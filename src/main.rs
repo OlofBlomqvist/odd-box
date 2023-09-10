@@ -1,7 +1,8 @@
 #![feature(async_closure)]
-
+#![feature(fs_try_exists)]
 mod types;
 use types::*;
+use std::env::args;
 use std::io::Read;
 use tracing::Level;
 use tracing_subscriber::filter::LevelFilter;
@@ -13,9 +14,24 @@ mod proxy;
 #[tokio::main]
 async fn main() -> Result<(),String> {
 
-    let mut file = std::fs::File::open("Config.toml").map_err(|_|"Could not open configuration file: Config.toml")?;
+    let args = args().collect::<Vec<String>>();
+
+    // By default we use odd-box.toml, and otherwise we try to read from Config.toml
+    let mut cfg_path = if std::fs::try_exists("odd-box.toml").is_err() {
+        "odd-box.toml"
+    } else {
+        "Config.toml"
+    };
+
+    // But also, if someone supplies an argument, we use that as the path to the config.
+    if let Some(p) =  args.get(1) {
+        cfg_path = p
+    }
+
+
+    let mut file = std::fs::File::open(cfg_path).map_err(|_|format!("Could not open configuration file: {cfg_path}"))?;
     let mut contents = String::new();
-    file.read_to_string(&mut contents).map_err(|_|"Could not read configuration file: Config.toml")?;
+    file.read_to_string(&mut contents).map_err(|_|format!("Could not read configuration file: {cfg_path}"))?;
 
     let mut config: Config = toml::from_str(&contents).map_err(|e:toml::de::Error| e.message().to_owned() )?;
 

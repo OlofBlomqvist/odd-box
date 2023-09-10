@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "odd-box"
-version = "0.0.1-alpha"
+version = "0.0.1-alpha1"
 dependencies = [
  "dirs",
  "futures-util",

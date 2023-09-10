@@ -11,6 +11,9 @@ Uses the 'port' environment variable to assign a port for each site. If your pro
 You can enable or disable all sites or specific ones using the http://localhost/START and http://localhost/STOP endpoints, optionally using query parameter "?proc=my_site" to stop or start a specific site.
 (Mostly only useful for pre-build scripts where you dont want to manually stop and start the proxy on each rebuild. Sites start automatically again on the next request) 
 
+By default, running odd-box without any arguments it will first try to read from odd-box.toml, then Config.toml.
+You can supply a custom config path using: ./odd-box "/tmp/my-file.toml"
+
 Configuration format:
 
 ```toml
