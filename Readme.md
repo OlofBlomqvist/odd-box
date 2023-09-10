@@ -2,9 +2,9 @@
 
 ## ODD-BOX
 
-A simple to use cross-platform reverse proxy server for local development and tinkering purposes.
+A simple to use cross-platform **toy-level** reverse proxy server for local development and tinkering purposes.
 
-It allows you to configure a list of processes to run and host them behind their custom hostnames.
+It allows you to configure a list of processes to run and host them behind their own custom hostnames.
 
 Uses the 'port' environment variable to assign a port for each site. If your process does not support using the port environment variable, you can pass custom arguments or variables for your process instead.
 
