@@ -5,7 +5,7 @@ version = "0.0.1-alpha"
 edition = "2021"
 authors = ["Olof Blomqvist <olof@twnet.se>"]
 repository = "https://github.com/OlofBlomqvist/odd-box"
-license-file = "licence"
+license-file = "license"
 
 [dependencies]
 dirs = "5.0.1"
