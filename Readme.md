@@ -8,8 +8,6 @@ It allows you to configure a list of processes to run and host them behind their
 
 Uses the 'port' environment variable to assign a port for each site. If your process does not support using the port environment variable, you can pass custom arguments or variables for your process instead.
 
-Since this is not meant to be used in production, the proxy listens on port 80 (http), although the hosted sites can still use https.
-
 You can enable or disable all sites or specific ones using the http://localhost/START and http://localhost/STOP endpoints, optionally using query parameter "?proc=my_site" to stop or start a specific site.
 (Mostly only useful for pre-build scripts where you dont want to manually stop and start the proxy on each rebuild. Sites start automatically again on the next request) 
 
