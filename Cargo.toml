@@ -1,7 +1,11 @@
 [package]
 name = "odd-box"
-version = "0.1.0"
+description = "dead simple reverse proxy server"
+version = "0.0.1-alpha"
 edition = "2021"
+authors = ["Olof Blomqvist <olof@twnet.se>"]
+repository = "https://github.com/OlofBlomqvist/odd-box"
+license-file = "licence"
 
 [dependencies]
 dirs = "5.0.1"
