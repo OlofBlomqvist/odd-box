@@ -1,3 +1,5 @@
+[![BuildAndTest](https://github.com/OlofBlomqvist/odd-box/actions/workflows/rust.yml/badge.svg)](https://github.com/OlofBlomqvist/odd-box/actions/workflows/rust.yml)
+
 ## ODD-BOX
 
 A simple to use cross-platform reverse proxy server for local development and tinkering purposes.
