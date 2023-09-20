@@ -55,42 +55,10 @@ async fn main() -> Result<(),String> {
         .with_thread_names(true)
         .finish()
         .init();
-    
-    let resolved_home_dir_path = dirs::home_dir().ok_or(String::from("Failed to resolve home directory."))?;
-    let resolved_home_dir_str = resolved_home_dir_path.to_str().ok_or(String::from("Failed to parse home directory."))?;
-    tracing::info!("Resolved home directory: {}",&resolved_home_dir_str);
+   
 
-    if let Some(rp) = &config.root_dir {
-        if rp.starts_with("~") {
-            config.root_dir = Some(rp.replace("~", resolved_home_dir_str));
-        }
-    }
+    config.init(cfg_path)?;
 
-    for x in config.processes.iter_mut() {
-        
-        if x.path.len() < 5 { return Err(format!("Invalid path configuration for {:?}",x))}
-        if x.path.starts_with("~") {
-           x.path = x.path.replace("~", resolved_home_dir_str)
-        }
-        if x.bin.starts_with("~") {
-            x.bin = x.bin.replace("~", resolved_home_dir_str)
-         }
-        
-        if x.path.contains("$root_dir") {
-            if let Some(rp) = &config.root_dir {
-                x.path = x.path.replace("$root_dir", rp);
-            } else {
-                return Err(format!("Invalid configuration: {x:?}. Missing root_dir in configuration file but referenced for this item.."))
-            }
-        }
-
-        // if no log format is specified for the process but there is a global format, override it
-        if x.log_format.is_none() {
-            if let Some(ref f) = config.default_log_format {
-                x.log_format = Some(f.clone())
-            }
-        }
-    }
 
     let srv_port = config.port.unwrap_or(80);
 

@@ -1,8 +1,8 @@
 # Global configuration
-root_dir = "c:\\temp" # optional - can be used as a variable in process paths
-log_level = "info" # trace,debug,info,warn,error
+root_dir = "$cfg_dir" # optional - can be used as a variable in process paths
+log_level = "trace" # trace,debug,info,warn,error
 port_range_start = 4200 # will start serving on 4200 and up 1 for each site
-default_log_format = "dotnet" # optional: "dotnet" or "standard"
+default_log_format = "standard" # optional: "dotnet" or "standard"
 env_vars = [
      # can be overridden by site specific ones
      { key = "env_var_for_all_sites" , value = "nice" }, 
