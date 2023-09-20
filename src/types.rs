@@ -53,7 +53,8 @@ pub (crate) struct Config {
     pub root_dir : Option<String>,
     pub log_level : Option<LogLevel>,
     pub port_range_start : u16,
-    pub default_log_format : Option<LogFormat>
+    pub default_log_format : Option<LogFormat>,
+    pub port : Option<u16>
     
 }
 

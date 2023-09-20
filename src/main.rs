@@ -92,16 +92,18 @@ async fn main() -> Result<(),String> {
         }
     }
 
+    let srv_port = config.port.unwrap_or(80);
+
     // Validate that we are allowed to bind prior to attempting to initialize hyper since it will panic on failure otherwise.
     {
-        let srv = std::net::TcpListener::bind("127.0.0.1:80");
+        let srv = std::net::TcpListener::bind(format!("127.0.0.1:{}",srv_port));
         match srv {
             Err(e) => {
-                tracing::error!("TCP Bind port 80 failed. It could be taken by another service like iis,apache,nginx etc, or perhaps you do not have permission to bind. The specific error was: {e:?}");
+                tracing::error!("TCP Bind port {} failed. It could be taken by another service like iis,apache,nginx etc, or perhaps you do not have permission to bind. The specific error was: {e:?}",srv_port);
                 return Ok(())
             },
             Ok(_) => {
-                tracing::debug!("TCP Port 80 is available for binding.");
+                tracing::debug!("TCP Port {} is available for binding.",srv_port);
             }
         }
     }
@@ -138,7 +140,7 @@ async fn main() -> Result<(),String> {
         
     }
 
-    proxy::rev_prox_srv(&config,"127.0.0.1:80",tx).await?;
+    proxy::rev_prox_srv(&config,&format!("127.0.0.1:{srv_port}"),tx).await?;
 
     Ok(())
 
