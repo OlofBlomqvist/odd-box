@@ -17,7 +17,7 @@ async fn main() -> Result<(),String> {
     let args = args().collect::<Vec<String>>();
 
     // By default we use odd-box.toml, and otherwise we try to read from Config.toml
-    let mut cfg_path = if std::fs::try_exists("odd-box.toml").is_err() {
+    let mut cfg_path = if !std::fs::try_exists("odd-box.toml").is_err() {
         "odd-box.toml"
     } else {
         "Config.toml"
@@ -25,7 +25,9 @@ async fn main() -> Result<(),String> {
 
     // But also, if someone supplies an argument, we use that as the path to the config.
     if let Some(p) =  args.get(1) {
-        cfg_path = p
+        if p.trim().len() > 0 {
+            cfg_path = p
+        }
     }
 
 
@@ -58,7 +60,6 @@ async fn main() -> Result<(),String> {
    
 
     config.init(cfg_path)?;
-
 
     let srv_port = config.port.unwrap_or(80);
 

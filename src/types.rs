@@ -95,27 +95,54 @@ impl Config {
                 .parent()
                 .map(|p| p.to_str().unwrap_or_default()) 
             {
-                tracing::debug!("$cfg_dir resolved to {directory_path_str}");
-                directory_path_str
+                if directory_path_str.eq("") {
+                    tracing::debug!("$cfg_dir resolved to '.'");
+                    "."
+                } else {
+                    tracing::debug!("$cfg_dir resolved to {directory_path_str}");
+                    directory_path_str
+                } 
+                
             } else {
                 return Err(format!("Failed to resolve $cfg_dir"));
             };   
 
+        if let Some(rd) = self.root_dir.as_mut() {
+            
+            if rd.contains("$root_dir") {
+                panic!("it is clearly not a good idea to use $root_dir in the configuration of root dir...")
+            }
+
+            let rd_with_vars_replaced = rd
+                .replace("$cfg_dir", cfg_dir)
+                .replace("~", resolved_home_dir_str);
+
+            let canonicalized_with_vars = 
+                match std::fs::canonicalize(rd_with_vars_replaced) {
+                    Ok(resolved_path) => {
+                        resolved_path.display().to_string()
+                            // we dont want to use ext path def on windows
+                            .replace("\\\\?\\", "")
+                    }
+                    Err(e) => {
+                        return Err(format!("Failed to resolve path: {}", e));
+                    }
+                };
+            
+            *rd = canonicalized_with_vars;
+
+            tracing::debug!("$root_dir resolved to: {rd}")
+        }
+           
         let cloned_root_dir = self.root_dir.clone();
+
 
         let with_vars = |x:&str| -> String {
             x.replace("$root_dir", & if let Some(rd) = &cloned_root_dir { rd.to_string() } else { "$root_dir".to_string() })
             .replace("$cfg_dir", cfg_dir)
             .replace("~", resolved_home_dir_str)
         };
-            
-        if let Some(rp) = self.root_dir.as_mut() {
-            if rp.contains("$root_dir") {
-                panic!("it is clearly not a good idea to use $root_dir in the configuration of root dir...")
-            }
-            *rp = with_vars(rp);
-            tracing::debug!("$root_dir resolved to: {rp}")
-        }
+           
 
         let log_format = self.default_log_format.clone();
 
