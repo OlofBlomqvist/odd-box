@@ -3,7 +3,6 @@
 mod types;
 mod hyper_reverse_proxy;
 use types::*;
-use std::env::args;
 use std::io::Read;
 use tracing::Level;
 use tracing_subscriber::filter::LevelFilter;
@@ -12,27 +11,43 @@ use tracing_subscriber::util::SubscriberInitExt;
 mod proc_host;
 mod proxy;
 
+
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+
+    /// Path to your configuration file. By default we will look for odd-box.toml and Config.toml.
+    #[arg(index = 1)]
+    configuration: Option<String>,
+
+    /// Port to listen on. Overrides configuration port. Defaults to 8080
+    #[arg(long,short)]
+    port: Option<u16>,
+
+}
+
+
 #[tokio::main]
 async fn main() -> Result<(),String> {
 
-    let args = args().collect::<Vec<String>>();
+    let args = Args::parse();
 
     // By default we use odd-box.toml, and otherwise we try to read from Config.toml
-    let mut cfg_path = if std::fs::try_exists("odd-box.toml").is_ok() {
-        "odd-box.toml"
-    } else {
-        "Config.toml"
-    };
-
-    // But also, if someone supplies an argument, we use that as the path to the config.
-    if let Some(p) =  args.get(1) {
-        if p.trim().len() > 0 {
-            cfg_path = p
-        }
-    }
+    let cfg_path = 
+        if let Some(cfg) = args.configuration {
+            cfg
+        } else {
+            if std::fs::try_exists("odd-box.toml").is_ok() {
+                "odd-box.toml".to_owned()
+            } else {
+                "Config.toml".to_owned()
+            }
+        };
 
 
-    let mut file = std::fs::File::open(cfg_path).map_err(|_|format!("Could not open configuration file: {cfg_path}"))?;
+    let mut file = std::fs::File::open(&cfg_path).map_err(|_|format!("Could not open configuration file: {cfg_path}"))?;
     let mut contents = String::new();
     file.read_to_string(&mut contents).map_err(|_|format!("Could not read configuration file: {cfg_path}"))?;
 
@@ -60,9 +75,9 @@ async fn main() -> Result<(),String> {
         .init();
    
 
-    config.init(cfg_path)?;
+    config.init(&cfg_path)?;
 
-    let srv_port = config.port.unwrap_or(80);
+    let srv_port : u16 = if let Some(p) = args.port { p } else { config.port.unwrap_or(8080) } ;
 
     // Validate that we are allowed to bind prior to attempting to initialize hyper since it will panic on failure otherwise.
     {
