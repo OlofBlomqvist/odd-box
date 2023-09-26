@@ -1,10 +1,51 @@
+use crate::hyper_reverse_proxy::ReverseProxy;
+
 use super::types;
+use hyper::client::HttpConnector;
+use hyper_trust_dns::TrustDnsResolver;
 use types::*;
-use hyper::{Server, Response, Body, StatusCode};
+use hyper::{Server, Response, Body, StatusCode, Version, Client};
 use hyper::server::conn::AddrStream;
-use hyper_reverse_proxy;
+
 use futures_util::StreamExt;
 use futures_util::SinkExt;
+
+
+lazy_static::lazy_static! {
+    static ref  PROXY_CLIENT_HTTPS_RUSTLS: ReverseProxy<hyper_trust_dns::RustlsHttpsConnector> = {
+        ReverseProxy::new(
+            hyper::Client::builder().build(TrustDnsResolver::default().into_rustls_webpki_https_connector()),
+        )
+    };
+}
+
+use hyper_tls::HttpsConnector;
+lazy_static::lazy_static! {
+    static ref  PROXY_CLIENT_HTTPS: ReverseProxy<HttpsConnector<HttpConnector>> = {
+            ReverseProxy::new(
+                Client::builder().build::<_, hyper::Body>(HttpsConnector::new())
+            )
+    };
+}
+
+
+lazy_static::lazy_static! {
+    static ref  PROXY_CLIENT_HTTP: ReverseProxy<HttpConnector> = {
+        ReverseProxy::new(
+            hyper::Client::builder().build_http()
+        )
+    };
+}
+
+
+lazy_static::lazy_static! {
+    static ref  PROXY_CLIENT_H2C: ReverseProxy<HttpConnector> = {
+        ReverseProxy::new(
+            hyper::Client::builder().http2_only(true).build_http()
+        )
+    };
+}
+
 
 pub(crate) async fn rev_prox_srv(cfg: &Config, bind_addr: &str, tx: tokio::sync::broadcast::Sender<(String, bool)>) -> Result<(), String> {
     tracing::info!("Starting reverse proxy!");
@@ -48,17 +89,18 @@ async fn handle_ws(
     _tx:tokio::sync::broadcast::Sender<(String,bool)>
 )  -> Result<hyper::Response<hyper::Body>, CustomError>  {
 
-    
     let req_host_name = 
         if let Some(hh) = req.headers().get("host") { 
-            hh.to_str().map_err(|e|CustomError(format!("{e:?}")))
-        } else { return Err(CustomError("no hostname, cant handle".into())) }? ;
-
+            hh.to_str().map_err(|e|CustomError(format!("{e:?}")))?.to_string()
+        } else { 
+            req.uri().authority().ok_or(CustomError(format!("No hostname and no Authority found")))?.host().to_string()
+        } ;
+        
     let req_path = req.uri().path();
-
+    
     tracing::debug!("Handling websocket request: {req_host_name:?} --> {req_path}");
 
-    let proc = cfg.processes.iter().find(|p| { req_host_name == &p.host_name })
+    let proc = cfg.processes.iter().find(|p| { req_host_name == p.host_name })
         .ok_or(CustomError(format!("No target is configured to handle requests to {req_host_name}")))?;
     
     let proto = if let Some(true) = proc.https { "wss" } else { "ws" };
@@ -91,18 +133,20 @@ async fn handle_ws(
 async fn handle(
     cfg:Config,
     client_ip: std::net::IpAddr, 
-    req: hyper::Request<hyper::Body>,
+    req:hyper::Request<hyper::Body>,
     tx:tokio::sync::broadcast::Sender<(String,bool)>
 ) -> Result<hyper::Response<hyper::Body>, CustomError> {
     
     let req_host_name = 
         if let Some(hh) = req.headers().get("host") { 
-            hh.to_str().map_err(|e|CustomError(format!("{e:?}")))
-        } else { return Err(CustomError("no hostname, cant handle".into())) }? ;
+            hh.to_str().map_err(|e|CustomError(format!("{e:?}")))?.to_string()
+        } else { 
+            req.uri().authority().ok_or(CustomError(format!("No hostname and no Authority found")))?.host().to_string()
+        } ;
 
+    tracing::debug!("Handling request: {req_host_name:?}");
+    
     let req_path = req.uri().path();
-
-    tracing::debug!("Handling request: {req_host_name:?} --> {req_path}");
     
     let params: std::collections::HashMap<String, String> = req
         .uri()
@@ -139,7 +183,8 @@ async fn handle(
             </center>
         "#;
         return Ok(Response::new(Body::from(html)))
-    }
+    } 
+    
     if req_path.eq("/START") {
         
 
@@ -167,21 +212,36 @@ async fn handle(
         "#;
         return Ok(Response::new(Body::from(html)))
     }
-
-
-
+    
     if let Some(target_cfg) = cfg.processes.iter().find(|p| {
-            req_host_name == &p.host_name
+            req_host_name == p.host_name
     }) {
         
         // auto start site in case its been disabled by other requests
         _ = tx.send((target_cfg.host_name.to_owned(),true)).map_err(|e|format!("{e:?}"));
 
-        let proto = if let Some(true) = target_cfg.https { "https" } else { "http" };
+        let scheme = if let Some(true) = target_cfg.https { "https" } else { "http" };
 
-        let target_url = format!("{proto}://127.0.0.1:{}",target_cfg.port);
+        let target_url = format!("{scheme}://{}:{}",target_cfg.host_name,target_cfg.port);
+        
+        let result =  if req.version() == Version::HTTP_2 {
+            if scheme == "http" {
+                // http2 over http (h2c)
+                PROXY_CLIENT_H2C.call(client_ip, &target_url, req).await
+            } else {
+                // http2 with tls (h2)
+                PROXY_CLIENT_HTTPS.call(client_ip, &target_url, req).await
+            }
+            
+        } else {
+            if scheme == "http" {
+                PROXY_CLIENT_HTTP.call(client_ip, &target_url, req).await
+            } else {
+                PROXY_CLIENT_HTTPS.call(client_ip, &target_url, req).await
+            }
+        };
 
-        match hyper_reverse_proxy::call(client_ip, &target_url, req).await {
+        match result {
             Ok(response) => {
                 tracing::trace!("Proxy call to {} succeeded", &target_cfg.host_name);
                 Ok(response)

@@ -1,6 +1,7 @@
 #![feature(async_closure)]
 #![feature(fs_try_exists)]
 mod types;
+mod hyper_reverse_proxy;
 use types::*;
 use std::env::args;
 use std::io::Read;
@@ -17,7 +18,7 @@ async fn main() -> Result<(),String> {
     let args = args().collect::<Vec<String>>();
 
     // By default we use odd-box.toml, and otherwise we try to read from Config.toml
-    let mut cfg_path = if !std::fs::try_exists("odd-box.toml").is_err() {
+    let mut cfg_path = if std::fs::try_exists("odd-box.toml").is_ok() {
         "odd-box.toml"
     } else {
         "Config.toml"
