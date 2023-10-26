@@ -210,18 +210,16 @@ async fn main() -> Result<(),String> {
     config.init(&cfg_path)?;
 
     let srv_port : u16 = if let Some(p) = args.port { p } else { config.port.unwrap_or(8080) } ;
-    let srv_tls_port : u16 = if let Some(p) = args.tls_port { p } else { config.port.unwrap_or(4343) } ;
+    let srv_tls_port : u16 = if let Some(p) = args.tls_port { p } else { config.tls_port.unwrap_or(4343) } ;
 
-    // Validate that we are allowed to bind prior to attempting to initialize hyper since it will panic on failure otherwise.
-
+    // Validate that we are allowed to bind prior to attempting to initialize hyper since it will simply on failure otherwise.
     for p in vec![srv_port,srv_tls_port] {
         let srv = std::net::TcpListener::bind(format!("127.0.0.1:{}",p));
         match srv {
             Err(e) => {
-                tracing::error!("TCP Bind port {} failed. It could be taken by another service like iis,apache,nginx etc, or perhaps you do not have permission to bind. The specific error was: {e:?}",p);
-                return Ok(())
+                return Err(format!("TCP Bind port {} failed. It could be taken by another service like iis,apache,nginx etc, or perhaps you do not have permission to bind. The specific error was: {e:?}",p))
             },
-            Ok(_) => {
+            Ok(_listener) => {
                 tracing::debug!("TCP Port {} is available for binding.",p);
             }
         }

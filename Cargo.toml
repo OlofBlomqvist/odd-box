@@ -16,7 +16,7 @@ regex = "1.9.5"
 serde = { version = "1.0.88", features = ["derive"] }
 tokio = { version = "1.32.0", features = ["full"] }
 tokio-tungstenite = "0.20.0"
-toml = "0.7.6"
+toml = "0.8.4"
 tracing = "0.1.37"
 tracing-subscriber = { version="0.3.17", features=[ "env-filter" ] }
 url = "2.4.1"
