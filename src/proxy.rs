@@ -74,7 +74,7 @@ pub(crate) async fn rev_prox_srv(cfg: &Config, bind_addr: &str,bind_addr_tls: &s
     let addr: std::net::SocketAddr = bind_addr.parse().map_err(|_| "Could not parse ip:port.")?;
     let addr_tls: std::net::SocketAddr = bind_addr_tls.parse().map_err(|_| "Could not parse ip:port.")?;
 
-    tracing::info!("Starting proxy service on {:?}. Press ctrl-c to exit.", addr);
+    tracing::info!("Starting proxy service on {:?} AND {:?}. Press ctrl-c to exit.", addr, addr_tls);
 
     // Create custom TCP socket for TLS
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
@@ -94,11 +94,11 @@ pub(crate) async fn rev_prox_srv(cfg: &Config, bind_addr: &str,bind_addr_tls: &s
 
     loop {
         match listener.accept().await {
-            Ok((stream, addr)) => {
+            Ok((stream, addr_tls)) => {
                 let acceptor = tls_acceptor.clone();
                 let cfg = cfg.clone();
                 let tx = tx.clone();
-                let ip = addr.ip();
+                let ip = addr_tls.ip();
                 tokio::spawn(async move {
                     match acceptor.accept(stream).await {
                         Ok(tls_stream) => {
