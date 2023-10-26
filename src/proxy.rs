@@ -1,7 +1,6 @@
 use std::collections::HashMap;
-use std::net::TcpListener;
-use std::ops::Mul;
 use std::sync::Mutex;
+use hyper_tungstenite::HyperWebsocket;
 
 use crate::hyper_reverse_proxy::ReverseProxy;
 
@@ -54,12 +53,66 @@ lazy_static::lazy_static! {
 
 pub(crate) async fn rev_prox_srv(cfg: &Config, bind_addr: &str,bind_addr_tls: &str, tx: tokio::sync::broadcast::Sender<(String, bool)>) -> Result<(), String> {
 
+
+    tracing::trace!("Starting reverse proxy");
+
+    let addr: std::net::SocketAddr = bind_addr.parse().map_err(|_| "Could not parse ip:port.")?;
+    let addr_tls: std::net::SocketAddr = bind_addr_tls.parse().map_err(|_| "Could not parse ip:port.")?;
+
+    tracing::info!("Starting proxy service on {:?} AND {:?}. Press ctrl-c to exit.", addr, addr_tls);
+
+    let http_future = run_http_server(cfg,addr,tx.clone());
+    let https_future = run_https_server(cfg,addr_tls,tx.clone());
+
+    tokio::try_join!(http_future, https_future).map_err(|e|format!("{e}")).unwrap();
+
+    Ok(())
+
+        
+}
+
+
+
+async fn run_http_server(cfg: &Config,bind_addr: std::net::SocketAddr, tx: tokio::sync::broadcast::Sender<(String, bool)>) -> Result<(), Box<dyn std::error::Error>> {
+ 
+    let make_http_svc = hyper::service::make_service_fn(|socket: &AddrStream| {
+
+        let remote_addr = socket.remote_addr();
+        let cfg = cfg.clone();
+        let tx = tx.clone();        
+       
+        async move {
+            Ok::<_, CustomError>(hyper::service::service_fn(move |mut req: hyper::Request<Body>| {
+                let tx = tx.clone();
+                let cfg = cfg.clone();
+                async move {
+                    if hyper_tungstenite::is_upgrade_request(&req) {
+                        let (response, websocket) = hyper_tungstenite::upgrade(&mut req, None).unwrap();
+                        tokio::spawn(async move {
+                            if let Err(e) = handle_ws(cfg, remote_addr.ip(), req, tx,websocket).await {
+                                eprintln!("Error in websocket connection: {}", e);
+                            }
+                        });
+                        return Ok(response)
+                    } else {
+                        handle(cfg, remote_addr.ip(), req, tx).await
+                    }
+                }
+            }))
+        }
+    
+    });
+    _ = Server::bind(&bind_addr).serve(make_http_svc).await;
+    Ok(())
+
+}
+
+async fn run_https_server(cfg: &Config,bind_addr: std::net::SocketAddr, tx: tokio::sync::broadcast::Sender<(String, bool)>) -> Result<(), Box<dyn std::error::Error>> {
+    
     use rustls::ServerConfig;
     use tokio_rustls::TlsAcceptor;
     use std::sync::Arc;
     use socket2::{Domain, Socket, Type};
-
-    tracing::info!("Starting reverse proxy!");
 
     let rustls_config = 
         ServerConfig::builder()
@@ -71,16 +124,11 @@ pub(crate) async fn rev_prox_srv(cfg: &Config, bind_addr: &str,bind_addr_tls: &s
 
     let tls_acceptor = TlsAcceptor::from(Arc::new(rustls_config));
 
-    let addr: std::net::SocketAddr = bind_addr.parse().map_err(|_| "Could not parse ip:port.")?;
-    let addr_tls: std::net::SocketAddr = bind_addr_tls.parse().map_err(|_| "Could not parse ip:port.")?;
-
-    tracing::info!("Starting proxy service on {:?} AND {:?}. Press ctrl-c to exit.", addr, addr_tls);
-
     // Create custom TCP socket for TLS
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
     socket.set_only_v6(false).unwrap();
     socket.set_reuse_address(true).unwrap(); // annoying as hell otherwise for quick resets
-    socket.bind(&addr_tls.into()).unwrap();
+    socket.bind(&bind_addr.into()).unwrap();
     socket.listen(128).unwrap();
     
     // Need non-block since we will convert it for use with tokio
@@ -88,10 +136,6 @@ pub(crate) async fn rev_prox_srv(cfg: &Config, bind_addr: &str,bind_addr_tls: &s
     listener.set_nonblocking(true).expect("Cannot set non-blocking");
     let listener = tokio::net::TcpListener::from_std(listener).unwrap();
     
-    // _ = Server::bind(&addr)
-    //     .serve(make_svc)
-    //     .await;
-
     loop {
         match listener.accept().await {
             Ok((stream, addr_tls)) => {
@@ -102,12 +146,24 @@ pub(crate) async fn rev_prox_srv(cfg: &Config, bind_addr: &str,bind_addr_tls: &s
                 tokio::spawn(async move {
                     match acceptor.accept(stream).await {
                         Ok(tls_stream) => {
-                            tracing::info!("TLS handshake successful: {:?}", tls_stream);
-                            let service = hyper::service::service_fn(move |req: hyper::Request<hyper::Body>| {
+                            tracing::debug!("TLS handshake successful: {:?}", tls_stream);
+                            let service = hyper::service::service_fn(move |mut req: hyper::Request<hyper::Body>| {
                                 let cfg = cfg.clone();
                                 let tx = tx.clone();
                                 let ip = ip;
-                                async move { handle(cfg.clone(), ip, req, tx.clone()).await }
+                                async move {
+                                    if hyper_tungstenite::is_upgrade_request(&req) {
+                                        let (response, websocket) = hyper_tungstenite::upgrade(&mut req, None).unwrap();
+                                        tokio::spawn(async move {
+                                            if let Err(e) = handle_ws(cfg, ip, req, tx,websocket).await {
+                                                eprintln!("Error in websocket connection: {}", e);
+                                            }
+                                        });
+                                        return Ok(response)
+                                    } else {
+                                        handle(cfg, ip, req, tx).await
+                                    }
+                                }
                             });
     
                             let http = hyper::server::conn::Http::new();
@@ -126,55 +182,98 @@ pub(crate) async fn rev_prox_srv(cfg: &Config, bind_addr: &str,bind_addr_tls: &s
         }
     }
     
-        
 }
 
 async fn handle_ws(
     cfg:Config,
     _client_ip: std::net::IpAddr, 
     req: hyper::Request<hyper::Body>,
-    _tx:tokio::sync::broadcast::Sender<(String,bool)>
-)  -> Result<hyper::Response<hyper::Body>, CustomError>  {
-
+    _tx:tokio::sync::broadcast::Sender<(String,bool)>,
+    ws:HyperWebsocket
+) -> Result<(),CustomError> {
+    
     let req_host_name = 
         if let Some(hh) = req.headers().get("host") { 
-            hh.to_str().map_err(|e|CustomError(format!("{e:?}")))?.to_string()
+            let hostname_and_port = hh.to_str().map_err(|e|CustomError(format!("{e:?}")))?.to_string();
+            hostname_and_port.split(":").collect::<Vec<&str>>()[0].to_owned()
         } else { 
             req.uri().authority().ok_or(CustomError(format!("No hostname and no Authority found")))?.host().to_string()
         } ;
         
-    let req_path = req.uri().path();
+    let req_path_and_uri = req.uri().path_and_query();
+
+    let req_path = if let Some(rpu) = req_path_and_uri { rpu.to_string() } else {
+        req.uri().path().to_string()
+    };
     
     tracing::debug!("Handling websocket request: {req_host_name:?} --> {req_path}");
+
 
     let proc = cfg.processes.iter().find(|p| { req_host_name == p.host_name })
         .ok_or(CustomError(format!("No target is configured to handle requests to {req_host_name}")))?;
     
     let proto = if let Some(true) = proc.https { "wss" } else { "ws" };
-    let ws_url = format!("{proto}://127.0.0.1:{}",proc.port);
+    let ws_url = format!("{proto}://127.0.0.1:{}{}",proc.port,req_path);
+    
+    tracing::debug!("initiating websocket tunnel to {}",ws_url);
 
-    let ws_stream = tokio_tungstenite::connect_async(&ws_url).await;
-    match ws_stream {
-        Ok((mut ws_stream, _response)) => {
-            tokio::task::spawn(async move {
-                while let Some(Ok(msg)) = ws_stream.next().await {
-                    if let Err(e) = ws_stream.send(msg).await {
-                        eprintln!("Error forwarding message: {}", e);
-                        break;
-                    }
-                }
-            });
-            let response = hyper::Response::builder()
-                .status(101)
-                .body(hyper::Body::from("WebSocket proxy established"))
-                .expect("body building always works");
-
-            Ok(response)
+    
+    let upstream_client = match tokio_tungstenite::connect_async(ws_url).await {
+        Ok(x) => {
+            tracing::debug!("Successfully connected to target websocket");
+            x
         },
         Err(e) => {
-            Err(CustomError::from(e))
-        },
-    }
+            tracing::warn!("{:?}",e);
+            return Err(CustomError(format!("{e:?}")))
+        }
+    };
+
+    tokio::spawn(async move {
+        
+        tracing::trace!("Successfully upgraded websocket connection from client");
+
+        let (mut ws_up_write,mut ws_up_read) = upstream_client.0.split();
+
+        tracing::trace!("Setting up tunnel between client and upstream websocket");
+
+        let (mut websocket_write,mut websocket_read) = ws.await.unwrap().split();
+        
+        // Forward messages from client to upstream
+        let client_to_upstream = async {
+            while let Some(message) = websocket_read.next().await {
+                //println!("got this message from client: {:?}",message);
+                match message {
+                    Ok(msg) => {
+                        if ws_up_write.send(msg.clone()).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        };
+    
+        // Forward messages from upstream to client
+        let upstream_to_client = async {
+            while let Some(message) = ws_up_read.next().await {
+                // println!("got this message from server: {:?}",message);
+                match message {
+                    Ok(msg) => {
+                        if websocket_write.send(msg.clone()).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        };
+        _ = tokio::join!(client_to_upstream, upstream_to_client);
+    });
+
+    Ok(())
+
+
 }
 
 async fn handle(
@@ -186,10 +285,11 @@ async fn handle(
     
     let req_host_name = 
         if let Some(hh) = req.headers().get("host") { 
-            hh.to_str().map_err(|e|CustomError(format!("{e:?}")))?.to_string()
+            let hostname_and_port = hh.to_str().map_err(|e|CustomError(format!("{e:?}")))?.to_string();
+            hostname_and_port.split(":").collect::<Vec<&str>>()[0].to_owned()
         } else { 
             req.uri().authority().ok_or(CustomError(format!("No hostname and no Authority found")))?.host().to_string()
-        } ;
+        };
 
     tracing::debug!("Handling request: {req_host_name:?}");
     
@@ -310,3 +410,5 @@ async fn handle(
     }
 
 }
+
+

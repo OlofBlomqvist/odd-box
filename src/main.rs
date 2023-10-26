@@ -2,7 +2,6 @@
 #![feature(fs_try_exists)]
 mod types;
 mod hyper_reverse_proxy;
-use hyper::server;
 use rustls::PrivateKey;
 use std::sync::Mutex;
 use types::*;
@@ -22,10 +21,9 @@ struct DynamicCertResolver {
 }
 
 
-use rustls::sign::{RsaSigningKey, CertifiedKey, SigningKey, any_supported_type};
+use rustls::sign::any_supported_type;
 
-
-use rustls::server::{ClientHello, ResolvesServerCertUsingSni, ResolvesServerCert};
+use rustls::server::{ClientHello, ResolvesServerCert};
 
 impl ResolvesServerCert for DynamicCertResolver {
     fn resolve(&self, client_hello: ClientHello) -> Option<std::sync::Arc<rustls::sign::CertifiedKey>> {

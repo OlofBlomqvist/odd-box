@@ -595,6 +595,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-tungstenite"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cc7dcb1ab67cd336f468a12491765672e61a3b6b148634dbfe2fe8acd3fe7d9"
+dependencies = [
+ "hyper",
+ "pin-project-lite",
+ "tokio",
+ "tokio-tungstenite",
+ "tungstenite",
+]
+
+[[package]]
 name = "idna"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -795,7 +808,7 @@ dependencies = [
 
 [[package]]
 name = "odd-box"
-version = "0.0.1-alpha6"
+version = "0.0.1-alpha7"
 dependencies = [
  "clap",
  "dirs",
@@ -803,6 +816,7 @@ dependencies = [
  "hyper",
  "hyper-tls",
  "hyper-trust-dns",
+ "hyper-tungstenite",
  "lazy_static",
  "rcgen",
  "regex",
