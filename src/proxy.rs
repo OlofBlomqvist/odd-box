@@ -1,3 +1,8 @@
+use std::collections::HashMap;
+use std::net::TcpListener;
+use std::ops::Mul;
+use std::sync::Mutex;
+
 use crate::hyper_reverse_proxy::ReverseProxy;
 
 use super::types;
@@ -47,39 +52,81 @@ lazy_static::lazy_static! {
 }
 
 
-pub(crate) async fn rev_prox_srv(cfg: &Config, bind_addr: &str, tx: tokio::sync::broadcast::Sender<(String, bool)>) -> Result<(), String> {
+pub(crate) async fn rev_prox_srv(cfg: &Config, bind_addr: &str,bind_addr_tls: &str, tx: tokio::sync::broadcast::Sender<(String, bool)>) -> Result<(), String> {
+
+    use rustls::ServerConfig;
+    use tokio_rustls::TlsAcceptor;
+    use std::sync::Arc;
+    use socket2::{Domain, Socket, Type};
+
     tracing::info!("Starting reverse proxy!");
 
+    let rustls_config = 
+        ServerConfig::builder()
+            .with_safe_defaults()
+            .with_no_client_auth()
+            .with_cert_resolver(Arc::new(crate::DynamicCertResolver {
+                cache: Mutex::new(HashMap::new())
+            }));
+
+    let tls_acceptor = TlsAcceptor::from(Arc::new(rustls_config));
+
     let addr: std::net::SocketAddr = bind_addr.parse().map_err(|_| "Could not parse ip:port.")?;
+    let addr_tls: std::net::SocketAddr = bind_addr_tls.parse().map_err(|_| "Could not parse ip:port.")?;
 
-    let make_svc = hyper::service::make_service_fn(|socket: &AddrStream| {
+    tracing::info!("Starting proxy service on {:?}. Press ctrl-c to exit.", addr);
 
-        let remote_addr = socket.remote_addr();
-        let cfg = cfg.clone();
-        let tx = tx.clone();
-        
-        async move {
-            Ok::<_, CustomError>(hyper::service::service_fn(move |req: hyper::Request<Body>| {
+    // Create custom TCP socket for TLS
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+    socket.set_only_v6(false).unwrap();
+    socket.set_reuse_address(true).unwrap(); // annoying as hell otherwise for quick resets
+    socket.bind(&addr_tls.into()).unwrap();
+    socket.listen(128).unwrap();
+    
+    // Need non-block since we will convert it for use with tokio
+    let listener: std::net::TcpListener = socket.into();
+    listener.set_nonblocking(true).expect("Cannot set non-blocking");
+    let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+    
+    // _ = Server::bind(&addr)
+    //     .serve(make_svc)
+    //     .await;
+
+    loop {
+        match listener.accept().await {
+            Ok((stream, addr)) => {
+                let acceptor = tls_acceptor.clone();
                 let cfg = cfg.clone();
                 let tx = tx.clone();
-                async move {
-                    if req.headers().get("upgrade").map(|v| v.to_str().ok() == Some("websocket")).unwrap_or(false) {
-                        //info!("accepting websocket connection");
-                        handle_ws(cfg,remote_addr.ip(),req,tx).await
-                    } else {
-                        //info!("accepting connection");
-                        handle(cfg, remote_addr.ip(), req, tx).await
-                    }
-                }
-            }))
-        }
-    });
-      
-    tracing::info!("Starting proxy service on {:?}. Press ctrl-c to exit.", addr);
-    _ = Server::bind(&addr).serve(make_svc).await;
-
-    Ok(())
+                let ip = addr.ip();
+                tokio::spawn(async move {
+                    match acceptor.accept(stream).await {
+                        Ok(tls_stream) => {
+                            tracing::info!("TLS handshake successful: {:?}", tls_stream);
+                            let service = hyper::service::service_fn(move |req: hyper::Request<hyper::Body>| {
+                                let cfg = cfg.clone();
+                                let tx = tx.clone();
+                                let ip = ip;
+                                async move { handle(cfg.clone(), ip, req, tx.clone()).await }
+                            });
     
+                            let http = hyper::server::conn::Http::new();
+                            match http.serve_connection(tls_stream, service).await {
+                                Ok(_) => tracing::info!("HTTP service completed successfully"),
+                                Err(e) => tracing::warn!("HTTP service failed: {:?}", e),
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("TLS handshake failed: {:?}", e);
+                        }
+                    }
+                });
+            }
+            Err(e) => eprintln!("Error accepting connection: {}", e),
+        }
+    }
+    
+        
 }
 
 async fn handle_ws(

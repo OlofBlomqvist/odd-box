@@ -2,14 +2,144 @@
 #![feature(fs_try_exists)]
 mod types;
 mod hyper_reverse_proxy;
+use hyper::server;
+use rustls::PrivateKey;
+use std::sync::Mutex;
 use types::*;
+use std::collections::HashMap;
 use std::io::Read;
+use std::sync::Arc;
 use tracing::Level;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::{FmtSubscriber, EnvFilter};
 use tracing_subscriber::util::SubscriberInitExt;
 mod proc_host;
 mod proxy;
+
+
+struct DynamicCertResolver {
+    cache: Mutex<HashMap<String, Arc<rustls::sign::CertifiedKey>>>,
+}
+
+
+use rustls::sign::{RsaSigningKey, CertifiedKey, SigningKey, any_supported_type};
+
+
+use rustls::server::{ClientHello, ResolvesServerCertUsingSni, ResolvesServerCert};
+
+impl ResolvesServerCert for DynamicCertResolver {
+    fn resolve(&self, client_hello: ClientHello) -> Option<std::sync::Arc<rustls::sign::CertifiedKey>> {
+        
+        let server_name = client_hello.server_name()?;
+        
+        {
+            let cache = self.cache.lock().unwrap();
+            if let Some(certified_key) = cache.get(server_name) {
+                return Some(certified_key.clone());
+            }
+        }
+
+        let odd_cache_base = ".odd_box_cache";
+
+        let base_path = std::path::Path::new(odd_cache_base);
+        let host_name_cert_path = base_path.join(server_name);
+    
+        if let Err(e) = std::fs::create_dir_all(&host_name_cert_path) {
+            eprintln!("Could not create directory: {:?}", e);
+            return None;
+        }
+
+        let cert_path = format!("{}/{}/cert.pem",odd_cache_base,server_name);
+        let key_path = format!("{}/{}/key.pem",odd_cache_base,server_name);
+
+        if let Err(e) = generate_cert_if_not_exist(server_name, &cert_path, &key_path) {
+            tracing::error!("Failed to generate certificate for {}! - Error reason: {}", server_name, e);
+            return None
+        }
+
+        let cert_chain = my_certs(&cert_path).unwrap();
+
+        if cert_chain.is_empty() {
+            tracing::warn!("EMPTY CERT CHAIN FOR {}",server_name);
+            return None
+        }
+       
+        let private_key = my_rsa_private_keys(&key_path).unwrap();
+        
+        let rsa_signing_key = any_supported_type(&private_key).unwrap();
+
+        // let rsa_signing_key = 
+        //     RsaSigningKey::new(&private_key).map_err(|e| {
+        //         tracing::warn!("{}",e.to_string());
+        //         std::io::Error::new(std::io::ErrorKind::InvalidData, "Failed to create signing key")
+        //     }).unwrap();
+
+        Some(std::sync::Arc::new(rustls::sign::CertifiedKey::new(
+            cert_chain, 
+            rsa_signing_key
+        )))
+    }
+}
+
+use std::io::BufReader;
+use std::fs::File;
+
+
+fn generate_cert_if_not_exist(hostname: &str, cert_path: &str,key_path: &str) -> Result<(),String> {
+    
+    let crt_exists = std::fs::try_exists(cert_path).unwrap_or_default();
+    let key_exists = std::fs::try_exists(key_path).unwrap_or_default();
+
+    if crt_exists && key_exists {
+        tracing::info!("Using existing certificate for {}",hostname);
+        return Ok(())
+    }
+    
+    if crt_exists != key_exists {
+        return Err(String::from("Missing key or crt for this hostname. Remove both if you want to generate a new set, or add the missing one."))
+    }
+
+    tracing::info!("Generating new certificate for site '{}'",hostname);
+    
+
+    match rcgen::generate_simple_self_signed(
+        vec![hostname.to_owned()]
+    ) {
+        Ok(cert) => {
+            match cert.serialize_pem() {
+                Ok(contents) => {
+                    tracing::info!("Generating new self-signed certificate for host '{}'!",hostname);
+                    let _ = std::fs::write(&cert_path, contents);
+                    let _ = std::fs::write(&key_path, &cert.serialize_private_key_pem());
+                    Ok(())
+                } 
+                Err(e) => Err(e.to_string())
+            }
+        },
+        Err(e) => Err(e.to_string())
+    }
+}
+
+fn my_certs(path: &str) -> Result<Vec<rustls::Certificate>, std::io::Error> {
+    let cert_file = File::open(path)?;
+    let mut reader = BufReader::new(cert_file);
+    let certs = rustls_pemfile::certs(&mut reader).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Failed to load certificate"))?;
+    Ok(certs.into_iter().map(rustls::Certificate).collect())
+}
+
+fn my_rsa_private_keys(path: &str) -> Result<PrivateKey, String> {
+
+    let file = File::open(&path).unwrap();
+    let mut reader = BufReader::new(file);
+    let mut keys = rustls_pemfile::pkcs8_private_keys(&mut reader).unwrap();
+
+    match keys.len() {
+        0 => Err(format!("No PKCS8-encoded private key found in {path}").into()),
+        1 => Ok(PrivateKey(keys.remove(0))),
+        _ => Err(format!("More than one PKCS8-encoded private key found in {path}").into()),
+    }
+
+}
 
 
 use clap::Parser;
@@ -25,6 +155,10 @@ struct Args {
     /// Port to listen on. Overrides configuration port. Defaults to 8080
     #[arg(long,short)]
     port: Option<u16>,
+
+    /// Port to listen on for using https. Overrides configuration port. Defaults to 4343
+    #[arg(long,short)]
+    tls_port: Option<u16>,
 
 }
 
@@ -78,17 +212,19 @@ async fn main() -> Result<(),String> {
     config.init(&cfg_path)?;
 
     let srv_port : u16 = if let Some(p) = args.port { p } else { config.port.unwrap_or(8080) } ;
+    let srv_tls_port : u16 = if let Some(p) = args.tls_port { p } else { config.port.unwrap_or(4343) } ;
 
     // Validate that we are allowed to bind prior to attempting to initialize hyper since it will panic on failure otherwise.
-    {
-        let srv = std::net::TcpListener::bind(format!("127.0.0.1:{}",srv_port));
+
+    for p in vec![srv_port,srv_tls_port] {
+        let srv = std::net::TcpListener::bind(format!("127.0.0.1:{}",p));
         match srv {
             Err(e) => {
-                tracing::error!("TCP Bind port {} failed. It could be taken by another service like iis,apache,nginx etc, or perhaps you do not have permission to bind. The specific error was: {e:?}",srv_port);
+                tracing::error!("TCP Bind port {} failed. It could be taken by another service like iis,apache,nginx etc, or perhaps you do not have permission to bind. The specific error was: {e:?}",p);
                 return Ok(())
             },
             Ok(_) => {
-                tracing::debug!("TCP Port {} is available for binding.",srv_port);
+                tracing::debug!("TCP Port {} is available for binding.",p);
             }
         }
     }
@@ -125,7 +261,12 @@ async fn main() -> Result<(),String> {
         
     }
 
-    proxy::rev_prox_srv(&config,&format!("127.0.0.1:{srv_port}"),tx).await?;
+    proxy::rev_prox_srv(
+        &config,
+        &format!("127.0.0.1:{srv_port}"),
+        &format!("127.0.0.1:{srv_tls_port}"),
+        tx
+    ).await?;
 
     Ok(())
 

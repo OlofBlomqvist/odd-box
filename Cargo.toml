@@ -20,7 +20,7 @@ toml = "0.7.6"
 tracing = "0.1.37"
 tracing-subscriber = { version="0.3.17", features=[ "env-filter" ] }
 url = "2.4.1"
-
+webpki = "0.22.2"
 hyper-trust-dns = { version = "0.5.0", features = [
   "rustls-http2",
   "dnssec-ring",
@@ -31,4 +31,9 @@ hyper-trust-dns = { version = "0.5.0", features = [
 lazy_static = "1.4.0"
 unicase = "2.7.0"
 hyper-tls = "0.5.0"
-clap = { version="4.4.5", features=["derive"]}
+clap = { version="4.4.7", features=["derive"]}
+rustls = "0.21.8"
+tokio-rustls = "0.24.1"
+rustls-pemfile = "1.0.3"
+rcgen = "0.11.3"
+socket2 = "0.5.5"
