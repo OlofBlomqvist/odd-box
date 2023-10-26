@@ -1,0 +1,45 @@
+name: Manually Triggered Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git reference to manually build'
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            artifact_path: target/release/odd-box
+          - os: windows-latest
+            artifact_path: target/release/odd-box.exe
+          - os: macos-latest
+            artifact_path: target/release/odd-box
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          ref: ${{ github.event.inputs.ref }}
+      - name: Setup Rust Nightly
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          profile: minimal
+          override: true
+      - name: Build
+        run: cargo build --release --verbose
+      - name: Upload artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ matrix.os }}-artifact
+          path: ${{ matrix.artifact_path }}
