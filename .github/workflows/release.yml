@@ -16,7 +16,7 @@ jobs:
             os: ubuntu-latest
             target: x86_64-unknown-linux-musl
           - build: macos
-            os: macos-latest
+            os: ubuntu-latest
             target: x86_64-apple-darwin
           - build: windows-gnu
             os: windows-latest
