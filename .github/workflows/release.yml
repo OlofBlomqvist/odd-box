@@ -35,6 +35,8 @@ jobs:
   upload-release-assets:
     needs: build
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
     - name: Download all artifacts
       uses: actions/download-artifact@v2
@@ -56,3 +58,4 @@ jobs:
             cd ..
           fi
         done
+      
