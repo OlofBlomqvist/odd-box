@@ -34,3 +34,18 @@ jobs:
         name: ${{ matrix.os }}-artifact
         path: target/release/odd-bo*
 
+  upload-release-assets:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v2
+    - name: Install gh
+      run: sudo apt install -y gh
+    - name: Upload Artifacts to Release
+      run: |
+        for artifact in $(ls -1); do
+          gh release upload "${{ github.event.inputs.releaseName }}" "$artifact/*"
+        done
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
