@@ -12,8 +12,10 @@ on:
 
 jobs:
   upload-artifacts:
+  
     runs-on: ubuntu-latest
-
+    env:
+        GH_TOKEN: ${{ github.token }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v2
