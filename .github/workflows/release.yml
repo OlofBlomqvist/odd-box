@@ -26,36 +26,6 @@ jobs:
         override: true
     - name: Build
       run: cargo build --release --verbose
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v2
-      with:
-        name: ${{ matrix.os }}-artifact
-        path: target/release/odd-bo*
-
-  upload-release-assets:
-    needs: build
-    runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-    - name: Download all artifacts
-      uses: actions/download-artifact@v2
-    - name: Install gh
-      run: sudo apt install -y gh
-    - name: Upload Artifacts to Release
+    - name: Upload Artifact to GitHub
       run: |
-        cd /home/runner/work/odd-box/odd-box/
-        ls
-        echo "..."
-        ls -1
-        echo "..."
-        for artifact in $(ls -1); do
-          if [ -d "$artifact" ]; then
-            cd "$artifact"
-            for file in $(ls -1); do
-              gh release upload "${{ github.event.inputs.releaseName }}" "$file"
-            done
-            cd ..
-          fi
-        done
-      
+        gh release upload "${{ github.event.inputs.releaseName }}" target/release/odd-bo*
