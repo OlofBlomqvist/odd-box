@@ -43,7 +43,7 @@ jobs:
     - name: Upload Artifact to GitHub
       run: |
         if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-          gh release upload "${{ github.event.inputs.releaseName }}" target/${{ matrix.target }}/release/odd-box.exe
+          gh release upload "${{ github.event.inputs.releaseName }}" target/${{ matrix.target }}/release/odd-box.exe "odd-box-${{ matrix.target }}.exe"
         else
-          gh release upload "${{ github.event.inputs.releaseName }}" target/${{ matrix.target }}/release/odd-box
+          gh release upload "${{ github.event.inputs.releaseName }}" target/${{ matrix.target }}/release/odd-box "odd-box-${{ matrix.target }}.bin"
         fi
