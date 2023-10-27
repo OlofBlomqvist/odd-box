@@ -3,9 +3,6 @@ use std::fmt;
 use serde::Serialize;
 use serde::Deserialize;
 
-#[derive(Debug)]
-pub (crate) struct CustomError(pub (crate) String);
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub (crate) struct EnvVar {
     pub key: String,
@@ -36,7 +33,10 @@ pub (crate) struct SiteConfig{
     pub args : Vec<String>,
     pub env_vars : Vec<EnvVar>,
     pub log_format: Option<LogFormat>,
+
+    /// Set this to true in case your backend service uses https
     pub https : Option<bool>,
+
     #[serde(skip)] pub (crate) port : u16
 }
 
@@ -54,9 +54,13 @@ pub (crate) struct Config {
     pub log_level : Option<LogLevel>,
     pub port_range_start : u16,
     pub default_log_format : Option<LogFormat>,
-    pub port : Option<u16>
-    
+    pub port : Option<u16>,
+    pub tls_port : Option<u16>
 }
+
+
+#[derive(Debug)]
+pub (crate) struct CustomError(pub (crate) String);
 
 
 impl fmt::Display for CustomError {
@@ -72,6 +76,7 @@ impl From
 }
 
 impl std::error::Error for CustomError {}
+
 impl From<hyper::Error> for CustomError {
     fn from(err: hyper::Error) -> CustomError {
         CustomError(format!("Hyper error: {}", err))

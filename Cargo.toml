@@ -1,7 +1,7 @@
 [package]
 name = "odd-box"
 description = "dead simple reverse proxy server"
-version = "0.0.1-alpha6"
+version = "0.0.1-alpha7"
 edition = "2021"
 authors = ["Olof Blomqvist <olof@twnet.se>"]
 repository = "https://github.com/OlofBlomqvist/odd-box"
@@ -16,11 +16,11 @@ regex = "1.9.5"
 serde = { version = "1.0.88", features = ["derive"] }
 tokio = { version = "1.32.0", features = ["full"] }
 tokio-tungstenite = "0.20.0"
-toml = "0.7.6"
+toml = "0.8.4"
 tracing = "0.1.37"
 tracing-subscriber = { version="0.3.17", features=[ "env-filter" ] }
 url = "2.4.1"
-
+webpki = "0.22.2"
 hyper-trust-dns = { version = "0.5.0", features = [
   "rustls-http2",
   "dnssec-ring",
@@ -31,4 +31,10 @@ hyper-trust-dns = { version = "0.5.0", features = [
 lazy_static = "1.4.0"
 unicase = "2.7.0"
 hyper-tls = "0.5.0"
-clap = { version="4.4.5", features=["derive"]}
+clap = { version="4.4.7", features=["derive"]}
+rustls = "0.21.8"
+tokio-rustls = "0.24.1"
+rustls-pemfile = "1.0.3"
+rcgen = "0.11.3"
+socket2 = "0.5.5"
+hyper-tungstenite = "0.11.1"
