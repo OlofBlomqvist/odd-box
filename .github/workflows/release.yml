@@ -43,8 +43,16 @@ jobs:
     - name: Upload Artifacts to Release
       run: |
         cd /home/runner/work/odd-box/odd-box/
+        ls
+        echo "..."
+        ls -1
+        echo "..."
         for artifact in $(ls -1); do
-          gh release upload "${{ github.event.inputs.releaseName }}" "$artifact/*"
+          if [ -d "$artifact" ]; then
+            cd "$artifact"
+            for file in $(ls -1); do
+              gh release upload "${{ github.event.inputs.releaseName }}" "$file"
+            done
+            cd ..
+          fi
         done
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
