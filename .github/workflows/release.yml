@@ -1,49 +1,59 @@
-name: Build and Release
+name: Manually Triggered Build and Release Upload
 
 on:
   workflow_dispatch:
     inputs:
-      releaseName:
-        description: 'Release name to attach the artifacts to'
+      ref:
+        description: 'Git reference to manually build and upload to'
         required: true
 
 env:
   CARGO_TERM_COLOR: always
-  GH_TOKEN: ${{ github.token }}
-  
-jobs:
 
+jobs:
   build:
+    name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - os: macos-latest
-            target: x86_64-apple-darwin
-          - os: macos-latest
-            target: aarch64-apple-darwin
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
         
-    steps:
-    - uses: actions/checkout@v2
-    - name: Setup Rust Nightly
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: nightly
-        target: ${{ matrix.target }}
-        profile: minimal
-        override: true
+          - os: ubuntu-latest
+            artifact_path: target/release/odd-box
+            artifact_name: odd-box-x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-gnu
+            
+          - os: windows-latest
+            artifact_path: target/release/odd-box.exe
+            artifact_name: odd-box-x86_64-pc-windows-msvc.exe
+            target: x86_64-pc-windows-msvc
+            
+          - os: macos-latest
+            artifact_path: target/release/odd-box
+            artifact_name: odd-box-x86_64-apple-darwin
+            target: x86_64-apple-darwin
+            
+          - os: macos-latest
+            artifact_path: target/release/odd-box
+            artifact_name: odd-box-aarch64-apple-darwin
+            target: aarch64-apple-darwin
 
-    - name: Build
-      run: cargo build --release --verbose --target ${{ matrix.target }}
-    
-    - name: Upload Artifact to GitHub
-      run: |
-        if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-          gh release upload "${{ github.event.inputs.releaseName }}" target/release/odd-box.exe "odd-box-${{ matrix.target }}.exe"
-        else
-          gh release upload "${{ github.event.inputs.releaseName }}" target/release/odd-box "odd-box-${{ matrix.target }}.bin"
-        fi
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          ref: ${{ github.event.inputs.ref }}
+      - name: Setup Rust Nightly
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          target: ${{ matrix.target }}
+          profile: minimal
+          override: true
+      - name: Build
+        run: cargo build --release --verbose
+
+      # Assuming you have gh CLI installed in the runner
+      - name: Upload Release Artifact
+        run: gh release upload ${{ github.event.inputs.ref }} ${{ matrix.artifact_path }} ${{ matrix.artifact_name }}
