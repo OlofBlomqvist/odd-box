@@ -43,8 +43,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
+      
         with:
           ref: ${{ github.event.inputs.ref }}
+          
       - name: Setup Rust Nightly
         uses: actions-rs/toolchain@v1
         with:
@@ -52,9 +54,13 @@ jobs:
           target: ${{ matrix.target }}
           profile: minimal
           override: true
+          
       - name: Build
         run: cargo build --release --verbose
-
+        
+      - name: Rename Artifact
+        run: mv ${{ matrix.artifact_path }} ${{ matrix.artifact_name }}
+        
       # Assuming you have gh CLI installed in the runner
       - name: Upload Release Artifact
-        run: gh release upload ${{ github.event.inputs.ref }} ${{ matrix.artifact_path }} ${{ matrix.artifact_name }}
+        run: gh release upload ${{ github.event.inputs.ref }} ${{ matrix.artifact_name }}
