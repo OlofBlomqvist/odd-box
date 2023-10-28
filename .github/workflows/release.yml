@@ -13,12 +13,11 @@ env:
 
 jobs:
   build:
-    name: Build on ${{ matrix.os }}
+    name: Build ${{ matrix.artifact_name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
         include:
         
           - os: ubuntu-latest
@@ -26,7 +25,7 @@ jobs:
             artifact_name: odd-box-x86_64-unknown-linux-gnu
             target: x86_64-unknown-linux-gnu
             
-          - os: windows-latest
+          - os: ubuntu-latest
             artifact_path: target/release/odd-box.exe
             artifact_name: odd-box-x86_64-pc-windows-msvc.exe
             target: x86_64-pc-windows-msvc
