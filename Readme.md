@@ -6,6 +6,8 @@ A simple to use cross-platform **toy-level** reverse proxy server for local deve
 
 It allows you to configure a list of processes to run and host them behind their own custom hostnames.
 
+Automatically generates (self-signed) certificates for HTTPS when accessing them the first time (cached in .odd-box-cache dir).
+
 Uses the 'port' environment variable to assign a port for each site. If your process does not support using the port environment variable, you can pass custom arguments or variables for your process instead.
 
 You can enable or disable all sites or specific ones using the http://localhost/START and http://localhost/STOP endpoints, optionally using query parameter "?proc=my_site" to stop or start a specific site.
@@ -18,6 +20,8 @@ Configuration format:
 
 ```toml
 # Global configuration
+port = 80 # optional - 8080 by default
+tls_port = 443 # optional - 4343 by default
 root_dir = "c:\\temp" # optional - can be used as a variable in process paths
 log_level = "info" # trace,debug,info,warn,error
 port_range_start = 4200 # will start serving on 4200 and up 1 for each site
@@ -26,18 +30,18 @@ env_vars = [
      # can be overridden by site specific ones
      { key = "env_var_for_all_sites" , value = "nice" }, 
 ]
-#port = 8080 # defaults to 80
 
 # Normal host
 [[processes]]
 host_name = "fun.local"
-path = "$root_dir\\sites\\fun"
-bin = "my_site.exe"
+path = "$root_dir/sites/fun"
+bin = "my_server_binary_file_name" # you can leave out .exe from the filename also on windows for xplat comp
 args = ["/woohoo","/test:$cfg_dir","/test2: $root_dir"]
-https = false # optional bool
+https = false # optional bool - defaults to false
 log_format = "standard" # optional - overrides default_log_format if defined
 env_vars = [
     { key = "site_specific_env_var", value = "hello"},
+    { key = "port", value = "9999"},
 ]
 
 # Host a node based site
@@ -48,7 +52,7 @@ bin = "node"
 args = ["app.js"]
 env_vars = []
 
-# Hosting an asp.net 4.8 based site behind IIS express 
+# Hosting an asp.net 4.8 based site behind IIS express  (windows only)
 [[processes]]
 host_name = "cool-site.local"
 path = "C:\\Program Files\\IIS Express"
