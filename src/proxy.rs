@@ -126,8 +126,18 @@ async fn run_https_server(cfg: &Config,bind_addr: std::net::SocketAddr, tx: toki
 
     // Create custom TCP socket for TLS
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
-    socket.set_only_v6(false).unwrap();
-    socket.set_reuse_address(true).unwrap(); // annoying as hell otherwise for quick resets
+
+
+    match socket.set_only_v6(false) {
+        Ok(_) => {},
+        Err(e) => tracing::warn!("Failed to set_only_vs: {e:?}")
+    };
+
+    match socket.set_reuse_address(true) { // annoying as hell otherwise for quick resets
+        Ok(_) => {},
+        Err(e) => tracing::warn!("Failed to set_reuse_address: {e:?}")
+    }
+
     socket.bind(&bind_addr.into()).unwrap();
     socket.listen(128).unwrap();
     
