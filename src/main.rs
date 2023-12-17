@@ -5,7 +5,6 @@ mod types;
 mod hyper_reverse_proxy;
 use rustls::PrivateKey;
 use std::sync::Mutex;
-use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use types::*;
 use std::collections::HashMap;
@@ -417,10 +416,6 @@ async fn main() -> Result<(),String> {
         tokio::time::sleep(Duration::from_secs(1)).await;
         
     }
-
-    _ = child.abort();
-    _ = child.await.ok();
-    
     let state = shared_state.lock().await;
     for (p,s) in state.procs.iter() {
 
@@ -447,6 +442,11 @@ async fn main() -> Result<(),String> {
             tracing::debug!("Graceful shutdown successful!");
         }    
     }
+
+    
+    _ = child.abort();
+    _ = child.await.ok();
+    
     
     Ok(())
 
