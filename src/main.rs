@@ -352,8 +352,7 @@ async fn main() -> Result<(),String> {
         let t2 = tx.clone();
         task::spawn(async move {
             while r2.load(std::sync::atomic::Ordering::SeqCst) {
-                let device_state = DeviceState::new();
-                let keys: Vec<Keycode> = device_state.get_keys();
+                let keys = { DeviceState::new().get_keys() };
                 if keys.contains(&Keycode::Q)  || keys.contains(&Keycode::Escape) || (keys.contains(&Keycode::C) && keys.contains(&Keycode::LControl)) {
                     _ = t2.send(("exit".to_owned(),false)).ok();
                     r2.store(false, std::sync::atomic::Ordering::SeqCst);
