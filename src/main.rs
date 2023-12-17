@@ -327,19 +327,6 @@ async fn main() -> Result<(),String> {
         
     }
 
-
-        
-    let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let r = running.clone();
-    let ctx = tx.clone();
-    ctrlc::set_handler(move || {
-        tracing::warn!("INITIATING SHUTDOWN, PLEASE WAIT WHILE TEARING DOWN CHILD-PROCESSES!");
-        r.store(false, std::sync::atomic::Ordering::SeqCst);
-        _ = ctx.send(("exit".to_owned(),false)).ok();
-    
-    }).expect("Error setting Ctrl-C handler");
-    
-
     let arced_tx = std::sync::Arc::new(tx.clone());
     let child = tokio::spawn(proxy::rev_prox_srv(
         config,
@@ -354,42 +341,33 @@ async fn main() -> Result<(),String> {
         tui::run(EnvFilter::from_default_env()
         .add_directive(log_level.into())
         .add_directive("hyper=info".parse().expect("this directive will always work")),shared_state.clone(),tx.clone()).await;
-    } else {  
+    } else {
+        use tokio::task;
+        use device_query::{DeviceQuery, DeviceState, Keycode};
+                
+        let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+
+        
+        let r2 = running.clone();
+        let t2 = tx.clone();
+        task::spawn(async move {
+            while r2.load(std::sync::atomic::Ordering::SeqCst) {
+                let device_state = DeviceState::new();
+                let keys: Vec<Keycode> = device_state.get_keys();
+                if keys.contains(&Keycode::Q)  || keys.contains(&Keycode::Escape) || (keys.contains(&Keycode::C) && keys.contains(&Keycode::LControl)) {
+                    _ = t2.send(("exit".to_owned(),false)).ok();
+                    r2.store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
+        }).await.unwrap();
+    
 
         while running.load(std::sync::atomic::Ordering::SeqCst) {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
     }
-
-    // if use_tui == false {
-    //     use tokio::task;
-    //     use device_query::{DeviceQuery, DeviceState, Keycode};
-    //     use tracing::warn;
-        
-    //     let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
-
-    //     let device_state = DeviceState::new();
-    //     let r2 = running.clone();
-    //     let t2 = tx.clone();
-    //     task::spawn(async move {
-    //         while r2.load(std::sync::atomic::Ordering::SeqCst) {
-    //             let keys: Vec<Keycode> = device_state.get_keys();
-    //             if keys.contains(&Keycode::Q)  || keys.contains(&Keycode::Escape) || (keys.contains(&Keycode::C) && keys.contains(&Keycode::LControl)) {
-    //                 warn!("ESC key pressed!");
-    //                 _ = t2.send(("exit".to_owned(),false));
-    //                 r2.store(false, std::sync::atomic::Ordering::SeqCst);
-    //             }
-    //             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    //         }
-    //     }).await.unwrap();
-    
-
-    //     while running.load(std::sync::atomic::Ordering::SeqCst) {
-    //         tokio::time::sleep(Duration::from_millis(100)).await;
-    //     }
-
-    // }
 
     _ = tx.send(("exit".to_owned(),false));
 
