@@ -1,25 +1,45 @@
 #![feature(async_closure)]
 #![feature(fs_try_exists)]
+#![feature(let_chains)]
 mod types;
 mod hyper_reverse_proxy;
 use rustls::PrivateKey;
 use std::sync::Mutex;
+use std::time::Duration;
 use types::*;
 use std::collections::HashMap;
 use std::io::Read;
 use std::sync::Arc;
-use tracing::Level;
 use tracing_subscriber::filter::LevelFilter;
-use tracing_subscriber::{FmtSubscriber, EnvFilter};
-use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 mod proc_host;
 mod proxy;
 
+use tracing_subscriber::util::SubscriberInitExt;
+
+#[cfg(feature = "TUI")]
+mod tui;
+
+#[cfg(feature = "TUI")]
+use tui::AppState;
+
+
+#[cfg(not(feature = "TUI"))]
+struct AppState {
+    procs: HashMap<String,ProcState>
+}
+#[cfg(not(feature = "TUI"))]
+impl AppState {
+    pub fn new() -> Self {
+        Self {
+            procs: HashMap::new()
+        }
+    }
+}
 
 struct DynamicCertResolver {
     cache: Mutex<HashMap<String, Arc<rustls::sign::CertifiedKey>>>,
 }
-
 
 use rustls::sign::any_supported_type;
 
@@ -158,13 +178,40 @@ struct Args {
     #[arg(long,short)]
     tls_port: Option<u16>,
 
+    #[cfg(feature = "TUI")]
+    #[arg(long,default_value="true")]
+    tui: Option<bool>
+
 }
+
+#[derive(Debug,PartialEq,Clone)]
+pub enum ProcState {
+    Faulty,
+    Stopped,    
+    Starting,
+    Stopping,
+    Running
+}
+
 
 
 #[tokio::main]
 async fn main() -> Result<(),String> {
-
+    
+    
     let args = Args::parse();
+
+    #[cfg(feature = "TUI")]
+    let use_tui = if args.tui.unwrap_or_default() {
+        tui::init();
+        true
+    } else {
+        false
+    };
+
+    #[cfg(not(feature = "TUI"))]
+    let use_tui = false;
+    
 
     // By default we use odd-box.toml, and otherwise we try to read from Config.toml
     let cfg_path = 
@@ -194,18 +241,25 @@ async fn main() -> Result<(),String> {
         None => LevelFilter::INFO
     };
     
-    let filter = EnvFilter::from_default_env()
-        .add_directive(log_level.into())
-        .add_directive("hyper=info".parse().expect("this directive will always work"));
-    
-    FmtSubscriber::builder()       
-        .compact()
-        .with_max_level(Level::TRACE)
-        .with_env_filter(filter)
-        .with_thread_names(true)
-        .finish()
-        .init();
-   
+    if !use_tui {
+        tracing_subscriber::FmtSubscriber::builder()       
+            .compact()
+            .with_max_level(tracing::Level::TRACE)
+            .with_env_filter(EnvFilter::from_default_env()
+            .add_directive(log_level.into())
+            .add_directive("hyper=info".parse().expect("this directive will always work")))
+            .with_thread_names(true)
+            .with_timer(
+                tracing_subscriber::fmt::time::OffsetTime::new(
+                    time::UtcOffset::from_whole_seconds(
+                        chrono::Local::now().offset().local_minus_utc()
+                    ).unwrap(), 
+                    time::macros::format_description!("[hour]:[minute]:[second]")
+                )
+            )
+            .finish()
+            .init();
+    }
 
     config.init(&cfg_path)?;
 
@@ -226,8 +280,18 @@ async fn main() -> Result<(),String> {
     }
 
     let (tx,_) = tokio::sync::broadcast::channel::<(String,bool)>(config.processes.len());
+
     let sites_len = config.processes.len() as u16;
+    
     let mut sites = vec![];
+    
+    let shared_state : Arc<tokio::sync::Mutex<AppState>> = 
+        std::sync::Arc::new(
+            tokio::sync::Mutex::new(
+                AppState::new()
+            )
+        );
+        
 
     for (i,x) in config.processes.iter_mut().enumerate() {
         let auto_port = config.port_range_start + i as u16;
@@ -253,19 +317,133 @@ async fn main() -> Result<(),String> {
 
         tracing::trace!("Initializing {} on port {}",x.host_name,x.port);
         x.env_vars = [ config.env_vars.clone(), x.env_vars.clone() ].concat();
-        sites.push(tokio::task::spawn(proc_host::host(x.clone(),tx.subscribe())))
+        sites.push(tokio::task::spawn(
+            proc_host::host(
+                x.clone(),
+                tx.subscribe(),
+                shared_state.clone()
+            ))
+        )
         
     }
 
-    proxy::rev_prox_srv(
-        &config,
-        &format!("127.0.0.1:{srv_port}"),
-        &format!("127.0.0.1:{srv_tls_port}"),
-        tx
-    ).await?;
+    let arced_tx = std::sync::Arc::new(tx.clone());
+    let child = tokio::spawn(proxy::rev_prox_srv(
+        config,
+        format!("127.0.0.1:{srv_port}"),
+        format!("127.0.0.1:{srv_tls_port}"),
+        arced_tx,
+        shared_state.clone()
+    ));
 
+    
+
+    // let r = running.clone();
+    // let ctx = tx.clone();
+    // ctrlc::set_handler(move || {
+    //     warn!("INITIATING SHUTDOWN, PLEASE WAIT WHILE TEARING DOWN CHILD-PROCESSES!");
+    //     r.store(false, std::sync::atomic::Ordering::SeqCst);
+    //     _ = ctx.send(("exit".to_owned(),false)).ok();
+    
+    // }).expect("Error setting Ctrl-C handler");
+    
+    #[cfg(feature="TUI")]
+    if use_tui {
+        tui::run(EnvFilter::from_default_env()
+        .add_directive(log_level.into())
+        .add_directive("hyper=info".parse().expect("this directive will always work")),shared_state.clone(),tx.clone()).await;
+    }
+
+    if use_tui == false {
+        use tokio::task;
+        use device_query::{DeviceQuery, DeviceState, Keycode};
+        use tracing::warn;
+        
+        let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+
+        let device_state = DeviceState::new();
+        let r2 = running.clone();
+        let t2 = tx.clone();
+        task::spawn(async move {
+            while r2.load(std::sync::atomic::Ordering::SeqCst) {
+                let keys: Vec<Keycode> = device_state.get_keys();
+                if keys.contains(&Keycode::Q)  || keys.contains(&Keycode::Escape) || (keys.contains(&Keycode::C) && keys.contains(&Keycode::LControl)) {
+                    warn!("ESC key pressed!");
+                    _ = t2.send(("exit".to_owned(),false));
+                    r2.store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
+        }).await.unwrap();
+    
+
+        while running.load(std::sync::atomic::Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+    }
+
+    // --> current status: in non-tui mode, we some times get stuck not able to quit
+
+    _ = tx.send(("exit".to_owned(),false));
+
+    let s = shared_state.clone();
+    while tx.receiver_count() > 0 {
+
+        let state = s.lock().await;
+        let mut nrwaiting = 0;
+        for (name,state) in &state.procs {
+            if state == &ProcState::Running {
+                
+                if use_tui {
+                    println!(">>> Waiting for {} to stop..",name);
+                } else {
+                    tracing::debug!("Waiting for {} to stop..",name);
+                }
+
+                nrwaiting += 1;
+            }
+        }
+        if nrwaiting == 0 {
+            break
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        
+    }
+
+    _ = child.abort();
+    _ = child.await.ok();
+    
+    let state = shared_state.lock().await;
+    for (p,s) in state.procs.iter() {
+
+        if use_tui {
+            println!(">> {} --> {:?}", p,s);
+        } else {
+            tracing::debug!("{} --> {:?}",p,s);
+        }        
+    
+    }
+
+
+    if tx.receiver_count() == 0 {
+        if use_tui {
+            println!("Something seems to have gone wrong - there may be child-processes still running even after exiting odd-box..");
+        } else {
+            tracing::error!("Something seems to have gone wrong - there may be child-processes still running even after exiting odd-box..");
+        }        
+    } else {
+
+        if use_tui {        
+            println!(">>> Graceful shutdown successful!");
+        } else {
+            tracing::debug!("Graceful shutdown successful!");
+        }    
+    }
+    
     Ok(())
 
 
 }
+
 

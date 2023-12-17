@@ -1,14 +1,17 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::error::Error;
+use std::sync::{Mutex, Arc};
+use std::time::Duration;
 use hyper_tungstenite::HyperWebsocket;
 
+use crate::{AppState, ProcState};
 use crate::hyper_reverse_proxy::ReverseProxy;
 
 use super::types;
 use hyper::client::HttpConnector;
 use hyper_trust_dns::TrustDnsResolver;
 use types::*;
-use hyper::{Server, Response, Body, StatusCode, Version, Client};
+use hyper::{Server, Response, Body, StatusCode, Version, Client, Method};
 use hyper::server::conn::AddrStream;
 
 use futures_util::StreamExt;
@@ -51,21 +54,28 @@ lazy_static::lazy_static! {
 }
 
 
-pub(crate) async fn rev_prox_srv(cfg: &Config, bind_addr: &str,bind_addr_tls: &str, tx: tokio::sync::broadcast::Sender<(String, bool)>) -> Result<(), String> {
-
+pub(crate) async fn rev_prox_srv(
+    cfg: Config, 
+    bind_addr: String,
+    bind_addr_tls: String, 
+    tx: Arc<tokio::sync::broadcast::Sender<(String, bool)>>,
+    state: Arc<tokio::sync::Mutex<AppState>>
+) -> Result<(), Box<dyn Error + Send>> {
+    
 
     tracing::trace!("Starting reverse proxy");
 
-    let addr: std::net::SocketAddr = bind_addr.parse().map_err(|_| "Could not parse ip:port.")?;
-    let addr_tls: std::net::SocketAddr = bind_addr_tls.parse().map_err(|_| "Could not parse ip:port.")?;
+    let addr: std::net::SocketAddr = bind_addr.parse().map_err(|_| "Could not parse ip:port.").unwrap();
+    let addr_tls: std::net::SocketAddr = bind_addr_tls.parse().map_err(|_| "Could not parse ip:port.").unwrap();
 
     tracing::info!("Starting proxy service on {:?} AND {:?}. Press ctrl-c to exit.", addr, addr_tls);
 
-    let http_future = run_http_server(cfg,addr,tx.clone());
-    let https_future = run_https_server(cfg,addr_tls,tx.clone());
+    let http_future = run_http_server(&cfg,addr,tx.clone(),state.clone());
+    let https_future = run_https_server(&cfg,addr_tls,tx.clone(),state.clone());
 
     tokio::try_join!(http_future, https_future).map_err(|e|format!("{e}")).unwrap();
 
+    tracing::trace!("leaving rev_prox_srv");
     Ok(())
 
         
@@ -73,29 +83,36 @@ pub(crate) async fn rev_prox_srv(cfg: &Config, bind_addr: &str,bind_addr_tls: &s
 
 
 
-async fn run_http_server(cfg: &Config,bind_addr: std::net::SocketAddr, tx: tokio::sync::broadcast::Sender<(String, bool)>) -> Result<(), Box<dyn std::error::Error>> {
- 
-    let make_http_svc = hyper::service::make_service_fn(|socket: &AddrStream| {
+async fn run_http_server(
+    cfg: &Config,
+    bind_addr: std::net::SocketAddr, 
+    tx: Arc<tokio::sync::broadcast::Sender<(String, bool)>>,
+    state:Arc<tokio::sync::Mutex<AppState>>
+) -> Result<(), Box<dyn std::error::Error + Send >> {
 
+    let make_http_svc = hyper::service::make_service_fn(|socket: &AddrStream| {
+        
         let remote_addr = socket.remote_addr();
         let cfg = cfg.clone();
         let tx = tx.clone();        
-       
+        let state = state.clone();
         async move {
+            let state = state.clone();
             Ok::<_, CustomError>(hyper::service::service_fn(move |mut req: hyper::Request<Body>| {
                 let tx = tx.clone();
                 let cfg = cfg.clone();
+                let state = state.clone();
                 async move {
                     if hyper_tungstenite::is_upgrade_request(&req) {
                         let (response, websocket) = hyper_tungstenite::upgrade(&mut req, None).unwrap();
                         tokio::spawn(async move {
-                            if let Err(e) = handle_ws(cfg, remote_addr.ip(), req, tx,websocket).await {
+                            if let Err(e) = handle_ws(cfg, remote_addr.ip(), req, tx,websocket,state).await {
                                 eprintln!("Error in websocket connection: {}", e);
                             }
                         });
                         return Ok(response)
                     } else {
-                        handle(cfg, remote_addr.ip(), req, tx).await
+                        handle(cfg.clone(), remote_addr.ip(), req, tx,state).await
                     }
                 }
             }))
@@ -107,11 +124,15 @@ async fn run_http_server(cfg: &Config,bind_addr: std::net::SocketAddr, tx: tokio
 
 }
 
-async fn run_https_server(cfg: &Config,bind_addr: std::net::SocketAddr, tx: tokio::sync::broadcast::Sender<(String, bool)>) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_https_server(
+    cfg: &Config,
+    bind_addr: std::net::SocketAddr, 
+    tx: Arc<tokio::sync::broadcast::Sender<(String, bool)>>,
+    state:Arc<tokio::sync::Mutex<AppState>>
+) -> Result<(), Box<dyn std::error::Error + Send >>{
     
     use rustls::ServerConfig;
     use tokio_rustls::TlsAcceptor;
-    use std::sync::Arc;
     use socket2::{Domain, Socket, Type};
 
     let rustls_config = 
@@ -153,25 +174,30 @@ async fn run_https_server(cfg: &Config,bind_addr: std::net::SocketAddr, tx: toki
                 let cfg = cfg.clone();
                 let tx = tx.clone();
                 let ip = addr_tls.ip();
+                let state = state.clone();
                 tokio::spawn(async move {
                     match acceptor.accept(stream).await {
+                        Err(e) => {
+                            tracing::warn!("TLS handshake failed: {:?}", e);
+                        }
                         Ok(tls_stream) => {
                             tracing::debug!("TLS handshake successful: {:?}", tls_stream);
                             let service = hyper::service::service_fn(move |mut req: hyper::Request<hyper::Body>| {
                                 let cfg = cfg.clone();
                                 let tx = tx.clone();
                                 let ip = ip;
+                                let state = state.clone();
                                 async move {
                                     if hyper_tungstenite::is_upgrade_request(&req) {
                                         let (response, websocket) = hyper_tungstenite::upgrade(&mut req, None).unwrap();
                                         tokio::spawn(async move {
-                                            if let Err(e) = handle_ws(cfg, ip, req, tx,websocket).await {
+                                            if let Err(e) = handle_ws(cfg, ip, req, tx,websocket,state).await {
                                                 eprintln!("Error in websocket connection: {}", e);
                                             }
                                         });
                                         return Ok(response)
                                     } else {
-                                        handle(cfg, ip, req, tx).await
+                                        handle(cfg, ip, req, tx,state).await
                                     }
                                 }
                             });
@@ -181,9 +207,6 @@ async fn run_https_server(cfg: &Config,bind_addr: std::net::SocketAddr, tx: toki
                                 Ok(_) => tracing::info!("HTTP service completed successfully"),
                                 Err(e) => tracing::warn!("HTTP service failed: {:?}", e),
                             }
-                        }
-                        Err(e) => {
-                            tracing::warn!("TLS handshake failed: {:?}", e);
                         }
                     }
                 });
@@ -198,8 +221,9 @@ async fn handle_ws(
     cfg:Config,
     _client_ip: std::net::IpAddr, 
     req: hyper::Request<hyper::Body>,
-    _tx:tokio::sync::broadcast::Sender<(String,bool)>,
-    ws:HyperWebsocket
+    _tx:Arc<tokio::sync::broadcast::Sender<(String,bool)>>,
+    ws:HyperWebsocket,
+    _state:Arc<tokio::sync::Mutex<AppState>>
 ) -> Result<(),CustomError> {
     
     let req_host_name = 
@@ -290,7 +314,8 @@ async fn handle(
     cfg:Config,
     client_ip: std::net::IpAddr, 
     req:hyper::Request<hyper::Body>,
-    tx:tokio::sync::broadcast::Sender<(String,bool)>
+    tx:Arc<tokio::sync::broadcast::Sender<(String,bool)>>,
+    _state:Arc<tokio::sync::Mutex<AppState>>
 ) -> Result<hyper::Response<hyper::Body>, CustomError> {
     
     let req_host_name = 
@@ -373,6 +398,62 @@ async fn handle(
     if let Some(target_cfg) = cfg.processes.iter().find(|p| {
             req_host_name == p.host_name
     }) {
+
+        let current_target_status : Option<ProcState> = {
+            let guard = _state.lock().await;
+            let info = guard.procs.iter().find(|x|x.0==&target_cfg.host_name);
+            match info {
+                Some((_,target_state)) => Some(target_state.clone()),
+                None => None,
+            }
+        };
+
+        // auto start site in case its been disabled by other requests
+        _ = tx.send((target_cfg.host_name.to_owned(),true)).map_err(|e|format!("{e:?}"));
+
+        
+        if let Some(cts) = current_target_status {
+            if cts == ProcState::Stopped || cts == ProcState::Starting {
+                match req.method() {
+                    &Method::GET => {
+                        let html = r#"
+                            <!DOCTYPE html>
+                            <html lang="en">
+                            <head>
+                                <meta charset="UTF-8" http-equiv="refresh" content="5;">
+                                <title>Starting site, please wait..</title>
+                                <style>
+                                    body {
+                                        margin: 0;
+                                        padding: 0;
+                                        display: flex;
+                                        justify-content: center;
+                                        align-items: center;
+                                        height: 100vh;
+                                    }
+                                    .lottie-container {
+                                        width: 300px;
+                                        height: 300px;
+                                    }
+                                </style>
+                            </head>
+                            <body>
+                                <div class="lottie-container">
+                                    <script src="https://unpkg.com/@dotlottie/player-component@latest/dist/dotlottie-player.mjs" type="module"></script> 
+                                    <dotlottie-player src="https://lottie.host/fb304345-633f-4b4a-a49f-541b7abbf165/rn9UiCEOBN.json" background="transparent" speed="0.5" loop autoplay></dotlottie-player>
+                                </div>
+                            </body>
+                            </html>
+                        "#;
+                        return Ok(Response::new(Body::from(html)))
+                    }  
+                    _ => {
+                        // we do this to give services some time to wake up instead of failing requests while cold-starting sites
+                        tokio::time::sleep(Duration::from_secs(3)).await
+                    }           
+                }                 
+            }
+        }
         
         // auto start site in case its been disabled by other requests
         _ = tx.send((target_cfg.host_name.to_owned(),true)).map_err(|e|format!("{e:?}"));

@@ -1,0 +1,177 @@
+port = 80
+tls_port = 443
+root_dir = "c:/users/oblink/Documents/Visit/repo/BookVisit"
+log_level = "debug"
+port_range_start = 4200 
+default_log_format = "standard"
+env_vars = [
+    { key = "ext-svc-url" , value = "localhost:9600" }
+]
+
+
+[[processes]]
+host_name = "online.local"
+path = "C:\\Program Files\\IIS Express"
+bin = "iisexpress.exe"
+args = [ 
+    "/path:$root_dir\\EasyAccessHotels.Online\\publish", 
+    "/port:12345",
+    "/hostname:127.0.0.1",
+    "/trace:error"]
+env_vars = [
+    { key = "PORT", value = "12345"},
+    { key = "ext-svc-url", value = "localhost:9600" }
+]
+
+
+[[processes]]
+host_name = "admin.local"
+path = "$root_dir/EasyAccessHotels.AdminAPI/publish"
+bin = "EasyAccessHotels.AdminAPI"
+args = ["use-kestrel"]
+env_vars = [
+    # required since we run wcf with kestrel here
+    { key = "host_base_addr", value = "http://admin.local/"},
+]
+
+[[processes]]
+host_name = "search.local"
+path = "$root_dir/EasyAccessHotels.Search/publish"
+bin = "EasyAccessHotels.Search"
+args = ["use-kestrel"]
+env_vars = [
+    # required since we run wcf with kestrel nere
+    { key = "host_base_addr", value = "http://search.local/"}
+]
+
+[[processes]]
+host_name = "querylab.local"
+path = "$root_dir/BookVisit.QueryLab/publish"
+bin = "BookVisit.QueryLab"
+args = []
+env_vars = []
+
+[[processes]]
+host_name = "restapi.local"
+path = "$root_dir/EasyAccessHotels.RESTAPI/publish"
+bin = "EasyAccessHotels.RESTAPI"
+args = ["use-kestrel"]
+env_vars = []
+
+# [[processes]]
+# host_name = "devportal.local"
+# path = "$root_dir/BookVisit.DeveloperPortal/publish"
+# bin = "BookVisit.DeveloperPortal"
+# args = ["use-kestrel"]
+# env_vars = []
+
+[[processes]]
+host_name = "externalservices.local"
+path = "$root_dir/BookVisit.ExternalServices/publish"
+bin = "BookVisit.ExternalServices"
+args = ["use-kestrel"]
+env_vars = [
+    { key = "PORT", value = "9600"}
+]
+
+[[processes]]
+host_name = "payment.local"
+path = "$root_dir/BookVisit.PaymentService/publish"
+bin = "BookVisit.PaymentService"
+args = ["use-kestrel"]
+env_vars = [
+    { key = "PORT", value = "5003"}
+]
+
+# [[processes]]
+# host_name = "scheduledtasks.local"
+# path = "$root_dir/BookVisit.ScheduledTasks/publish"
+# bin = "BookVisit.ScheduledTasks"
+# args = ["use-kestrel"]
+# env_vars = []
+
+[[processes]]
+host_name = "fdapi.local"
+path = "$root_dir/EasyAccessHotels.FrontdeskAPI/publish"
+bin = "EasyAccessHotels.FrontdeskAPI"
+args = ["use-kestrel"]
+env_vars = [
+    # there is a custom port specified for this in the clients
+    { key = "PORT" , value = "5007" }
+]
+
+[[processes]]
+host_name = "frontdeskwebapi.local"
+path = "$root_dir/EasyAccessHotels.FrontdeskWebAPI/publish"
+bin = "EasyAccessHotels.FrontdeskWebAPI"
+args = ["use-kestrel"]
+env_vars = []
+
+[[processes]]
+host_name = "images.local"
+path = "$root_dir/EasyAccessHotels.Images/publish"
+bin = "EasyAccessHotels.Images"
+args = ["use-kestrel"]
+env_vars = []
+
+[[processes]]
+host_name = "ota.local"
+path = "$root_dir/EasyAccessHotels.OTAService/publish"
+bin = "EasyAccessHotels.OTAService"
+args = ["use-kestrel"]
+env_vars = []
+
+# [[processes]]
+# host_name = "ownersapi.local"
+# path = "$root_dir/EasyAccessHotels.OwnerPortal-API/publish"
+# bin = "EasyAccessHotels.OwnerPortal-API"
+# args = ["use-kestrel"]
+# env_vars = []
+
+# [[processes]]
+# host_name = "owners.local"
+# path = "$root_dir/EasyAccessHotels.OwnerPortal/public"
+# bin = "~/.cargo/bin/http"
+# args = ["-p","3011"]
+# env_vars = []
+
+[[processes]]
+host_name = "ibe.local"
+path = "$root_dir/BookVisit.IBE/.next"
+bin = "C:/Program Files/nodejs/node.exe"
+args = ["standalone/server.js"]
+env_vars = [
+ { key = "PORT", value = "9200"},
+ { key = "NODE_EXTRA_CA_CERTS", value = "c:/temp/my_cert.pem" }
+]
+
+
+# [[processes]]
+# host_name = "pms.local"
+# path = "$root_dir/EasyAccessHotels.PMSConnectivity/publish"
+# bin = "EasyAccessHotels.PMSConnectivity"
+# args = ["use-kestrel"]
+# env_vars = []
+
+# [[processes]]
+# host_name = "priceexport.local"
+# path = "$root_dir/EasyAccessHotels.PriceExport/publish"
+# bin = "EasyAccessHotels.PriceExport"
+# args = ["use-kestrel"]
+# env_vars = []
+
+[[processes]]
+host_name = "signalr.local"
+path = "$root_dir/EasyAccessHotels.SignalR/publish"
+bin = "EasyAccessHotels.SignalR"
+args = ["use-kestrel"]
+env_vars = [
+    {key="PORT", value="5006"}
+]
+
+[[processes]]
+host_name = "bo.local"
+path = "$root_dir/EasyAccessHotels.Web/publish"
+bin = "EasyAccessHotels.Web"
+args = ["use-kestrel"]
+env_vars = []
