@@ -379,7 +379,7 @@ impl AppState {
             if current < max {
                 let new_val = current.saturating_add(count.unwrap_or(1)).min(max);
                 self.vertical_scroll = Some(new_val);
-                for i in 0 .. current.abs_diff(new_val) + 1 {
+                for _ in 0 .. current.abs_diff(new_val) + 1 {
                     self.scroll_state.scroll(ratatui::widgets::ScrollDirection::Forward);
                 }
             }
@@ -395,7 +395,7 @@ impl AppState {
             Some(current) if current > 0 => {
                 let new_val = current.saturating_sub(count.unwrap_or(1)).min(max);
                 self.vertical_scroll = Some(new_val);
-                for i in 0 .. current.abs_diff(new_val) + 1 {
+                for _ in 0 .. current.abs_diff(new_val) + 1 {
                     self.scroll_state.scroll(ratatui::widgets::ScrollDirection::Backward);
                 }
             }
