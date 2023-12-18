@@ -229,7 +229,21 @@ pub (crate) async fn run(
                         None
                     };
                     match event::read()? {
-                        
+                        Event::Mouse(mouse) => {
+                            if time_since_last_keypress >= debounce_duration {
+                                match mouse.kind {
+                                    event::MouseEventKind::ScrollDown => {
+                                        let mut app = app_state.lock().await;
+                                        app.scroll_down(Some(10));
+                                    },
+                                    event::MouseEventKind::ScrollUp => {
+                                        let mut app = app_state.lock().await;
+                                        app.scroll_up(Some(10));
+                                    },
+                                    _ => {}
+                                }
+                            }
+                        }
                         Event::Key(key) => {
                             if time_since_last_keypress >= debounce_duration { 
                             
@@ -241,20 +255,7 @@ pub (crate) async fn run(
                                     // },
                                     KeyCode::Up => {
                                         let mut app = app_state.lock().await;
-                                        //let log_buf = log_buffer.lock().unwrap();
-                                        let msg_count = app.line_count;
-                                        let max = msg_count.saturating_sub(app.logs_area_height);
-                                        match app.vertical_scroll {
-                                           Some(current) if current > 0 => {
-                                            app.vertical_scroll = Some(current.saturating_sub(1).min(max));
-                                            app.scroll_state.scroll(ratatui::widgets::ScrollDirection::Backward);
-                                           }
-                                           None => {
-                                            app.vertical_scroll = Some(max.saturating_sub(1));
-                                            app.scroll_state.scroll(ratatui::widgets::ScrollDirection::Backward);
-                                           } 
-                                           _ => {}
-                                        }
+                                        app.scroll_up(None);
                                     }
                                     KeyCode::PageUp => {
                                         let mut app = app_state.lock().await;
@@ -284,20 +285,8 @@ pub (crate) async fn run(
                                         }
                                     }
                                     KeyCode::Down => {
-                                        
                                         let mut app = app_state.lock().await;
-                                        if app.vertical_scroll.is_some() {
-                                            let current = app.vertical_scroll.unwrap_or_default();
-                                            let max = app.line_count.saturating_sub(app.logs_area_height) - 1;
-                                            if current < max {
-                                                app.vertical_scroll = Some(current.saturating_add(1));
-                                                app.scroll_state.scroll(ratatui::widgets::ScrollDirection::Forward);
-                                            }
-                                            else {
-                                                app.vertical_scroll = None;
-                                            }
-                                        }
-
+                                        app.scroll_down(None);
                                     }
                                     KeyCode::Char('z') => {
                                         tx.clone().send(("all".to_owned(),false)).unwrap();
@@ -381,6 +370,40 @@ impl AppState {
             //view_mode: ViewMode::Console,
             procs: HashMap::<String,ProcState>::new(),
             show_apps_window : false
+        }
+    }
+    pub fn scroll_down(&mut self, count:Option<usize>) {
+        if self.vertical_scroll.is_some() {
+            let current = self.vertical_scroll.unwrap_or_default();
+            let max = self.line_count.saturating_sub(self.logs_area_height) - 1;
+            if current < max {
+                let new_val = current.saturating_add(count.unwrap_or(1)).min(max);
+                self.vertical_scroll = Some(new_val);
+                for i in 0 .. current.abs_diff(new_val) + 1 {
+                    self.scroll_state.scroll(ratatui::widgets::ScrollDirection::Forward);
+                }
+            }
+            else {
+                self.vertical_scroll = None;
+            }
+        }
+    }
+    pub fn scroll_up(&mut self, count:Option<usize>) {
+        let msg_count = self.line_count;
+        let max = msg_count.saturating_sub(self.logs_area_height);
+        match self.vertical_scroll {
+            Some(current) if current > 0 => {
+                let new_val = current.saturating_sub(count.unwrap_or(1)).min(max);
+                self.vertical_scroll = Some(new_val);
+                for i in 0 .. current.abs_diff(new_val) + 1 {
+                    self.scroll_state.scroll(ratatui::widgets::ScrollDirection::Backward);
+                }
+            }
+            None => {
+                let new_val = max.saturating_sub(count.unwrap_or(1));
+                self.vertical_scroll = Some(new_val);
+            } 
+            _ => {}
         }
     }
 
