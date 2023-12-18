@@ -58,12 +58,12 @@ bin = "EasyAccessHotels.RESTAPI"
 args = ["use-kestrel"]
 env_vars = []
 
-# [[processes]]
-# host_name = "devportal.local"
-# path = "$root_dir/BookVisit.DeveloperPortal/publish"
-# bin = "BookVisit.DeveloperPortal"
-# args = ["use-kestrel"]
-# env_vars = []
+[[processes]]
+host_name = "devportal.local"
+path = "$root_dir/BookVisit.DeveloperPortal/publish"
+bin = "BookVisit.DeveloperPortal"
+args = ["use-kestrel"]
+env_vars = []
 
 [[processes]]
 host_name = "externalservices.local"

@@ -180,7 +180,10 @@ struct Args {
 
     #[cfg(feature = "TUI")]
     #[arg(long,default_value="true")]
-    tui: Option<bool>
+    tui: Option<bool>,
+
+    #[arg(long)]
+    enable_site: Option<Vec<String>>
 
 }
 
@@ -201,18 +204,6 @@ async fn main() -> Result<(),String> {
     
     let args = Args::parse();
 
-    #[cfg(feature = "TUI")]
-    let use_tui = if args.tui.unwrap_or_default() {
-        tui::init();
-        true
-    } else {
-        false
-    };
-
-    #[cfg(not(feature = "TUI"))]
-    let use_tui = false;
-    
-
     // By default we use odd-box.toml, and otherwise we try to read from Config.toml
     let cfg_path = 
         if let Some(cfg) = args.configuration {
@@ -232,6 +223,24 @@ async fn main() -> Result<(),String> {
 
     let mut config: Config = toml::from_str(&contents).map_err(|e:toml::de::Error| e.message().to_owned() )?;
 
+    if let Some(sites) = args.enable_site {
+        for site in &sites {
+            let site_config = config.processes.iter().find(|x|&x.host_name==site);
+            if site_config.is_none() {
+                let allowed =  config.processes.iter().map(|x|x.host_name.as_str()).collect::<Vec<&str>>();
+                if allowed.len() == 0 {
+                    return Err(format!("You have not configured any sites yet.."))
+                }
+                let allowed = allowed.join(", ");
+                return Err(format!("No such site '{site}' found in your configuration. Available sites: {allowed}"))
+            }
+        }
+        config.processes = config.processes.into_iter().filter(|x:&SiteConfig| {
+            sites.contains(&x.host_name)
+        }).collect()
+    }
+
+
     let log_level : LevelFilter = match config.log_level {
         Some(LogLevel::info) => LevelFilter::INFO,
         Some(LogLevel::error) => LevelFilter::ERROR,
@@ -239,6 +248,18 @@ async fn main() -> Result<(),String> {
         Some(LogLevel::trace) => LevelFilter::TRACE,
         Some(LogLevel::debug) => LevelFilter::DEBUG,
         None => LevelFilter::INFO
+    };
+
+    
+    #[cfg(not(feature = "TUI"))]
+    let use_tui = false;
+    
+    #[cfg(feature = "TUI")]
+    let use_tui = if args.tui.unwrap_or_default() {
+        tui::init();
+        true
+    } else {
+        false
     };
     
     if !use_tui {
@@ -260,6 +281,8 @@ async fn main() -> Result<(),String> {
             .finish()
             .init();
     }
+    
+
 
     config.init(&cfg_path)?;
 
