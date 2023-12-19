@@ -978,7 +978,7 @@ dependencies = [
 
 [[package]]
 name = "odd-box"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "chrono",
  "clap",
