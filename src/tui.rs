@@ -393,9 +393,9 @@ impl AppState {
         let max = msg_count.saturating_sub(self.logs_area_height);
         match self.vertical_scroll {
             Some(current) if current > 0 => {
-                let new_val = current.saturating_sub(count.unwrap_or(1)).min(max);
+                let new_val = current.saturating_sub(count.unwrap_or(1)).max(0);
                 self.vertical_scroll = Some(new_val);
-                for _ in 0 .. current.abs_diff(new_val) + 1 {
+                for _ in 0 ..=current.abs_diff(new_val)  {
                     self.scroll_state.scroll(ratatui::widgets::ScrollDirection::Backward);
                 }
             }
@@ -569,7 +569,10 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
     
     if app_state.show_apps_window {
 
-        let sites_area_height = chunks[1].height - 2;
+        let sites_area_height = chunks[1].height.saturating_sub(2);
+        if sites_area_height == 0 {
+            return
+        }
         let sites_count = app_state.procs.len() as u16;
         let columns_needed = (sites_count as f32 / sites_area_height as f32).ceil() as usize;
 
