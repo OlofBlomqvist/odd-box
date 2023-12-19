@@ -257,37 +257,24 @@ pub (crate) async fn run(
                                         let mut app = app_state.lock().await;
                                         app.scroll_up(None);
                                     }
-                                    KeyCode::PageUp => {
-                                        let mut app = app_state.lock().await;
-                                       // let log_buf = log_buffer.lock().unwrap();
-                                        let page_size = app.logs_area_height / 2;
-                                        let max = app.line_count.saturating_sub(app.logs_area_height);
-                                        let current = app.vertical_scroll.unwrap_or(max);
-                                        if current > 0 {
-                                            app.vertical_scroll = Some(current.saturating_sub(page_size));
-                                            app.scroll_state = app.scroll_state.position(current.saturating_sub(page_size));
-                                        }
-                                    }
-                                    KeyCode::PageDown => {
-                                        
-                                        let mut app = app_state.lock().await;
-                                        if app.vertical_scroll.is_some() {
-                                            
-                                            let current = app.vertical_scroll.unwrap_or_default();
-                                            let page_size = app.logs_area_height / 2;
-                                            let max = app.line_count.saturating_sub(app.logs_area_height) - 1;
-                                            if current < max {
-                                                app.vertical_scroll = Some(current.saturating_add(page_size));
-                                                app.scroll_state = app.scroll_state.position(current.saturating_add(page_size));
-                                            } else {
-                                                app.vertical_scroll = None;
-                                            }
-                                        }
-                                    }
                                     KeyCode::Down => {
                                         let mut app = app_state.lock().await;
                                         app.scroll_down(None);
                                     }
+                                    KeyCode::PageUp => {
+                                        let mut app = app_state.lock().await;
+                                        let scroll_count = app.logs_area_height.saturating_div(2);
+                                        if scroll_count > 0 {
+                                            app.scroll_up(Some(scroll_count));
+                                        }
+                                    }
+                                    KeyCode::PageDown => {
+                                        let mut app = app_state.lock().await;
+                                        let scroll_count = app.logs_area_height.saturating_div(2);
+                                        if scroll_count > 0 {
+                                            app.scroll_down(Some(scroll_count));
+                                        }
+                                    }                                    
                                     KeyCode::Char('z') => {
                                         tx.clone().send(("all".to_owned(),false)).unwrap();
                                     } 
@@ -307,7 +294,16 @@ pub (crate) async fn run(
                                     KeyCode::Enter => {
                                         let mut app = app_state.lock().await;
                                         app.vertical_scroll = None;
-                                    }                                     
+                                    }    
+                                    KeyCode::Char('l') => {
+                                        let mut app = app_state.lock().await;
+                                        let mut buf = log_buffer.lock().unwrap();
+                                        app.line_count = 0;
+                                        app.vertical_scroll = None;
+                                        app.scroll_state.position(0);
+                                        buf.logs.clear();
+                                        
+                                    }                                      
                                     KeyCode::Esc | KeyCode::Char('q')=> {
                                         tx.clone().send(("all".to_owned(),false)).unwrap();
                                         let mut app = app_state.lock().await;
@@ -375,13 +371,11 @@ impl AppState {
     pub fn scroll_down(&mut self, count:Option<usize>) {
         if self.vertical_scroll.is_some() {
             let current = self.vertical_scroll.unwrap_or_default();
-            let max = self.line_count.saturating_sub(self.logs_area_height) - 1;
+            let max = self.line_count.saturating_sub(self.logs_area_height).saturating_sub(1);
             if current < max {
                 let new_val = current.saturating_add(count.unwrap_or(1)).min(max);
                 self.vertical_scroll = Some(new_val);
-                for _ in 0 .. current.abs_diff(new_val) + 1 {
-                    self.scroll_state.scroll(ratatui::widgets::ScrollDirection::Forward);
-                }
+                self.scroll_state = self.scroll_state.position(new_val);
             }
             else {
                 self.vertical_scroll = None;
@@ -390,19 +384,18 @@ impl AppState {
     }
     pub fn scroll_up(&mut self, count:Option<usize>) {
         let msg_count = self.line_count;
-        let max = msg_count.saturating_sub(self.logs_area_height);
         match self.vertical_scroll {
             Some(current) if current > 0 => {
                 let new_val = current.saturating_sub(count.unwrap_or(1)).max(0);
                 self.vertical_scroll = Some(new_val);
-                for _ in 0 ..=current.abs_diff(new_val)  {
-                    self.scroll_state.scroll(ratatui::widgets::ScrollDirection::Backward);
-                }
+                self.scroll_state = self.scroll_state.position(new_val);
             }
             None => {
+                let max = self.line_count.saturating_sub(self.logs_area_height);
                 let new_val = max.saturating_sub(count.unwrap_or(1));
                 self.vertical_scroll = Some(new_val);
-            } 
+                self.scroll_state = self.scroll_state.position(new_val);
+            }
             _ => {}
         }
     }
