@@ -1,4 +1,4 @@
-use ratatui::layout::{Margin, Alignment};
+use ratatui::layout::{Margin, Alignment, Rect};
 use ratatui::style::{Style, Color, Modifier};
 use ratatui::text::Line;
 use ratatui::widgets::{ListItem, List, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState, BorderType};
@@ -240,6 +240,14 @@ pub (crate) async fn run(
                                         let mut app = app_state.lock().await;
                                         app.scroll_up(Some(10));
                                     },
+                                    event::MouseEventKind::Moved => {
+                                        let mut app = app_state.lock().await;
+                                        app.handle_mouse_hover(mouse.column,mouse.row)
+                                    }
+                                    event::MouseEventKind::Down(event::MouseButton::Left) => {
+                                        let mut app = app_state.lock().await;
+                                        app.handle_mouse_click(mouse.column,mouse.row,tx.clone())
+                                    }
                                     _ => {}
                                 }
                             }
@@ -276,9 +284,21 @@ pub (crate) async fn run(
                                         }
                                     }                                    
                                     KeyCode::Char('z') => {
+                                        let mut app = app_state.lock().await;
+                                        for (_,state) in app.procs.iter_mut() {
+                                            if let ProcState::Running = state {
+                                                *state = ProcState::Stopping;
+                                            }
+                                        }
                                         tx.clone().send(("all".to_owned(),false)).unwrap();
                                     } 
                                     KeyCode::Char('s') => {
+                                        let mut app = app_state.lock().await;
+                                        for (_,state) in app.procs.iter_mut() {
+                                            if let ProcState::Running = ProcState::Stopped {
+                                                *state = ProcState::Starting;
+                                            }
+                                        }
                                         tx.clone().send(("all".to_owned(),true)).unwrap();
                                     }    
                                     KeyCode::Char('a') => {
@@ -350,7 +370,9 @@ pub (crate) struct AppState {
     vertical_scroll: Option<usize>,
     scroll_state : ScrollbarState,
     show_apps_window : bool,
-    logs_area_height:usize
+    logs_area_height:usize,
+    site_rects: Vec<(Rect,String)>,
+    currently_hovered_site: Option<String>
 }
 
 impl AppState {
@@ -358,6 +380,8 @@ impl AppState {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
         AppState {
+            currently_hovered_site: None,
+            site_rects: vec![],
             line_count:0,
             logs_area_height: 5,
             scroll_state: ScrollbarState::new(0),
@@ -382,8 +406,51 @@ impl AppState {
             }
         }
     }
+
+    pub fn handle_mouse_click(&mut self, _column: u16, _row: u16,tx: tokio::sync::broadcast::Sender<(String, bool)>) {
+        
+        let selected_site = if let Some(x) = &self.currently_hovered_site {x} else { return };
+        
+        let new_state : Option<bool> =  {
+
+            let (_,state) = if let Some(info) = self.procs.iter_mut().find(|x|x.0==selected_site) {info} else {return};
+
+            match state {
+                ProcState::Faulty => {
+                    *state = ProcState::Stopped;
+                    Some(false)
+                },
+                ProcState::Stopped =>  {
+                    *state = ProcState::Starting;
+                    Some(true)
+                }
+                ProcState::Running =>  {
+                    *state = ProcState::Stopping;
+                    Some(false)
+                }
+                _ => None
+            }
+        };
+
+        if let Some(s) = new_state {
+            tx.send((selected_site.to_owned(),s)).unwrap();
+        }
+
+    }
+
+    pub fn handle_mouse_hover(&mut self, column: u16, row: u16) {
+        let mut highlight : Option<String> = None;
+        for (rect,site) in &self.site_rects {
+            if rect.left() <= column && rect.right() >= column && row == rect.top() {
+                highlight = Some(site.to_string());
+                break;
+            }
+        }
+        
+        self.currently_hovered_site = highlight;
+    }
+
     pub fn scroll_up(&mut self, count:Option<usize>) {
-        let msg_count = self.line_count;
         match self.vertical_scroll {
             Some(current) if current > 0 => {
                 let new_val = current.saturating_sub(count.unwrap_or(1)).max(0);
@@ -574,22 +641,39 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
             .constraints(vec![Constraint::Percentage(100 / columns_needed as u16); columns_needed])
             .split(chunks[1]);
 
+        let mut site_rects = vec![];
+
         for (col_idx, col) in site_columns.iter().enumerate() {
             let procly : Vec<(&String, &ProcState)> = app_state.procs.iter().collect();
             let start_idx = col_idx * sites_area_height as usize;
             let end_idx = ((col_idx + 1) * sites_area_height as usize).min(app_state.procs.len());
-            let items: Vec<ListItem> = procly[start_idx..end_idx].iter().map(|(id, state)| {
+            let items: Vec<ListItem> = procly[start_idx..end_idx].iter().enumerate().map(|(index,(id, state))| {
                 
+                let item_rect = ratatui::layout::Rect {
+                    x: col.x,
+                    y: col.y + index as u16 + 1,  // Assuming each ListItem is one line high
+                    width: col.width,
+                    height: 1,  // Assuming each ListItem is one line high
+                };
 
-                let s = match state {
+                site_rects.push((item_rect,id.to_string()));
+
+                let mut s = match state {
                     &ProcState::Running => Style::default().fg(Color::LightGreen),
                     &ProcState::Faulty => Style::default().fg(Color::Red),
                     &ProcState::Starting => Style::default().fg(Color::Green),
                     &ProcState::Stopped => Style::default().fg(Color::DarkGray),
                     &ProcState::Stopping => Style::default().fg(Color::Yellow)
                 };
+
+                let mut id_style = Style::default();
+
+                if let Some(hovered) = &app_state.currently_hovered_site && hovered == *id {
+                    id_style = id_style.bg(Color::White).fg(Color::Black).add_modifier(Modifier::BOLD);
+                    s = s.bg(Color::Gray);
+                }
                 
-                let message = ratatui::text::Span::styled(format!(" {id} "),Style::default());
+                let message = ratatui::text::Span::styled(format!(" {id} "),id_style);
 
                 let status = ratatui::text::Span::styled(format!("{:?}",state),s);
         
@@ -612,11 +696,13 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
                 .style(Style::default().fg(Color::White))
                 .highlight_style(Style::default().add_modifier(Modifier::BOLD))
                 .highlight_symbol(">> ");
-
+            
             f.render_widget(sites_list, *col);
         }
-        
+        app_state.site_rects = site_rects;
     }
+
+    
       
     let help_bar_chunk = Layout::default()
         .direction(Direction::Vertical)

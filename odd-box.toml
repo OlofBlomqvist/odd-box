@@ -22,7 +22,7 @@ env_vars = [
     { key = "PORT", value = "12345"},
     { key = "ext-svc-url", value = "localhost:9600" }
 ]
-
+auto_start = false
 
 [[processes]]
 host_name = "admin.local"
@@ -50,6 +50,7 @@ path = "$root_dir/BookVisit.QueryLab/publish"
 bin = "BookVisit.QueryLab"
 args = []
 env_vars = []
+auto_start = false
 
 [[processes]]
 host_name = "restapi.local"
@@ -120,6 +121,7 @@ path = "$root_dir/EasyAccessHotels.OTAService/publish"
 bin = "EasyAccessHotels.OTAService"
 args = ["use-kestrel"]
 env_vars = []
+auto_start = false
 
 # [[processes]]
 # host_name = "ownersapi.local"
@@ -168,6 +170,7 @@ args = ["use-kestrel"]
 env_vars = [
     {key="PORT", value="5006"}
 ]
+auto_start = false
 
 [[processes]]
 host_name = "bo.local"

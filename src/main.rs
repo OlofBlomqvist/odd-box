@@ -4,6 +4,7 @@
 mod types;
 mod hyper_reverse_proxy;
 use rustls::PrivateKey;
+use self_update::cargo_crate_version;
 use std::sync::Mutex;
 use std::time::Duration;
 use types::*;
@@ -163,7 +164,7 @@ fn my_rsa_private_keys(path: &str) -> Result<PrivateKey, String> {
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about, long_about = Some("ODD-BOX MAIN REPOSITORY: https://github.com/OlofBlomqvist/odd-box"))]
 struct Args {
 
     /// Path to your configuration file. By default we will look for odd-box.toml and Config.toml.
@@ -183,8 +184,10 @@ struct Args {
     tui: Option<bool>,
 
     #[arg(long)]
-    enable_site: Option<Vec<String>>
+    enable_site: Option<Vec<String>>,
 
+    #[arg(long)]
+    update: bool,
 }
 
 #[derive(Debug,PartialEq,Clone)]
@@ -196,13 +199,62 @@ pub enum ProcState {
     Running
 }
 
+use reqwest;
+use serde::Deserialize;
+use serde_json::Result as JsonResult;
+#[derive(Deserialize, Debug, Clone)]
+struct Release {
+    html_url: Option<String>,
+    tag_name: Option<String>,
+}
 
+fn update_from_github(target_tag:&str,current_version:&str) {
+    let status = self_update::backends::github::Update::configure()
+        .repo_owner("OlofBlomqvist")
+        .repo_name("odd-box")
+        .bin_name("odd-box")
+        .show_download_progress(true)
+        .target_version_tag(target_tag)
+        .current_version(current_version)
+        .build().unwrap()
+        .update().unwrap();
+    println!("Update status: `{}`!", status.version());
+}
+
+async fn update() -> JsonResult<()> {
+    let releases_url = "https://api.github.com/repos/OlofBlomqvist/odd-box/releases";   
+    let c = reqwest::Client::new();
+    let latest_release: Release = c.get(releases_url).header("user-agent", "odd-box").send()
+        .await
+        .expect("request failed")
+        .json::<Vec<Release>>()
+        .await
+        .expect("failed to deserialize").first().unwrap().clone();
+    let current_version = cargo_crate_version!();
+    let latest_tag = latest_release.tag_name.unwrap();
+    if format!("v{current_version}") == latest_tag {
+        println!("already running latest version: {latest_tag}");
+        return Ok(())
+    }
+    tokio::task::spawn_blocking(move || {
+        update_from_github(&latest_tag,&current_version)
+    }).await;
+
+    Ok(())
+
+}
 
 #[tokio::main]
 async fn main() -> Result<(),String> {
     
     
     let args = Args::parse();
+
+    if args.update {
+        update().await;
+        return Ok(());
+    }
+
 
     // By default we use odd-box.toml, and otherwise we try to read from Config.toml
     let cfg_path = 

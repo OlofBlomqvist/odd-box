@@ -33,7 +33,8 @@ pub (crate) struct SiteConfig{
     pub args : Vec<String>,
     pub env_vars : Vec<EnvVar>,
     pub log_format: Option<LogFormat>,
-
+    /// Set this to false if you do not want this site to start automatically
+    pub auto_start: Option<bool>,
     /// Set this to true in case your backend service uses https
     pub https : Option<bool>,
 
@@ -55,7 +56,8 @@ pub (crate) struct Config {
     pub port_range_start : u16,
     pub default_log_format : Option<LogFormat>,
     pub port : Option<u16>,
-    pub tls_port : Option<u16>
+    pub tls_port : Option<u16>,
+    pub auto_start : Option<bool>
 }
 
 

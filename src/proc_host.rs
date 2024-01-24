@@ -15,9 +15,10 @@ use std::os::windows::process::CommandExt;
 
 pub (crate) async fn host(proc:SiteConfig,mut rcv:tokio::sync::broadcast::Receiver<(String, bool)>, state: Arc<Mutex<AppState>>) {
 
-    let mut enabled = true;
+    // if auto_start is not set in the config, we assume that user wants to start site automatically like before
+    let mut enabled = proc.auto_start.unwrap_or(true);
     let mut exit = false;
-
+    let mut initialized = false;
     let domsplit = proc.host_name.split(".").collect::<Vec<&str>>();
     
     let mut acceptable_names = vec![proc.host_name.clone()];
@@ -34,6 +35,12 @@ pub (crate) async fn host(proc:SiteConfig,mut rcv:tokio::sync::broadcast::Receiv
             tracing::debug!("exiting host for {}",&proc.host_name);
             break;
         }
+
+        if initialized == false {
+            let mut guard = state.lock().await;
+            guard.procs.insert(proc.host_name.clone(), ProcState::Stopped);
+            initialized = true;
+        }
         
         let is_enabled_before = enabled == true;
 
@@ -48,6 +55,10 @@ pub (crate) async fn host(proc:SiteConfig,mut rcv:tokio::sync::broadcast::Receiv
         if !enabled {
             if enabled != is_enabled_before {
                 tracing::info!("[{}] Disabled via command from proxy service",&proc.host_name);
+                {
+                    let mut guard = state.lock().await;
+                    guard.procs.insert(proc.host_name.clone(), ProcState::Stopped);
+                }
             }
             tokio::time::sleep(Duration::from_millis(1111)).await;
             continue;
