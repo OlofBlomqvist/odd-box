@@ -413,29 +413,31 @@ async fn main() -> Result<(),String> {
 
 
     if use_tui {
+        #[cfg(feature="TUI")]
         tui::run(EnvFilter::from_default_env()
-        .add_directive(log_level.into())
-        .add_directive("hyper=info".parse().expect("this directive will always work")),shared_state.clone(),tx.clone()).await;
+            .add_directive(log_level.into())
+            .add_directive("hyper=info".parse().expect("this directive will always work")),shared_state.clone(),tx.clone()).await;
     } else {
         use tokio::task;
-        use device_query::{DeviceQuery, DeviceState, Keycode};
+        
                 
         let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
 
-        
-        let r2 = running.clone();
-        let t2 = tx.clone();
-        task::spawn(async move {
-            while r2.load(std::sync::atomic::Ordering::SeqCst) {
-                let keys = { DeviceState::new().get_keys() };
-                if keys.contains(&Keycode::Q)  || keys.contains(&Keycode::Escape) || (keys.contains(&Keycode::C) && keys.contains(&Keycode::LControl)) {
-                    _ = t2.send(("exit".to_owned(),false)).ok();
-                    r2.store(false, std::sync::atomic::Ordering::SeqCst);
+        #[cfg(feature="device_query")] {
+            use device_query::{DeviceQuery, DeviceState, Keycode};
+            let r2 = running.clone();
+            let t2 = tx.clone();
+            task::spawn(async move {
+                while r2.load(std::sync::atomic::Ordering::SeqCst) {
+                    let keys = { DeviceState::new().get_keys() };
+                    if keys.contains(&Keycode::Q)  || keys.contains(&Keycode::Escape) || (keys.contains(&Keycode::C) && keys.contains(&Keycode::LControl)) {
+                        _ = t2.send(("exit".to_owned(),false)).ok();
+                        r2.store(false, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 }
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            }
-        }).await.unwrap();
-    
+            }).await.unwrap();
+        }
 
         while running.load(std::sync::atomic::Ordering::SeqCst) {
             tokio::time::sleep(Duration::from_millis(100)).await;
