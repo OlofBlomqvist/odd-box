@@ -26,7 +26,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
 
           - os: ubuntu-latest
-            artifact_path: target/release/odd-box-no-default-features
+            artifact_path: target/release/odd-box
             artifact_name: odd-box-no-default-features-x86_64-unknown-linux-gnu
             target: x86_64-unknown-linux-gnu
             no_default_features: true
@@ -59,14 +59,16 @@ jobs:
           target: ${{ matrix.target }}
           profile: minimal
           override: true
-                
+                      
       - name: Build
         run: |
-          if [ "${{ matrix.no_default_features }}" == "true" ]; then
+          if ("${{ matrix.no_default_features }}" -eq "true") {
             cargo build --release --verbose --no-default-features
-          else
+          } else {
             cargo build --release --verbose
-          fi
+          }
+        shell: pwsh
+
         
       - name: Rename Artifact
         run: mv ${{ matrix.artifact_path }} ${{ matrix.artifact_name }}
