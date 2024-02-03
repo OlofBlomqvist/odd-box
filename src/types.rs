@@ -37,7 +37,7 @@ pub (crate) struct SiteConfig{
     pub auto_start: Option<bool>,
     /// Set this to true in case your backend service uses https
     pub https : Option<bool>,
-
+    pub capture_subdomains : Option<bool>,
     #[serde(skip)] pub (crate) port : u16
 }
 

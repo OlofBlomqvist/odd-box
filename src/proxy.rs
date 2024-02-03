@@ -243,11 +243,14 @@ async fn handle_ws(
     tracing::debug!("Handling websocket request: {req_host_name:?} --> {req_path}");
 
 
-    let proc = cfg.processes.iter().find(|p| { req_host_name == p.host_name })
+    let proc = cfg.processes.iter().find(|p| { 
+        req_host_name == p.host_name 
+        || p.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",p.host_name)) 
+    })
         .ok_or(CustomError(format!("No target is configured to handle requests to {req_host_name}")))?;
     
     let proto = if let Some(true) = proc.https { "wss" } else { "ws" };
-    let ws_url = format!("{proto}://127.0.0.1:{}{}",proc.port,req_path);
+    let ws_url = format!("{proto}://{req_host_name}:{}{}",proc.port,req_path);
     
     tracing::debug!("initiating websocket tunnel to {}",ws_url);
 
@@ -397,6 +400,7 @@ async fn handle(
     
     if let Some(target_cfg) = cfg.processes.iter().find(|p| {
             req_host_name == p.host_name
+            || p.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",p.host_name))
     }) {
 
         let current_target_status : Option<ProcState> = {
@@ -460,7 +464,7 @@ async fn handle(
 
         let scheme = if let Some(true) = target_cfg.https { "https" } else { "http" };
 
-        let target_url = format!("{scheme}://{}:{}",target_cfg.host_name,target_cfg.port);
+        let target_url = format!("{scheme}://{}:{}",req_host_name,target_cfg.port);
         
         let result =  if req.version() == Version::HTTP_2 {
             if scheme == "http" {
