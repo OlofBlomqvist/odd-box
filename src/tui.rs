@@ -497,7 +497,7 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
     let constraints = if app_state.show_apps_window {
         vec![
             Constraint::Percentage(70),
-            Constraint::Percentage(30 - (help_bar_height * 100 / size.height)), 
+            Constraint::Min(0), 
             Constraint::Length(help_bar_height),
         ]
     } else {
