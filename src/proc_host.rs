@@ -1,11 +1,9 @@
-use tokio::sync::Mutex;
-
-use crate::{ProcState, AppState};
-
-use super::types::*;
+use crate::configuration::LogFormat;
+use crate::http_proxy::ProcMessage;
+use crate::types::app_state::ProcState;
+use crate::types::app_state::AppState;
 use std::collections::HashMap;
 use std::io::Write;
-
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,11 +11,15 @@ use std::time::Duration;
 #[cfg(target_os="windows")]
 use std::os::windows::process::CommandExt;
 
-pub (crate) async fn host(proc:SiteConfig,mut rcv:tokio::sync::broadcast::Receiver<(String, bool)>, state: Arc<Mutex<AppState>>) {
+pub (crate) async fn host(
+    proc:crate::configuration::v1::InProcessSiteConfig,
+    mut rcv:tokio::sync::broadcast::Receiver<ProcMessage>,
+    state: Arc<tokio::sync::RwLock<AppState>>
+) {
 
     // if auto_start is not set in the config, we assume that user wants to start site automatically like before
     let mut enabled = proc.auto_start.unwrap_or(true);
-    let mut exit = false;
+  
     let mut initialized = false;
     let domsplit = proc.host_name.split(".").collect::<Vec<&str>>();
     
@@ -27,28 +29,45 @@ pub (crate) async fn host(proc:SiteConfig,mut rcv:tokio::sync::broadcast::Receiv
         acceptable_names.push(domsplit[0].to_owned());
     }
     
-    let re = regex::Regex::new(r"^\d* *\[.*?\] .*? - ").unwrap();
+    let re = regex::Regex::new(r"^\d* *\[.*?\] .*? - ").expect("host regex always works");
     
     loop {
 
-        if exit {
-            tracing::debug!("exiting host for {}",&proc.host_name);
-            break;
-        }
-
         if initialized == false {
-            let mut guard = state.lock().await;
+            let mut guard = state.write().await;
             guard.procs.insert(proc.host_name.clone(), ProcState::Stopped);
             initialized = true;
+        } else {
+            let exit = {
+                let guard = state.read().await;
+                guard.exit
+            };            
+            if exit {
+                let mut guard = state.write().await;
+                guard.procs.insert(proc.host_name.clone(), ProcState::Stopped);
+                tracing::debug!("exiting host for {}",&proc.host_name);
+                break
+            }
         }
         
         let is_enabled_before = enabled == true;
-
-        while let Ok((msg,state)) = rcv.try_recv() {
-            exit = msg == "exit";
-            let is_for_me = exit || msg == "all" || acceptable_names.contains(&msg); 
-            if is_for_me {
-                enabled = if exit { false } else { state };
+        
+        while let Ok(msg) = rcv.try_recv() {
+            match msg {
+                ProcMessage::StartAll => enabled = true,
+                ProcMessage::StopAll => enabled = false,
+                ProcMessage::Start(s) => {
+                    let is_for_me = s == "all" || acceptable_names.contains(&s); 
+                    if is_for_me {
+                        enabled = true;
+                    }
+                },
+                ProcMessage::Stop(s) => {
+                    let is_for_me = s == "all" || acceptable_names.contains(&s); 
+                    if is_for_me {
+                        enabled = false;
+                    }
+                },
             }
         }
         
@@ -56,11 +75,11 @@ pub (crate) async fn host(proc:SiteConfig,mut rcv:tokio::sync::broadcast::Receiv
             if enabled != is_enabled_before {
                 tracing::info!("[{}] Disabled via command from proxy service",&proc.host_name);
                 {
-                    let mut guard = state.lock().await;
+                    let mut guard = state.write().await;
                     guard.procs.insert(proc.host_name.clone(), ProcState::Stopped);
                 }
             }
-            tokio::time::sleep(Duration::from_millis(1111)).await;
+            tokio::time::sleep(Duration::from_millis(500)).await;
             continue;
         }
         
@@ -70,13 +89,13 @@ pub (crate) async fn host(proc:SiteConfig,mut rcv:tokio::sync::broadcast::Receiv
 
         
         {
-            let mut guard = state.lock().await;
+            let mut guard = state.write().await;
             guard.procs.insert(proc.host_name.clone(), ProcState::Starting);
         }
 
-        tracing::info!("[{}] Executing command '{}' in directory '{}'",proc.host_name,proc.bin,proc.path);
+        tracing::info!("[{}] Executing command '{}' in directory '{}'",proc.host_name,proc.bin,proc.dir);
 
-        let mut bin_path = std::path::PathBuf::from(&proc.path);
+        let mut bin_path = std::path::PathBuf::from(&proc.dir);
         bin_path.push(&proc.bin);
         
         let mut process_specific_environment_variables = HashMap::new();
@@ -93,10 +112,10 @@ pub (crate) async fn host(proc:SiteConfig,mut rcv:tokio::sync::broadcast::Receiv
         let cmd = Command::new(bin_path)
             .args(proc.args.clone())
             .envs(&process_specific_environment_variables)
-            .current_dir(&proc.path)
+            .current_dir(&proc.dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .stdin(Stdio::piped())
+            .stdin(Stdio::null())
             // dont want windows to let child take over our keyboard input and such
             .creation_flags(DETACHED_PROCESS).spawn(); 
 
@@ -107,14 +126,14 @@ pub (crate) async fn host(proc:SiteConfig,mut rcv:tokio::sync::broadcast::Receiv
             .current_dir(&proc.path)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .stdin(Stdio::piped()).spawn();
+            .stdin(Stdio::null()).spawn();
 
         match cmd {
             Ok(mut child) => {
 
                 
                 {
-                    let mut guard = state.lock().await;
+                    let mut guard = state.write().await;
                     guard.procs.insert(proc.host_name.clone(), ProcState::Running);
                 }
 
@@ -182,19 +201,44 @@ pub (crate) async fn host(proc:SiteConfig,mut rcv:tokio::sync::broadcast::Receiv
                 });
                 
                 while let Ok(None) = child.try_wait() {
-                                    
-                    while let Ok((msg,state)) = rcv.try_recv() {
-                        exit = msg=="exit";
-                        let is_for_me = exit || msg == "all" || acceptable_names.contains(&msg); 
-                        if is_for_me {
-                            enabled = if exit { false } else { state };
+                    let exit = {
+                        let guard = state.read().await;
+                        guard.exit
+                    }    ;
+                    if exit {
+                        tracing::info!("[{}] Stopping due to app exit", proc.host_name);
+                        {
+                            let mut guard = state.write().await;
+                            guard.procs.insert(proc.host_name.clone(), ProcState::Stopping);
+                        }
+                        _ = child.kill();
+                        break
+                    }
+                    
+                   
+                    while let Ok(msg) = rcv.try_recv() {
+                        match msg {
+                            ProcMessage::StartAll => enabled = true,
+                            ProcMessage::StopAll => enabled = false,
+                            ProcMessage::Start(s) => {
+                                let is_for_me = s == "all" || acceptable_names.contains(&s); 
+                                if is_for_me {
+                                    enabled = true;
+                                }
+                            },
+                            ProcMessage::Stop(s) => {
+                                let is_for_me = s == "all" || acceptable_names.contains(&s); 
+                                if is_for_me {
+                                    enabled = false;
+                                }
+                            },
                         }
                     }
                     if !enabled {
                         tracing::warn!("[{}] Stopping due to having been disabled by proxy.", proc.host_name);
                         // note: we just send q here because some apps like iisexpress requires it
                         {
-                            let mut guard = state.lock().await;
+                            let mut guard = state.write().await;
                             guard.procs.insert(proc.host_name.clone(), ProcState::Stopping);
                         }
                         if let Some(mut stdin) = child.stdin.take() {
@@ -204,22 +248,23 @@ pub (crate) async fn host(proc:SiteConfig,mut rcv:tokio::sync::broadcast::Receiv
                        
                         break;
                     } 
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
-                let mut guard = state.lock().await;
+                let mut guard = state.write().await;
                 guard.procs.insert(procname, ProcState::Stopped);
                 tracing::warn!("[{}] Stopped.",proc.host_name)
             },
             Err(e) => {
                 tracing::info!("[{}] Failed to start! {e:?}",proc.host_name);
                 {
-                    let mut guard = state.lock().await;
+                    let mut guard = state.write().await;
                     guard.procs.insert(proc.host_name.clone(), ProcState::Faulty);
                 }
             },
         }
         
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
     }
    
 }

@@ -1,0 +1,41 @@
+version = "V1" # this is the configuration format version, dont change it
+root_dir = "~" # you can use $root_dir in env_var values and dir paths etc.
+log_level = "info" # trace,info,debug,info,warn,error
+alpn = false # optional - allows alpn negotiation for http/1.0 and h2 on tls connections
+port_range_start = 4200 # port range for automatic port assignment (the env var PORT will be set if you did not specify one manually for a process)
+default_log_format = "standard" # standard | dotnet
+ip = "0.0.0.0" # ip for proxy to listen to , can be ipv4/6
+http_port = 80
+tls_port = 443
+auto_start = false # optional, defaults to true - used as default value for configured sites. auto_start false means a site will not start automatically with odd-box,
+                   # but it will still be automatically started on incoming requests to that site.
+env_vars = [ 
+    # these are global environment variables - they will be set for all hosted processes
+    { key = "GRPC_TRACE" , value = "http,http1,http_keepalive,http2_stream_state" },
+    { key = "GRPC_VERBOSITY" , value = "DEBUG" },
+]
+
+[[remote_target]] # remote targets are those that odd-box is not responsible for running
+host_name = "lobsters.localtest.me" # incoming name for binding to (frontend)
+target_hostname = "lobste.rs" # domain name or ip to proxy the request to (backend)
+capture_subdomains = false # optional, false by default: allows capturing wildcard requests such as test.lobsters.local
+disable_tcp_tunnel_mode = false # optional, false by default
+https = true # optional, false by default: must be true if the target uses tls
+port = 443 # optional - 80 by default if https is false, 443 by default if https is true 
+
+
+[[hosted_process]] # hosted processes are ones that odd-box will keep running
+disable_tcp_tunnel_mode = false # optional, false by default
+host_name = "some_host.local" # incoming name for binding to (frontend)
+dir = "$root_dir" # path where we should be located when running the binary file
+bin = "my_bin" # name or path of the binary that should be executed
+args = ["--test"] # any arguments you wish to pass to the binary
+log_format = "standard" # standard | dotnet
+auto_start = false # optional, uses global auto_start by default. set to false to prevent the process from starting when launching odd-box
+port = 443 # optional, defaults to 443 for https configurations and 80 otherwise
+https = true # must be set to https if the target expects tls connections
+env_vars = [
+    # environment variables specific to this process
+    { key = "logserver", value = "http://www.example.com" },
+    { key = "host", value = "odd-box" }
+]

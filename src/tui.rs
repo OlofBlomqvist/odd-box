@@ -1,8 +1,8 @@
-use ratatui::layout::{Margin, Alignment, Rect};
-use ratatui::style::{Style, Color, Modifier};
+use ratatui::layout::{Alignment, Flex, Margin, Offset, Rect};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::Line;
-use ratatui::widgets::{ListItem, List, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState, BorderType};
-use tokio::sync::MutexGuard;
+use ratatui::widgets::{BorderType, Cell, List, ListItem, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table};
+use tokio::sync::RwLockWriteGuard;
 use tokio::task;
 use tracing::{Level, Subscriber};
 use tracing_subscriber::{Layer, EnvFilter};
@@ -10,9 +10,18 @@ use tracing_subscriber::layer::{Context, SubscriberExt};
 use std::borrow::BorrowMut;
 use std::collections::{HashMap, VecDeque};
 use std::io::Stdout;
+use crate::types::app_state::*;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use crate::ProcState;
+use crate::http_proxy::ProcMessage;
+use crate::types::app_state::ProcState;
+
+use crate::types::proxy_state::*;
+
+use ratatui::{
+    layout::{Constraint, Direction, Layout},
+    widgets::{Block, Borders, Paragraph}
+};
 
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
@@ -35,8 +44,8 @@ struct LogMsg {
 }
 
 struct SharedLogBuffer {
-    logs: VecDeque<LogMsg>,
-    limit : Option<usize>
+    pub (crate) logs: VecDeque<LogMsg>,
+    pub (crate) limit : Option<usize>
 }
 
 impl SharedLogBuffer {
@@ -44,7 +53,7 @@ impl SharedLogBuffer {
     fn new() -> Self {
         SharedLogBuffer {
             logs: VecDeque::new(),
-            limit: Some(1000)
+            limit: Some(500)
         }
     }
 
@@ -62,9 +71,7 @@ impl SharedLogBuffer {
         
     }
 
-    fn get_logs(&self) -> Vec<LogMsg> {
-        self.logs.iter().cloned().collect()
-    }
+
 }
 
 struct LogVisitor {
@@ -104,7 +111,10 @@ struct TuiLoggerLayer {
 impl<S: Subscriber> Layer<S> for TuiLoggerLayer {
     fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
         let metadata = event.metadata();
-       
+
+
+        let target = metadata.target();
+        
         // Create a visitor to format the fields of the event.
         let mut visitor = LogVisitor::new();
         event.record(&mut visitor);
@@ -120,16 +130,31 @@ impl<S: Subscriber> Layer<S> for TuiLoggerLayer {
             msg = msg[end+1..].to_string().trim().to_string();
         }
 
-        let current_thread = std::thread::current();
+        if src.is_empty() {
+            if !target.ends_with("proc_host") {
+                src = target.into();
+            }
+            
+        }
 
-        let log_message = LogMsg {
-            thread: if let Some(n) = current_thread.name() {Some(n.to_owned())}else{None},
-            lvl: metadata.level().clone(),
-            src,
-            msg
+        let current_thread = std::thread::current();
+        let current_thread_name = current_thread.name().and_then(|x|Some(x.to_string())).unwrap_or(format!("HAH!"));
+        let mut skip_src = false;
+        let thread_name = if current_thread_name == "tokio-runtime-worker" { 
+            skip_src = true;
+            Some(src.to_string()) 
+        } else { 
+            Some(current_thread_name) 
         };
 
-        let mut buffer = self.log_buffer.lock().unwrap();
+        let log_message = LogMsg {
+            thread: thread_name,
+            lvl: metadata.level().clone(),
+            src: if skip_src { "".into() } else {src},
+            msg,
+        };
+
+        let mut buffer = self.log_buffer.lock().expect("must always be able to lock log buffer");
         buffer.push(log_message);
     
     }
@@ -137,30 +162,33 @@ impl<S: Subscriber> Layer<S> for TuiLoggerLayer {
 
 
 pub (crate) fn init() {
-    _ = enable_raw_mode().unwrap();
-    execute!(std::io::stdout(), EnterAlternateScreen, EnableMouseCapture).unwrap();
+    _ = enable_raw_mode().expect("must be able to enable raw mode");();
+    execute!(std::io::stdout(), EnterAlternateScreen, EnableMouseCapture).expect("must always be able to enter alt screen");
 }
 
 pub (crate) async fn run(
     filter:EnvFilter,
-    shared_state:Arc<tokio::sync::Mutex<AppState>>,
-    tx: tokio::sync::broadcast::Sender<(String, bool)>
+    shared_state:Arc<tokio::sync::RwLock<AppState>>,
+    tx: tokio::sync::broadcast::Sender<ProcMessage>
 ) {
     
     let log_buffer = Arc::new(Mutex::new(SharedLogBuffer::new()));
     let layer = TuiLoggerLayer { log_buffer: log_buffer.clone() };
 
-    let subscriber = tracing_subscriber::registry().with(filter).with(layer);
+    let subscriber = tracing_subscriber::registry()
+        .with(filter).with(layer);
+
 
     tracing::subscriber::set_global_default(subscriber).expect("Failed to set collector");
   
 
     let backend = CrosstermBackend::new(std::io::stdout());
     
-    let terminal = Terminal::new(backend).unwrap();
+    let terminal = Terminal::new(backend).expect("must be possible to create terminal");
     
     let terminal = Arc::new(tokio::sync::Mutex::new(terminal));
     
+
     // TUI event loop
     let tui_handle = {
         let terminal = Arc::clone(&terminal);
@@ -169,17 +197,16 @@ pub (crate) async fn run(
         task::spawn(async move {
             
             let tx = tx.clone();
-            
+           
             let mut last_key_time = tokio::time::Instant::now();
             let debounce_duration = Duration::from_millis(100);
             
-            let toggle_debounce: Duration = Duration::from_millis(250);
-            let mut last_toggle : Option<tokio::time::Instant> = None;
-
+            //let mut last_toggle : Option<tokio::time::Instant> = None;
+            
             loop {
 
                 {
-                    let app = app_state.lock().await;
+                    let app = app_state.read().await;
 
                     if app.exit {
                         if app.procs.iter().find(|x|
@@ -193,342 +220,436 @@ pub (crate) async fn run(
                     }
                 }
 
-                // let view_mode = {
-                //     app_state.lock().await.view_mode.clone()
-                // };
-
-                // match view_mode {
-                //     ViewMode::Console => {
-                //         let mut state = app_state.lock().await;
+                // KEEP LOCK SHORT TO AVOID DEADLOCK
+                {
+                    let mut state = app_state.write().await;
+                    
+                    let mut terminal = terminal.lock().await;
+                    
+                    terminal.draw(|f| draw_ui::<CrosstermBackend<Stdout>>(f, &mut state, &log_buffer))?;
                         
-                //         let mut terminal = terminal.lock().await;
-                       
-                //         terminal.draw(|f| draw_ui::<CrosstermBackend<Stdout>>(f, &mut state, &log_buffer))?;
-                //     },
-                //     ViewMode::TUI => 
-
-                    // KEEP LOCK SHORT TO AVOID DEADLOCK
-                    {
-                        let mut state = app_state.lock().await;
-                        
-                        let mut terminal = terminal.lock().await;
-                        terminal.draw(|f| draw_ui::<CrosstermBackend<Stdout>>(f, &mut state, &log_buffer))?;
-                            
-                    }
+                }
 
                 // }
 
-                
+
                 // Handle input
-                if event::poll(std::time::Duration::from_millis(100))? {
+                if event::poll(std::time::Duration::from_millis(20))? {
                     let now = tokio::time::Instant::now();
                     let time_since_last_keypress = now.duration_since(last_key_time);
-                    let time_since_last_toggle = if let Some(t) = last_toggle {
-                        Some(now.duration_since(t))
-                    } else {
-                        None
+                    
+                    // let time_since_last_toggle = if let Some(t) = last_toggle {
+                    //     Some(now.duration_since(t))
+                    // } else {
+                    //     None
+                    // };
+                    let (current_page,sites_open) = {
+                        let guard =  app_state.read().await;
+                        (guard.current_page.clone(),guard.show_apps_window)
                     };
-                    match event::read()? {
+                    let evt = event::read()?;
+                    match evt {
                         Event::Mouse(mouse) => {
-                            if time_since_last_keypress >= debounce_duration {
-                                match mouse.kind {
-                                    event::MouseEventKind::ScrollDown => {
-                                        let mut app = app_state.lock().await;
-                                        app.scroll_down(Some(10));
-                                    },
-                                    event::MouseEventKind::ScrollUp => {
-                                        let mut app = app_state.lock().await;
-                                        app.scroll_up(Some(10));
-                                    },
-                                    event::MouseEventKind::Moved => {
-                                        let mut app = app_state.lock().await;
-                                        app.handle_mouse_hover(mouse.column,mouse.row)
+                                if sites_open {
+                                    match mouse.kind {
+                                        event::MouseEventKind::Moved => {
+                                            let mut app = app_state.write().await;
+                                            app.sites_handle_mouse_hover(mouse.column,mouse.row)
+                                        }
+                                        event::MouseEventKind::Down(event::MouseButton::Left) => {
+                                            let mut app = app_state.write().await;
+                                            app.sites_handle_mouse_click(mouse.column,mouse.row,tx.clone())
+                                        }
+                                        _ => {}
                                     }
-                                    event::MouseEventKind::Down(event::MouseButton::Left) => {
-                                        let mut app = app_state.lock().await;
-                                        app.handle_mouse_click(mouse.column,mouse.row,tx.clone())
-                                    }
-                                    _ => {}
                                 }
-                            }
+                                match current_page {
+                                    Page::Logs => {
+                                        match mouse.kind {
+                                            event::MouseEventKind::Drag(event::MouseButton::Left) => {
+                                                let mut app = app_state.write().await;
+                                                app.logs_handle_mouse_scroll_drag(mouse.column,mouse.row)
+                                            }
+                                            event::MouseEventKind::Moved => {
+                                                let mut app = app_state.write().await;
+                                                app.logs_handle_mouse_move(mouse.column,mouse.row)
+                                            }
+                                            event::MouseEventKind::ScrollDown => {
+                                                let mut app = app_state.write().await;
+                                                app.logs_tab_scroll_down(Some(10));
+                                            },
+                                            event::MouseEventKind::ScrollUp => {
+                                                let mut app = app_state.write().await;
+                                                app.logs_tab_scroll_up(Some(10));
+                                            },
+                                            _ => {}
+                                        }
+                                    },
+                                    Page::Statistics => {},
+                                    Page::Connections => {
+                                        match mouse.kind {
+                                            event::MouseEventKind::ScrollDown => {
+                                                let mut app = app_state.write().await;
+                                                app.traf_tab_scroll_down(Some(10));
+                                            },
+                                            event::MouseEventKind::ScrollUp => {
+                                                let mut app = app_state.write().await;
+                                                app.traf_tab_scroll_up(Some(10));
+                                            },
+                                            _ => {}
+                                        }
+                                    },
+                                }
+                                
                         }
                         Event::Key(key) => {
+
                             if time_since_last_keypress >= debounce_duration { 
-                            
-                                match key.code {
-                                    // todo
-                                    // KeyCode::Char('x') => {
-                                    //     let mut app = app_state.lock().await;
-                                    //     app.toggle_view()
-                                    // },
-                                    KeyCode::Up => {
-                                        let mut app = app_state.lock().await;
-                                        app.scroll_up(None);
-                                    }
-                                    KeyCode::Down => {
-                                        let mut app = app_state.lock().await;
-                                        app.scroll_down(None);
-                                    }
-                                    KeyCode::PageUp => {
-                                        let mut app = app_state.lock().await;
-                                        let scroll_count = app.logs_area_height.saturating_div(2);
-                                        if scroll_count > 0 {
-                                            app.scroll_up(Some(scroll_count));
+                                last_key_time = now;
+                                
+                                match current_page {
+                                    Page::Logs => {
+                                        match key.code {
+                                            KeyCode::Enter => {
+                                                let mut app = app_state.write().await;
+                                                app.vertical_scroll = None;
+                                                let mut buf = log_buffer.lock().expect("must always be able to lock log buffer");
+                                                match buf.limit {
+                                                    Some(x) => {
+                                                        while buf.logs.len() > x {
+                                                            buf.logs.pop_front();
+                                                        }
+                                                    },
+                                                    None => {},
+                                                }
+                                                
+                                            }    
+                                            KeyCode::Up => {
+                                                let mut app = app_state.write().await;
+                                                app.logs_tab_scroll_up(Some(1));
+                                            }
+                                            KeyCode::Down => {
+                                                let mut app = app_state.write().await;
+                                                app.logs_tab_scroll_down(Some(1));
+                                            }
+                                            KeyCode::PageUp => {
+                                                let mut app = app_state.write().await;
+                                                let scroll_count = app.logs_area_height.saturating_div(2);
+                                                if scroll_count > 0 {
+                                                    app.logs_tab_scroll_up(Some(scroll_count));
+                                                }
+                                            }
+                                            KeyCode::PageDown => {
+                                                let mut app = app_state.write().await;
+                                                let scroll_count = app.logs_area_height.saturating_div(2);
+                                                if scroll_count > 0 {
+                                                    app.logs_tab_scroll_down(Some(scroll_count));
+                                                }
+                                            },   
+                                            KeyCode::Char('c') => {
+                                                let mut app = app_state.write().await;
+                                                let mut buf = log_buffer.lock().expect("must always be able to lock log buffer");
+                                                app.total_line_count = 0;
+                                                app.vertical_scroll = None;
+                                                app.scroll_state = app.scroll_state.position(0);
+                                                buf.logs.clear();
+                                                
+                                            }    
+                                            _ => {}        
                                         }
                                     }
-                                    KeyCode::PageDown => {
-                                        let mut app = app_state.lock().await;
-                                        let scroll_count = app.logs_area_height.saturating_div(2);
-                                        if scroll_count > 0 {
-                                            app.scroll_down(Some(scroll_count));
+                                    Page::Statistics => {},
+                                    Page::Connections => {
+                                        match key.code {
+                                            KeyCode::PageUp => {
+                                                let mut app = app_state.write().await;
+                                                app.traf_tab_scroll_up(Some(10));
+                                            }
+                                            KeyCode::PageDown => {
+                                                let mut app = app_state.write().await;
+                                                app.traf_tab_scroll_down(Some(10));
+                                                
+                                            },
+                                            KeyCode::Up => {
+                                                let mut app = app_state.write().await;
+                                                let scroll_count = app.logs_area_height.saturating_div(2);
+                                                if scroll_count > 0 {
+                                                    app.traf_tab_scroll_up(None);
+                                                }
+                                            }
+                                            KeyCode::Down => {
+                                                let mut app = app_state.write().await;
+                                                app.traf_tab_scroll_down(None);
+                                            }
+                                            _ => {}
                                         }
-                                    }                                    
+                                    },
+                                }
+
+                                match key.code {    
+                                    KeyCode::Char('1') => {
+                                        let mut app = app_state.write().await;
+                                        app.current_page = Page::Logs;
+                                    }
+                                    KeyCode::Char('2') => {
+                                        let mut app = app_state.write().await;
+                                        app.current_page = Page::Connections;
+                                    }
+                                    KeyCode::Char('3') => {
+                                        let mut app = app_state.write().await;
+                                        app.current_page = Page::Statistics;
+                                    }
+                                    KeyCode::BackTab | KeyCode::Left => {
+                                        let mut app = app_state.write().await;
+                                        match app.current_page {
+                                            Page::Logs => app.current_page = Page::Statistics, 
+                                            Page::Statistics => app.current_page = Page::Connections, 
+                                            Page::Connections => app.current_page = Page::Logs,
+                                        }
+                                    }
+                                    KeyCode::Tab | KeyCode::Right => {
+                                        let mut app = app_state.write().await;
+                                        match app.current_page {
+                                            Page::Logs => app.current_page = Page::Connections, 
+                                            Page::Statistics => app.current_page = Page::Logs, 
+                                            Page::Connections => app.current_page = Page::Statistics,
+                                        }
+                                    }          
                                     KeyCode::Char('z') => {
-                                        let mut app = app_state.lock().await;
-                                        for (_,state) in app.procs.iter_mut() {
-                                            if let ProcState::Running = state {
-                                                *state = ProcState::Stopping;
+                                        {
+                                            let mut app = app_state.write().await;
+                                            for (_,state) in app.procs.iter_mut() {
+                                                if let ProcState::Running = state {
+                                                    *state = ProcState::Stopping;
+                                                }
                                             }
                                         }
-                                        tx.clone().send(("all".to_owned(),false)).unwrap();
+                                        tx.clone().send(ProcMessage::StopAll).expect("must always be able to send internal messages");
                                     } 
                                     KeyCode::Char('s') => {
-                                        let mut app = app_state.lock().await;
-                                        for (_,state) in app.procs.iter_mut() {
-                                            if let ProcState::Running = ProcState::Stopped {
-                                                *state = ProcState::Starting;
+                                        {
+                                            let mut app = app_state.write().await;
+                                            for (_,state) in app.procs.iter_mut() {
+                                                if let ProcState::Stopped = state {
+                                                    *state = ProcState::Starting;
+                                                }
                                             }
                                         }
-                                        tx.clone().send(("all".to_owned(),true)).unwrap();
+                                        tx.clone().send(ProcMessage::StartAll).expect("must always be able to send internal messages");
                                     }    
                                     KeyCode::Char('a') => {
-                                        if let Some(t) = time_since_last_toggle{
-                                            if t < toggle_debounce {
-                                                continue
-                                            }
-                                        }
-                                        let mut app = app_state.lock().await;
-                                        app.show_apps_window = !app.show_apps_window;
-                                        last_toggle = Some(now)
-                                    }  
-                                    KeyCode::Enter => {
-                                        let mut app = app_state.lock().await;
-                                        app.vertical_scroll = None;
-                                    }    
-                                    KeyCode::Char('l') => {
-                                        let mut app = app_state.lock().await;
-                                        let mut buf = log_buffer.lock().unwrap();
-                                        app.line_count = 0;
-                                        app.vertical_scroll = None;
-                                        app.scroll_state.position(0);
-                                        buf.logs.clear();
-                                        
-                                    }                                      
+                                        //if let Some(t) = time_since_last_toggle{
+                                             //{
+                                                let mut app = app_state.write().await;
+                                                app.show_apps_window = !app.show_apps_window;
+                                                //last_toggle = Some(now)
+                                            //}
+                                        //}
+                                    }                                  
                                     KeyCode::Esc | KeyCode::Char('q')=> {
-                                        tx.clone().send(("all".to_owned(),false)).unwrap();
-                                        let mut app = app_state.lock().await;
-                                        app.exit = true;
-                                    }
-                                    KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-                                        tx.clone().send(("all".to_owned(),false)).unwrap();
-                                        let mut app = app_state.lock().await;
-                                        app.exit = true;
+                                        {
+                                            let mut app = app_state.write().await;
+                                            app.exit = true;
+                                        }
+                                        
                                     }
                                     _ => {
     
                                     }
                                 }
-                                last_key_time = now;
+                                
+                                
                             }
+                            
                         },
                         _=> {}
                     }
-                   
+                
                 }
-            }
+            } 
             Result::<(), std::io::Error>::Ok(())
         })
+        
     };
 
     _ = tui_handle.await.ok();
 
     _ = disable_raw_mode().ok();
     let mut stdout = std::io::stdout();
-    execute!(stdout, LeaveAlternateScreen, DisableMouseCapture).unwrap();
+    execute!(stdout, LeaveAlternateScreen, DisableMouseCapture).expect("should always be possible to leave tui");
   
 }
 
+// TODO - move all the state types to a separate module
 
-
-
-
-pub (crate) struct AppState {
-    line_count: usize,
-    exit: bool,
-    //view_mode: ViewMode,
-    pub procs: HashMap<String,ProcState>,
-    vertical_scroll: Option<usize>,
-    scroll_state : ScrollbarState,
-    show_apps_window : bool,
-    logs_area_height:usize,
-    site_rects: Vec<(Rect,String)>,
-    currently_hovered_site: Option<String>
+#[derive(Debug,Default)]
+pub struct TrafficTabState {
+    pub test : String,
+    pub vertical_scroll_state: ScrollbarState,
+    pub horizontal_scroll_state: ScrollbarState,
+    pub vertical_scroll: usize,
+    pub horizontal_scroll: usize,    
+    pub total_rows : usize,
+    pub visible_rows : usize,
+    pub area_height : usize
 }
 
-impl AppState {
-    pub fn new() -> AppState {
-        let mut list_state = ListState::default();
-        list_state.select(Some(0));
-        AppState {
-            currently_hovered_site: None,
-            site_rects: vec![],
-            line_count:0,
-            logs_area_height: 5,
-            scroll_state: ScrollbarState::new(0),
-            vertical_scroll: None,
-            exit: false,
-            //view_mode: ViewMode::Console,
-            procs: HashMap::<String,ProcState>::new(),
-            show_apps_window : false
-        }
-    }
-    pub fn scroll_down(&mut self, count:Option<usize>) {
-        if self.vertical_scroll.is_some() {
-            let current = self.vertical_scroll.unwrap_or_default();
-            let max = self.line_count.saturating_sub(self.logs_area_height).saturating_sub(1);
-            if current < max {
-                let new_val = current.saturating_add(count.unwrap_or(1)).min(max);
-                self.vertical_scroll = Some(new_val);
-                self.scroll_state = self.scroll_state.position(new_val);
-            }
-            else {
-                self.vertical_scroll = None;
-            }
-        }
-    }
-
-    pub fn handle_mouse_click(&mut self, _column: u16, _row: u16,tx: tokio::sync::broadcast::Sender<(String, bool)>) {
-        
-        let selected_site = if let Some(x) = &self.currently_hovered_site {x} else { return };
-        
-        let new_state : Option<bool> =  {
-
-            let (_,state) = if let Some(info) = self.procs.iter_mut().find(|x|x.0==selected_site) {info} else {return};
-
-            match state {
-                ProcState::Faulty => {
-                    *state = ProcState::Stopped;
-                    Some(false)
-                },
-                ProcState::Stopped =>  {
-                    *state = ProcState::Starting;
-                    Some(true)
-                }
-                ProcState::Running =>  {
-                    *state = ProcState::Stopping;
-                    Some(false)
-                }
-                _ => None
-            }
-        };
-
-        if let Some(s) = new_state {
-            tx.send((selected_site.to_owned(),s)).unwrap();
-        }
-
-    }
-
-    pub fn handle_mouse_hover(&mut self, column: u16, row: u16) {
-        let mut highlight : Option<String> = None;
-        for (rect,site) in &self.site_rects {
-            if rect.left() <= column && rect.right() >= column && row == rect.top() {
-                highlight = Some(site.to_string());
-                break;
-            }
-        }
-        
-        self.currently_hovered_site = highlight;
-    }
-
-    pub fn scroll_up(&mut self, count:Option<usize>) {
-        match self.vertical_scroll {
-            Some(current) if current > 0 => {
-                let new_val = current.saturating_sub(count.unwrap_or(1)).max(0);
-                self.vertical_scroll = Some(new_val);
-                self.scroll_state = self.scroll_state.position(new_val);
-            }
-            None => {
-                let max = self.line_count.saturating_sub(self.logs_area_height);
-                let new_val = max.saturating_sub(count.unwrap_or(1));
-                self.vertical_scroll = Some(new_val);
-                self.scroll_state = self.scroll_state.position(new_val);
-            }
-            _ => {}
-        }
-    }
-
-    // fn toggle_view(&mut self) {
-        
-        
-    //     self.view_mode = match self.view_mode {
-    //         ViewMode::Console => {
-    //             ViewMode::TUI
-    //         },
-    //         ViewMode::TUI => {
-    //             ViewMode::Console
-    //         },
-    //     };
-    // }
+#[derive(Clone,Debug,Eq,PartialEq)]
+pub enum Page {
+    Logs,
+    Statistics,
+    Connections
 }
 
-fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut MutexGuard<'_, AppState>,log_buffer: &Arc<Mutex<SharedLogBuffer>>) {
-    use ratatui::{
-        layout::{Constraint, Direction, Layout},
-        widgets::{Block, Borders, Paragraph}
-    };
-
-    let size = f.size();
-    if size.height < 10 || size.width < 10 {
-        return
-    }
-
-    let help_bar_height = 3 as u16;
+fn draw_traffic(
+    f: &mut ratatui::Frame,
+    app_state: &mut RwLockWriteGuard<'_, AppState>,
+    area: Rect,
+) {
+    let headers = [ "Site", "Source", "Target", "Description"];
     
-    let constraints = if app_state.show_apps_window {
+    let rows : Vec<Vec<String>> = app_state.statistics.read().expect("must be able to read stats").active_connections.iter().map(|((src,_id),target)| {
+        let typ = match &target.connection_type {
+            ProxyActiveConnectionType::TcpTunnelUnencryptedHttp => "UNENCRYPTED TCP TUNNEL".to_string(),
+            ProxyActiveConnectionType::TcpTunnelTls => 
+                "TLS ENCRYPTED TCP TUNNEL".to_string(),
+            ProxyActiveConnectionType::TerminatingHttp { incoming_scheme, incoming_http_version, outgoing_scheme, outgoing_http_version }=> 
+                format!("{incoming_scheme}@{incoming_http_version:?} <-TERMINATING_HTTP-> {outgoing_scheme}@{outgoing_http_version:?}"),
+            ProxyActiveConnectionType::TerminatingWs { incoming_scheme, incoming_http_version, outgoing_scheme, outgoing_http_version } => 
+                format!("{incoming_scheme}@{incoming_http_version:?} <-TERMINATING_WS-> {outgoing_scheme}@{outgoing_http_version:?}"),
+        };
+        let description = format!("{}",typ);
         vec![
-            Constraint::Percentage(70),
-            Constraint::Min(0), 
-            Constraint::Length(help_bar_height),
+            target.target.host_name.clone(),
+            src.to_string(), 
+            target.target_addr.clone(), 
+            description
         ]
-    } else {
-        vec![
-            Constraint::Min(0),
-            Constraint::Length(help_bar_height),
-        ]
+    }).collect();
+
+    
+    let state = &mut app_state.traffic_tab_state;
+
+    let header_height = 1;
+    let visible_rows = area.height as usize - header_height;
+
+    let start = state.vertical_scroll;
+    let end = std::cmp::min(start + visible_rows, rows.len());
+
+    
+    let display_rows = &rows[start..end];
+
+    let table_rows : Vec<_> = display_rows.iter().enumerate().map(|(i,row)| {
+        
+        let is_odd = i % 2 == 0;
+
+        Row::new(row.iter().map(|x|Cell::new(x.to_string()))).height(1 as u16)
+            .style(
+                Style::new()
+                    .bg(
+                        if is_odd {
+                            Color::from_hsl(15.0, 10.0, 10.0)
+                        } else {
+                            Color::from_hsl(10.0, 10.0, 5.0)
+                        }
+                    ).fg(Color::White)
+                )
+    }).collect();
+    
+
+    state.visible_rows = display_rows.iter().len() as usize;
+    state.total_rows = rows.len();
+
+    let widths = [
+        Constraint::Fill(1), 
+        Constraint::Fill(1), 
+        Constraint::Fill(2), 
+        Constraint::Fill(4),        
+    ];
+    
+    let headers = Row::new(headers
+        .iter()
+        .map(|&h| Cell::from(h).fg(Color::LightGreen).underlined().add_modifier(Modifier::BOLD))
+    ).height(1);
+
+    
+    let table = Table::new(table_rows, widths.clone())
+        .header(headers)
+        .highlight_style(Style::default().add_modifier(Modifier::BOLD))
+        .widths(&widths)
+        .flex(Flex::Legacy)
+        .column_spacing(1);
+
+    f.render_widget(table, area);
+
+
+    let scrollbar = Scrollbar::default()
+        .style(Style::default())
+        .orientation(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("↑"))
+        .end_symbol(Some("↓")).thumb_style(Style::new().fg(Color::LightBlue))
+        .orientation(ScrollbarOrientation::VerticalRight);
+
+    let height_of_traf_area = area.height.saturating_sub(2); 
+    state.area_height = height_of_traf_area as usize;
+    
+    state.vertical_scroll_state = state.vertical_scroll_state.content_length(rows.len().saturating_sub(height_of_traf_area as usize));
+    
+    let scrollbar_area = Rect::new(area.right() - 1, area.top(), 1, area.height);
+
+    f.render_stateful_widget(scrollbar,scrollbar_area, &mut state.vertical_scroll_state);
+
+}
+
+
+
+fn draw_stats(
+    f: &mut ratatui::Frame, 
+    app_state: &mut RwLockWriteGuard<'_, AppState>,
+    area: Rect
+) {
+
+    let total_received_tcp_connections = {
+        let guard = app_state.statistics.read().expect("must always be able to read statistics");
+        guard.received_tcp_connections
     };
-   
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .margin(1)
-        .constraints(constraints)
-        .split(size);
 
-    let mut buffer = log_buffer.lock().unwrap();
-    let logs = buffer.get_logs();
+    let p = Paragraph::new(format!("Total received TCP connections: {total_received_tcp_connections}"));
+    let p2 = Paragraph::new(format!("..More to come on this page at some point! :D")).fg(Color::DarkGray);
+    
+    f.render_widget(p, area.offset(Offset{x:4,y:2}));
+    f.render_widget(p2, area.offset(Offset{x:4,y:4}));
+}
 
+fn draw_logs(
+    f: &mut ratatui::Frame, 
+    app_state: &mut RwLockWriteGuard<'_, AppState>,
+    log_buffer: &Arc<Mutex<SharedLogBuffer>>,
+    area: Rect
+) {
 
-    if app_state.vertical_scroll.is_none() && buffer.limit.is_none() {
-        let l = buffer.limit.borrow_mut();
-        *l = Some(1000);
-    } else if app_state.vertical_scroll.is_some() && buffer.limit.is_some() {
-        let l = buffer.limit.borrow_mut();
-        *l = None;
+    {
+        let mut buffer = log_buffer.lock().expect("locking shared buffer mutex should always work");
+
+        if app_state.vertical_scroll.is_none() && buffer.limit.is_none() {
+            let l = buffer.limit.borrow_mut();
+            *l = Some(500);
+        } else if app_state.vertical_scroll.is_some() && buffer.limit.is_some() {
+            let l = buffer.limit.borrow_mut();
+            *l = None;
+        }
     }
 
-    let max_msg_width = chunks[0].inner(&Margin::default()).width;
 
-    let item_count = logs.len().to_string().len().max(6);
-    let items: Vec<Line> = logs.iter().enumerate().flat_map(|(i,x)|{
+     let buffer = log_buffer.lock().expect("locking shared buffer mutex should always work");
+
+    let max_msg_width = area.width;
+
+    let item_count = buffer.logs.len().to_string().len().max(6);
+
+    // we do this recalculation on each render in case of window-resize and such
+    // we should move so that this is done ONCE per log message and not for each log message ever on each render.
+    let items: Vec<Line> = buffer.logs.iter().enumerate().flat_map(|(i,x)|{
         
         let level = x.lvl;
         
@@ -548,12 +669,10 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
         let level = ratatui::text::Span::styled(lvl_str.clone(),s);
         let thread_name = ratatui::text::Span::styled(thread_str.clone(),Style::default().fg(Color::DarkGray));
 
-
-
         // if x.msg is wider than the available width, we need to split the message in multiple lines..
         let max_width = (max_msg_width as usize).saturating_sub(8).saturating_sub(nr_str.len() + lvl_str.len() + thread_str.len());
 
-        if x.msg.len() > max_width as usize {
+        let l = if x.msg.len() > max_width as usize {
             
             wrap_string(x.msg.as_str(), max_width as usize)
             .into_iter().enumerate()
@@ -575,71 +694,155 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
             let message = ratatui::text::Span::styled(format!("{} {}",x.src.clone(),x.msg),Style::default());
             vec![Line::from(vec![number,level,thread_name,message])]
             
-        }
+        };
+        
+        l
 
         
     }).collect();
 
     let wrapped_line_count = items.len();
-    app_state.line_count = wrapped_line_count;
-
-    let area = chunks[0];
+    app_state.total_line_count = wrapped_line_count;
     
-    let height_of_logs_area = area.height.saturating_sub(2); // header and footer
+    let height_of_logs_area = area.height.saturating_sub(0); // header and footer
     app_state.logs_area_height = height_of_logs_area as usize;
+    app_state.logs_area_width = area.width as usize;
+    
     let scroll_pos = { app_state.vertical_scroll };
 
-
+    let scrollbar_hovered = app_state.logs_scroll_bar_hovered;
     let mut scrollbar_state = app_state.scroll_state.borrow_mut();
    
-    let max = items.len().saturating_sub(height_of_logs_area as usize) ;
-    let paragraph = Paragraph::new(items.clone())
-        .scroll((scroll_pos.unwrap_or(max) as u16,0))
-        .block(
-                Block::new()
-                .border_style(Style::default().fg(Color::DarkGray))
-                .border_type(BorderType::Rounded)
-                .borders(Borders::ALL)
-            .title(" Logs ")
-            .title_alignment(Alignment::Left)
-            .title_style(Style::default().fg(Color::Cyan))
-        );
-        
-    let scrollbar = Scrollbar::default()
-        .style(Style::default().fg(Color::LightBlue))
+    let max_scroll_pos = items.len().saturating_sub(height_of_logs_area as usize);
+    
+    //let clamped_scroll_pos = scroll_pos.unwrap_or(max_scroll_pos).min(max_scroll_pos) as u16;
+   
+    let visible_rows = area.height as usize; // Adjust as needed based on your UI
+
+    let start = scroll_pos.unwrap_or(max_scroll_pos);
+    let end = std::cmp::min(start + visible_rows, items.len());
+    let display_rows = &items[start..end];
+
+
+    let clamped_items : Vec<Line> = display_rows.iter().map(|x| {
+        x.clone()
+    }).collect();
+
+    let paragraph = Paragraph::new(clamped_items);
+
+    let mut scrollbar = Scrollbar::default()
+        .style( Style::default())
         .orientation(ScrollbarOrientation::VerticalRight)
         .begin_symbol(Some("↑"))
-        .end_symbol(Some("↓"));
+        .end_symbol(Some("↓")).thumb_style(Style::new().fg(Color::LightBlue));
+
+    if scrollbar_hovered {
+        scrollbar = scrollbar.thumb_style(Style::default().fg(Color::Yellow).bg(Color::Red));
+    }
 
     *scrollbar_state = scrollbar_state.content_length(items.len().saturating_sub(height_of_logs_area as usize));
 
     if scroll_pos.is_none() {
         *scrollbar_state = scrollbar_state.position(items.len().saturating_sub(height_of_logs_area as usize));
     }
+   
 
     f.render_widget(paragraph, area);
-    f.render_stateful_widget(scrollbar,
-        area.inner(&Margin {
-            vertical: 1,
-            horizontal: 0,
-        }), 
-       &mut scrollbar_state);
+    f.render_stateful_widget(scrollbar,area, &mut scrollbar_state);
 
    
+
+}
+
+fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut RwLockWriteGuard<'_, AppState>,log_buffer: &Arc<Mutex<SharedLogBuffer>>) {
     
+    let size = f.size();
+    if size.height < 10 || size.width < 10 {
+        return
+    }
+
+    let help_bar_height = 3 as u16;
+
+
+
+    let constraints = if app_state.show_apps_window {
+        vec![
+            Constraint::Percentage(70), // MAIN SECTION
+            Constraint::Min(0),  // SITES SECTION
+            Constraint::Length(help_bar_height), // QUICK BAR
+        ]
+    } else {
+        vec![
+            Constraint::Min(1),  // MAIN SECTION
+            Constraint::Max(0),
+            Constraint::Length(help_bar_height),  // QUICK BAR
+        ]
+    };
+
+    let vertical = Layout::vertical(constraints);
+    let [top_area, mid_area, bot_area] = vertical.areas(size);
+
+    //et x = format!("Logs {:?}",app_state.vertical_scroll);
+    
+    let main_area = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0) 
+        ])
+        .split(top_area.clone()); 
+
+    // let totrows = app_state.traffic_tab_state.total_rows;
+    // let traheight = size.height;
+    
+    let tabs =  ratatui::widgets::Tabs::new(
+        vec![
+            "[1] Logs", 
+            "[2] Connections",
+            "[3] Stats",
+        ]).highlight_style(Style::new().fg(Color::Cyan))
+        .select(match app_state.current_page {
+            Page::Logs => 0,
+            Page::Connections => 1,
+            Page::Statistics => 2,
+        }) 
+        
+        .divider(ratatui::text::Span::raw("|"));
+
+    let frame_margin = &Margin { horizontal: 1, vertical: 1 };
+
+    match &app_state.current_page {
+        Page::Logs => draw_logs(f,app_state,log_buffer,main_area[0].inner(frame_margin)),
+        Page::Statistics => draw_stats(f,app_state,main_area[0].inner(frame_margin)),
+        Page::Connections => draw_traffic(f,app_state,main_area[0].inner(frame_margin)),
+    }
+
+    let frame = 
+        Block::new()
+        .border_style(Style::default().fg(Color::DarkGray))
+        .border_type(BorderType::Rounded)
+        .borders(Borders::ALL);
+
+    f.render_widget(frame, main_area[0]);
+
+
+    // render the tab bar on top of the tab content
+    f.render_widget(tabs, main_area[0].inner(&Margin { horizontal: 2, vertical: 0 }));
+
+
     if app_state.show_apps_window {
 
-        let sites_area_height = chunks[1].height.saturating_sub(2);
+        let sites_area_height = mid_area.height.saturating_sub(2);
         if sites_area_height == 0 {
             return
         }
         let sites_count = app_state.procs.len() as u16;
-        let columns_needed = (sites_count as f32 / sites_area_height as f32).ceil() as usize;
+        let columns_needed = ((sites_count as f32 / sites_area_height as f32).ceil()).max(1.0) as usize;
 
         let site_columns = Layout::default()
             .direction(Direction::Horizontal)
+            .flex(ratatui::layout::Flex::Legacy)
             .constraints(vec![Constraint::Percentage(100 / columns_needed as u16); columns_needed])
-            .split(chunks[1]);
+            .split(mid_area);
 
         let mut site_rects = vec![];
 
@@ -663,7 +866,8 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
                     &ProcState::Faulty => Style::default().fg(Color::Red),
                     &ProcState::Starting => Style::default().fg(Color::Green),
                     &ProcState::Stopped => Style::default().fg(Color::DarkGray),
-                    &ProcState::Stopping => Style::default().fg(Color::Yellow)
+                    &ProcState::Stopping => Style::default().fg(Color::Yellow),
+                    &ProcState::Remote => Style::default().fg(Color::Blue)
                 };
 
                 let mut id_style = Style::default();
@@ -710,7 +914,7 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
             Constraint::Min(0),
             Constraint::Length(3) 
         ])
-        .split(chunks.last().unwrap().clone()); 
+        .split(bot_area.clone()); 
 
 
     
@@ -719,43 +923,42 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
         ratatui::text::Span::raw("a: Toggle Sites | "),
     ];
 
-    if app_state.procs.iter().all(|x|x.1==&ProcState::Stopped) {
-        help_bar_text.push(ratatui::text::Span::raw("s: Start all sites | "))
-    }
-    else if  app_state.procs.iter().all(|x: (&String, &ProcState)|x.1==&ProcState::Running) {
-        help_bar_text.push(ratatui::text::Span::raw("z: Stop all sites | "));
-    }
-    else {
-        help_bar_text.push(ratatui::text::Span::raw("s: Start all sites | "));
-        help_bar_text.push(ratatui::text::Span::raw("z: Stop all sites | "));
-    }
+
+    help_bar_text.push(ratatui::text::Span::raw("s: Start all | "));
+    help_bar_text.push(ratatui::text::Span::raw("z: Stop all | "));
 
     help_bar_text.push(ratatui::text::Span::raw("↑/↓: Scroll | "));
-    help_bar_text.push(ratatui::text::Span::raw("PgUp/PgDn: Page Scroll "));
+    help_bar_text.push(ratatui::text::Span::raw("PgUp/PgDn Scroll "));
 
-    if app_state.vertical_scroll.is_some() {
-        help_bar_text.push(ratatui::text::Span::raw("| enter: Tail log "));
+
+    if Page::Logs == app_state.current_page {
+        help_bar_text.push(ratatui::text::Span::raw("c: Clear | "));
+        help_bar_text.push(ratatui::text::Span::raw("tab: toggle page "));
+        if app_state.vertical_scroll.is_some() {
+            help_bar_text.push(ratatui::text::Span::raw("| enter: Tail log "));
+        }
+    } else {
+        help_bar_text.push(ratatui::text::Span::raw("| tab: toggle page"));
     }
 
-    
+
+    // // DEBUG
+    // help_bar_text.push(ratatui::text::Span::raw(format!("| DBG: {}", 
+    //     app_state.dbg
+    // )));
+    let current_version = self_update::cargo_crate_version!();
     let help_bar = Paragraph::new(Line::from(help_bar_text))
         .style(Style::default().fg(Color::DarkGray))
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray))
-        .title(" ODD-BOX ").title_style(Style::default().fg(Color::LightYellow)));
+        .title(format!(" ODD-BOX v{current_version}")).title_style(Style::default().fg(Color::LightYellow)));
 
     f.render_widget(help_bar, help_bar_chunk[1]);
 
 
 }
-
-// #[derive(Clone)]
-// enum ViewMode {
-//     Console,
-//     TUI,
-// }
 
 fn wrap_string(input: &str, max_length: usize) -> Vec<String> {
 

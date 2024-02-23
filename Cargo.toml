@@ -10,17 +10,17 @@ license-file = "license"
 [dependencies]
 dirs = "5.0.1"
 futures-util = "0.3.28"
-hyper = { version = "0.14.27" , features=["http2","client","server","tcp"] }
-
+hyper = { version = "1.1.0" , features=["http2","client","server"] }
+hyper-util = { version = "0.1.1", features = ["full"] }
 regex = "1.9.5"
 serde = { version = "1.0.88", features = ["derive"] }
 tokio = { version = "1.32.0", features = ["full"] }
-tokio-tungstenite = "0.20.0"
+tokio-tungstenite = { version="0.21.0" , features = ["__rustls-tls"] }
 toml = "0.8.4"
 tracing = "0.1.37"
 tracing-subscriber = { version="0.3.18", features=[ "env-filter","std","fmt","time"] }
 url = "2.4.1"
-webpki = "0.22.2"
+
 hyper-trust-dns = { version = "0.5.0", features = [
   "rustls-http2",
   "dnssec-ring",
@@ -30,33 +30,46 @@ hyper-trust-dns = { version = "0.5.0", features = [
 
 lazy_static = "1.4.0"
 unicase = "2.7.0"
-hyper-tls = "0.5.0"
+hyper-tls = "0.6.0"
 clap = { version="4.4.7", features=["derive"]}
-rustls = "0.21.8"
-tokio-rustls = "0.24.1"
-rustls-pemfile = "1.0.3"
-rcgen = "0.11.3"
+rustls = "0.22.2"
+tokio-rustls = "0.25.0"
+rustls-pemfile = "2.0.0"
+rcgen = "0.12.1"
 socket2 = "0.5.5"
-hyper-tungstenite = "0.11.1"
+hyper-tungstenite = "0.13.0"
 
-ratatui = { version = "0.24.0", optional = true }
-crossterm = { version = "0.27.0", optional = true }
-#ctrlc = { version = "3.4.1" }
+#ratatui = { version = "0.26.1" }
+ratatui = { git = "https://github.com/ratatui-org/ratatui" }
+crossterm = { version = "0.27.0"  }
 chrono = "0.4.31"
 
 time = {version="0.3.30",features=["macros","formatting","parsing"]}
-device_query = { version="1.1.3", optional = true }
-reqwest = {version="0.11.23",features=["json"]}
+reqwest = { version = "0.11.23", features = ["json"] }
 serde_json = "1.0.111"
 self_update = "0.39.0"
+bytes = "1.5.0"
+http-body-util = "0.1.0"
+active-win-pos-rs = "0.8.3"
+h2 = "0.4.2"
+hyper-rustls = { version = "0.26.0", features = ["http2"] }
+hyper-hickory = "0.7.0"
+http-body = "1.0.0"
+tokio-stream = "0.1.14"
+
+hpack = { version = "0.3.0"  }
+webpki = { version = "0.22.4"  }
+anyhow = "1.0.79"
+uuid = { version = "1.7.0", features = ["v4"] }
+tungstenite = "0.21.0"
+tokio-util = "0.7.10"
+toml_edit = "0.22.6"
+serde_yaml = "0.9.32"
+#console-subscriber = "0.2.0"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.52.0", features = ["Win32","Win32_Foundation","Win32_System","Win32_System_Console"] }
 
-[features]
-default = ["TUI","device_query"]
-TUI = ["ratatui","crossterm"]
-device_query = ["dep:device_query"]
 
 
 
@@ -66,3 +79,4 @@ opt-level = 'z'     # Optimize for size
 #codegen-units = 1   # Reduce number of codegen units to increase optimizations
 # panic = 'abort'     # Abort on panic
 #strip = true        # Strip symbols from binary*
+#debug = true

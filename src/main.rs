@@ -1,48 +1,38 @@
 #![feature(async_closure)]
 #![feature(fs_try_exists)]
 #![feature(let_chains)]
+#![feature(ascii_char)]
+#![feature(impl_trait_in_assoc_type)]
+#![feature(fn_traits)]
+
+mod configuration;
 mod types;
-mod hyper_reverse_proxy;
-use rustls::PrivateKey;
+mod tcp_proxy;
+mod http_proxy;
+mod proxy;
+use http_proxy::ProcMessage;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use self_update::cargo_crate_version;
-use std::sync::Mutex;
+use std::{borrow::BorrowMut, sync::Mutex};
 use std::time::Duration;
-use types::*;
+use types::custom_error::*;
 use std::collections::HashMap;
 use std::io::Read;
 use std::sync::Arc;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::EnvFilter;
 mod proc_host;
-mod proxy;
-
 use tracing_subscriber::util::SubscriberInitExt;
-
-#[cfg(feature = "TUI")]
+use crate::types::app_state::ProcState;
 mod tui;
 
-#[cfg(feature = "TUI")]
-use tui::AppState;
+use types::app_state::AppState;
 
 
-#[cfg(not(feature = "TUI"))]
-struct AppState {
-    procs: HashMap<String,ProcState>
-}
-#[cfg(not(feature = "TUI"))]
-impl AppState {
-    pub fn new() -> Self {
-        Self {
-            procs: HashMap::new()
-        }
-    }
-}
-
+#[derive(Debug)]
 struct DynamicCertResolver {
     cache: Mutex<HashMap<String, Arc<rustls::sign::CertifiedKey>>>,
 }
-
-use rustls::sign::any_supported_type;
 
 use rustls::server::{ClientHello, ResolvesServerCert};
 
@@ -52,7 +42,7 @@ impl ResolvesServerCert for DynamicCertResolver {
         let server_name = client_hello.server_name()?;
         
         {
-            let cache = self.cache.lock().unwrap();
+            let cache = self.cache.lock().expect("should always be able to read cert cache");
             if let Some(certified_key) = cache.get(server_name) {
                 return Some(certified_key.clone());
             }
@@ -64,7 +54,7 @@ impl ResolvesServerCert for DynamicCertResolver {
         let host_name_cert_path = base_path.join(server_name);
     
         if let Err(e) = std::fs::create_dir_all(&host_name_cert_path) {
-            eprintln!("Could not create directory: {:?}", e);
+            tracing::error!("Could not create directory: {:?}", e);
             return None;
         }
 
@@ -76,27 +66,33 @@ impl ResolvesServerCert for DynamicCertResolver {
             return None
         }
 
-        let cert_chain = my_certs(&cert_path).unwrap();
+        let cert_chain = if let Ok(c) = my_certs(&cert_path) {
+            c
+        } else {
+            tracing::error!("failed to read cert: {cert_path}");
+            return None
+        };
 
         if cert_chain.is_empty() {
             tracing::warn!("EMPTY CERT CHAIN FOR {}",server_name);
             return None
         }
        
-        let private_key = my_rsa_private_keys(&key_path).unwrap();
-        
-        let rsa_signing_key = any_supported_type(&private_key).unwrap();
+        if let Ok(private_key) = my_rsa_private_keys(&key_path) {
+            if let Ok(rsa_signing_key) = rustls::crypto::ring::sign::any_supported_type(&private_key) {
+                Some(std::sync::Arc::new(rustls::sign::CertifiedKey::new(
+                    cert_chain, 
+                    rsa_signing_key
+                )))
 
-        // let rsa_signing_key = 
-        //     RsaSigningKey::new(&private_key).map_err(|e| {
-        //         tracing::warn!("{}",e.to_string());
-        //         std::io::Error::new(std::io::ErrorKind::InvalidData, "Failed to create signing key")
-        //     }).unwrap();
-
-        Some(std::sync::Arc::new(rustls::sign::CertifiedKey::new(
-            cert_chain, 
-            rsa_signing_key
-        )))
+            } else {
+                tracing::error!("rustls::crypto::ring::sign::any_supported_type - failed to read cert: {cert_path}");
+                None
+            }
+        } else {
+            tracing::error!("my_rsa_private_keys - failed to read cert: {cert_path}");
+            None
+        }
     }
 }
 
@@ -139,22 +135,27 @@ fn generate_cert_if_not_exist(hostname: &str, cert_path: &str,key_path: &str) ->
     }
 }
 
-fn my_certs(path: &str) -> Result<Vec<rustls::Certificate>, std::io::Error> {
+
+fn my_certs(path: &str) -> Result<Vec<CertificateDer<'static>>, std::io::Error> {
     let cert_file = File::open(path)?;
     let mut reader = BufReader::new(cert_file);
-    let certs = rustls_pemfile::certs(&mut reader).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Failed to load certificate"))?;
-    Ok(certs.into_iter().map(rustls::Certificate).collect())
+    let certs = rustls_pemfile::certs(&mut reader);
+    Ok(certs.filter_map(|cert|match cert {
+        Ok(x) => Some(x),
+        Err(_) => None,
+    }).collect())
 }
 
-fn my_rsa_private_keys(path: &str) -> Result<PrivateKey, String> {
+fn my_rsa_private_keys(path: &str) -> Result<PrivateKeyDer, String> {
 
-    let file = File::open(&path).unwrap();
+    let file = File::open(&path).map_err(|e|format!("{e:?}"))?;
     let mut reader = BufReader::new(file);
-    let mut keys = rustls_pemfile::pkcs8_private_keys(&mut reader).unwrap();
+    let mut keys = rustls_pemfile::pkcs8_private_keys(&mut reader)
+        .collect::<Result<Vec<rustls::pki_types::PrivatePkcs8KeyDer>,_>>().map_err(|e|format!("{e:?}"))?;
 
     match keys.len() {
         0 => Err(format!("No PKCS8-encoded private key found in {path}").into()),
-        1 => Ok(PrivateKey(keys.remove(0))),
+        1 => Ok(PrivateKeyDer::Pkcs8(keys.remove(0))),
         _ => Err(format!("More than one PKCS8-encoded private key found in {path}").into()),
     }
 
@@ -179,7 +180,6 @@ struct Args {
     #[arg(long,short)]
     tls_port: Option<u16>,
 
-    #[cfg(feature = "TUI")]
     #[arg(long,default_value="true")]
     tui: Option<bool>,
 
@@ -188,23 +188,19 @@ struct Args {
 
     #[arg(long)]
     update: bool,
-}
 
-#[derive(Debug,PartialEq,Clone)]
-pub enum ProcState {
-    Faulty,
-    Stopped,    
-    Starting,
-    Stopping,
-    Running
+    #[arg(long)]
+    generate_example_cfg : bool
 }
 
 use reqwest;
 use serde::Deserialize;
 use serde_json::Result as JsonResult;
+
+use crate::configuration::{ConfigWrapper, EnvVar, LogLevel};
 #[derive(Deserialize, Debug, Clone)]
 struct Release {
-    html_url: Option<String>,
+    #[allow(dead_code)] html_url: Option<String>,
     tag_name: Option<String>,
 }
 
@@ -236,7 +232,7 @@ async fn update() -> JsonResult<()> {
         println!("already running latest version: {latest_tag}");
         return Ok(())
     }
-    tokio::task::spawn_blocking(move || {
+    _ = tokio::task::spawn_blocking(move || {
         update_from_github(&latest_tag,&current_version)
     }).await;
 
@@ -244,16 +240,26 @@ async fn update() -> JsonResult<()> {
 
 }
 
-#[tokio::main]
+#[tokio::main(flavor="multi_thread")]
 async fn main() -> Result<(),String> {
     
+    //console_subscriber::init();
+    //let cancellation_token = tokio_util::sync::CancellationToken::new();
     
     let args = Args::parse();
 
     if args.update {
-        update().await;
+        _ = update().await;
         return Ok(());
     }
+
+    if args.generate_example_cfg {
+        let cfg = crate::configuration::v1::example_v1();
+        let serialized = toml::to_string_pretty(&cfg).unwrap();
+        std::fs::write("odd-box-example-config.toml", serialized).unwrap();
+        return Ok(())
+    }
+
 
 
     // By default we use odd-box.toml, and otherwise we try to read from Config.toml
@@ -263,6 +269,8 @@ async fn main() -> Result<(),String> {
         } else {
             if std::fs::try_exists("odd-box.toml").is_ok() {
                 "odd-box.toml".to_owned()
+            } else if std::fs::try_exists("oddbox.toml").is_ok() {
+                "oddbox.toml".to_owned()
             } else {
                 "Config.toml".to_owned()
             }
@@ -273,24 +281,57 @@ async fn main() -> Result<(),String> {
     let mut contents = String::new();
     file.read_to_string(&mut contents).map_err(|_|format!("Could not read configuration file: {cfg_path}"))?;
 
-    let mut config: Config = toml::from_str(&contents).map_err(|e:toml::de::Error| e.message().to_owned() )?;
-
-    if let Some(sites) = args.enable_site {
-        for site in &sites {
-            let site_config = config.processes.iter().find(|x|&x.host_name==site);
-            if site_config.is_none() {
-                let allowed =  config.processes.iter().map(|x|x.host_name.as_str()).collect::<Vec<&str>>();
-                if allowed.len() == 0 {
-                    return Err(format!("You have not configured any sites yet.."))
+    let mut config: ConfigWrapper = 
+        ConfigWrapper(match configuration::Config::parse(&contents) {
+            Ok(configuration::Config::V1(configuration)) => {
+                Ok(configuration)
+            },
+            Ok(old_config) => {
+                eprintln!("Warning: you are using a legacy style configuration file, it will be automatically updated");
+                match old_config.try_upgrade() {
+                    Ok(configuration::Config::V1(configuration)) => {       
+                              
+                        configuration.write_to_disk(&cfg_path);
+                        Ok(configuration)
+                    },
+                    Ok(_) => return Err(format!("Unable to update the configuration file to new schema")),
+                    Err(e) => return Err(e),
                 }
+            },
+            Err(e) => Err(e),
+        }?);
+    
+    config.is_valid()?;
+
+    // some times we are invoked with specific sites to run
+    if let Some(sites) = args.enable_site {
+        if config.hosted_process.as_ref().map_or(true, Vec::is_empty) {
+            return Err("You have not configured any sites yet..".to_string());
+        }
+    
+        for site in &sites {
+            let site_config = config.hosted_process.as_ref()
+                .and_then(|processes| processes.iter().find(|x| &x.host_name == site));
+    
+            if site_config.is_none() {
+                let allowed = config.hosted_process.as_ref().map_or(Vec::new(), |processes| 
+                    processes.iter().map(|x| x.host_name.as_str()).collect::<Vec<&str>>()
+                );
+                if allowed.is_empty() {
+                    return Err("You have not configured any sites yet..".to_string());
+                }
+    
                 let allowed = allowed.join(", ");
-                return Err(format!("No such site '{site}' found in your configuration. Available sites: {allowed}"))
+                return Err(format!("No such site '{site}' found in your configuration. Available sites: {allowed}"));
             }
         }
-        config.processes = config.processes.into_iter().filter(|x:&SiteConfig| {
-            sites.contains(&x.host_name)
-        }).collect()
+    
+        config.hosted_process = config.hosted_process.take().map(|processes| 
+            processes.into_iter().filter(|x| sites.contains(&x.host_name)).collect()
+        );
     }
+    
+
 
 
     let log_level : LevelFilter = match config.log_level {
@@ -303,10 +344,6 @@ async fn main() -> Result<(),String> {
     };
 
     
-    #[cfg(not(feature = "TUI"))]
-    let use_tui = false;
-    
-    #[cfg(feature = "TUI")]
     let use_tui = if args.tui.unwrap_or_default() {
         tui::init();
         true
@@ -320,13 +357,14 @@ async fn main() -> Result<(),String> {
             .with_max_level(tracing::Level::TRACE)
             .with_env_filter(EnvFilter::from_default_env()
             .add_directive(log_level.into())
-            .add_directive("hyper=info".parse().expect("this directive will always work")))
+            .add_directive("hyper=info".parse().expect("this directive will always work"))
+            .add_directive("h2=info".parse().expect("this directive will always work")))
             .with_thread_names(true)
             .with_timer(
                 tracing_subscriber::fmt::time::OffsetTime::new(
                     time::UtcOffset::from_whole_seconds(
                         chrono::Local::now().offset().local_minus_utc()
-                    ).unwrap(), 
+                    ).expect("time... works"), 
                     time::macros::format_description!("[hour]:[minute]:[second]")
                 )
             )
@@ -338,7 +376,7 @@ async fn main() -> Result<(),String> {
 
     config.init(&cfg_path)?;
 
-    let srv_port : u16 = if let Some(p) = args.port { p } else { config.port.unwrap_or(8080) } ;
+    let srv_port : u16 = if let Some(p) = args.port { p } else { config.http_port.unwrap_or(8080) } ;
     let srv_tls_port : u16 = if let Some(p) = args.tls_port { p } else { config.tls_port.unwrap_or(4343) } ;
 
     // Validate that we are allowed to bind prior to attempting to initialize hyper since it will simply on failure otherwise.
@@ -354,154 +392,144 @@ async fn main() -> Result<(),String> {
         }
     }
 
-    let (tx,_) = tokio::sync::broadcast::channel::<(String,bool)>(config.processes.len());
+    let sites_len = config.hosted_process.as_ref().and_then(|x|Some(x.len())).unwrap_or_default() as u16;
 
-    let sites_len = config.processes.len() as u16;
+    let (tx,_) = tokio::sync::broadcast::channel::<ProcMessage>(sites_len.max(1).into());
+
+    
     
     let mut sites = vec![];
-    
-    let shared_state : Arc<tokio::sync::Mutex<AppState>> = 
+    let mut inner_state = AppState::new();
+    for x in config.remote_target.as_ref().unwrap_or(&vec![]) {
+        inner_state.procs.insert(x.host_name.to_owned(), ProcState::Remote);
+    }
+    let shared_state : Arc<tokio::sync::RwLock<AppState>> = 
         std::sync::Arc::new(
-            tokio::sync::Mutex::new(
-                AppState::new()
+            tokio::sync::RwLock::new(
+                inner_state
             )
         );
-        
+    
+    let global_auto_start_default_value = config.auto_start.clone();
+    let port_range_start = config.port_range_start.clone();
+    let global_env_vars = config.env_vars.clone();
 
-    for (i,x) in config.processes.iter_mut().enumerate() {
-        let auto_port = config.port_range_start + i as u16;
-        
+    let mut_procs = config.hosted_process.borrow_mut();
+    if let Some(processes) = mut_procs {
+        for (i, x) in processes.iter_mut().enumerate() {
+            
+            let auto_port = port_range_start + i as u16;
+            // if a custom PORT variable is set, we use it
+            if let Some(cp) = x.env_vars.iter().find(|x| x.key.to_lowercase() == "port") {
+                let custom_port = cp.value.parse::<u16>()
+                    .map_err(|e| format!("Invalid port configured for {}. {:?}", &x.host_name, e))?;
+                
+                if custom_port > sites_len {
+                    tracing::warn!("Using custom port for {} as specified in configuration! ({})", x.host_name, custom_port);
+                    x.set_port(custom_port);
+                } else if custom_port < 1 {
+                    return Err(format!("Invalid port configured for {}: {}.", x.host_name, cp.value));
+                } else {
+                    return Err(format!("Invalid port configured for {}: {}. Please use a port number above {}", 
+                        x.host_name, cp.value, sites_len + port_range_start));
+                }
+            // otherwise we assign one from the auto range
+            } else {
+                x.set_port(auto_port);
+                x.env_vars.push(EnvVar { key: "PORT".to_string(), value: auto_port.to_string() });
+            }
 
-        if let Some(cp) = x.env_vars.iter().find(|x|x.key.to_lowercase()=="port"){
-            let custom_port = cp.value.parse::<u16>().map_err(|e|format!("Invalid port configured for {}. {e:?}",&x.host_name))?;
-            if custom_port > sites_len {                
-                tracing::warn!("Using custom port for {} as specified in configuration! ({})", x.host_name,custom_port);
-                x.set_port(custom_port as u16);
+    
+            tracing::trace!("Initializing {} on port {:?}", x.host_name, x.port);
+            x.env_vars = [global_env_vars.clone(), x.env_vars.clone()].concat();
+    
+            if x.auto_start.is_none() {
+                x.auto_start = global_auto_start_default_value;
             }
-            else if custom_port < 1 {
-                return Err(format!("Invalid port configured for {}: {}.", x.host_name,cp.value))
-            }
-            else {
-                return Err(format!("Invalid port configured for {}: {}. Please use a port number above {}", 
-                    x.host_name,cp.value, (sites_len + config.port_range_start)))
-            }
-        } else {
-            x.set_port(auto_port);
-            x.env_vars.push(EnvVar { key: String::from("PORT"), value: auto_port.to_string() });
-        }
-
-        tracing::trace!("Initializing {} on port {}",x.host_name,x.port);
-        x.env_vars = [ config.env_vars.clone(), x.env_vars.clone() ].concat();
-        sites.push(tokio::task::spawn(
-            proc_host::host(
+    
+            sites.push(tokio::task::spawn(proc_host::host(
                 x.clone(),
                 tx.subscribe(),
                 shared_state.clone()
-            ))
-        )
-        
+            )));
+        }
     }
 
+    let srv_ip = if let Some(ip) = config.ip { ip.to_string() } else { "127.0.0.1".to_string() };
     let arced_tx = std::sync::Arc::new(tx.clone());
-    let child = tokio::spawn(proxy::rev_prox_srv(
-        config,
-        format!("127.0.0.1:{srv_port}"),
-        format!("127.0.0.1:{srv_tls_port}"),
-        arced_tx,
-        shared_state.clone()
-    ));
+    let shutdown_signal = Arc::new(tokio::sync::Notify::new());
+
+    let proxy_thread = 
+        tokio::spawn(crate::proxy::listen(
+            config.clone(),
+            format!("{srv_ip}:{srv_port}").parse().expect("bind address for http must be valid.."),
+            format!("{srv_ip}:{srv_tls_port}").parse().expect("bind address for https must be valid.."),
+            arced_tx.clone(),
+            shared_state.clone(),
+            shutdown_signal
+        ));
+       
+
 
 
     if use_tui {
-        #[cfg(feature="TUI")]
         tui::run(EnvFilter::from_default_env()
             .add_directive(log_level.into())
+            .add_directive("h2=info".parse().expect("this directive will always work"))
+            .add_directive("tokio_util=info".parse().expect("this directive will always work"))            
             .add_directive("hyper=info".parse().expect("this directive will always work")),shared_state.clone(),tx.clone()).await;
     } else {
-        use tokio::task;
-        
-                
-        let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
-
-        #[cfg(feature="device_query")] {
-            use device_query::{DeviceQuery, DeviceState, Keycode};
-            let r2 = running.clone();
-            let t2 = tx.clone();
-            task::spawn(async move {
-                while r2.load(std::sync::atomic::Ordering::SeqCst) {
-                    let keys = { DeviceState::new().get_keys() };
-                    if keys.contains(&Keycode::Q)  || keys.contains(&Keycode::Escape) || (keys.contains(&Keycode::C) && keys.contains(&Keycode::LControl)) {
-                        _ = t2.send(("exit".to_owned(),false)).ok();
-                        r2.store(false, std::sync::atomic::Ordering::SeqCst);
-                    }
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                }
-            }).await.unwrap();
-        }
-
-        while running.load(std::sync::atomic::Ordering::SeqCst) {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-
-    }
-
-    _ = tx.send(("exit".to_owned(),false));
-
-    let s = shared_state.clone();
-    while tx.receiver_count() > 0 {
-
-        let state = s.lock().await;
-        let mut nrwaiting = 0;
-        for (name,state) in &state.procs {
-            if state == &ProcState::Running {
-                
-                if use_tui {
-                    println!(">>> Waiting for {} to stop..",name);
-                } else {
-                    tracing::debug!("Waiting for {} to stop..",name);
-                }
-
-                nrwaiting += 1;
+       let mut stdin = std::io::stdin();
+       let mut buf : [u8;1] = [0;1];
+       loop {
+            _ = stdin.read_exact(&mut buf);
+            if buf[0] == 3 || buf[0] == 113 {
+                tracing::info!("bye: {:?}",buf);
+                break;
+            } else {
+                tracing::info!("press 'q' or ctrl-c to quit, not {:?}",buf);
             }
-        }
-        if nrwaiting == 0 {
-            break
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        
-    }
-    let state = shared_state.lock().await;
-    for (p,s) in state.procs.iter() {
-
-        if use_tui {
-            println!(">> {} --> {:?}", p,s);
-        } else {
-            tracing::debug!("{} --> {:?}",p,s);
-        }        
-    
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            
+       }
     }
 
+    {
+        tracing::warn!("Changing application state to EXIT");
+        let mut state = shared_state.write().await;
+        state.exit = true;
+    }
 
-    if tx.receiver_count() == 0 {
-        if use_tui {
-            println!("Something seems to have gone wrong - there may be child-processes still running even after exiting odd-box..");
-        } else {
-            tracing::error!("Something seems to have gone wrong - there may be child-processes still running even after exiting odd-box..");
-        }        
+    if use_tui {
+        println!("Waiting for processes to stop..");
     } else {
+        tracing::info!("Waiting for processes to stop..");
+    } 
 
-        if use_tui {        
-            println!(">>> Graceful shutdown successful!");
-        } else {
-            tracing::debug!("Graceful shutdown successful!");
-        }    
+    while tx.receiver_count() > 0 {          
+        tokio::time::sleep(Duration::from_millis(50)).await;        
+    }
+ 
+    {
+        let state = shared_state.read().await;
+            for (name,status) in state.procs.iter().filter(|x|x.1!=&ProcState::Remote) {
+                if use_tui {
+                    println!("{name} ==> {status:?}")
+                } else {
+                    tracing::info!("{name} ==> {status:?}")
+                }
+            }
     }
 
+    if use_tui {
+        println!("Performing cleanup, please wait..");
+    } else {
+        tracing::info!("Performing cleanup, please wait..");
+    } 
     
-    _ = child.abort();
-    _ = child.await.ok();
-    
-    
+    _ = proxy_thread.abort();
+    _ = proxy_thread.await.ok();
+
     Ok(())
 
 
