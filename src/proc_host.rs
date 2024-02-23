@@ -123,7 +123,7 @@ pub (crate) async fn host(
         let cmd = Command::new(bin_path)
             .args(proc.args.clone())
             .envs(&process_specific_environment_variables)
-            .current_dir(&proc.path)
+            .current_dir(&proc.dir)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::null()).spawn();
