@@ -65,6 +65,7 @@ tungstenite = "0.21.0"
 tokio-util = "0.7.10"
 toml_edit = "0.22.6"
 serde_yaml = "0.9.32"
+ahash = "0.8.7"
 #console-subscriber = "0.2.0"
 
 [target.'cfg(windows)'.dependencies]
