@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use socket2::Socket;
 use tokio::net::TcpSocket;
 use tokio::net::TcpStream;
@@ -17,6 +18,7 @@ use crate::tcp_proxy::DataType;
 use crate::tcp_proxy::PeekResult;
 use crate::tcp_proxy::ReverseTcpProxyTarget;
 use crate::types::app_state;
+use crate::types::app_state::ProcState;
 
 pub async fn listen(
     cfg: ConfigWrapper, 
@@ -39,17 +41,19 @@ pub async fn listen(
                 target_http_port = y.port;
             }
             tcp_targets.push(ReverseTcpProxyTarget { 
-                target_hostname: y.host_name.clone(), 
+                capture_subdomains: y.capture_subdomains.unwrap_or_default(),
+                forward_wildcard: y.forward_subdomains.unwrap_or_default(),
                 target_http_port,
                 target_tls_port,
+                target_hostname: y.host_name.to_owned(),
                 host_name: y.host_name.to_owned(),
-                is_hosted: true
+                is_hosted: true,
+                sub_domain: None
             })
         }
     }
 
     if let Some(x) = &cfg.0.remote_target {
-        // dont add non_tcp_enabled_targets_to_the_list
         for y in x.iter().filter(|xx|xx.disable_tcp_tunnel_mode.unwrap_or_default() == false) {
             let mut target_http_port = None;
             let mut target_tls_port = None;
@@ -59,11 +63,14 @@ pub async fn listen(
                 target_http_port = y.port;
             }
             tcp_targets.push(ReverseTcpProxyTarget { 
+                capture_subdomains: y.capture_subdomains.unwrap_or_default(),
+                forward_wildcard: y.forward_subdomains.unwrap_or_default(),
                 target_hostname: y.target_hostname.to_owned(), 
                 target_http_port,
                 target_tls_port,
                 host_name: y.host_name.to_owned(),
-                is_hosted: false
+                is_hosted: false,
+                sub_domain: None
             })
         }
     }
@@ -282,10 +289,6 @@ async fn handle_new_tcp_stream(
 
     let targets = targets.clone();
     
-    // NOTE: toggling this to true will make all tls requests go thru the terminating proxy.
-    // it seems google does not like our tcp tunnel, gotta find out why.
-    let prevent_tcp = false;
-
     // OK SO IT TURNS OUT GOOGLE USES SNI ROUTING, AND SINCE WE ARRIVE WITH THE GOOGLE.LOCAL SNI, IT WONT WORK.
     // THIS MEANS WE MUST ALLOW CONFIGURING TCP_MODE=ALWAYS|NEVER|ALLOW
     
@@ -303,6 +306,7 @@ async fn handle_new_tcp_stream(
                     
                     
                     if target.is_hosted {
+                        
                         // we rely on terminating proxy do trigger this instead of doing it here
                         //_ = tx.send(ProcMessage::Start(target.host_name.clone()));
                      
@@ -318,7 +322,30 @@ async fn handle_new_tcp_stream(
                                 tracing::warn!("error 0001 has occurred")
                             },
                             Some(app_state::ProcState::Stopped) => {
-                                tracing::debug!("target process is stopped, re-routing to terminating proxy so that user sees 'please wait' text")
+                                _ = tx.send(ProcMessage::Start(target.host_name.clone()));
+                                let thn = target.host_name.clone();
+                                let mut has_started = false;
+                                for _ in 0..5 {
+                                    tokio::time::sleep(Duration::from_secs(2)).await;
+                                    tracing::debug!("handling an incoming request to a stopped target, waiting for up to 10 seconds for {thn} to spin up - after this we will release the request to the terminating proxy and show a 'please wait' page instaead.");
+                                    {
+                                        let guard = state.read().await;
+                                        match guard.procs.get(&target.host_name) {
+                                            Some(&ProcState::Running) => {
+                                                has_started = true;
+                                                break
+                                            },
+                                            _ => { }
+                                        }
+                                    }
+                                }
+                                if has_started {
+                                    tracing::trace!("Using unencrypted tcp tunnel for remote target: {target:?}");
+                                    tcp_proxy::ReverseTcpProxy::tunnel(tcp_stream, target, false,state.clone(),source_addr).await;
+                                    return;
+                                } else {
+                                    tracing::trace!("{thn} is still not running... handing this request over to the terminating proxy.")
+                                }
                             }
                             ,_=> {
                                 tracing::trace!("Using unencrypted tcp tunnel for remote target: {target:?}");
@@ -344,7 +371,7 @@ async fn handle_new_tcp_stream(
             typ: DataType::TLS,
             http_version:_,
             target_host: Some(target)
-        }) if expect_tls && !prevent_tcp => {
+        }) if expect_tls => {
             if let Some(target) = tcp_proxy::ReverseTcpProxy::try_get_target_from_vec(targets, &target) {
                 
                 if target.target_tls_port.is_some() {

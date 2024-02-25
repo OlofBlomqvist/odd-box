@@ -65,6 +65,7 @@ pub enum Target {
 }
 
 pub async fn proxy(
+    _req_host_name: &str,
     is_https:bool,
     state: std::sync::Arc<tokio::sync::RwLock<crate::AppState>>,
     mut req: hyper::Request<hyper::body::Incoming>,

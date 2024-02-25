@@ -21,7 +21,11 @@ pub struct ReverseTcpProxyTarget {
     pub target_http_port: Option<u16>,
     pub target_tls_port: Option<u16>,
     pub host_name: String,
-    pub is_hosted : bool // we have this here to not need to check actual state for non hosted sites (for the "please wait" page feature)
+    pub is_hosted : bool,
+    pub capture_subdomains: bool,
+    pub forward_wildcard: bool,
+    // subdomain is filled in otf upon receiving a request for this target and there is a subdomain used in the req
+    pub sub_domain: Option<String> 
 }
 
 
@@ -29,6 +33,9 @@ impl ReverseTcpProxyTarget {
     pub fn from_target(target:crate::http_proxy::Target) -> Self {
         match &target {
             crate::http_proxy::Target::Remote(x) => ReverseTcpProxyTarget {
+                sub_domain: None,
+                capture_subdomains: x.capture_subdomains.unwrap_or_default(),
+                forward_wildcard: x.forward_subdomains.unwrap_or_default(),
                 target_hostname: x.target_hostname.clone(),
                 target_http_port: if x.https.unwrap_or_default() {None} else { x.port },
                 target_tls_port:if x.https.unwrap_or_default() {x.port} else { None },
@@ -36,6 +43,9 @@ impl ReverseTcpProxyTarget {
                 is_hosted: false
             },
             crate::http_proxy::Target::Proc(x) => ReverseTcpProxyTarget {
+                sub_domain: None,
+                capture_subdomains: x.capture_subdomains.unwrap_or_default(),
+                forward_wildcard: x.forward_subdomains.unwrap_or_default(),
                 target_hostname: x.host_name.clone(),
                 target_http_port: if x.https.unwrap_or_default() {None} else { x.port },
                 target_tls_port:if x.https.unwrap_or_default() {x.port} else { None },
@@ -82,31 +92,62 @@ pub struct ReverseTcpProxy {
 }
 
 impl ReverseTcpProxy {
-
+    fn get_subdomain(requested_hostname: &str, backend_hostname: &str) -> Option<String> {
+        if requested_hostname == backend_hostname { return None };
+        if requested_hostname.to_uppercase().ends_with(&backend_hostname.to_uppercase()) {
+            let part_to_remove_len = backend_hostname.len();
+            let start_index = requested_hostname.len() - part_to_remove_len;
+            if start_index == 0 || requested_hostname.as_bytes()[start_index - 1] == b'.' {
+                return Some(requested_hostname[..start_index].trim_end_matches('.').to_string());
+            }
+        }
+        None
+    }
     pub fn try_get_target_from_vec(
         targets: Arc<Vec<ReverseTcpProxyTarget>>,
-        name: &str,
+        req_host_name: &str,
     ) -> Option<ReverseTcpProxyTarget> {
-        let parsed_name = if name.contains(":") {
-            name.split(":").next().expect("if something contains a colon and we split the thing there must be at least one part")
+        
+        let parsed_name = if req_host_name.contains(":") {
+            req_host_name.split(":").next().expect("if something contains a colon and we split the thing there must be at least one part")
         } else {
-            name
+            req_host_name
         };
+
         targets.iter().find_map(|x| {
+
+
             if x.host_name.to_lowercase().trim() == parsed_name.to_lowercase().trim() {
                 // we dont want to impl clone on this so we just create it manually for now
                 // altough we could return refs but I don't have time for lifetimes atm
                 Some(ReverseTcpProxyTarget { 
+                    capture_subdomains: x.capture_subdomains,
+                    forward_wildcard: x.forward_wildcard,
                     target_hostname: x.target_hostname.clone(), 
                     target_http_port: x.target_http_port, 
                     target_tls_port: x.target_tls_port,
                     host_name: x.host_name.clone(),
-                    is_hosted: x.is_hosted
+                    is_hosted: x.is_hosted,
+                    sub_domain: None
                 })
-            } else {
+            } else if x.capture_subdomains && let Some(subdomain) = Self::get_subdomain(parsed_name,&x.host_name) {
+                Some(ReverseTcpProxyTarget { 
+                    capture_subdomains: x.capture_subdomains,
+                    forward_wildcard: x.forward_wildcard,
+                    target_hostname: x.target_hostname.clone(), 
+                    target_http_port: x.target_http_port, 
+                    target_tls_port: x.target_tls_port,
+                    host_name: x.host_name.clone(),
+                    is_hosted: x.is_hosted,
+                    sub_domain: Some(subdomain)
+                })
+            } 
+            else {
                 None
             }
+
         })
+
     }
 
     #[instrument(skip_all)]
@@ -276,11 +317,18 @@ impl ReverseTcpProxy {
         client_address: SocketAddr
     ) {
 
+        let resolved_target = if target.forward_wildcard && let Some(subdomain) = target.sub_domain.as_ref() {
+            tracing::debug!("tcp tunnel rewrote for subdomain: {subdomain}!");
+            format!("{subdomain}.{}",target.target_hostname)
+        } else {
+            target.target_hostname.clone()
+        };
+
         let target_addr = {
             if incoming_traffic_is_tls && let Some(tls_port) = target.target_tls_port {
-                format!("{}:{}",target.target_hostname, tls_port)
+                format!("{}:{}",resolved_target, tls_port)
             } else if let Some(http_port) = target.target_http_port {
-                format!("{}:{}",target.target_hostname, http_port)
+                format!("{}:{}",resolved_target, http_port)
             } else {
                 unreachable!()
             }

@@ -216,17 +216,33 @@ async fn handle(
 
         let default_port = if enforce_https { 443 } else { 80 };
 
+        let resolved_host_name = 
+
+            if target_cfg.forward_subdomains.unwrap_or_default() && let Some(subdomain) = get_subdomain(&req_host_name, &target_cfg.host_name) {
+                tracing::debug!("in-proc forward terminating proxy rewrote subdomain: {subdomain}!");
+                format!("{subdomain}.{}",&target_cfg.host_name)
+            } else {
+                target_cfg.host_name.clone()
+            };
+
+
+        // TODO - also support this mode for tcp tunnelling and remote sites ?
+        // need to be opt-in so that we either
+        // direct *.blah.com -> mysite.com
+        // or *.blah.com -> *.mysite.com (would obviously not work if target is ip?)
+
+        tracing::info!("USING THIS RESOLVED TARGET: {resolved_host_name}");
         let target_url = format!("{scheme}://{}:{}{}",
-            target_cfg.host_name,
+            resolved_host_name,
             target_cfg.port.unwrap_or(default_port),
             original_path_and_query
         );
     
 
         let target = crate::http_proxy::Target::Proc(target_cfg.clone());
-
+        
         let result = 
-            proxy(is_https,state.clone(),req,&target_url,target,client_ip).await;
+            proxy(&req_host_name,is_https,state.clone(),req,&target_url,target,client_ip).await;
 
         map_result(&req_host_name,result).await
     }
@@ -238,8 +254,8 @@ async fn handle(
             req_host_name == p.host_name
             || p.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",p.host_name))
         }) {
-            
-            return perform_remote_forwarding(is_https,state.clone(),client_ip,remote_target_cfg,req).await
+
+            return perform_remote_forwarding(req_host_name,is_https,state.clone(),client_ip,remote_target_cfg,req).await
         }
 
         tracing::warn!("Received request that does not match any known target: {:?}", req_host_name);
@@ -252,8 +268,20 @@ async fn handle(
 
 }
 
+fn get_subdomain(requested_hostname: &str, backend_hostname: &str) -> Option<String> {
+    if requested_hostname == backend_hostname { return None };
+    if requested_hostname.to_uppercase().ends_with(&backend_hostname.to_uppercase()) {
+        let part_to_remove_len = backend_hostname.len();
+        let start_index = requested_hostname.len() - part_to_remove_len;
+        if start_index == 0 || requested_hostname.as_bytes()[start_index - 1] == b'.' {
+            return Some(requested_hostname[..start_index].trim_end_matches('.').to_string());
+        }
+    }
+    None
+}
 
 async fn perform_remote_forwarding(
+    req_host_name:String,
     is_https:bool,
     state:Arc<tokio::sync::RwLock<crate::AppState>>,
     client_ip:std::net::SocketAddr,
@@ -273,8 +301,19 @@ async fn perform_remote_forwarding(
 
     let default_port = if enforce_https { 443 } else { 80 };
 
+    
+    let resolved_host_name = 
+
+        if remote_target_config.forward_subdomains.unwrap_or_default() && let Some(subdomain) = get_subdomain(&req_host_name, &remote_target_config.host_name) {
+            tracing::debug!("remote forward terminating proxy rewrote subdomain: {subdomain}!");
+            format!("{subdomain}.{}",&remote_target_config.target_hostname)
+        } else {
+            remote_target_config.target_hostname.clone()
+        };
+
+        
     let target_url = format!("{scheme}://{}:{}{}",
-        remote_target_config.target_hostname,
+        resolved_host_name,
         remote_target_config.port.unwrap_or(default_port),
         original_path_and_query
     );
@@ -282,6 +321,7 @@ async fn perform_remote_forwarding(
     tracing::info!("Incoming request to '{}' for remote proxy target {target_url}",remote_target_config.host_name);
     let result = 
         proxy(
+            &req_host_name,
             is_https,
             state.clone(),
             req,

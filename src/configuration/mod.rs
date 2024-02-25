@@ -96,6 +96,7 @@ impl TryFrom<legacy::Config> for v1::OddBoxConfig {
             port_range_start: old_config.port_range_start,
             hosted_process: Some(old_config.processes.into_iter().map(|x|{
                 v1::InProcessSiteConfig {
+                    forward_subdomains: None,
                     disable_tcp_tunnel_mode: x.disable_tcp_tunnel_mode,
                     args: x.args,
                     auto_start: x.auto_start,

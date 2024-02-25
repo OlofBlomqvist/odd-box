@@ -33,7 +33,12 @@ pub (crate) struct InProcessSiteConfig{
     pub port: Option<u16>,
     pub https : Option<bool>,
     /// If you wish to use wildcard routing for any subdomain under the 'host_name'
-    pub capture_subdomains : Option<bool>
+    pub capture_subdomains : Option<bool>,
+    /// If you wish to use the subdomain from the request in forwarded requests:
+    /// test.example.com -> internal.site
+    /// vs
+    /// test.example.com -> test.internal.site 
+    pub forward_subdomains : Option<bool>
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,7 +58,12 @@ pub (crate) struct RemoteSiteConfig{
     /// If you wish to use wildcard routing for any subdomain under the 'host_name'
     pub capture_subdomains : Option<bool>,
     /// This is mostly useful in case the target uses SNI sniffing/routing
-    pub disable_tcp_tunnel_mode : Option<bool>
+    pub disable_tcp_tunnel_mode : Option<bool>,
+    /// If you wish to use the subdomain from the request in forwarded requests:
+    /// test.example.com -> internal.site
+    /// vs
+    /// test.example.com -> test.internal.site 
+    pub forward_subdomains : Option<bool>
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -378,6 +388,7 @@ pub fn example_v1() -> OddBoxConfig {
         port_range_start: 4200,
         hosted_process: Some(vec![
             InProcessSiteConfig {
+                forward_subdomains: None,
                 disable_tcp_tunnel_mode: Some(false),
                 args: vec!["--test".to_string()],
                 auto_start: Some(true),
@@ -398,6 +409,7 @@ pub fn example_v1() -> OddBoxConfig {
         ]),
         remote_target: Some(vec![
             RemoteSiteConfig { 
+                forward_subdomains: None,
                 h2_hint: None, 
                 host_name: "lobsters.local".into(), 
                 target_hostname: "lobste.rs".into(), 
@@ -407,6 +419,7 @@ pub fn example_v1() -> OddBoxConfig {
                 disable_tcp_tunnel_mode: Some(false)
             },
             RemoteSiteConfig { 
+                forward_subdomains: Some(true),
                 h2_hint: None, 
                 host_name: "google.local".into(), 
                 target_hostname: "google.com".into(), 

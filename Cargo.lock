@@ -1441,7 +1441,7 @@ dependencies = [
 
 [[package]]
 name = "odd-box"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "active-win-pos-rs",
  "ahash",
