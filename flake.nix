@@ -18,23 +18,6 @@
       };
     in {
 
-      
-      packages.default = rustToolchain.buildRustPackage rec {
-        pname = "odd-box";
-        version = "0.0.10";
-        src = ./.;
-        cargoSha256 = "pPaMWbjk7Ntk/F5TyzKimSwmd+6zOJEZKeAbFYavfS4=";
-        nativeBuildInputs = [
-          pkgs.pkg-config
-        ];
-        buildInputs = [
-          rustToolchain.cargo
-          rustToolchain.rustc
-          pkgs.openssl
-          pkgs.pkg-config
-        ];
-      };
-
       devShell = pkgs.mkShell {
         nativeBuildInputs = [
           rustToolchain.cargo
