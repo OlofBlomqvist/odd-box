@@ -193,7 +193,7 @@ struct Args {
     generate_example_cfg : bool
 }
 
-use reqwest;
+
 use serde::Deserialize;
 use serde_json::Result as JsonResult;
 
@@ -523,7 +523,16 @@ async fn main() -> Result<(),String> {
 
     if use_tui {
         println!("Performing cleanup, please wait..");
-        _ = crossterm::terminal::disable_raw_mode();
+                
+        use crossterm::{
+            event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+            execute,
+            terminal::{
+                disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+        };
+        _ = disable_raw_mode();
+        let mut stdout = std::io::stdout();
+        _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture);
     } else {
         tracing::info!("Performing cleanup, please wait..");
     } 
