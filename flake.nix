@@ -17,7 +17,7 @@
 
         rustNightly = pkgs.rustChannelOf {
           channel = "nightly";
-          date = "2024-01-01"; 
+          date = "2024-03-04"; 
         };
 
       in {
@@ -64,8 +64,7 @@
         # DEV THE THING        
         devShell = pkgs.mkShell {
             nativeBuildInputs = [
-                rustNightly.cargo
-                rustNightly.rustc          
+                rustNightly.default         
                 pkgs.openssl
                 pkgs.pkg-config
             ];

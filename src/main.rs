@@ -523,6 +523,7 @@ async fn main() -> Result<(),String> {
 
     if use_tui {
         println!("Performing cleanup, please wait..");
+        _ = crossterm::terminal::disable_raw_mode();
     } else {
         tracing::info!("Performing cleanup, please wait..");
     } 
