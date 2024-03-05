@@ -1,30 +1,76 @@
 {
+  description = "A Rust application using the nightly compiler";
+
   inputs = {
-    fenix = {
-      url = "github:nix-community/fenix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-    nixpkgs.url = "nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    rust-overlay.url = "github:oxalica/rust-overlay";
   };
 
-  outputs = { self, fenix, nixpkgs, flake-utils,... }@inputs:
-    flake-utils.lib.eachDefaultSystem (system: let
-      pkgs = import nixpkgs { inherit system; };
-      rustToolchain = fenix.packages.${system}.toolchainOf {
-        channel = "nightly";
-        date = "2024-03-04";
-        sha256 = "AhaXmpuEQKbeHbG5tB/UamfItWiidsEWfKQfbKTKH1Y=";
-      };
-    in {
+  outputs = { self, nixpkgs, flake-utils, rust-overlay, ... }:
+    flake-utils.lib.eachDefaultSystem (system:
+      let
+        overlays = [ rust-overlay.overlays.default ];
+        pkgs = import nixpkgs {
+          inherit system overlays;
+        };
 
-      devShell = pkgs.mkShell {
-        nativeBuildInputs = [
-          rustToolchain.cargo
-          rustToolchain.rustc          
-          pkgs.openssl
-          pkgs.pkg-config
-        ];
-      };
-    });
+        rustNightly = pkgs.rustChannelOf {
+          channel = "nightly";
+          date = "2024-01-01"; 
+        };
+
+      in {
+
+        packages.default = pkgs.rustPlatform.buildRustPackage rec {
+
+            pname = "odd-box";
+            version = "0.0.10";
+            src = ./.;
+
+            cargoLock = {
+                lockFile = ./Cargo.lock;
+            };
+
+            #buildNoDefaultFeatures = true;
+            #buildFeatures = [ "color" "net" ];
+            #checkFeatures = [ "color" ];
+
+            meta = with pkgs.lib; {
+                description = "dead simple reverse-proxy";
+                homepage = "https://github.com/OlofBlomqvist/odd-box";
+                license = licenses.mit;
+                maintainers = ["olof@twnet.se"];
+            };
+
+            buildType = "release";
+            buildInputs = [ pkgs.openssl pkgs.pkg-config ];
+
+            RUSTC = "${rustNightly.default}/bin/rustc";
+            CARGO = "${rustNightly.default}/bin/cargo";
+
+            nativeBuildInputs = [ rustNightly.default ];
+
+            OPENSSL_DIR = "${pkgs.openssl.dev}";
+            OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
+
+            installPhase = ''
+                mkdir -p $out/bin
+                cp target/*/release/odd-box $out/bin/
+            '';
+
+        };
+
+        # DEV THE THING        
+        devShell = pkgs.mkShell {
+            nativeBuildInputs = [
+                rustNightly.cargo
+                rustNightly.rustc          
+                pkgs.openssl
+                pkgs.pkg-config
+            ];
+        };
+      }
+
+    );
 }
