@@ -106,7 +106,7 @@ pub (crate) async fn host(
         }  
 
         const _CREATE_NO_WINDOW: u32 = 0x08000000;
-        //const DETACHED_PROCESS: u32 = 0x00000008;
+        const DETACHED_PROCESS: u32 = 0x00000008;
         
         #[cfg(target_os = "windows")] 
         let cmd = Command::new(bin_path)
