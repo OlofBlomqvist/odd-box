@@ -1,0 +1,24 @@
+{
+	"name": "Rust",
+	"image": "mcr.microsoft.com/devcontainers/rust:1-1-bullseye",
+	"features": {
+	  "ghcr.io/lee-orr/rusty-dev-containers/cargo-watch:0": {}
+	},
+	"mounts": [
+	  {
+		"source": "devcontainer-cargo-cache-${devcontainerId}",
+		"target": "/usr/local/cargo",
+		"type": "volume"
+	  }
+	],
+	"remoteUser": "root",
+	"customizations": {
+	  "vscode": {
+		"extensions": [
+		  "rust-lang.rust-analyzer"
+		]
+	  }
+	},
+	"postCreateCommand": "rustup install nightly && rustup default nightly"
+  }
+  

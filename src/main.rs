@@ -240,12 +240,23 @@ async fn update() -> JsonResult<()> {
 
 }
 
+
+pub fn initialize_panic_handler() {
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        _ = crossterm::execute!(std::io::stderr(), crossterm::event::DisableMouseCapture, crossterm::terminal::LeaveAlternateScreen);
+        crossterm::terminal::disable_raw_mode().unwrap();
+        eprintln!("odd-box crashed :-(");
+        original_hook(panic_info);
+
+    }));
+}
+
 #[tokio::main(flavor="multi_thread")]
 async fn main() -> Result<(),String> {
     
-    //console_subscriber::init();
-    //let cancellation_token = tokio_util::sync::CancellationToken::new();
-    
+    initialize_panic_handler();
+
     let args = Args::parse();
 
     if args.update {
@@ -259,8 +270,6 @@ async fn main() -> Result<(),String> {
         std::fs::write("odd-box-example-config.toml", serialized).unwrap();
         return Ok(())
     }
-
-
 
     // By default we use odd-box.toml, and otherwise we try to read from Config.toml
     let cfg_path = 
@@ -343,13 +352,7 @@ async fn main() -> Result<(),String> {
         None => LevelFilter::INFO
     };
 
-    
-    let use_tui = if args.tui.unwrap_or_default() {
-        tui::init();
-        true
-    } else {
-        false
-    };
+    let use_tui = args.tui.unwrap_or_default();
     
     if !use_tui {
         tracing_subscriber::FmtSubscriber::builder()       
@@ -470,9 +473,8 @@ async fn main() -> Result<(),String> {
         ));
        
 
-
-
     if use_tui {
+        tui::init();
         tui::run(EnvFilter::from_default_env()
             .add_directive(log_level.into())
             .add_directive("h2=info".parse().expect("this directive will always work"))
@@ -525,10 +527,9 @@ async fn main() -> Result<(),String> {
         println!("Performing cleanup, please wait..");
                 
         use crossterm::{
-            event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+            event::DisableMouseCapture,
             execute,
-            terminal::{
-                disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+            terminal::{disable_raw_mode, LeaveAlternateScreen},
         };
         _ = disable_raw_mode();
         let mut stdout = std::io::stdout();

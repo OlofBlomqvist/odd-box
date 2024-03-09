@@ -6,7 +6,7 @@ use super::extension::TlsExtensionType;
 pub (crate) enum TlsClientHelloError {
     NotTLSHandshake,
     NotClientHello,
-    MessageIncomplete(usize),
+    MessageIncomplete(#[allow(dead_code)]usize),
 }
 
 #[derive(Debug)]

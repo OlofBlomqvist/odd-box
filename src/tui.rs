@@ -14,7 +14,6 @@ use crate::types::app_state::*;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use crate::http_proxy::ProcMessage;
-use crate::types::app_state::ProcState;
 
 use crate::types::proxy_state::*;
 
@@ -188,6 +187,14 @@ pub (crate) async fn run(
     
     let terminal = Arc::new(tokio::sync::Mutex::new(terminal));
     
+    
+    let mut theme = match dark_light::detect() {
+        dark_light::Mode::Dark => Theme::Dark(dark_theme()),
+        dark_light::Mode::Light => Theme::Light(light_theme()),
+        dark_light::Mode::Default => Theme::Dark(dark_theme()),
+    };
+    let mut count = 0;
+
 
     // TUI event loop
     let tui_handle = {
@@ -220,13 +227,23 @@ pub (crate) async fn run(
                     }
                 }
 
+                if count > 100 {
+                    theme = match dark_light::detect() {
+                        dark_light::Mode::Dark => Theme::Dark(dark_theme()),
+                        dark_light::Mode::Light => Theme::Light(light_theme()),
+                        dark_light::Mode::Default => Theme::Dark(dark_theme()),
+                    };
+                    count = 0;
+                
+                }
+                
                 // KEEP LOCK SHORT TO AVOID DEADLOCK
                 {
                     let mut state = app_state.write().await;
                     
                     let mut terminal = terminal.lock().await;
                     
-                    terminal.draw(|f| draw_ui::<CrosstermBackend<Stdout>>(f, &mut state, &log_buffer))?;
+                    terminal.draw(|f| draw_ui::<CrosstermBackend<Stdout>>(f, &mut state, &log_buffer,&theme))?;
                         
                 }
 
@@ -505,6 +522,7 @@ fn draw_traffic(
     f: &mut ratatui::Frame,
     app_state: &mut RwLockWriteGuard<'_, AppState>,
     area: Rect,
+    theme: &Theme
 ) {
     let headers = [ "Site", "Source", "Target", "Description"];
     
@@ -536,23 +554,34 @@ fn draw_traffic(
     let start = state.vertical_scroll;
     let end = std::cmp::min(start + visible_rows, rows.len());
 
+    let is_dark_theme = matches!(&theme,Theme::Dark(_));
     
     let display_rows = &rows[start..end];
+
+    let odd_row_bg = if is_dark_theme { Color::from_hsl(15.0, 10.0, 10.0) } else {
+        Color::Rgb(250,250,250)
+    };
+    let row_bg =  if is_dark_theme { Color::from_hsl(10.0, 10.0, 5.0) } else {
+        Color::Rgb(235,235,255)
+    };
+
+    
 
     let table_rows : Vec<_> = display_rows.iter().enumerate().map(|(i,row)| {
         
         let is_odd = i % 2 == 0;
+
 
         Row::new(row.iter().map(|x|Cell::new(x.to_string()))).height(1 as u16)
             .style(
                 Style::new()
                     .bg(
                         if is_odd {
-                            Color::from_hsl(15.0, 10.0, 10.0)
+                            odd_row_bg
                         } else {
-                            Color::from_hsl(10.0, 10.0, 5.0)
+                            row_bg
                         }
-                    ).fg(Color::White)
+                    ).fg(if is_dark_theme { Color::White } else { Color::Black })
                 )
     }).collect();
     
@@ -567,9 +596,10 @@ fn draw_traffic(
         Constraint::Fill(4),        
     ];
     
+    
     let headers = Row::new(headers
         .iter()
-        .map(|&h| Cell::from(h).fg(Color::LightGreen).underlined().add_modifier(Modifier::BOLD))
+        .map(|&h| Cell::from(h).fg(if is_dark_theme {Color::LightGreen} else {Color::Blue}).underlined().add_modifier(Modifier::BOLD))
     ).height(1);
 
     
@@ -606,7 +636,8 @@ fn draw_traffic(
 fn draw_stats(
     f: &mut ratatui::Frame, 
     app_state: &mut RwLockWriteGuard<'_, AppState>,
-    area: Rect
+    area: Rect,
+    _theme: &Theme
 ) {
 
     let total_received_tcp_connections = {
@@ -625,7 +656,8 @@ fn draw_logs(
     f: &mut ratatui::Frame, 
     app_state: &mut RwLockWriteGuard<'_, AppState>,
     log_buffer: &Arc<Mutex<SharedLogBuffer>>,
-    area: Rect
+    area: Rect,
+    _theme: &Theme
 ) {
 
     {
@@ -653,6 +685,8 @@ fn draw_logs(
         
         let level = x.lvl;
         
+        // todo - theme
+
         let s = match level {
             Level::ERROR => Style::default().fg(Color::Red),
             Level::TRACE => Style::default().fg(Color::Gray),
@@ -664,6 +698,8 @@ fn draw_logs(
         let nr_str = format!("{:1$} | ",i+1, item_count);
         let lvl_str = format!("{:>1$} ",x.lvl.as_str(),5);
         let thread_str = if let Some(n) = &x.thread {format!("{n} ")} else { format!("") };
+
+        // todo: theme
 
         let number = ratatui::text::Span::styled(nr_str.clone(),Style::default().fg(Color::DarkGray));
         let level = ratatui::text::Span::styled(lvl_str.clone(),s);
@@ -754,8 +790,40 @@ fn draw_logs(
 
 }
 
-fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut RwLockWriteGuard<'_, AppState>,log_buffer: &Arc<Mutex<SharedLogBuffer>>) {
+
+
+/// Returns a `Style` configured for a dark theme.
+fn dark_theme() -> Style {
+    Style::default()
+        .fg(Color::White) // Text color
+        //.bg(Color::Black) // Background color
+        .add_modifier(Modifier::BOLD) // Text modifier
+}
+
+/// Returns a `Style` configured for a light theme.
+fn light_theme() -> Style {
+    Style::default()
+        .fg(Color::Black) // Text color
+       // .bg(Color::White) // Background color
+        .add_modifier(Modifier::ITALIC) // Text modifier
+}
+
+
+#[derive(Clone)]
+pub enum Theme {
+    Light(Style),
+    Dark(Style)
+}
+
+fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut RwLockWriteGuard<'_, AppState>,log_buffer: &Arc<Mutex<SharedLogBuffer>>, theme: &Theme) {
     
+    let is_dark_theme = matches!(&theme,Theme::Dark(_));
+    let theme_style = match theme {
+        Theme::Light(s) => s,
+        Theme::Dark(s) => s
+    };
+
+
     let size = f.size();
     if size.height < 10 || size.width < 10 {
         return
@@ -799,7 +867,13 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
             "[1] Logs", 
             "[2] Connections",
             "[3] Stats",
-        ]).highlight_style(Style::new().fg(Color::Cyan))
+        ]).highlight_style(
+            if is_dark_theme {
+                Style::new().fg(Color::Cyan)
+            } else {
+                Style::new().fg(Color::LightRed)
+            }
+        )
         .select(match app_state.current_page {
             Page::Logs => 0,
             Page::Connections => 1,
@@ -811,19 +885,26 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
     let frame_margin = &Margin { horizontal: 1, vertical: 1 };
 
     match &app_state.current_page {
-        Page::Logs => draw_logs(f,app_state,log_buffer,main_area[0].inner(frame_margin)),
-        Page::Statistics => draw_stats(f,app_state,main_area[0].inner(frame_margin)),
-        Page::Connections => draw_traffic(f,app_state,main_area[0].inner(frame_margin)),
+        Page::Logs => draw_logs(f,app_state,log_buffer,main_area[0].inner(frame_margin),&theme),
+        Page::Statistics => draw_stats(f,app_state,main_area[0].inner(frame_margin),&theme),
+        Page::Connections => draw_traffic(f,app_state,main_area[0].inner(frame_margin),&theme),
     }
 
     let frame = 
         Block::new()
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(
+            if matches!(&theme,Theme::Dark(_)) {
+                Style::new().fg(Color::DarkGray)
+            } else {
+                Style::new().fg(Color::DarkGray)
+            }
+            
+        )
         .border_type(BorderType::Rounded)
         .borders(Borders::ALL);
 
     f.render_widget(frame, main_area[0]);
-
+    
 
     // render the tab bar on top of the tab content
     f.render_widget(tabs, main_area[0].inner(&Margin { horizontal: 2, vertical: 0 }));
@@ -862,19 +943,54 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
                 site_rects.push((item_rect,id.to_string()));
 
                 let mut s = match state {
-                    &ProcState::Running => Style::default().fg(Color::LightGreen),
-                    &ProcState::Faulty => Style::default().fg(Color::Red),
-                    &ProcState::Starting => Style::default().fg(Color::Green),
-                    &ProcState::Stopped => Style::default().fg(Color::DarkGray),
-                    &ProcState::Stopping => Style::default().fg(Color::Yellow),
-                    &ProcState::Remote => Style::default().fg(Color::Blue)
+                    &ProcState::Running => Style::default().fg(
+                        if is_dark_theme {
+                            Color::LightGreen
+                        } else {
+                            Color::Green
+                        }
+                    ),
+                    &ProcState::Faulty => Style::default().fg(
+                        if is_dark_theme {
+                                Color::Red
+                            } else {
+                                Color::Red
+                            }
+                    ),
+                    &ProcState::Starting => Style::default().fg(
+                        if is_dark_theme {
+                                Color::Green
+                            } else {
+                                Color::Green
+                            }
+                    ),
+                    &ProcState::Stopped => Style::default().fg(
+                        if is_dark_theme{
+                                Color::DarkGray
+                            } else {
+                                Color::DarkGray
+                            }
+                    ),
+                    &ProcState::Stopping => Style::default().fg(
+                        if is_dark_theme {
+                                Color::Black
+                            } else {
+                                Color::Yellow
+                            }
+                    ),
+                    &ProcState::Remote => Style::default().fg(
+                        if is_dark_theme {
+                                Color::Blue
+                            } else {
+                                Color::Blue
+                            }
+                    ),
                 };
 
-                let mut id_style = Style::default();
-
+                let mut id_style = theme_style.clone();
                 if let Some(hovered) = &app_state.currently_hovered_site && hovered == *id {
-                    id_style = id_style.bg(Color::White).fg(Color::Black).add_modifier(Modifier::BOLD);
-                    s = s.bg(Color::Gray);
+                    id_style = id_style.add_modifier(Modifier::BOLD);
+                    s = if is_dark_theme { s.bg(Color::Gray) } else { s.bg(Color::Gray)  };
                 }
                 
                 let message = ratatui::text::Span::styled(format!(" {id} "),id_style);
@@ -895,9 +1011,14 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
                         .border_type(BorderType::Rounded)
                         .borders(Borders::ALL)
                         .title(" Sites ").title_alignment(Alignment::Left)
-                        .title_style(Style::default().fg(Color::Cyan))
+                        .title_style(
+                            if is_dark_theme {
+                                Style::default().fg(Color::Cyan)
+                            } else {
+                                Style::default().fg(Color::Blue)
+                            }
+                        )
                 )
-                .style(Style::default().fg(Color::White))
                 .highlight_style(Style::default().add_modifier(Modifier::BOLD))
                 .highlight_symbol(">> ");
             
@@ -953,7 +1074,13 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
         .block(Block::default().borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray))
-        .title(format!(" ODD-BOX v{current_version}")).title_style(Style::default().fg(Color::LightYellow)));
+        .title(format!(" ODD-BOX v{current_version}")).title_style(
+            if is_dark_theme {
+                Style::default().fg(Color::LightYellow)
+            } else {
+                Style::default().fg(Color::Black)
+            }
+        ));
 
     f.render_widget(help_bar, help_bar_chunk[1]);
 

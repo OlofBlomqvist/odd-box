@@ -78,5 +78,5 @@ impl Into<u16> for TlsExtensionType {
 pub (crate) enum SniParserError {
     NoSniFound,
     InvalidExtensionFormat,
-    Utf8Error(std::str::Utf8Error),
+    Utf8Error(#[allow(dead_code)]std::str::Utf8Error),
 }

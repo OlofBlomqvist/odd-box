@@ -1,7 +1,7 @@
 [package]
 name = "odd-box"
 description = "dead simple reverse proxy server"
-version = "0.0.10"
+version = "0.0.11"
 edition = "2021"
 authors = ["Olof Blomqvist <olof@twnet.se>"]
 repository = "https://github.com/OlofBlomqvist/odd-box"
@@ -66,6 +66,7 @@ tokio-util = "0.7.10"
 toml_edit = "0.22.6"
 serde_yaml = "0.9.32"
 ahash = "0.8.7"
+dark-light = "1.0.0"
 #console-subscriber = "0.2.0"
 
 [target.'cfg(windows)'.dependencies]
