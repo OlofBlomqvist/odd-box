@@ -757,6 +757,12 @@ fn draw_logs(
 
     let start = scroll_pos.unwrap_or(max_scroll_pos);
     let end = std::cmp::min(start + visible_rows, items.len());
+
+
+    if start > items.len() || end > items.len() || start >= end {
+        return
+    }
+
     let display_rows = &items[start..end];
 
 
