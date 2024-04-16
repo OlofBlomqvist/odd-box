@@ -934,7 +934,10 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
         let mut site_rects = vec![];
 
         for (col_idx, col) in site_columns.iter().enumerate() {
-            let procly : Vec<(&String, &ProcState)> = app_state.procs.iter().collect();
+            
+            let mut procly : Vec<(&String, &ProcState)> = app_state.procs.iter().collect();
+            procly.sort_by_key(|k| k.0);
+            
             let start_idx = col_idx * sites_area_height as usize;
             let end_idx = ((col_idx + 1) * sites_area_height as usize).min(app_state.procs.len());
             let items: Vec<ListItem> = procly[start_idx..end_idx].iter().enumerate().map(|(index,(id, state))| {

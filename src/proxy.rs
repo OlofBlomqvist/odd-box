@@ -149,7 +149,7 @@ async fn listen_http(
                 tokio::spawn( async move { 
                     tokio::select!{ 
                         _ = handle_new_tcp_stream(None,service, tcp_stream, source_addr, targets, false,tx.clone(),state.clone()) => {
-                            //tracing::info!("stream handled")
+                            tracing::trace!("http tcp stream handled")
                         }
                         _ = shutdown_signal.notified() => {
                             eprintln!("stream aborted due to app shutdown.");
@@ -246,7 +246,7 @@ async fn listen_https(
                 tokio::task::spawn(async move {
                     tokio::select!{ 
                         _ = handle_new_tcp_stream(Some(arced_tls_config),service, tcp_stream, source_addr, targets, true,tx.clone(),state.clone()) => {
-                            tracing::info!("https tcp stream handled");
+                            tracing::trace!("https tcp stream handled");
 
                         }
                         _ = shutdown_signal.notified() => {
@@ -289,8 +289,6 @@ async fn handle_new_tcp_stream(
 
     let targets = targets.clone();
     
-    // OK SO IT TURNS OUT GOOGLE USES SNI ROUTING, AND SINCE WE ARRIVE WITH THE GOOGLE.LOCAL SNI, IT WONT WORK.
-    // THIS MEANS WE MUST ALLOW CONFIGURING TCP_MODE=ALWAYS|NEVER|ALLOW
     
     match tcp_proxy::ReverseTcpProxy::peek_tcp_stream(&tcp_stream, source_addr).await {
         
@@ -307,9 +305,6 @@ async fn handle_new_tcp_stream(
                     
                     if target.is_hosted {
                         
-                        // we rely on terminating proxy do trigger this instead of doing it here
-                        //_ = tx.send(ProcMessage::Start(target.host_name.clone()));
-                     
                         let proc_state = {
                             let guard = state.read().await;
                             match guard.procs.get(&target.host_name) {
@@ -321,12 +316,15 @@ async fn handle_new_tcp_stream(
                             None => {
                                 tracing::warn!("error 0001 has occurred")
                             },
-                            Some(app_state::ProcState::Stopped) => {
+                            Some(app_state::ProcState::Stopped) 
+                            | Some(app_state::ProcState::Starting) => {
                                 _ = tx.send(ProcMessage::Start(target.host_name.clone()));
                                 let thn = target.host_name.clone();
                                 let mut has_started = false;
-                                for _ in 0..5 {
-                                    tokio::time::sleep(Duration::from_secs(2)).await;
+                                // done here to allow non-browser clients to reach the target socket without receiving unexpected loading screen html blobs
+                                // as long as we are able to start the backing process within 10 seconds
+                                for _ in 0..2 {
+                                    tokio::time::sleep(Duration::from_secs(5)).await;
                                     tracing::debug!("handling an incoming request to a stopped target, waiting for up to 10 seconds for {thn} to spin up - after this we will release the request to the terminating proxy and show a 'please wait' page instaead.");
                                     {
                                         let guard = state.read().await;
