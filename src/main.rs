@@ -479,7 +479,11 @@ async fn main() -> Result<(),String> {
             .add_directive(log_level.into())
             .add_directive("h2=info".parse().expect("this directive will always work"))
             .add_directive("tokio_util=info".parse().expect("this directive will always work"))            
-            .add_directive("hyper=info".parse().expect("this directive will always work")),shared_state.clone(),tx.clone()).await;
+            .add_directive("hyper=info".parse().expect("this directive will always work")),
+            shared_state.clone(),
+            tx.clone(),
+            config.clone()
+        ).await;
     } else {
        let mut stdin = std::io::stdin();
        let mut buf : [u8;1] = [0;1];

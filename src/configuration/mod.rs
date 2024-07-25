@@ -109,6 +109,7 @@ impl TryFrom<legacy::Config> for v1::OddBoxConfig {
                     dir: x.path,
                     https: x.https,
                     h2_hint: x.h2_hint,
+                    disabled: None
                     
                 }
             }).collect::<Vec<v1::InProcessSiteConfig>>()),

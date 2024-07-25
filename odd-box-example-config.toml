@@ -44,3 +44,4 @@ env_vars = [
     { key = "logserver", value = "http://www.example.com" },
     { key = "host", value = "odd-box" }
 ]
+disabled = true # optional, false by default: set to true to disable the process from running when odd-box is started and when using the start-all commands. you can still manually start it in the tui.

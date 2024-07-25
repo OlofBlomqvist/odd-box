@@ -10,6 +10,7 @@ use tracing_subscriber::layer::{Context, SubscriberExt};
 use std::borrow::BorrowMut;
 use std::collections::{HashMap, VecDeque};
 use std::io::Stdout;
+use crate::configuration::ConfigWrapper;
 use crate::types::app_state::*;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -168,7 +169,8 @@ pub (crate) fn init() {
 pub (crate) async fn run(
     filter:EnvFilter,
     shared_state:Arc<tokio::sync::RwLock<AppState>>,
-    tx: tokio::sync::broadcast::Sender<ProcMessage>
+    tx: tokio::sync::broadcast::Sender<ProcMessage>,
+    application_config: ConfigWrapper
 ) {
     
     let log_buffer = Arc::new(Mutex::new(SharedLogBuffer::new()));
@@ -193,7 +195,17 @@ pub (crate) async fn run(
         dark_light::Mode::Light => Theme::Light(light_theme()),
         dark_light::Mode::Default => Theme::Dark(dark_theme()),
     };
+
     let mut count = 0;
+
+    let disabled_items : Vec<String> =  application_config.hosted_process.clone().unwrap_or_default().iter_mut().filter_map( |x| 
+      if x.disabled.unwrap_or_default() { 
+        Some(x.host_name.clone()) 
+      } else {
+        None
+      }
+    ).collect();
+
 
 
     // TUI event loop
@@ -446,7 +458,9 @@ pub (crate) async fn run(
                                     KeyCode::Char('s') => {
                                         {
                                             let mut app = app_state.write().await;
-                                            for (_,state) in app.procs.iter_mut() {
+
+                                            for (k,state) in app.procs.iter_mut() {
+                                                if disabled_items.contains(k) { continue }
                                                 if let ProcState::Stopped = state {
                                                     *state = ProcState::Starting;
                                                 }

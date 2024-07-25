@@ -28,7 +28,7 @@ pub (crate) struct InProcessSiteConfig{
     pub args : Vec<String>,
     pub env_vars : Vec<EnvVar>,
     pub log_format: Option<LogFormat>,
-    /// Set this to false if you do not want this site to start automatically
+    /// Set this to false if you do not want this site to start automatically when odd-box starts
     pub auto_start: Option<bool>,
     pub port: Option<u16>,
     pub https : Option<bool>,
@@ -38,7 +38,10 @@ pub (crate) struct InProcessSiteConfig{
     /// test.example.com -> internal.site
     /// vs
     /// test.example.com -> test.internal.site 
-    pub forward_subdomains : Option<bool>
+    pub forward_subdomains : Option<bool>,
+    /// Set to true to prevent odd-box from starting this site automatically when it starts or using the 'start' command.
+    /// It can still be manually started by ctrl-clicking in the TUI. 
+    pub disabled: Option<bool>
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -404,6 +407,7 @@ pub fn example_v1() -> OddBoxConfig {
                 dir: "/tmp".into(),
                 https: Some(true),
                 h2_hint: None,
+                disabled :None
                 
             }
         ]),

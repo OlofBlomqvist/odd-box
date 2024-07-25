@@ -19,7 +19,12 @@ pub (crate) async fn host(
 
     // if auto_start is not set in the config, we assume that user wants to start site automatically like before
     let mut enabled = proc.auto_start.unwrap_or(true);
-  
+    if proc.disabled == Some(true) {
+        enabled = false;
+    }
+
+    let disabled = proc.disabled.is_some_and(|x|x==true);
+
     let mut initialized = false;
     let domsplit = proc.host_name.split(".").collect::<Vec<&str>>();
     
@@ -54,10 +59,12 @@ pub (crate) async fn host(
         
         while let Ok(msg) = rcv.try_recv() {
             match msg {
+                ProcMessage::StartAll if disabled => tracing::debug!("Refusing to start {} as thru the start all command as it is disabled",&proc.host_name),
+                ProcMessage::Start(s) if disabled && s == "all" => tracing::debug!("Refusing to start {} as thru the start all command as it is disabled",&proc.host_name),
                 ProcMessage::StartAll => enabled = true,
                 ProcMessage::StopAll => enabled = false,
                 ProcMessage::Start(s) => {
-                    let is_for_me = s == "all" || acceptable_names.contains(&s); 
+                    let is_for_me = s == "all"  || acceptable_names.contains(&s); 
                     if is_for_me {
                         enabled = true;
                     }
@@ -67,7 +74,7 @@ pub (crate) async fn host(
                     if is_for_me {
                         enabled = false;
                     }
-                },
+                }
             }
         }
         
@@ -220,20 +227,14 @@ pub (crate) async fn host(
                    
                     while let Ok(msg) = rcv.try_recv() {
                         match msg {
-                            ProcMessage::StartAll => enabled = true,
                             ProcMessage::StopAll => enabled = false,
-                            ProcMessage::Start(s) => {
-                                let is_for_me = s == "all" || acceptable_names.contains(&s); 
-                                if is_for_me {
-                                    enabled = true;
-                                }
-                            },
                             ProcMessage::Stop(s) => {
                                 let is_for_me = s == "all" || acceptable_names.contains(&s); 
                                 if is_for_me {
                                     enabled = false;
                                 }
                             },
+                            _ => {}
                         }
                     }
                     if !enabled {
