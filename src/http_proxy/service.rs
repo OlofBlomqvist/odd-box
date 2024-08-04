@@ -10,6 +10,7 @@ use tokio::net::TcpStream;
 use tokio_stream::wrappers::ReceiverStream;
 use std::future::Future;
 use std::pin::Pin;
+use crate::global_state::GlobalState;
 use crate::CustomError;
 use hyper::{Method, StatusCode};
 use crate::configuration::ConfigWrapper;
@@ -119,7 +120,6 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
         
         // handle normal proxy path
         let f = handle(
-            self.cfg.clone(),
             self.remote_addr.expect("there must always be a client"),
             req,
             self.tx.clone(),
@@ -137,11 +137,10 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
 
 #[allow(dead_code)]
 async fn handle(
-    cfg: ConfigWrapper,
     client_ip: std::net::SocketAddr, 
     req: Request<hyper::body::Incoming>,
     tx: Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
-    state:Arc<tokio::sync::RwLock<crate::AppState>>,
+    state: GlobalState,
     is_https:bool
 ) -> Result<EpicResponse, CustomError> {
     
@@ -172,15 +171,17 @@ async fn handle(
         return Ok(r)
     }
     
-    let processes = cfg.0.hosted_process.unwrap_or_default();
+    let guarded = state.1.read().await;
+
+    let processes = guarded.hosted_process.clone().unwrap_or_default();
     if let Some(target_cfg) = processes.iter().find(|p| {
             req_host_name == p.host_name
             || p.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",p.host_name))
     }) {
 
         let current_target_status : Option<crate::ProcState> = {
-            let guard = state.read().await;
-            let info = guard.procs.iter().find(|x|x.0==&target_cfg.host_name);
+            let guard = state.0.read().await;
+            let info = guard.site_states_map.iter().find(|x|x.0==&target_cfg.host_name);
             match info {
                 Some((_,target_state)) => Some(target_state.clone()),
                 None => None,
@@ -216,14 +217,20 @@ async fn handle(
 
         let default_port = if enforce_https { 443 } else { 80 };
 
-        let resolved_host_name = 
-
-            if target_cfg.forward_subdomains.unwrap_or_default() && let Some(subdomain) = get_subdomain(&req_host_name, &target_cfg.host_name) {
-                tracing::debug!("in-proc forward terminating proxy rewrote subdomain: {subdomain}!");
-                format!("{subdomain}.{}",&target_cfg.host_name)
+        let resolved_host_name = {
+            let forward_subdomains = target_cfg.forward_subdomains.unwrap_or_default();
+            if forward_subdomains {
+                if let Some(subdomain) = get_subdomain(&req_host_name, &target_cfg.host_name) {
+                    tracing::debug!("in-proc forward terminating proxy rewrote subdomain: {subdomain}!");
+                    format!("{subdomain}.{}", &target_cfg.host_name)
+                } else {
+                    target_cfg.host_name.clone()
+                }
             } else {
                 target_cfg.host_name.clone()
-            };
+            }
+        };
+        
 
 
         // TODO - also support this mode for tcp tunnelling and remote sites ?
@@ -249,7 +256,8 @@ async fn handle(
 
     else {
         
-        if let Some(remote_target_cfg) = cfg.0.remote_target.unwrap_or_default().iter().find(|p|{
+        let config = &state.1.read().await.0;
+        if let Some(remote_target_cfg) = config.remote_target.clone().unwrap_or_default().iter().find(|p|{
             //tracing::info!("comparing incoming req: {} vs {} ",req_host_name,p.host_name);
             req_host_name == p.host_name
             || p.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",p.host_name))
@@ -283,7 +291,7 @@ fn get_subdomain(requested_hostname: &str, backend_hostname: &str) -> Option<Str
 async fn perform_remote_forwarding(
     req_host_name:String,
     is_https:bool,
-    state:Arc<tokio::sync::RwLock<crate::AppState>>,
+    state: GlobalState,
     client_ip:std::net::SocketAddr,
     remote_target_config:&crate::configuration::v1::RemoteSiteConfig,
     req:hyper::Request<IncomingBody>
@@ -302,14 +310,20 @@ async fn perform_remote_forwarding(
     let default_port = if enforce_https { 443 } else { 80 };
 
     
-    let resolved_host_name = 
+    let resolved_host_name = {
 
-        if remote_target_config.forward_subdomains.unwrap_or_default() && let Some(subdomain) = get_subdomain(&req_host_name, &remote_target_config.host_name) {
+        let forward_subdomains = remote_target_config.forward_subdomains.unwrap_or_default();
+        let subdomain = get_subdomain(&req_host_name, &remote_target_config.host_name);
+        
+        if forward_subdomains && subdomain.is_some() {
+            let subdomain = subdomain.unwrap(); 
             tracing::debug!("remote forward terminating proxy rewrote subdomain: {subdomain}!");
-            format!("{subdomain}.{}",&remote_target_config.target_hostname)
+            format!("{subdomain}.{}", &remote_target_config.target_hostname)
         } else {
             remote_target_config.target_hostname.clone()
-        };
+        }
+    };
+        
 
         
     let target_url = format!("{scheme}://{}:{}{}",

@@ -6,6 +6,7 @@ use std::{
     net::SocketAddr,
     sync::Arc,
 };
+use crate::global_state::GlobalState;
 use crate::tcp_proxy::tls::client_hello::TlsClientHello;
 use crate::tcp_proxy::tls::client_hello::TlsClientHelloError;
 use crate::types::proxy_state::{ProxyActiveConnection, ProxyActiveConnectionType};
@@ -28,6 +29,62 @@ pub struct ReverseTcpProxyTarget {
     pub sub_domain: Option<String> 
 }
 
+pub struct ReverseTcpProxyTargets {
+    pub global_state : GlobalState
+}
+
+impl ReverseTcpProxyTargets {
+    pub async fn reverse_tcp_proxy_targets(&self) -> Vec<ReverseTcpProxyTarget> {
+        let cfg = self.global_state.1.read().await;
+
+        let mut tcp_targets = vec![];
+        if let Some(x) = &cfg.hosted_process {
+            for y in x.iter().filter(|xx|xx.disable_tcp_tunnel_mode.unwrap_or_default() == false) {
+                
+                let mut target_http_port = None;
+                let mut target_tls_port = None;
+                if y.https.unwrap_or_default() {
+                    target_tls_port = y.port;
+                } else {
+                    target_http_port = y.port;
+                }
+                tcp_targets.push(ReverseTcpProxyTarget { 
+                    capture_subdomains: y.capture_subdomains.unwrap_or_default(),
+                    forward_wildcard: y.forward_subdomains.unwrap_or_default(),
+                    target_http_port,
+                    target_tls_port,
+                    target_hostname: y.host_name.to_owned(),
+                    host_name: y.host_name.to_owned(),
+                    is_hosted: true,
+                    sub_domain: None
+                })
+            }
+        }
+
+        if let Some(x) = &cfg.remote_target {
+            for y in x.iter().filter(|xx|xx.disable_tcp_tunnel_mode.unwrap_or_default() == false) {
+                let mut target_http_port = None;
+                let mut target_tls_port = None;
+                if y.https.unwrap_or_default() {
+                    target_tls_port = y.port;
+                } else {
+                    target_http_port = y.port;
+                }
+                tcp_targets.push(ReverseTcpProxyTarget { 
+                    capture_subdomains: y.capture_subdomains.unwrap_or_default(),
+                    forward_wildcard: y.forward_subdomains.unwrap_or_default(),
+                    target_hostname: y.target_hostname.to_owned(), 
+                    target_http_port,
+                    target_tls_port,
+                    host_name: y.host_name.to_owned(),
+                    is_hosted: false,
+                    sub_domain: None
+                })
+            }
+        }
+        tcp_targets
+    }
+}
 
 impl ReverseTcpProxyTarget {
     pub fn from_target(target:crate::http_proxy::Target) -> Self {
@@ -87,7 +144,7 @@ impl ReverseTcpProxyTarget {
 }
 
 pub struct ReverseTcpProxy {
-    pub targets: Arc<Vec<ReverseTcpProxyTarget>>,
+    pub targets: Arc<ReverseTcpProxyTargets>,
     pub socket_addr: SocketAddr,
 }
 
@@ -104,7 +161,7 @@ impl ReverseTcpProxy {
         None
     }
     pub fn try_get_target_from_vec(
-        targets: Arc<Vec<ReverseTcpProxyTarget>>,
+        targets: Vec<ReverseTcpProxyTarget>,
         req_host_name: &str,
     ) -> Option<ReverseTcpProxyTarget> {
         
@@ -130,20 +187,20 @@ impl ReverseTcpProxy {
                     is_hosted: x.is_hosted,
                     sub_domain: None
                 })
-            } else if x.capture_subdomains && let Some(subdomain) = Self::get_subdomain(parsed_name,&x.host_name) {
-                Some(ReverseTcpProxyTarget { 
-                    capture_subdomains: x.capture_subdomains,
-                    forward_wildcard: x.forward_wildcard,
-                    target_hostname: x.target_hostname.clone(), 
-                    target_http_port: x.target_http_port, 
-                    target_tls_port: x.target_tls_port,
-                    host_name: x.host_name.clone(),
-                    is_hosted: x.is_hosted,
-                    sub_domain: Some(subdomain)
-                })
-            } 
-            else {
-                None
+            } else {
+                match Self::get_subdomain(parsed_name, &x.host_name) {
+                    Some(subdomain) => Some(ReverseTcpProxyTarget {
+                        capture_subdomains: x.capture_subdomains,
+                        forward_wildcard: x.forward_wildcard,
+                        target_hostname: x.target_hostname.clone(),
+                        target_http_port: x.target_http_port,
+                        target_tls_port: x.target_tls_port,
+                        host_name: x.host_name.clone(),
+                        is_hosted: x.is_hosted,
+                        sub_domain: Some(subdomain),
+                    }),
+                    None => None,
+                }
             }
 
         })
@@ -313,26 +370,36 @@ impl ReverseTcpProxy {
         mut client_tcp_stream:TcpStream,
         target:ReverseTcpProxyTarget,
         incoming_traffic_is_tls:bool,
-        state: std::sync::Arc<tokio::sync::RwLock<crate::AppState>>,
+        state: GlobalState,
         client_address: SocketAddr
     ) {
 
-        let resolved_target = if target.forward_wildcard && let Some(subdomain) = target.sub_domain.as_ref() {
-            tracing::debug!("tcp tunnel rewrote for subdomain: {subdomain}!");
-            format!("{subdomain}.{}",target.target_hostname)
-        } else {
-            target.target_hostname.clone()
+        let resolved_target = {
+            let subdomain = target.sub_domain.as_ref();
+            if target.forward_wildcard && subdomain.is_some() {
+                tracing::debug!("tcp tunnel rewrote for subdomain: {:?}", subdomain);
+                format!("{:?}.{}", subdomain, target.target_hostname)
+            } else {
+                target.target_hostname.clone()
+            }
         };
 
         let target_addr = {
-            if incoming_traffic_is_tls && let Some(tls_port) = target.target_tls_port {
-                format!("{}:{}",resolved_target, tls_port)
+            if incoming_traffic_is_tls {
+                if let Some(tls_port) = target.target_tls_port {
+                    format!("{}:{}", resolved_target, tls_port)
+                } else if let Some(http_port) = target.target_http_port {
+                    format!("{}:{}", resolved_target, http_port)
+                } else {
+                    unreachable!()
+                }
             } else if let Some(http_port) = target.target_http_port {
-                format!("{}:{}",resolved_target, http_port)
+                format!("{}:{}", resolved_target, http_port)
             } else {
                 unreachable!()
             }
-        };        
+        };
+        
         match TcpStream::connect(target_addr.clone()).await {
             Ok(mut rem_stream) => {
 
@@ -356,7 +423,7 @@ impl ReverseTcpProxy {
                     let item_key = (source_addr,uuid::Uuid::new_v4());
 
                     {   // ADD THIS CONNECTION TO STATE
-                        let s = state.read().await;
+                        let s = state.0.read().await;
                         let mut guard = s.statistics.write().expect("should always be able to add connections to state");
                         _=guard.active_connections.insert(item_key, item);
                     }
@@ -373,7 +440,7 @@ impl ReverseTcpProxy {
                             }
                             
                     {   // DROP THIS CONNECTION FROM STATE
-                        let s = state.read().await;
+                        let s = state.0.read().await;
                         let mut guard = s.statistics.write().expect("should always be able to drop connections from state");
                         _ = guard.active_connections.remove(&item_key);
                     }
@@ -388,7 +455,7 @@ impl ReverseTcpProxy {
     }
 
     #[instrument(skip_all)]
-    pub async fn listen(&self,shutdown_signal:std::sync::Arc<Notify>,state: std::sync::Arc<tokio::sync::RwLock<crate::AppState>>,) -> Result<(), std::io::Error> {
+    pub async fn listen(&self,shutdown_signal:std::sync::Arc<Notify>,state: GlobalState,) -> Result<(), std::io::Error> {
 
         tracing::info!("Starting TCP proxy on {:?}",self.socket_addr);
         let listener = TcpListener::bind(self.socket_addr).await?;
@@ -400,7 +467,7 @@ impl ReverseTcpProxy {
                     
                     let peek_result = Self::peek_tcp_stream(&tcp_stream, client_address).await;
                     
-                    let cloned_list = self.targets.clone();
+                    let cloned_list = self.targets.clone().reverse_tcp_proxy_targets().await;
                     tokio::spawn(async move {
                         match peek_result {
                             Ok(PeekResult {

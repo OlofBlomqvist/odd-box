@@ -1,20 +1,19 @@
 use crate::configuration::LogFormat;
+use crate::global_state::GlobalState;
 use crate::http_proxy::ProcMessage;
 use crate::types::app_state::ProcState;
-use crate::types::app_state::AppState;
 use std::collections::HashMap;
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::sync::Arc;
 use std::time::Duration;
 
 #[cfg(target_os="windows")]
 use std::os::windows::process::CommandExt;
 
 pub (crate) async fn host(
-    proc:crate::configuration::v1::InProcessSiteConfig,
+    proc: crate::configuration::v1::InProcessSiteConfig,
     mut rcv:tokio::sync::broadcast::Receiver<ProcMessage>,
-    state: Arc<tokio::sync::RwLock<AppState>>
+    state: GlobalState
 ) {
 
     // if auto_start is not set in the config, we assume that user wants to start site automatically like before
@@ -34,17 +33,17 @@ pub (crate) async fn host(
     loop {
 
         if initialized == false {
-            let mut guard = state.write().await;
-            guard.procs.insert(proc.host_name.clone(), ProcState::Stopped);
+            let mut guard = state.0.write().await;
+            guard.site_states_map.insert(proc.host_name.clone(), ProcState::Stopped);
             initialized = true;
         } else {
             let exit = {
-                let guard = state.read().await;
+                let guard = state.0.read().await;
                 guard.exit
             };            
             if exit {
-                let mut guard = state.write().await;
-                guard.procs.insert(proc.host_name.clone(), ProcState::Stopped);
+                let mut guard = state.0.write().await;
+                guard.site_states_map.insert(proc.host_name.clone(), ProcState::Stopped);
                 tracing::debug!("exiting host for {}",&proc.host_name);
                 break
             }
@@ -54,6 +53,18 @@ pub (crate) async fn host(
         
         while let Ok(msg) = rcv.try_recv() {
             match msg {
+                ProcMessage::Delete(s,sender) => {
+                    if acceptable_names.contains(&s) {
+                        tracing::warn!("[{}] Dropping due to having been deleted by proxy.", proc.host_name);
+                        let mut guard = state.0.write().await;
+                        guard.site_states_map.remove(&proc.host_name);
+                        match sender.send(0).await {
+                            Ok(_) => {},
+                            Err(e) => {tracing::warn!("Failed to send confirmation to proxy service that we stopped! {e:?}")},
+                        }
+                        return
+                    }
+                },
                 ProcMessage::StartAll => enabled = true,
                 ProcMessage::StopAll => enabled = false,
                 ProcMessage::Start(s) => {
@@ -75,13 +86,14 @@ pub (crate) async fn host(
             if enabled != is_enabled_before {
                 tracing::info!("[{}] Disabled via command from proxy service",&proc.host_name);
                 {
-                    let mut guard = state.write().await;
-                    guard.procs.insert(proc.host_name.clone(), ProcState::Stopped);
+                    let mut guard = state.0.write().await;
+                    guard.site_states_map.insert(proc.host_name.clone(), ProcState::Stopped);
                 }
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
             continue;
         }
+
         
         if enabled != is_enabled_before {
             tracing::info!("[{}] Enabled via command from proxy service",&proc.host_name);
@@ -89,8 +101,8 @@ pub (crate) async fn host(
 
         
         {
-            let mut guard = state.write().await;
-            guard.procs.insert(proc.host_name.clone(), ProcState::Starting);
+            let mut guard = state.0.write().await;
+            guard.site_states_map.insert(proc.host_name.clone(), ProcState::Starting);
         }
 
         tracing::info!("[{}] Executing command '{}' in directory '{}'",proc.host_name,proc.bin,proc.dir);
@@ -104,6 +116,14 @@ pub (crate) async fn host(
             tracing::debug!("[{}] ADDING ENV VAR '{}': {}", &proc.host_name,&kvp.key,&kvp.value);
             process_specific_environment_variables.insert(kvp.key.clone(), kvp.value.clone());
         }  
+
+        {
+            let state_guard = state.1.read().await;
+            for kvp in &state_guard.env_vars.clone() {
+                tracing::debug!("[{}] ADDING GLOBAL ENV VAR '{}': {}", &proc.host_name,&kvp.key,&kvp.value);
+                process_specific_environment_variables.insert(kvp.key.clone(), kvp.value.clone());
+            }  
+        }
 
         const _CREATE_NO_WINDOW: u32 = 0x08000000;
         
@@ -135,8 +155,8 @@ pub (crate) async fn host(
 
                 
                 {
-                    let mut guard = state.write().await;
-                    guard.procs.insert(proc.host_name.clone(), ProcState::Running);
+                    let mut guard = state.0.write().await;
+                    guard.site_states_map.insert(proc.host_name.clone(), ProcState::Running);
                 }
 
                 //let stdin = child.stdin.take().expect("Failed to capture stdin");
@@ -204,14 +224,14 @@ pub (crate) async fn host(
                 
                 while let Ok(None) = child.try_wait() {
                     let exit = {
-                        let guard = state.read().await;
+                        let guard = state.0.read().await;
                         guard.exit
                     }    ;
                     if exit {
                         tracing::info!("[{}] Stopping due to app exit", proc.host_name);
                         {
-                            let mut guard = state.write().await;
-                            guard.procs.insert(proc.host_name.clone(), ProcState::Stopping);
+                            let mut guard = state.0.write().await;
+                            guard.site_states_map.insert(proc.host_name.clone(), ProcState::Stopping);
                         }
                         _ = child.kill();
                         break
@@ -220,6 +240,23 @@ pub (crate) async fn host(
                    
                     while let Ok(msg) = rcv.try_recv() {
                         match msg {
+                            ProcMessage::Delete(s,sender) => {
+                                if acceptable_names.contains(&s) {
+                                    tracing::warn!("[{}] Dropping due to having been deleted by proxy.", proc.host_name);
+                                    let mut guard = state.0.write().await;
+                                    guard.site_states_map.remove(&proc.host_name);
+                                    if let Some(mut stdin) = child.stdin.take() {
+                                        _ = stdin.write_all(b"q");
+                                    } 
+                                    _ = child.kill();
+                                    // inform sender that we actually stopped the process and that we are exiting our loop
+                                    match sender.send(0).await {
+                                        Ok(_) => {},
+                                        Err(e) => {tracing::warn!("Failed to send confirmation to proxy service that we stopped! {e:?}")},
+                                    }
+                                    return
+                                }
+                            },
                             ProcMessage::StartAll => enabled = true,
                             ProcMessage::StopAll => enabled = false,
                             ProcMessage::Start(s) => {
@@ -240,8 +277,8 @@ pub (crate) async fn host(
                         tracing::warn!("[{}] Stopping due to having been disabled by proxy.", proc.host_name);
                         // note: we just send q here because some apps like iisexpress requires it
                         {
-                            let mut guard = state.write().await;
-                            guard.procs.insert(proc.host_name.clone(), ProcState::Stopping);
+                            let mut guard = state.0.write().await;
+                            guard.site_states_map.insert(proc.host_name.clone(), ProcState::Stopping);
                         }
                         if let Some(mut stdin) = child.stdin.take() {
                             _ = stdin.write_all(b"q");
@@ -253,15 +290,15 @@ pub (crate) async fn host(
                     
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
-                let mut guard = state.write().await;
-                guard.procs.insert(procname, ProcState::Stopped);
+                let mut guard = state.0.write().await;
+                guard.site_states_map.insert(procname, ProcState::Stopped);
                 tracing::warn!("[{}] Stopped.",proc.host_name)
             },
             Err(e) => {
                 tracing::info!("[{}] Failed to start! {e:?}",proc.host_name);
                 {
-                    let mut guard = state.write().await;
-                    guard.procs.insert(proc.host_name.clone(), ProcState::Faulty);
+                    let mut guard = state.0.write().await;
+                    guard.site_states_map.insert(proc.host_name.clone(), ProcState::Faulty);
                 }
             },
         }

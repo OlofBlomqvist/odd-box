@@ -1,5 +1,5 @@
 {
-	"name": "Rust",
+	"name": "RustOddBoxContainer",
 	"image": "mcr.microsoft.com/devcontainers/rust:1-1-bullseye",
 	"features": {
 	  "ghcr.io/lee-orr/rusty-dev-containers/cargo-watch:0": {}

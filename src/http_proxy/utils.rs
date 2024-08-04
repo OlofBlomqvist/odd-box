@@ -18,8 +18,7 @@ use tungstenite::http;
 use lazy_static::lazy_static;
 
 use crate::{
-    configuration::v1::H2Hint, http_proxy::EpicResponse, tcp_proxy::ReverseTcpProxyTarget, types::app_state::AppState, CustomError,
-    types::proxy_state::{ ConnectionKey, ProxyActiveConnection, ProxyActiveConnectionType }
+    configuration::v1::H2Hint, global_state::GlobalState, http_proxy::EpicResponse, tcp_proxy::ReverseTcpProxyTarget, types::{app_state::AppState, proxy_state::{ ConnectionKey, ProxyActiveConnection, ProxyActiveConnectionType }}, CustomError
 };
 lazy_static! {
     static ref TE_HEADER: HeaderName = HeaderName::from_static("te");
@@ -67,7 +66,7 @@ pub enum Target {
 pub async fn proxy(
     _req_host_name: &str,
     is_https:bool,
-    state: std::sync::Arc<tokio::sync::RwLock<crate::AppState>>,
+    state: GlobalState,
     mut req: hyper::Request<hyper::body::Incoming>,
     target_url: &str,
     target: Target,
@@ -294,7 +293,7 @@ impl WrappedNormalResponse {
     pub fn into_parts(self) -> (http::response::Parts,WrappedNormalResponseBody) {
         (self.a,self.b)
     }
-    pub async fn new(res:Response<Incoming>,state: std::sync::Arc<tokio::sync::RwLock<crate::AppState>>,con: ProxyActiveConnection) -> Self {
+    pub async fn new(res:Response<Incoming>,state: GlobalState,con: ProxyActiveConnection) -> Self {
         //tracing::trace!("Adding connection for this WrappedNormalResponse.");
         let con_key = add_connection(state.clone(), con).await;
         let drop_state = state.clone();        
@@ -518,9 +517,9 @@ pub async fn h2_stream_test(
 
 
 
-async fn add_connection(state:std::sync::Arc<tokio::sync::RwLock<AppState>>,connection:ProxyActiveConnection) -> ConnectionKey {
+async fn add_connection(state:GlobalState,connection:ProxyActiveConnection) -> ConnectionKey {
     let id = uuid::Uuid::new_v4();
-    let global_state = state.read().await;
+    let global_state = state.0.read().await;
     let mut guard = global_state.statistics.write().expect("should always be able to add connections to state.");
     let key = (
         connection.source_addr.clone(),
@@ -530,8 +529,8 @@ async fn add_connection(state:std::sync::Arc<tokio::sync::RwLock<AppState>>,conn
     key
 }
 
-async fn del_connection(state:std::sync::Arc<tokio::sync::RwLock<AppState>>,key:&ConnectionKey) {
-    let global_state = state.read().await;
+async fn del_connection(state:GlobalState,key:&ConnectionKey) {
+    let global_state = state.0.read().await;
     let mut guard = global_state.statistics.write().expect("should always be able to delete connections from state.");
     _ = guard.active_connections.remove(key);
 }

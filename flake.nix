@@ -16,8 +16,7 @@
         };
 
         rustNightly = pkgs.rustChannelOf {
-          channel = "nightly";
-          date = "2024-03-04"; 
+          channel = "stable";
         };
 
       in {
@@ -25,16 +24,12 @@
         packages.default = pkgs.rustPlatform.buildRustPackage rec {
 
             pname = "odd-box";
-            version = "0.0.12";
+            version = "0.0.14";
             src = ./.;
 
             cargoLock = {
                 lockFile = ./Cargo.lock;
             };
-
-            #buildNoDefaultFeatures = true;
-            #buildFeatures = [ "color" "net" ];
-            #checkFeatures = [ "color" ];
 
             meta = with pkgs.lib; {
                 description = "dead simple reverse-proxy";
@@ -44,7 +39,12 @@
             };
 
             buildType = "release";
-            buildInputs = [ pkgs.openssl pkgs.pkg-config ];
+            buildInputs = [
+              pkgs.openssl
+              pkgs.pkg-config
+              pkgs.vscode-extensions.rust-lang.rust-analyzer
+              
+            ];
 
             RUSTC = "${rustNightly.default}/bin/rustc";
             CARGO = "${rustNightly.default}/bin/cargo";
@@ -61,14 +61,15 @@
 
         };
 
-        # DEV THE THING        
         devShell = pkgs.mkShell {
             nativeBuildInputs = [
                 rustNightly.default         
                 pkgs.openssl
                 pkgs.pkg-config
+                pkgs.vscode-extensions.rust-lang.rust-analyzer
             ];
         };
+      
       }
 
     );

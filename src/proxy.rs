@@ -9,6 +9,7 @@ use tokio::sync::Notify;
 use tokio_rustls::TlsAcceptor;
 
 use crate::configuration::ConfigWrapper;
+use crate::global_state::GlobalState;
 use crate::http_proxy::SomeIo;
 use crate::http_proxy::ProcMessage;
 use crate::http_proxy::ReverseProxyService;
@@ -17,70 +18,27 @@ use crate::http_proxy;
 use crate::tcp_proxy::DataType;
 use crate::tcp_proxy::PeekResult;
 use crate::tcp_proxy::ReverseTcpProxyTarget;
+use crate::tcp_proxy::ReverseTcpProxyTargets;
 use crate::types::app_state;
 use crate::types::app_state::ProcState;
 
 pub async fn listen(
-    cfg: ConfigWrapper, 
+    cfg: std::sync::Arc<tokio::sync::RwLock<ConfigWrapper>>, 
     bind_addr: SocketAddr,
     bind_addr_tls: SocketAddr, 
     tx: std::sync::Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
-    state: std::sync::Arc<tokio::sync::RwLock<crate::AppState>>,
+    state: GlobalState,
     shutdown_signal: Arc<Notify> 
 )  {
 
-    let mut tcp_targets = vec![];
-    if let Some(x) = &cfg.0.hosted_process {
-        for y in x.iter().filter(|xx|xx.disable_tcp_tunnel_mode.unwrap_or_default() == false) {
-            
-            let mut target_http_port = None;
-            let mut target_tls_port = None;
-            if y.https.unwrap_or_default() {
-                target_tls_port = y.port;
-            } else {
-                target_http_port = y.port;
-            }
-            tcp_targets.push(ReverseTcpProxyTarget { 
-                capture_subdomains: y.capture_subdomains.unwrap_or_default(),
-                forward_wildcard: y.forward_subdomains.unwrap_or_default(),
-                target_http_port,
-                target_tls_port,
-                target_hostname: y.host_name.to_owned(),
-                host_name: y.host_name.to_owned(),
-                is_hosted: true,
-                sub_domain: None
-            })
-        }
-    }
-
-    if let Some(x) = &cfg.0.remote_target {
-        for y in x.iter().filter(|xx|xx.disable_tcp_tunnel_mode.unwrap_or_default() == false) {
-            let mut target_http_port = None;
-            let mut target_tls_port = None;
-            if y.https.unwrap_or_default() {
-                target_tls_port = y.port;
-            } else {
-                target_http_port = y.port;
-            }
-            tcp_targets.push(ReverseTcpProxyTarget { 
-                capture_subdomains: y.capture_subdomains.unwrap_or_default(),
-                forward_wildcard: y.forward_subdomains.unwrap_or_default(),
-                target_hostname: y.target_hostname.to_owned(), 
-                target_http_port,
-                target_tls_port,
-                host_name: y.host_name.to_owned(),
-                is_hosted: false,
-                sub_domain: None
-            })
-        }
-    }
-
+    
     
     // create this from the state.
-    let tcp_targets: Arc<Vec<ReverseTcpProxyTarget>> = Arc::new(tcp_targets);
+    let tcp_targets: Arc<ReverseTcpProxyTargets> = Arc::new(ReverseTcpProxyTargets {
+        global_state: state.clone()
+    });
 
     let terminating_proxy_service = ReverseProxyService { 
-        cfg:cfg.clone(), 
         state:state.clone(), 
         remote_addr: None, 
         tx:tx.clone(), 
@@ -92,7 +50,6 @@ pub async fn listen(
 
 
         listen_http(
-            cfg.clone(),
             bind_addr.clone(),
             tx.clone(),
             state.clone(),
@@ -102,7 +59,6 @@ pub async fn listen(
         ),
 
         listen_https(
-            cfg.clone(),
             bind_addr_tls.clone(),
             tx.clone(),
             state.clone(),
@@ -119,12 +75,11 @@ pub async fn listen(
 
 
 async fn listen_http(
-    _cfg: ConfigWrapper, 
     bind_addr: SocketAddr,
     tx: std::sync::Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
-    state: std::sync::Arc<tokio::sync::RwLock<crate::AppState>>,
+    state: GlobalState,
     terminating_service_template: ReverseProxyService,
-    targets: Arc<Vec<ReverseTcpProxyTarget>>,
+    targets: Arc<ReverseTcpProxyTargets>,
     shutdown_signal: Arc<Notify> 
 ) {
     
@@ -143,7 +98,7 @@ async fn listen_http(
                 tracing::trace!("tcp listener accepted a new http connection");
                 let mut service: ReverseProxyService = terminating_service_template.clone();
                 service.remote_addr = Some(source_addr);
-                let targets = targets.clone();         
+                let targets = targets.clone().reverse_tcp_proxy_targets().await;         
                 let tx = tx.clone();
                 let state = state.clone();
                 tokio::spawn( async move { 
@@ -188,12 +143,11 @@ async fn accept_tcp_stream_via_tls_terminating_proxy_service(
 }
 
 async fn listen_https(
-    cfg: ConfigWrapper, 
     bind_addr: SocketAddr,
     tx: std::sync::Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
-    state: std::sync::Arc<tokio::sync::RwLock<crate::AppState>>,
+    state: GlobalState,
     terminating_service_template: ReverseProxyService,
-    targets: Arc<Vec<ReverseTcpProxyTarget>>,
+    targets: Arc<ReverseTcpProxyTargets>,
     shutdown_signal: Arc<Notify>
 ) {
 
@@ -222,7 +176,7 @@ async fn listen_https(
                 cache: std::sync::Mutex::new(HashMap::new())
             }));
         
-    if let Some(true) = cfg.alpn {
+    if let Some(true) = state.1.read().await.alpn {
         rustls_config.alpn_protocols.push("h2".into());
         rustls_config.alpn_protocols.push("http/1.1".into());
     }
@@ -239,7 +193,7 @@ async fn listen_https(
                 let mut service: ReverseProxyService = terminating_service_template.clone();
                 service.remote_addr = Some(source_addr);
                 let shutdown_signal = shutdown_signal.clone();
-                let targets = targets.clone();         
+                let targets = targets.clone().reverse_tcp_proxy_targets().await;         
                 let tx = tx.clone();
                 let arced_tls_config = arced_tls_config.clone();
                 let state = state.clone();
@@ -271,16 +225,16 @@ async fn handle_new_tcp_stream(
     service:ReverseProxyService,
     tcp_stream:TcpStream,
     source_addr:SocketAddr,
-    targets: Arc<Vec<ReverseTcpProxyTarget>>,
+    targets: Vec<ReverseTcpProxyTarget>,
     expect_tls: bool,
     tx: std::sync::Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
-    state: std::sync::Arc<tokio::sync::RwLock<crate::AppState>>,
+    state: GlobalState,
 ) {
 
     //tracing::warn!("handle_new_tcp_stream!");
 
     {
-        let s = state.read().await;
+        let s = state.0.read().await;
         let mut guard = s.statistics.write().expect("must always be able to write stats");
         guard.received_tcp_connections += 1;
     }
@@ -306,8 +260,8 @@ async fn handle_new_tcp_stream(
                     if target.is_hosted {
                         
                         let proc_state = {
-                            let guard = state.read().await;
-                            match guard.procs.get(&target.host_name) {
+                            let guard = state.0.read().await;
+                            match guard.site_states_map.get(&target.host_name) {
                                 Some(v) => Some(v.clone()),
                                 _ => None
                             }
@@ -327,8 +281,8 @@ async fn handle_new_tcp_stream(
                                     tokio::time::sleep(Duration::from_secs(5)).await;
                                     tracing::debug!("handling an incoming request to a stopped target, waiting for up to 10 seconds for {thn} to spin up - after this we will release the request to the terminating proxy and show a 'please wait' page instaead.");
                                     {
-                                        let guard = state.read().await;
-                                        match guard.procs.get(&target.host_name) {
+                                        let guard = state.0.read().await;
+                                        match guard.site_states_map.get(&target.host_name) {
                                             Some(&ProcState::Running) => {
                                                 has_started = true;
                                                 break

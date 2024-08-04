@@ -10,12 +10,15 @@ use tracing_subscriber::layer::{Context, SubscriberExt};
 use std::borrow::BorrowMut;
 use std::collections::{HashMap, VecDeque};
 use std::io::Stdout;
+use crate::global_state::GlobalState;
 use crate::types::app_state::*;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use crate::http_proxy::ProcMessage;
-
 use crate::types::proxy_state::*;
+
+use serde::ser::SerializeStruct;
+
 
 use ratatui::{
     layout::{Constraint, Direction, Layout},
@@ -40,6 +43,20 @@ struct LogMsg {
     lvl: Level,
     src: String,
     thread: Option<String>
+}
+
+impl serde::Serialize for LogMsg {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        let mut s = serializer.serialize_struct("LogMsg", 4)?;
+        s.serialize_field("msg", &self.msg)?;
+        s.serialize_field("lvl", &self.lvl.as_str())?;
+        s.serialize_field("src", &self.src)?;
+        s.serialize_field("thread", &self.thread.as_ref().unwrap_or(&"".to_string()))?;
+        s.end()
+
+    }
 }
 
 struct SharedLogBuffer {
@@ -105,6 +122,7 @@ impl LogVisitor {
 
 struct TuiLoggerLayer {
     log_buffer: Arc<Mutex<SharedLogBuffer>>,
+    broadcaster: tokio::sync::broadcast::Sender<String>
 }
 
 impl<S: Subscriber> Layer<S> for TuiLoggerLayer {
@@ -147,14 +165,16 @@ impl<S: Subscriber> Layer<S> for TuiLoggerLayer {
         };
 
         let log_message = LogMsg {
-            thread: thread_name,
+            thread: thread_name.clone(),
             lvl: metadata.level().clone(),
             src: if skip_src { "".into() } else {src},
             msg,
         };
-
+        
+        _ = self.broadcaster.send(serde_json::to_string_pretty(&log_message).expect("should always be possible to serialize log messages"));
         let mut buffer = self.log_buffer.lock().expect("must always be able to lock log buffer");
-        buffer.push(log_message);
+        buffer.push(log_message.clone());
+        
     
     }
 }
@@ -167,16 +187,16 @@ pub (crate) fn init() {
 
 pub (crate) async fn run(
     filter:EnvFilter,
-    shared_state:Arc<tokio::sync::RwLock<AppState>>,
-    tx: tokio::sync::broadcast::Sender<ProcMessage>
+    shared_state:GlobalState,
+    tx: tokio::sync::broadcast::Sender<ProcMessage>,
+    trace_msg_broadcaster: tokio::sync::broadcast::Sender<String>
 ) {
     
     let log_buffer = Arc::new(Mutex::new(SharedLogBuffer::new()));
-    let layer = TuiLoggerLayer { log_buffer: log_buffer.clone() };
+    let layer = TuiLoggerLayer { log_buffer: log_buffer.clone(), broadcaster: trace_msg_broadcaster };
 
     let subscriber = tracing_subscriber::registry()
         .with(filter).with(layer);
-
 
     tracing::subscriber::set_global_default(subscriber).expect("Failed to set collector");
   
@@ -199,7 +219,7 @@ pub (crate) async fn run(
     // TUI event loop
     let tui_handle = {
         let terminal = Arc::clone(&terminal);
-        let app_state = Arc::clone(&shared_state);
+        let app_state = shared_state.clone();
         let tx = tx.clone();
         task::spawn(async move {
             
@@ -213,10 +233,10 @@ pub (crate) async fn run(
             loop {
 
                 {
-                    let app = app_state.read().await;
+                    let app = app_state.0.read().await;
 
                     if app.exit {
-                        if app.procs.iter().find(|x|
+                        if app.site_states_map.iter().find(|x|
                                x.1 == &ProcState::Stopping 
                             || x.1 == &ProcState::Running
                             || x.1 == &ProcState::Starting 
@@ -239,7 +259,7 @@ pub (crate) async fn run(
                 
                 // KEEP LOCK SHORT TO AVOID DEADLOCK
                 {
-                    let mut state = app_state.write().await;
+                    let mut state = app_state.0.write().await;
                     
                     let mut terminal = terminal.lock().await;
                     
@@ -261,7 +281,7 @@ pub (crate) async fn run(
                     //     None
                     // };
                     let (current_page,sites_open) = {
-                        let guard =  app_state.read().await;
+                        let guard =  app_state.0.read().await;
                         (guard.current_page.clone(),guard.show_apps_window)
                     };
                     let evt = event::read()?;
@@ -270,11 +290,11 @@ pub (crate) async fn run(
                                 if sites_open {
                                     match mouse.kind {
                                         event::MouseEventKind::Moved => {
-                                            let mut app = app_state.write().await;
+                                            let mut app = app_state.0.write().await;
                                             app.sites_handle_mouse_hover(mouse.column,mouse.row)
                                         }
                                         event::MouseEventKind::Down(event::MouseButton::Left) => {
-                                            let mut app = app_state.write().await;
+                                            let mut app = app_state.0.write().await;
                                             app.sites_handle_mouse_click(mouse.column,mouse.row,tx.clone())
                                         }
                                         _ => {}
@@ -284,19 +304,19 @@ pub (crate) async fn run(
                                     Page::Logs => {
                                         match mouse.kind {
                                             event::MouseEventKind::Drag(event::MouseButton::Left) => {
-                                                let mut app = app_state.write().await;
+                                                let mut app = app_state.0.write().await;
                                                 app.logs_handle_mouse_scroll_drag(mouse.column,mouse.row)
                                             }
                                             event::MouseEventKind::Moved => {
-                                                let mut app = app_state.write().await;
+                                                let mut app = app_state.0.write().await;
                                                 app.logs_handle_mouse_move(mouse.column,mouse.row)
                                             }
                                             event::MouseEventKind::ScrollDown => {
-                                                let mut app = app_state.write().await;
+                                                let mut app = app_state.0.write().await;
                                                 app.logs_tab_scroll_down(Some(10));
                                             },
                                             event::MouseEventKind::ScrollUp => {
-                                                let mut app = app_state.write().await;
+                                                let mut app = app_state.0.write().await;
                                                 app.logs_tab_scroll_up(Some(10));
                                             },
                                             _ => {}
@@ -306,11 +326,11 @@ pub (crate) async fn run(
                                     Page::Connections => {
                                         match mouse.kind {
                                             event::MouseEventKind::ScrollDown => {
-                                                let mut app = app_state.write().await;
+                                                let mut app = app_state.0.write().await;
                                                 app.traf_tab_scroll_down(Some(10));
                                             },
                                             event::MouseEventKind::ScrollUp => {
-                                                let mut app = app_state.write().await;
+                                                let mut app = app_state.0.write().await;
                                                 app.traf_tab_scroll_up(Some(10));
                                             },
                                             _ => {}
@@ -328,7 +348,7 @@ pub (crate) async fn run(
                                     Page::Logs => {
                                         match key.code {
                                             KeyCode::Enter => {
-                                                let mut app = app_state.write().await;
+                                                let mut app = app_state.0.write().await;
                                                 app.vertical_scroll = None;
                                                 let mut buf = log_buffer.lock().expect("must always be able to lock log buffer");
                                                 match buf.limit {
@@ -342,29 +362,29 @@ pub (crate) async fn run(
                                                 
                                             }    
                                             KeyCode::Up => {
-                                                let mut app = app_state.write().await;
+                                                let mut app = app_state.0.write().await;
                                                 app.logs_tab_scroll_up(Some(1));
                                             }
                                             KeyCode::Down => {
-                                                let mut app = app_state.write().await;
+                                                let mut app = app_state.0.write().await;
                                                 app.logs_tab_scroll_down(Some(1));
                                             }
                                             KeyCode::PageUp => {
-                                                let mut app = app_state.write().await;
+                                                let mut app = app_state.0.write().await;
                                                 let scroll_count = app.logs_area_height.saturating_div(2);
                                                 if scroll_count > 0 {
                                                     app.logs_tab_scroll_up(Some(scroll_count));
                                                 }
                                             }
                                             KeyCode::PageDown => {
-                                                let mut app = app_state.write().await;
+                                                let mut app = app_state.0.write().await;
                                                 let scroll_count = app.logs_area_height.saturating_div(2);
                                                 if scroll_count > 0 {
                                                     app.logs_tab_scroll_down(Some(scroll_count));
                                                 }
                                             },   
                                             KeyCode::Char('c') => {
-                                                let mut app = app_state.write().await;
+                                                let mut app = app_state.0.write().await;
                                                 let mut buf = log_buffer.lock().expect("must always be able to lock log buffer");
                                                 app.total_line_count = 0;
                                                 app.vertical_scroll = None;
@@ -379,23 +399,23 @@ pub (crate) async fn run(
                                     Page::Connections => {
                                         match key.code {
                                             KeyCode::PageUp => {
-                                                let mut app = app_state.write().await;
+                                                let mut app = app_state.0.write().await;
                                                 app.traf_tab_scroll_up(Some(10));
                                             }
                                             KeyCode::PageDown => {
-                                                let mut app = app_state.write().await;
+                                                let mut app = app_state.0.write().await;
                                                 app.traf_tab_scroll_down(Some(10));
                                                 
                                             },
                                             KeyCode::Up => {
-                                                let mut app = app_state.write().await;
+                                                let mut app = app_state.0.write().await;
                                                 let scroll_count = app.logs_area_height.saturating_div(2);
                                                 if scroll_count > 0 {
                                                     app.traf_tab_scroll_up(None);
                                                 }
                                             }
                                             KeyCode::Down => {
-                                                let mut app = app_state.write().await;
+                                                let mut app = app_state.0.write().await;
                                                 app.traf_tab_scroll_down(None);
                                             }
                                             _ => {}
@@ -405,19 +425,19 @@ pub (crate) async fn run(
 
                                 match key.code {    
                                     KeyCode::Char('1') => {
-                                        let mut app = app_state.write().await;
+                                        let mut app = app_state.0.write().await;
                                         app.current_page = Page::Logs;
                                     }
                                     KeyCode::Char('2') => {
-                                        let mut app = app_state.write().await;
+                                        let mut app = app_state.0.write().await;
                                         app.current_page = Page::Connections;
                                     }
                                     KeyCode::Char('3') => {
-                                        let mut app = app_state.write().await;
+                                        let mut app = app_state.0.write().await;
                                         app.current_page = Page::Statistics;
                                     }
                                     KeyCode::BackTab | KeyCode::Left => {
-                                        let mut app = app_state.write().await;
+                                        let mut app = app_state.0.write().await;
                                         match app.current_page {
                                             Page::Logs => app.current_page = Page::Statistics, 
                                             Page::Statistics => app.current_page = Page::Connections, 
@@ -425,7 +445,7 @@ pub (crate) async fn run(
                                         }
                                     }
                                     KeyCode::Tab | KeyCode::Right => {
-                                        let mut app = app_state.write().await;
+                                        let mut app = app_state.0.write().await;
                                         match app.current_page {
                                             Page::Logs => app.current_page = Page::Connections, 
                                             Page::Statistics => app.current_page = Page::Logs, 
@@ -434,8 +454,8 @@ pub (crate) async fn run(
                                     }          
                                     KeyCode::Char('z') => {
                                         {
-                                            let mut app = app_state.write().await;
-                                            for (_,state) in app.procs.iter_mut() {
+                                            let mut app = app_state.0.write().await;
+                                            for (_,state) in app.site_states_map.iter_mut() {
                                                 if let ProcState::Running = state {
                                                     *state = ProcState::Stopping;
                                                 }
@@ -445,8 +465,8 @@ pub (crate) async fn run(
                                     } 
                                     KeyCode::Char('s') => {
                                         {
-                                            let mut app = app_state.write().await;
-                                            for (_,state) in app.procs.iter_mut() {
+                                            let mut app = app_state.0.write().await;
+                                            for (_,state) in app.site_states_map.iter_mut() {
                                                 if let ProcState::Stopped = state {
                                                     *state = ProcState::Starting;
                                                 }
@@ -457,7 +477,7 @@ pub (crate) async fn run(
                                     KeyCode::Char('a') => {
                                         //if let Some(t) = time_since_last_toggle{
                                              //{
-                                                let mut app = app_state.write().await;
+                                                let mut app = app_state.0.write().await;
                                                 app.show_apps_window = !app.show_apps_window;
                                                 //last_toggle = Some(now)
                                             //}
@@ -465,7 +485,7 @@ pub (crate) async fn run(
                                     }                                  
                                     KeyCode::Esc | KeyCode::Char('q')=> {
                                         {
-                                            let mut app = app_state.write().await;
+                                            let mut app = app_state.0.write().await;
                                             app.exit = true;
                                         }
                                         
@@ -922,7 +942,7 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
         if sites_area_height == 0 {
             return
         }
-        let sites_count = app_state.procs.len() as u16;
+        let sites_count = app_state.site_states_map.len() as u16;
         let columns_needed = ((sites_count as f32 / sites_area_height as f32).ceil()).max(1.0) as usize;
 
         let site_columns = Layout::default()
@@ -935,11 +955,11 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
 
         for (col_idx, col) in site_columns.iter().enumerate() {
             
-            let mut procly : Vec<(&String, &ProcState)> = app_state.procs.iter().collect();
+            let mut procly : Vec<(&String, &ProcState)> = app_state.site_states_map.iter().collect();
             procly.sort_by_key(|k| k.0);
             
             let start_idx = col_idx * sites_area_height as usize;
-            let end_idx = ((col_idx + 1) * sites_area_height as usize).min(app_state.procs.len());
+            let end_idx = ((col_idx + 1) * sites_area_height as usize).min(app_state.site_states_map.len());
             let items: Vec<ListItem> = procly[start_idx..end_idx].iter().enumerate().map(|(index,(id, state))| {
                 
                 let item_rect = ratatui::layout::Rect {
@@ -997,10 +1017,13 @@ fn draw_ui<B: ratatui::backend::Backend>(f: &mut ratatui::Frame, app_state: &mut
                 };
 
                 let mut id_style = theme_style.clone();
-                if let Some(hovered) = &app_state.currently_hovered_site && hovered == *id {
-                    id_style = id_style.add_modifier(Modifier::BOLD);
-                    s = if is_dark_theme { s.bg(Color::Gray) } else { s.bg(Color::Gray)  };
+                if let Some(hovered) = &app_state.currently_hovered_site {
+                    if hovered == *id {
+                        id_style = id_style.add_modifier(Modifier::BOLD);
+                        s = if is_dark_theme { s.bg(Color::Gray) } else { s.bg(Color::Gray) };
+                    }
                 }
+                
                 
                 let message = ratatui::text::Span::styled(format!(" {id} "),id_style);
 
