@@ -11,6 +11,7 @@ use std::borrow::BorrowMut;
 use std::collections::{HashMap, VecDeque};
 use std::io::Stdout;
 use crate::global_state::GlobalState;
+use crate::configuration::ConfigWrapper;
 use crate::types::app_state::*;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -213,7 +214,17 @@ pub (crate) async fn run(
         dark_light::Mode::Light => Theme::Light(light_theme()),
         dark_light::Mode::Default => Theme::Dark(dark_theme()),
     };
+
     let mut count = 0;
+
+    let disabled_items : Vec<String> =  application_config.hosted_process.clone().unwrap_or_default().iter_mut().filter_map( |x| 
+      if x.disabled.unwrap_or_default() { 
+        Some(x.host_name.clone()) 
+      } else {
+        None
+      }
+    ).collect();
+
 
 
     // TUI event loop
@@ -467,6 +478,7 @@ pub (crate) async fn run(
                                         {
                                             let mut app = app_state.0.write().await;
                                             for (_,state) in app.site_states_map.iter_mut() {
+                                                if disabled_items.contains(k) { continue }
                                                 if let ProcState::Stopped = state {
                                                     *state = ProcState::Starting;
                                                 }
