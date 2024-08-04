@@ -217,7 +217,7 @@ pub (crate) async fn run(
 
     let mut count = 0;
 
-    let disabled_items : Vec<String> =  application_config.hosted_process.clone().unwrap_or_default().iter_mut().filter_map( |x| 
+    let disabled_items : Vec<String> =  shared_state.1.read().await.hosted_process.clone().unwrap_or_default().iter_mut().filter_map( |x| 
       if x.disabled.unwrap_or_default() { 
         Some(x.host_name.clone()) 
       } else {
@@ -477,7 +477,7 @@ pub (crate) async fn run(
                                     KeyCode::Char('s') => {
                                         {
                                             let mut app = app_state.0.write().await;
-                                            for (_,state) in app.site_states_map.iter_mut() {
+                                            for (k,state) in app.site_states_map.iter_mut() {
                                                 if disabled_items.contains(k) { continue }
                                                 if let ProcState::Stopped = state {
                                                     *state = ProcState::Starting;
