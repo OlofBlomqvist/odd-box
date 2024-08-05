@@ -1,0 +1,79 @@
+name: Manually Triggered Build and Attach Artifacts Without release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch name to manually build and attach artifacts from'
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  build:
+    name: Build ${{ matrix.artifact_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        
+          - os: ubuntu-latest
+            artifact_path: target/release/odd-box
+            artifact_name: odd-box-x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-gnu
+
+          - os: ubuntu-latest
+            artifact_path: target/release/odd-box
+            artifact_name: odd-box-no-default-features-x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-gnu
+            no_default_features: true
+            
+          - os: windows-latest
+            artifact_path: target/release/odd-box.exe
+            artifact_name: odd-box-x86_64-pc-windows-msvc.exe
+            target: x86_64-pc-windows-msvc
+            
+          - os: macos-latest
+            artifact_path: target/release/odd-box
+            artifact_name: odd-box-x86_64-apple-darwin
+            target: x86_64-apple-darwin
+            
+          - os: macos-latest
+            artifact_path: target/release/odd-box
+            artifact_name: odd-box-aarch64-apple-darwin
+            target: aarch64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          ref: ${{ github.event.inputs.ref }}
+          
+      - name: Setup Rust Nightly
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          target: ${{ matrix.target }}
+          profile: minimal
+          override: true
+                      
+      - name: Build
+        run: |
+          if ("${{ matrix.no_default_features }}" -eq "true") {
+            cargo build --release --verbose --no-default-features
+          } else {
+            cargo build --release --verbose
+          }
+        shell: pwsh
+
+        
+      - name: Rename Artifact
+        run: mv ${{ matrix.artifact_path }} ${{ matrix.artifact_name }}
+        
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}
