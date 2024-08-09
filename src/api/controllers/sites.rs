@@ -40,6 +40,38 @@ pub (crate) struct ListResponse {
     pub items : Vec<ConfigurationItem>
 }
 
+#[derive(ToSchema,Serialize)]
+pub (crate) struct StatusResponse {
+    pub items : Vec<StatusItem>
+}
+
+
+#[derive(Debug,PartialEq,Clone,serde::Serialize,ToSchema)]
+pub enum BasicProcState {
+    Faulty,
+    Stopped,    
+    Starting,
+    Stopping,
+    Running,
+    Remote
+}
+impl From<crate::ProcState> for BasicProcState {
+    fn from(l: crate::ProcState) -> Self {
+        match l {
+            crate::types::app_state::ProcState::Faulty => BasicProcState::Faulty,
+            crate::types::app_state::ProcState::Stopped => BasicProcState::Stopped,
+            crate::types::app_state::ProcState::Starting => BasicProcState::Starting,
+            crate::types::app_state::ProcState::Stopping => BasicProcState::Stopping,
+            crate::types::app_state::ProcState::Running => BasicProcState::Running,
+            crate::types::app_state::ProcState::Remote => BasicProcState::Remote,
+        }
+    }
+}
+#[derive(ToSchema,Serialize)]
+pub struct StatusItem {
+    pub hostname: String,
+    pub state: BasicProcState
+}
 
 /// List all configured sites.
 #[utoipa::path(
@@ -61,6 +93,33 @@ pub (crate) async fn list_handler(state: axum::extract::State<GlobalState>) -> a
 
     Ok(Json(ListResponse {
         items: procs.into_iter().map(ConfigurationItem::HostedProcess).chain(rems.into_iter().map(ConfigurationItem::RemoteSite)).collect()
+    }))
+    
+}
+
+
+/// List all configured sites.
+#[utoipa::path(
+    operation_id="status",
+    get,
+    tag = "Site management",
+    path = "/sites/status",
+    responses(
+        (status = 200, description = "Successful Response", body = StatusResponse),
+        (status = 500, description = "When something goes wrong", body = String),
+    )
+)]
+pub (crate) async fn status_handler(state: axum::extract::State<GlobalState>) -> axum::response::Result<impl IntoResponse,SitesError> {
+    
+    let cfg_guard = state.0.0.read().await;
+    
+    Ok(Json(StatusResponse {
+        items: cfg_guard.site_states_map.clone().into_iter().map(|(site,state)|{
+            StatusItem {
+                hostname: site,
+                state: state.into()
+            }
+        }).collect()
     }))
     
 }

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use ratatui::widgets::ScrollbarState;
 use ratatui::prelude::Rect;
-use crate::http_proxy::ConfigWrapper;
+use utoipa::ToSchema;
 use crate::tui::Page;
 use crate::tui::TrafficTabState;
 use std::sync::Arc;
@@ -9,7 +9,7 @@ use crate::types::proxy_state::*;
 use ratatui::widgets::ListState;
 use crate::ProcMessage;
 
-#[derive(Debug,PartialEq,Clone,serde::Serialize)]
+#[derive(Debug,PartialEq,Clone,serde::Serialize,ToSchema)]
 pub enum ProcState {
     Faulty,
     Stopped,    
