@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use ratatui::widgets::ScrollbarState;
 use ratatui::prelude::Rect;
+use utoipa::ToSchema;
 use crate::tui::Page;
 use crate::tui::TrafficTabState;
 use std::sync::Arc;
@@ -8,7 +9,7 @@ use crate::types::proxy_state::*;
 use ratatui::widgets::ListState;
 use crate::ProcMessage;
 
-#[derive(Debug,PartialEq,Clone)]
+#[derive(Debug,PartialEq,Clone,serde::Serialize,ToSchema)]
 pub enum ProcState {
     Faulty,
     Stopped,    
@@ -25,7 +26,7 @@ pub (crate) struct AppState {
     pub (crate) dbg : String,
     pub (crate) total_line_count: usize,
     pub (crate) exit: bool,
-    pub (crate) procs: HashMap<String,ProcState>,
+    pub (crate) site_states_map: HashMap<String,ProcState>,
     pub (crate) vertical_scroll: Option<usize>,
     pub (crate) scroll_state : ScrollbarState,
     pub (crate) show_apps_window : bool,
@@ -43,7 +44,7 @@ impl AppState {
     pub fn new() -> AppState {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
-        AppState {
+        let result = AppState {
             logs_scroll_bar_hovered:false,
             last_mouse_down_y_pos: 1,
             dbg: String::new(),
@@ -64,9 +65,12 @@ impl AppState {
             vertical_scroll: None,
             exit: false,
             //view_mode: ViewMode::Console,
-            procs: HashMap::<String,ProcState>::new(),
+            site_states_map: HashMap::<String,ProcState>::new(),
             show_apps_window : true 
-        }
+        };
+
+        
+        result
     }
 
 
@@ -77,7 +81,7 @@ impl AppState {
         
         let new_state : Option<bool> =  {
 
-            let (_,state) = if let Some(info) = self.procs.iter_mut().find(|x|x.0==selected_site) {info} else {return};
+            let (_,state) = if let Some(info) = self.site_states_map.iter_mut().find(|x|x.0==selected_site) {info} else {return};
 
             match state {
                 ProcState::Faulty => {

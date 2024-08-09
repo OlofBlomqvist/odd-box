@@ -3,17 +3,14 @@ use chrono::Local;
 use hyper_tungstenite::HyperWebsocket;
 use hyper::{body::Incoming as IncomingBody, Request};
 use rustls::ClientConfig;
-use crate::CustomError;
+use crate::{global_state::GlobalState, CustomError};
 use futures_util::{SinkExt,StreamExt};
 use crate::tcp_proxy::ReverseTcpProxyTarget;
 use super::{ReverseProxyService, Target};
-use crate::types::{
-    app_state::AppState, 
-    proxy_state::{
-        ConnectionKey, 
-        ProxyActiveConnection, 
-        ProxyActiveConnectionType
-    }
+use crate::types::proxy_state::{
+    ConnectionKey, 
+    ProxyActiveConnection, 
+    ProxyActiveConnectionType
 };
 use hyper_rustls::ConfigBuilderExt;
 
@@ -35,9 +32,11 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
     };
     
     tracing::trace!("Handling websocket request: {req_host_name:?} --> {req_path}");
+    
+    let read_guard = service.state.1.read().await;
 
-    let processes = service.cfg.0.hosted_process.unwrap_or_default();
-    let remote_targets = service.cfg.0.remote_target;
+    let processes = read_guard.hosted_process.clone().unwrap_or_default();
+    let remote_targets = read_guard.0.clone().remote_target.unwrap_or_default();
     
     let target = {
 
@@ -46,7 +45,7 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
             || p.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",p.host_name)) 
         }) {
             crate::http_proxy::utils::Target::Proc(proc.clone())
-        } else if let Some(remsite) = remote_targets.unwrap_or_default().iter().find(|x| { 
+        } else if let Some(remsite) = remote_targets.iter().find(|x| { 
             req_host_name == x.host_name 
             || x.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",x.host_name)) 
         }) {
@@ -167,9 +166,9 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
 }
 
 
-async fn add_connection(state:Arc<tokio::sync::RwLock<AppState>>,connection:ProxyActiveConnection) -> ConnectionKey {
+async fn add_connection(state:GlobalState,connection:ProxyActiveConnection) -> ConnectionKey {
     let id = uuid::Uuid::new_v4();
-    let global_state = state.read().await;
+    let global_state = state.0.read().await;
     let mut guard = global_state.statistics.write().expect("should always be able to add statistics");
     let key = (
         connection.source_addr.clone(),
@@ -179,8 +178,8 @@ async fn add_connection(state:Arc<tokio::sync::RwLock<AppState>>,connection:Prox
     key
 }
 
-async fn del_connection(state:Arc<tokio::sync::RwLock<AppState>>,key:&ConnectionKey) {
-    let global_state = state.read().await;
+async fn del_connection(state:GlobalState,key:&ConnectionKey) {
+    let global_state = state.0.read().await;
     let mut guard = global_state.statistics.write().expect("should always be able to add statistics");
     _ = guard.active_connections.remove(key);
 }
