@@ -81,24 +81,15 @@ pub (crate) async fn run(globally_shared_state: crate::global_state::GlobalState
             .merge(RapiDoc::new("/api-docs/openapi.json").path("/rapidoc"))
             
              // API ROUTES
-            .merge(crate::api::controllers::routes(globally_shared_state.clone()))
+            .merge(crate::api::controllers::routes(globally_shared_state.clone()).await)
 
-            // STATIC FILES (For the web ui)
-            // .merge(
-            //     Router::new()
-            //         .nest_service("/", ServeFile::new("static/index.html"))
-            //         .nest_service("/static", ServeDir::new("static"))
-            // )
-            
             .route("/", axum::routing::get(root))
             .route("/script.js", axum::routing::get(script))
 
             
             // WEBSOCKET ROUTE
             .route("/ws", axum::routing::get(ws_handler).with_state(websocket_state.clone()))
-            
-           
-           
+
             
         ; 
 

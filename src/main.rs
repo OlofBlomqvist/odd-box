@@ -222,7 +222,14 @@ async fn update() -> JsonResult<()> {
         .expect("request failed")
         .json::<Vec<Release>>()
         .await
-        .expect("failed to deserialize").first().unwrap().clone();
+        .expect("failed to deserialize").iter().filter(|x|{
+            if let Some(t) = &x.tag_name {
+                t.to_lowercase().contains("-preview") == false
+            } else {
+                false
+            }
+        }).next().unwrap().clone();
+
     let current_version = cargo_crate_version!();
     let latest_tag = latest_release.tag_name.unwrap();
     if format!("v{current_version}") == latest_tag {
