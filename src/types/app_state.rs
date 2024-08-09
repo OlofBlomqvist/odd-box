@@ -44,7 +44,7 @@ impl AppState {
     pub fn new() -> AppState {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
-        let mut result = AppState {
+        let result = AppState {
             logs_scroll_bar_hovered:false,
             last_mouse_down_y_pos: 1,
             dbg: String::new(),

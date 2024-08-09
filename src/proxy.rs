@@ -23,7 +23,7 @@ use crate::types::app_state;
 use crate::types::app_state::ProcState;
 
 pub async fn listen(
-    cfg: std::sync::Arc<tokio::sync::RwLock<ConfigWrapper>>, 
+    _cfg: std::sync::Arc<tokio::sync::RwLock<ConfigWrapper>>, 
     bind_addr: SocketAddr,
     bind_addr_tls: SocketAddr, 
     tx: std::sync::Arc<tokio::sync::broadcast::Sender<ProcMessage>>,

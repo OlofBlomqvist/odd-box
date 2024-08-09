@@ -356,8 +356,6 @@ impl OddBoxConfig {
 
 #[derive(Debug)]
 enum ConfigurationUpdateError {
-    FailedToSave(String),
-    NotFound,
     Bug(String)
 }
 
@@ -365,12 +363,12 @@ enum ConfigurationUpdateError {
 impl std::fmt::Display for ConfigurationUpdateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConfigurationUpdateError::NotFound => {
-                f.write_str("No such hosted process found.")
-            },
-            ConfigurationUpdateError::FailedToSave(e) => {
-                f.write_fmt(format_args!("Failed to save due to error: {}",e))
-            },
+            // ConfigurationUpdateError::NotFound => {
+            //     f.write_str("No such hosted process found.")
+            // },
+            // ConfigurationUpdateError::FailedToSave(e) => {
+            //     f.write_fmt(format_args!("Failed to save due to error: {}",e))
+            // },
             ConfigurationUpdateError::Bug(e) => {
                 f.write_fmt(format_args!("Failed to save due to a bug in odd-box: {}",e))
             }

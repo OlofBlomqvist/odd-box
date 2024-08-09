@@ -1,30 +1,11 @@
-use std::hash::Hash;
 
-use crate::configuration::v1::{InProcessSiteConfig, RemoteSiteConfig};
+
+
 
 use super::*;
 use ahash::HashMap;
-use axum::extract::State;
-use utoipa::{IntoParams, IntoResponses, OpenApi, ToSchema};
 
-
-#[derive(Serialize,ToSchema)]
-pub (crate) enum SettingsError {
-    SomethingWentWrong,
-    UnknownError(String),
-    AccessDenied,
-    ServerIsBusy
-}
-impl IntoResponse for SettingsError {
-    fn into_response(self) -> Response {
-        let status = match self {
-            SettingsError::AccessDenied => StatusCode::FORBIDDEN,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        };
-        (status,serde_json::to_string_pretty(&self).unwrap()).into_response()
-    }
-}
-
+use utoipa::ToSchema;
 
 
 
@@ -95,7 +76,7 @@ pub struct OddBoxConfigGlobalPart {
 )]
 pub (crate) async fn get_settings_handler(
     axum::extract::State(global_state): axum::extract::State<GlobalState>,
-) -> axum::response::Result<impl IntoResponse,SettingsError> {
+) -> axum::response::Result<impl IntoResponse> {
     let guard = global_state.1.read().await;
     
     let cfg = OddBoxConfigGlobalPart {

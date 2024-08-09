@@ -18,7 +18,7 @@ use tungstenite::http;
 use lazy_static::lazy_static;
 
 use crate::{
-    configuration::v1::H2Hint, global_state::GlobalState, http_proxy::EpicResponse, tcp_proxy::ReverseTcpProxyTarget, types::{app_state::AppState, proxy_state::{ ConnectionKey, ProxyActiveConnection, ProxyActiveConnectionType }}, CustomError
+    configuration::v1::H2Hint, global_state::GlobalState, http_proxy::EpicResponse, tcp_proxy::ReverseTcpProxyTarget, types::{proxy_state::{ ConnectionKey, ProxyActiveConnection, ProxyActiveConnectionType }}, CustomError
 };
 lazy_static! {
     static ref TE_HEADER: HeaderName = HeaderName::from_static("te");

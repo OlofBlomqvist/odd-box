@@ -11,7 +11,7 @@ use std::borrow::BorrowMut;
 use std::collections::{HashMap, VecDeque};
 use std::io::Stdout;
 use crate::global_state::GlobalState;
-use crate::configuration::ConfigWrapper;
+
 use crate::types::app_state::*;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

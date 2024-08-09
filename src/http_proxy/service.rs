@@ -13,7 +13,7 @@ use std::pin::Pin;
 use crate::global_state::GlobalState;
 use crate::CustomError;
 use hyper::{Method, StatusCode};
-use crate::configuration::ConfigWrapper;
+
 use super::{ProcMessage, ReverseProxyService, WrappedNormalResponse};
 use super::proxy;
 

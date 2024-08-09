@@ -2,20 +2,17 @@ use crate::configuration::v1::{InProcessSiteConfig, RemoteSiteConfig};
 
 use super::*;
 use axum::extract::State;
-use utoipa::{IntoParams, OpenApi, ToSchema};
+use utoipa::{IntoParams, ToSchema};
 
 #[derive(Serialize,ToSchema)]
 pub (crate) enum SitesError {
-    SomethingWentWrong,
-    UnknownError(String),
-    AccessDenied,
-    ServerIsBusy
+    UnknownError(String)
 }
 
 impl IntoResponse for SitesError {
     fn into_response(self) -> Response {
         let status = match self {
-            SitesError::AccessDenied => StatusCode::FORBIDDEN,
+            //SitesError::AccessDenied => StatusCode::FORBIDDEN,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (status,serde_json::to_string_pretty(&self).unwrap()).into_response()
@@ -23,11 +20,6 @@ impl IntoResponse for SitesError {
 }
 
 
-#[derive(Deserialize,utoipa::IntoParams,utoipa::ToSchema,Debug)]
-pub (crate) struct QueryParameters {
-    pub a: i32,
-    pub b: i32,
-}
 
 #[derive(ToSchema,Serialize)]
 pub (crate) enum ConfigurationItem {

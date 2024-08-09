@@ -309,7 +309,7 @@ async fn main() -> anyhow::Result<()> {
                 match old_config.try_upgrade() {
                     Ok(configuration::Config::V1(configuration)) => {       
                               
-                        configuration.write_to_disk(&cfg_path);
+                        configuration.write_to_disk(&cfg_path)?;
                         configuration
                     },
                     Ok(_) => anyhow::bail!(format!("Unable to update the configuration file to new schema")),

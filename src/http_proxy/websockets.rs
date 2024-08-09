@@ -7,13 +7,10 @@ use crate::{global_state::GlobalState, CustomError};
 use futures_util::{SinkExt,StreamExt};
 use crate::tcp_proxy::ReverseTcpProxyTarget;
 use super::{ReverseProxyService, Target};
-use crate::types::{
-    app_state::AppState, 
-    proxy_state::{
-        ConnectionKey, 
-        ProxyActiveConnection, 
-        ProxyActiveConnectionType
-    }
+use crate::types::proxy_state::{
+    ConnectionKey, 
+    ProxyActiveConnection, 
+    ProxyActiveConnectionType
 };
 use hyper_rustls::ConfigBuilderExt;
 

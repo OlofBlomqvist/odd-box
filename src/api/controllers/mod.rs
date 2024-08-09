@@ -1,8 +1,8 @@
-use std::sync::Arc;
 
-use axum::{extract::{Path, Query}, http::StatusCode, response::{IntoResponse, Response}, routing::{get, post}, Json, Router};
+
+use axum::{extract::{Query}, http::StatusCode, response::{IntoResponse, Response}, Json, Router};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+
 
 use crate::global_state::GlobalState;
 
@@ -21,7 +21,7 @@ pub (crate) async fn routes(state:GlobalState) -> Router {
 
         // during development we want to allow setting cors options such that the frontend can be served from a different port than the api
         let cors_var = 
-            std::env::vars().find(|(a,b)|a=="ODDBOX_CORS_ALLOWED_ORIGIN").map(|(a,b)|b).unwrap_or(default_cors_origin);
+            std::env::vars().find(|(a,_b)|a=="ODDBOX_CORS_ALLOWED_ORIGIN").map(|(_a,b)|b).unwrap_or(default_cors_origin);
         
 
         let mut response = next.run(request).await;

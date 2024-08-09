@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
-use axum::{extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, handler::Handler, response::{Html, IntoResponse}, Router, ServiceExt};
-use futures_util::{SinkExt, StreamExt};
-use tower_http::services::{ServeDir, ServeFile};
+use axum::{extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::{Html, IntoResponse}, Router};
+use futures_util::SinkExt;
+
 use utoipa::{openapi::ExternalDocs, Modify, OpenApi};
 use utoipa_rapidoc::RapiDoc;
 use utoipa_redoc::{Redoc, Servable};
@@ -17,11 +17,6 @@ pub struct WebSocketGlobalState {
     pub global_state: crate::global_state::GlobalState
 }
 
-impl WebSocketGlobalState {
-    pub fn test(mut self) {
-
-    }
-}
 
 mod controllers;
 
@@ -140,7 +135,7 @@ async fn ws_handler(
 }
 
 
-async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: WebSocketGlobalState) {
+async fn handle_socket(socket: WebSocket, who: SocketAddr, state: WebSocketGlobalState) {
     
     let (mut sender, _receiver) = futures_util::StreamExt::split(socket);
 
