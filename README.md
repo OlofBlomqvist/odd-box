@@ -8,8 +8,7 @@ It allows you to configure a list of processes to run and host them behind their
 
 Uses the 'port' environment variable to assign a port for each site. If your process does not support using the port environment variable, you can pass custom arguments or variables for your process instead.
 
-You can enable or disable all sites or specific ones using the http://localhost/START and http://localhost/STOP endpoints, optionally using query parameter "?proc=my_site" to stop or start a specific site. (Mostly only useful for pre-build scripts where you dont want to manually stop and start the proxy on each rebuild. Sites start automatically again on the next request) 
-
+You can enable or disable all sites or specific ones using the http://localhost/START and http://localhost/STOP endpoints, optionally using query parameter "?proc=my_site" to stop or start a specific site. (Mostly only useful for pre-build scripts where you dont want to manually stop and start the proxy on each rebuild. Sites start automatically again on the next request). The same can be acomplished thru the admin-api if you enable it.
 
 ### Main Features & Goals
 
@@ -26,9 +25,17 @@ You can enable or disable all sites or specific ones using the http://localhost/
 - H2C via terminating proxy 
 - Automatic self-signed certs for all hosted processes
 
+### Performance
+
+While the goal of this project is not to provide a state-of-the-art level performing proxy server, but rather a tool for simplifying local development scenarios, we do try to keep performance ok:ish.. TCP tunnel mode supports 100k+ requests per second while the intercepting proxy mode allows for around 20k-50k requests per second in most cases. More specific measurements of different scenarios will be added here at some point.
+
 ### Terminal User Interface
 
 The TUI is fairly simple basic; it provides an easy way to see which sites are running, the log outputs and all currently active connections.
+
+### API
+
+There is a basic administration API that can be enabled by adding "admin_api_port = n" to the configuration file. At some point a web-interface might be added for controlling odd-box thru this API..
 
 **odd-box v0.0.9:**
 ![Screenshot of oddbox v0.0.9](/screenshot.png)
@@ -38,6 +45,8 @@ The TUI is fairly simple basic; it provides an easy way to see which sites are r
 By default, running odd-box without any arguments it will first try to read from odd-box.toml, then Config.toml. You can supply a custom config path using: ./odd-box "/tmp/my-file.toml"
 
 See the odd-box-example-config.toml file in this repository for details around how to configure oddbox.
+
+*Due to the fact that we now support more than a few configuration options, it is also possible to update the active configuration at runtime thru an administration API which fully documents the possible settings.*
 
 ### Configuration Variables
 
