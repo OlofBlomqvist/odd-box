@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 pub (crate) mod legacy;
 pub (crate) mod v1;
@@ -11,6 +12,7 @@ pub (crate) enum Config {
 
 #[derive(Debug,Clone)]
 pub struct ConfigWrapper(pub v1::OddBoxConfig);
+
 impl std::ops::Deref for ConfigWrapper {
     type Target = v1::OddBoxConfig;
     fn deref(&self) -> &Self::Target {
@@ -24,31 +26,63 @@ impl std::ops::DerefMut for ConfigWrapper {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize,ToSchema)]
 pub (crate) struct EnvVar {
     pub key: String,
     pub value: String,
 }
 
-#[derive(Serialize,Deserialize,Debug,Clone)]
+#[derive(Serialize,Deserialize,Debug,Clone,ToSchema)]
 #[allow(non_camel_case_types)]
 pub enum LogFormat {
     standard,
     dotnet
 }
 
-#[derive(Serialize,Deserialize,Debug,Clone)]
-#[allow(non_camel_case_types)]
+#[derive(Debug,Serialize,Clone,ToSchema)]
 pub enum LogLevel {
-    trace,
-    debug,
-    info,
-    warn,
-    error
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error
+}
+
+impl<'de> Deserialize<'de> for LogLevel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct LogLevelVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for LogLevelVisitor {
+            type Value = LogLevel;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a log level (trace, debug, info, warn, error)")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<LogLevel, E>
+            where
+                E: serde::de::Error,
+            {
+                match value.to_lowercase().as_str() {
+                    "trace" => Ok(LogLevel::Trace),
+                    "debug" => Ok(LogLevel::Debug),
+                    "info" => Ok(LogLevel::Info),
+                    "warn" => Ok(LogLevel::Warn),
+                    "error" => Ok(LogLevel::Error),
+                    _ => Err(E::custom(format!("unknown log level: {}", value))),
+                }
+            }
+        }
+
+        deserializer.deserialize_str(LogLevelVisitor)
+    }
 }
 
 
-#[derive(Debug,Clone,Serialize,Deserialize,Default)]
+#[derive(Debug,Clone,Serialize,Deserialize,Default,ToSchema)]
 pub enum OddBoxConfigVersion {
     #[default] Unmarked,
     V1
@@ -85,10 +119,12 @@ impl TryFrom<legacy::Config> for v1::OddBoxConfig {
 
     fn try_from(old_config: legacy::Config) -> Result<Self, Self::Error> {
         let new_config = v1::OddBoxConfig {
+            path: None,
             version: OddBoxConfigVersion::V1,
+            admin_api_port: None,
             alpn: Some(false), // allowing alpn would be a breaking change for h2c when using old configuration format
             auto_start: old_config.auto_start,
-            default_log_format: old_config.default_log_format,
+            default_log_format: old_config.default_log_format.unwrap_or(LogFormat::standard),
             env_vars: old_config.env_vars,
             ip: old_config.ip,
             log_level: old_config.log_level,

@@ -2,6 +2,7 @@ version = "V1" # this is the configuration format version, dont change it
 root_dir = "~" # you can use $root_dir in env_var values and dir paths etc.
 log_level = "info" # trace,info,debug,info,warn,error
 alpn = false # optional - allows alpn negotiation for http/1.0 and h2 on tls connections
+admin_api_port = 6789 # optional - leave out to disable the admin api
 port_range_start = 4200 # port range for automatic port assignment (the env var PORT will be set if you did not specify one manually for a process)
 default_log_format = "standard" # standard | dotnet
 ip = "127.0.0.1" # ip for proxy to listen to , can be ipv4/6
@@ -45,3 +46,17 @@ env_vars = [
     { key = "host", value = "odd-box" }
 ]
 disabled = true # optional, false by default: set to true to disable the process from running when odd-box is started and when using the start-all commands. you can still manually start it in the tui.
+
+
+[[hosted_process]]
+host_name = "py.localtest.me"
+dir = "/usr/bin/"
+bin = "/usr/bin/python3"
+args = ["-m", "http.server", "8012"]
+auto_start = false
+https = false
+port = 8012
+capture_subdomains = false
+env_vars = [
+	{ key = "PORT", value = "8012" },
+]

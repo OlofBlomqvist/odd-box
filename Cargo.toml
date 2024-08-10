@@ -35,19 +35,19 @@ clap = { version="4.4.7", features=["derive"]}
 rustls = "0.22.2"
 tokio-rustls = "0.25.0"
 rustls-pemfile = "2.0.0"
-rcgen = "0.12.1"
+rcgen = "0.13.1"
 socket2 = "0.5.5"
 hyper-tungstenite = "0.13.0"
 
-ratatui = "=0.26.2-alpha.2"
+ratatui = "0.26.2"
 #ratatui = { git = "https://github.com/ratatui-org/ratatui" }
 crossterm = { version = "0.27.0"  }
 chrono = "0.4.31"
 
 time = {version="0.3.30",features=["macros","formatting","parsing"]}
-reqwest = { version = "0.11.23", features = ["json"] }
+reqwest = { version = "0.12.4", features = ["json"] }
 serde_json = "1.0.111"
-self_update = "0.39.0"
+self_update = "0.40.0"
 bytes = "1.5.0"
 http-body-util = "0.1.0"
 #active-win-pos-rs = "0.8.3"
@@ -68,6 +68,18 @@ serde_yaml = "0.9.32"
 ahash = "0.8.7"
 dark-light = "1.0.0"
 #console-subscriber = "0.2.0"
+
+# === MANAGEMENT API ============================================
+axum = { version="0.7.5",features=["ws"] }
+utoipa = "4.2.3"
+utoipa-swagger-ui = { version = "7.1.0", features = ["axum","vendored"] }
+utoipa-rapidoc = { version = "4.0.0", features = ["axum"] }
+utoipa-redoc = { version = "4.0.0", features = ["axum"] }
+utoipauto = "0.1.10"
+tower-http = { version = "0.5.2" , features = ["fs"]}
+async-trait = "0.1.79"
+axum-extra = { version = "0.9.3", features = ["typed-header"] }
+# ===============================================================
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.52.0", features = ["Win32","Win32_Foundation","Win32_System","Win32_System_Console"] }
