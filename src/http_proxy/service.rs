@@ -11,6 +11,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use std::future::Future;
 use std::pin::Pin;
 use crate::global_state::GlobalState;
+use crate::types::app_state::ProcState;
 use crate::CustomError;
 use hyper::{Method, StatusCode};
 
@@ -124,7 +125,8 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
             req,
             self.tx.clone(),
             self.state.clone(),
-            self.is_https_only
+            self.is_https_only,
+            self.client_tls_config.clone()
         );
         
         return Box::pin(async move {
@@ -141,7 +143,8 @@ async fn handle(
     req: Request<hyper::body::Incoming>,
     tx: Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
     state: GlobalState,
-    is_https:bool
+    is_https:bool,
+    client_tls_config:rustls::ClientConfig
 ) -> Result<EpicResponse, CustomError> {
     
     let req_host_name = 
@@ -188,8 +191,14 @@ async fn handle(
             }
         };
 
-        // auto start site in case its been disabled by other requests
-        _ = tx.send(super::ProcMessage::Start(target_cfg.host_name.to_owned())).map_err(|e|format!("{e:?}"));
+        match current_target_status {
+            Some(ProcState::Running) => {},
+            None => {},
+            _ => {
+                // auto start site in case its been disabled by other requests
+                _ = tx.send(super::ProcMessage::Start(target_cfg.host_name.to_owned())).map_err(|e|format!("{e:?}"));
+            }
+        }
 
         
         if let Some(cts) = current_target_status {
@@ -206,8 +215,6 @@ async fn handle(
             }
         }
         
-        // auto start site in case its been disabled by other requests
-        _ = tx.send(super::ProcMessage::Start(target_cfg.host_name.to_owned())).map_err(|e|format!("{e:?}"));
         let enforce_https = target_cfg.https.is_some_and(|x|x);
         let scheme = if enforce_https { "https" } else { "http" };
 
@@ -232,24 +239,17 @@ async fn handle(
         };
         
 
-
-        // TODO - also support this mode for tcp tunnelling and remote sites ?
-        // need to be opt-in so that we either
-        // direct *.blah.com -> mysite.com
-        // or *.blah.com -> *.mysite.com (would obviously not work if target is ip?)
-
         tracing::info!("USING THIS RESOLVED TARGET: {resolved_host_name}");
         let target_url = format!("{scheme}://{}:{}{}",
             resolved_host_name,
             target_cfg.port.unwrap_or(default_port),
             original_path_and_query
         );
-    
 
         let target = crate::http_proxy::Target::Proc(target_cfg.clone());
         
         let result = 
-            proxy(&req_host_name,is_https,state.clone(),req,&target_url,target,client_ip).await;
+            proxy(&req_host_name,is_https,state.clone(),req,&target_url,target,client_ip,client_tls_config).await;
 
         map_result(&req_host_name,result).await
     }
@@ -263,7 +263,7 @@ async fn handle(
             || p.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",p.host_name))
         }) {
 
-            return perform_remote_forwarding(req_host_name,is_https,state.clone(),client_ip,remote_target_cfg,req).await
+            return perform_remote_forwarding(req_host_name,is_https,state.clone(),client_ip,remote_target_cfg,req,client_tls_config).await
         }
 
         tracing::warn!("Received request that does not match any known target: {:?}", req_host_name);
@@ -294,7 +294,8 @@ async fn perform_remote_forwarding(
     state: GlobalState,
     client_ip:std::net::SocketAddr,
     remote_target_config:&crate::configuration::v1::RemoteSiteConfig,
-    req:hyper::Request<IncomingBody>
+    req:hyper::Request<IncomingBody>,
+    client_tls_config:rustls::ClientConfig
 ) -> Result<EpicResponse,CustomError> {
     
     
@@ -341,7 +342,9 @@ async fn perform_remote_forwarding(
             req,
             &target_url,
             crate::http_proxy::Target::Remote(remote_target_config.clone()),
-            client_ip
+            client_ip,
+            client_tls_config
+            
         ).await;
 
     map_result(&target_url,result).await

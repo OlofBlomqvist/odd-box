@@ -71,18 +71,15 @@ pub async fn proxy(
     target_url: &str,
     target: Target,
     client_ip: SocketAddr,
+    client_tls_config: ClientConfig
 ) -> Result<ProxyCallResult, ProxyError> {
     
-    let v = req.version();
-
+    let incoming_http_version = req.version();
+    
     tracing::info!(
-        "Incoming {v:?} request to proxy from {client_ip:?} with target url: {target_url}"
+        "Incoming {incoming_http_version:?} request to proxy from {client_ip:?} with target url: {target_url}"
     );
 
-    let client_tls_config = ClientConfig::builder_with_protocol_versions(ALL_VERSIONS)
-        .with_native_roots()
-        .expect("should always be able to build a tls client")
-        .with_no_client_auth();
 
     let https_builder =
         hyper_rustls::HttpsConnectorBuilder::default().with_tls_config(client_tls_config);
@@ -102,7 +99,7 @@ pub async fn proxy(
         Target::Remote(x) => x.h2_hint.clone(),
         Target::Proc(x) => x.h2_hint.clone(),
     };
-
+    
     let mut enforce_http2 = false;
     let mut target_url = target_url.to_string();
     
@@ -111,12 +108,10 @@ pub async fn proxy(
         match hint {
             H2Hint::H2 => {
                 tracing::debug!("H2 HINT DETECTED");
-                *req.version_mut() = Version::HTTP_2;
                 enforce_http2 = true;
             }
             H2Hint::H2C => {
                 tracing::debug!("H2C HINT DETECTED");
-                *req.version_mut() = Version::HTTP_2;
                 target_url = target_url.replace("https://", "http://").to_string();
                 if enforce_https {
                     tracing::warn!("Suspicious configuration for target: {target_url}. the domain is marked both with https and h2c.. will connect using h2c..")
@@ -149,7 +144,8 @@ pub async fn proxy(
     }
 
     if enforce_http2 {
-        tracing::warn!("enforcing http2!");
+        tracing::trace!("enforcing http2!");        
+        *req.version_mut() = Version::HTTP_2;
     }
     if enforce_https {
         tracing::trace!("enforcing https!");
@@ -159,20 +155,22 @@ pub async fn proxy(
     let mut proxied_request =
         create_proxied_request(&target_url, req, request_upgrade_type.as_ref())?;
 
-    
+
     let target_scheme = if enforce_https || target_url.to_lowercase().starts_with("https") {
         "https"
     } else {
-        "http(s?)" // stupidest thing I've ever seen
+        "http(s?)" // stupidest thing I've ever seen..
+                   // we dont know if it will be upgraded at this point, and we dont upgrade the con info after this step..
     };
 
 
     let con: ProxyActiveConnection = create_connection(
         &proxied_request, 
+        incoming_http_version,
         target, 
         &client_ip, 
         target_scheme, 
-        Version::HTTP_11, 
+        proxied_request.version(), 
         &target_url, 
         is_https
     );
@@ -537,18 +535,20 @@ async fn del_connection(state:GlobalState,key:&ConnectionKey) {
 
 fn create_connection(
     req:&Request<Incoming>,
+    incoming_http_version: Version,
     target:Target,
     client_addr:&SocketAddr,
     target_scheme: &str,
-    target_version: hyper::http::Version,
+    target_http_version: hyper::http::Version,
     target_addr: &str,
     incoming_known_tls_only: bool
 ) -> ProxyActiveConnection {
+    
     let typ_info = 
         ProxyActiveConnectionType::TerminatingHttp { 
             incoming_scheme: req.uri().scheme_str().unwrap_or(if incoming_known_tls_only { "HTTPS" } else {"HTTP"} ).to_owned(), 
-            incoming_http_version: format!("{:?}",req.version()), 
-            outgoing_http_version: format!("{:?}",target_version), 
+            incoming_http_version: format!("{:?}",incoming_http_version), 
+            outgoing_http_version: format!("{:?}",target_http_version), 
             outgoing_scheme: target_scheme.to_owned()
         };
 

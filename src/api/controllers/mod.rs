@@ -15,7 +15,7 @@ pub (crate) async fn routes(state:GlobalState) -> Router {
   
     let adm_port = state.1.read().await.admin_api_port.expect("Admin API port not set even though the admin api is being started.. this is a bug in odd-box");
 
-    async fn set_static_cache_control(request: axum::extract::Request, next: axum::middleware::Next, port: u16) -> axum::response::Response {
+    async fn set_cors(request: axum::extract::Request, next: axum::middleware::Next, port: u16) -> axum::response::Response {
         
         let default_cors_origin = format!("http://localhost:{}",port);
 
@@ -48,6 +48,7 @@ pub (crate) async fn routes(state:GlobalState) -> Router {
     let settings = Router::new()
         .route("/settings", axum::routing::get(settings::get_settings_handler)).with_state(state.clone());
 
-    sites.merge(settings).layer(axum::middleware::from_fn(move |request: axum::extract::Request, next: axum::middleware::Next|set_static_cache_control(request,next,adm_port)))
+    sites.merge(settings)
+        .layer(axum::middleware::from_fn(move |request: axum::extract::Request, next: axum::middleware::Next|set_cors(request,next,adm_port)))
 
 } 

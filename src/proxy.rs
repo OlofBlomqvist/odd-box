@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use hyper_rustls::ConfigBuilderExt;
 use socket2::Socket;
 use tokio::net::TcpSocket;
 use tokio::net::TcpStream;
@@ -28,7 +29,7 @@ pub async fn listen(
     bind_addr_tls: SocketAddr, 
     tx: std::sync::Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
     state: GlobalState,
-    shutdown_signal: Arc<Notify> 
+    shutdown_signal: Arc<Notify>
 )  {
 
     
@@ -38,11 +39,18 @@ pub async fn listen(
         global_state: state.clone()
     });
 
+    let client_tls_config = rustls::ClientConfig::builder_with_protocol_versions(rustls::ALL_VERSIONS)
+        .with_native_roots()
+        .expect("should always be able to build a tls client")
+        .with_no_client_auth();
+
+
     let terminating_proxy_service = ReverseProxyService { 
         state:state.clone(), 
         remote_addr: None, 
         tx:tx.clone(), 
-        is_https_only:false
+        is_https_only:false,
+        client_tls_config: client_tls_config
     };
     
   
@@ -253,6 +261,7 @@ async fn handle_new_tcp_stream(
             http_version:_,
             target_host: Some(target)
         }) if !expect_tls => {
+
             if let Some(target) = tcp_proxy::ReverseTcpProxy::try_get_target_from_vec(targets, &target) {
                 if target.target_http_port.is_some() {
                     

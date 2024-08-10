@@ -224,7 +224,7 @@ impl ReverseTcpProxy {
         let mut last_peeked = 0;
 
 
-        let duration = std::time::Duration::from_secs(1); 
+        let duration = std::time::Duration::from_millis(500); 
         let start_time = time::Instant::now();
         
         let result = tokio::time::timeout(duration, async {
@@ -289,8 +289,8 @@ impl ReverseTcpProxy {
                                 | Err(TlsClientHelloError::NotTLSHandshake) => {
                                     we_know_this_is_not_tls_handshake = true;
                                 }
-                                Err(_e) => {
-                                    //trace!("{e:?}")
+                                Err(e) => {
+                                    trace!("{e:?}")
                                 }
                             }
                         }
@@ -321,19 +321,29 @@ impl ReverseTcpProxy {
                     }
                     // if we dont already know the traffic is NOT http1: 
                     else if we_know_its_not_h2 == false && super::http2::is_valid_http2_request(&buf) {
-                        we_know_its_not_h1 = true;
-                        if let Some(valid_host_name) = super::http2::find_http2_authority(&buf) {
-                            trace!("Found valid http2 authority while peeking in to tcp stream: {valid_host_name}");
-                            return Ok(PeekResult { 
-                                typ: DataType::ClearText, 
-                                // todo : use version from the peeked tcp bytes
-                                http_version: Some(Version::HTTP_2), 
-                                target_host: Some(valid_host_name)
-                            });
-                        } else {
-                            trace!("it is a valid http2 request but no authority is yet to be found");
-                            we_know_this_is_not_tls_handshake = true;
-                        }
+                        
+                        return Err(PeekError::Unknown("oddbox does not currently support h2c for tcp tunnel mode".into()));
+                        
+                        // note: the issue here is that clients do not send their header/settings frame until it receives a response from the server
+                        // containing the server settings, which we don't yet know at this point.
+
+                        // we_know_its_not_h1 = true;
+                        // if let Some(valid_host_name) = super::http2::find_http2_authority(&buf) {
+                        //     trace!("Found valid http2 authority while peeking in to tcp stream: {valid_host_name}");
+                        //     return Ok(PeekResult { 
+                        //         typ: DataType::ClearText, 
+                        //         // todo : use version from the peeked tcp bytes
+                        //         http_version: Some(Version::HTTP_2), 
+                        //         target_host: Some(valid_host_name)
+                        //     });
+                        // } else {
+                        //     trace!("it is a valid http2 request but no authority is yet to be found");
+                        //     we_know_this_is_not_tls_handshake = true;
+                        //     // wait for more bytes to arrive as we need the authority info from a header frame to be able to proceed
+                            
+                        //     tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                        //     continue
+                        // }
                     }
 
                     if we_know_this_is_not_tls_handshake {

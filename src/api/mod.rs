@@ -182,5 +182,5 @@ async fn broadcast_manager(state: WebSocketGlobalState,tracing_broadcaster:tokio
         _ = state.broadcast_channel.send(msg);
     }
 
-    tracing::warn!("leaving broadcast manager main loop")
+    //tracing::warn!("leaving broadcast manager main loop")
 }

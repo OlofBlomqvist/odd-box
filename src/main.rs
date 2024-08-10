@@ -46,6 +46,7 @@ impl ResolvesServerCert for DynamicCertResolver {
         {
             let cache = self.cache.lock().expect("should always be able to read cert cache");
             if let Some(certified_key) = cache.get(server_name) {
+                tracing::trace!("Returning a cached certificate for {:?}",server_name);
                 return Some(certified_key.clone());
             }
         }
@@ -64,35 +65,37 @@ impl ResolvesServerCert for DynamicCertResolver {
         let key_path = format!("{}/{}/key.pem",odd_cache_base,server_name);
 
         if let Err(e) = generate_cert_if_not_exist(server_name, &cert_path, &key_path) {
-            tracing::error!("Failed to generate certificate for {}! - Error reason: {}", server_name, e);
+            tracing::error!("Could not generate cert: {:?}", e);
             return None
         }
 
-        let cert_chain = if let Ok(c) = my_certs(&cert_path) {
-            c
-        } else {
-            tracing::error!("failed to read cert: {cert_path}");
-            return None
-        };
+        
+        if let Ok(cert_chain) = my_certs(&cert_path) {
 
-        if cert_chain.is_empty() {
-            tracing::warn!("EMPTY CERT CHAIN FOR {}",server_name);
-            return None
-        }
-       
-        if let Ok(private_key) = my_rsa_private_keys(&key_path) {
-            if let Ok(rsa_signing_key) = rustls::crypto::ring::sign::any_supported_type(&private_key) {
-                Some(std::sync::Arc::new(rustls::sign::CertifiedKey::new(
-                    cert_chain, 
-                    rsa_signing_key
-                )))
+            if cert_chain.is_empty() {
+                tracing::warn!("EMPTY CERT CHAIN FOR {}",server_name);
+                return None
+            }
+            if let Ok(private_key) = my_rsa_private_keys(&key_path) {
+                if let Ok(rsa_signing_key) = rustls::crypto::ring::sign::any_supported_type(&private_key) {
+                    let result = std::sync::Arc::new(rustls::sign::CertifiedKey::new(
+                        cert_chain, 
+                        rsa_signing_key
+                    ));
+                    let mut cache = self.cache.lock().expect("should always be able to write to cert cache");
+                    cache.insert(server_name.into(), result.clone());
+                    Some(result)
 
+                } else {
+                    tracing::error!("rustls::crypto::ring::sign::any_supported_type - failed to read cert: {cert_path}");
+                    None
+                }
             } else {
-                tracing::error!("rustls::crypto::ring::sign::any_supported_type - failed to read cert: {cert_path}");
+                tracing::error!("my_rsa_private_keys - failed to read cert: {cert_path}");
                 None
             }
         } else {
-            tracing::error!("my_rsa_private_keys - failed to read cert: {cert_path}");
+            tracing::error!("generate_cert_if_not_exist - failed to read cert: {cert_path}");
             None
         }
     }
@@ -157,7 +160,6 @@ fn my_rsa_private_keys(path: &str) -> Result<PrivateKeyDer, String> {
     }
 
 }
-
 
 use clap::Parser;
 
