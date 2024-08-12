@@ -47,13 +47,10 @@ jobs:
         with:
           ref: ${{ github.event.inputs.ref }}  # This checks out the git reference specified by the user
 
-      - name: Setup Rust Nightly
-        uses: actions-rs/toolchain@v1
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly
-          target: ${{ matrix.target }}
-          profile: minimal
-          override: true
 
       - name: Build
         run: |
