@@ -4,7 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Release name to manually build and upload to'
+        description: 'Git reference (branch or commit) to build from'
+        required: true
+      release_name:
+        description: 'Release name or tag to upload the artifact to'
         required: true
 
 env:
@@ -19,7 +22,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        
           - os: ubuntu-latest
             artifact_path: target/release/odd-box
             artifact_name: odd-box-x86_64-unknown-linux-gnu
@@ -29,12 +31,12 @@ jobs:
             artifact_path: target/release/odd-box.exe
             artifact_name: odd-box-x86_64-pc-windows-msvc.exe
             target: x86_64-pc-windows-msvc
-            
+
           - os: macos-latest
             artifact_path: target/release/odd-box
             artifact_name: odd-box-x86_64-apple-darwin
             target: x86_64-apple-darwin
-            
+
           - os: macos-latest
             artifact_path: target/release/odd-box
             artifact_name: odd-box-aarch64-apple-darwin
@@ -42,10 +44,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
-      
         with:
-          ref: ${{ github.event.inputs.ref }}
-          
+          ref: ${{ github.event.inputs.ref }}  # This checks out the git reference specified by the user
+
       - name: Setup Rust Nightly
         uses: actions-rs/toolchain@v1
         with:
@@ -53,7 +54,7 @@ jobs:
           target: ${{ matrix.target }}
           profile: minimal
           override: true
-                      
+
       - name: Build
         run: |
           if ("${{ matrix.no_default_features }}" -eq "true") {
@@ -63,10 +64,9 @@ jobs:
           }
         shell: pwsh
 
-        
       - name: Rename Artifact
         run: mv ${{ matrix.artifact_path }} ${{ matrix.artifact_name }}
-        
+
       # Assuming you have gh CLI installed in the runner
       - name: Upload Release Artifact
-        run: gh release upload ${{ github.event.inputs.ref }} ${{ matrix.artifact_name }}
+        run: gh release upload ${{ github.event.inputs.release_name }} ${{ matrix.artifact_name }}  # Upload to the specified release
