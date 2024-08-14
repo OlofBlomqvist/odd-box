@@ -63,7 +63,7 @@ Since all the routing is based on hostnames, your client machine(s) must of cour
 
 ### Security tips
 
-Since odd-box spawns your defined binaries, you should be careful not to run odd-box in elevated/admin mode. To be safe, use a non-restricted port or follow the section for your OS below!
+Since odd-box spawns your defined binaries, you should be careful not to run odd-box in elevated/admin mode. To be safe, use a non-restricted port so that you do not need root access or follow the section for your OS below!
 
 #### MacOS:
 
