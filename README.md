@@ -11,7 +11,7 @@ As configuration is done thru basic files (toml format) which are easy to share,
 ### Main Features & Goals
 
 - Cross platform (win/lin/osx)
-- Easy to configure
+- Easy to configure (toml files)
 - Keep a list of specified binaries running
 - Uses PORT environment variable for routing
 - Allows for setting proc specific and global env vars
@@ -25,7 +25,7 @@ As configuration is done thru basic files (toml format) which are easy to share,
 
 ### Performance
 
-While the goal of this project is not to provide a state-of-the-art level performing proxy server for production environments, but rather a tool for simplifying local development scenarios, we do try to keep performance in mind.. TCP tunnel mode supports 100k+ requests per second while the intercepting proxy mode allows for around 20k-50k requests per second in most cases. More specific measurements of different scenarios will be added here at some point.
+While the goal of this project **is not** to provide a state-of-the-art level performing proxy server for production environments, but rather a tool for simplifying local development scenarios, we do try to keep performance in mind.. Some  rudimentary testing on this authors development machine shows that TCP tunnel mode supports 100k+ requests per second while the intercepting proxy mode handles 20k+ requests per second in most cases. More specific measurements of different scenarios will be added here at some point.
 
 ### Terminal User Interface
 
@@ -64,7 +64,7 @@ You can enable or disable all sites or specific ones using the http://localhost:
 
 ### DNS
 
-Since all the routing is based on hostnames, your client machine(s) must of course be able to resolve those names correctly to the proxy server IP. If you are working on a local machine this can be configured either by adding entries to your host file pointing each domain to 127.0.0.1 or by using something like [localtest.me](http://localtest.me/).me, eg. my-first-site.localtest.me when configuring hosted sites. More advanced users might use their own DNS servers to set up these domains however they like.
+As all the routing is based on hostnames, your client machine(s) must of course be able to resolve those names correctly to the proxy server IP. If you are working on a local machine this can be configured either by adding entries to your host file pointing each domain to 127.0.0.1 or by using something like [localtest.me](http://localtest.me/).me, eg. my-first-site.localtest.me when configuring hosted sites. More advanced users might use their own DNS servers to set up these domains however they like.
 
 
 
