@@ -76,7 +76,7 @@ utoipa-swagger-ui = { version = "7.1.0", features = ["axum","vendored"] }
 utoipa-rapidoc = { version = "4.0.0", features = ["axum"] }
 utoipa-redoc = { version = "4.0.0", features = ["axum"] }
 utoipauto = "0.1.10"
-tower-http = { version = "0.5.2" , features = ["fs"]}
+tower-http = { version = "0.5.2" , features = ["fs","cors","trace"]}
 async-trait = "0.1.79"
 axum-extra = { version = "0.9.3", features = ["typed-header"] }
 # ===============================================================

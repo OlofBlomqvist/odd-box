@@ -1,8 +1,9 @@
 
 
-use axum::{extract::{Query}, http::StatusCode, response::{IntoResponse, Response}, Json, Router};
+use axum::{http::StatusCode, response::{IntoResponse, Response}, Json, Router};
 use serde::{Deserialize, Serialize};
 
+use tower_http::cors::{Any, CorsLayer};
 
 use crate::global_state::GlobalState;
 
@@ -12,18 +13,8 @@ pub mod settings;
 
 pub (crate) async fn routes(state:GlobalState) -> Router {
 
-  
-    let adm_port = state.1.read().await.admin_api_port.expect("Admin API port not set even though the admin api is being started.. this is a bug in odd-box");
-
-    async fn set_cors(request: axum::extract::Request, next: axum::middleware::Next, port: u16) -> axum::response::Response {
+    async fn set_cors(request: axum::extract::Request, next: axum::middleware::Next, cors_var: String) -> axum::response::Response {
         
-        let default_cors_origin = format!("http://localhost:{}",port);
-
-        // during development we want to allow setting cors options such that the frontend can be served from a different port than the api
-        let cors_var = 
-            std::env::vars().find(|(a,_b)|a=="ODDBOX_CORS_ALLOWED_ORIGIN").map(|(_a,b)|b).unwrap_or(default_cors_origin);
-        
-
         let mut response = next.run(request).await;
         response.headers_mut().insert(
             hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN,
@@ -48,7 +39,19 @@ pub (crate) async fn routes(state:GlobalState) -> Router {
     let settings = Router::new()
         .route("/settings", axum::routing::get(settings::get_settings_handler)).with_state(state.clone());
 
-    sites.merge(settings)
-        .layer(axum::middleware::from_fn(move |request: axum::extract::Request, next: axum::middleware::Next|set_cors(request,next,adm_port)))
+    let mut router = sites.merge(settings);
+
+    // in some cases one might want to allow CORS from a specific origin. this is not currently allowed to do from the config file
+    // so we use an environment variable to set this. might change in the future if it becomes a common use case
+    if let Some((_,cors_var)) = std::env::vars().find(|(key,_)| key=="ODDBOX_CORS_ALLOWED_ORIGIN") { 
+        router = router.layer(
+            CorsLayer::new()
+                .allow_methods(Any)
+                .allow_headers(Any)
+                .expose_headers(Any))
+        .layer(axum::middleware::from_fn(move |request: axum::extract::Request, next: axum::middleware::Next|set_cors(request,next,cors_var.clone())));
+    }
+       
+    router
 
 } 

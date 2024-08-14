@@ -1,7 +1,7 @@
 use crate::configuration::v1::{InProcessSiteConfig, RemoteSiteConfig};
 
 use super::*;
-use axum::extract::State;
+use axum::extract::{Query, State};
 use utoipa::{IntoParams, ToSchema};
 
 #[derive(Serialize,ToSchema)]
