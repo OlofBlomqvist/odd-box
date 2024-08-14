@@ -32,10 +32,13 @@ While the goal of this project is not to provide a state-of-the-art level perfor
 ### Terminal User Interface
 
 The TUI is fairly simple basic; it provides an easy way to see which sites are running, the log outputs and all currently active connections.
+It is possible to opt-out of TUI mode by supplying the argument: "--tui=false" when starting odd-box. 
 
 ### API
 
 There is a basic administration API that can be enabled by adding "admin_api_port = n" to the configuration file. At some point a web-interface might be added for controlling odd-box thru this API..
+
+### Screenshot(s)
 
 **odd-box v0.0.9:**
 ![Screenshot of oddbox v0.0.9](/screenshot.png)
