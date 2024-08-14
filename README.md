@@ -1,14 +1,12 @@
-[![BuildAndTest](https://github.com/OlofBlomqvist/odd-box/actions/workflows/rust.yml/badge.svg)](https://github.com/OlofBlomqvist/odd-box/actions/workflows/rust.yml)
+[![BuildAndTest](https://github.com/OlofBlomqvist/odd-box/actions/workflows/rust.yml/badge.svg)](https://github.com/OlofBlomqvist/odd-box/actions/workflows/BuildAndTest.yml)
 
 ## ODD-BOX
 
-A simple to use cross-platform reverse proxy server for local development and tinkering purposes.
+A simple, cross-platform reverse proxy server tailored for local development and tinkering. Think of it as a lightweight (and more streamlined) alternative to something like IIS, but with a key difference: configuration is primarily done declaratively through structured files, rather than a graphical user interface.
 
-It allows you to configure a list of processes to run and host them behind their own custom hostnames. Automatically generates (self-signed) certificates for HTTPS when accessing them the first time (cached in .odd-box-cache dir).
+It allows you to configure a list of processes to run and host them behind their own custom hostnames. Self-signed certificates for HTTPS are automatically generated when accessing a site thru the intercepting proxy service the first time (cached in .odd-box-cache dir).
 
-Uses the 'port' environment variable to assign a port for each site. If your process does not support using the port environment variable, you can pass custom arguments or variables for your process instead.
-
-You can enable or disable all sites or specific ones using the http://localhost/START and http://localhost/STOP endpoints, optionally using query parameter "?proc=my_site" to stop or start a specific site. (Mostly only useful for pre-build scripts where you dont want to manually stop and start the proxy on each rebuild. Sites start automatically again on the next request). The same can be acomplished thru the admin-api if you enable it.
+As configuration is done thru basic files (toml format) which are easy to share, it's very easy to reproduce a particular setup.
 
 ### Main Features & Goals
 
@@ -57,6 +55,12 @@ See the odd-box-example-config.toml file in this repository for details around h
 |------------|----------------------------------|
 | $root_dir  | Resolves to whatever you set it to in the global configuration section. |
 | $cfg_dir   | Resolves to the directory which the configuration toml file was read from. |
+
+### Workflow tips
+
+If you are hosting a local project that you are currently working on, and want to do a rebuild without having to manually start and stop your site - you may want to consider having a pre-build step that does it for you:
+
+You can enable or disable all sites or specific ones using the http://localhost:port/START and http://localhost:port/STOP endpoints, optionally using query parameter "?proc=my_site" to stop or start a specific site. Sites start automatically again on the next request). The same can be acomplished thru the admin-api if you enable it.
 
 ### DNS
 
