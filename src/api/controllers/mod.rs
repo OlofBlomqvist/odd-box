@@ -37,6 +37,7 @@ pub (crate) async fn routes(state:GlobalState) -> Router {
         ;
 
     let settings = Router::new()
+        .route("/settings", axum::routing::post(settings::set_settings_handler)).with_state(state.clone())
         .route("/settings", axum::routing::get(settings::get_settings_handler)).with_state(state.clone());
 
     let mut router = sites.merge(settings);
