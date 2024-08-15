@@ -51,7 +51,7 @@ disabled = true # optional, false by default: set to true to disable the process
 
 [[hosted_process]]
 host_name = "py.localtest.me"
-dir = "/usr/bin/"
+dir = "$cfg_dir"
 bin = "/usr/bin/python3"
 args = ["-m", "http.server", "8012"]
 auto_start = false
