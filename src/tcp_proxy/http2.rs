@@ -1,5 +1,6 @@
 use hpack::Decoder;
 
+#[allow(dead_code)]
 // https://datatracker.ietf.org/doc/html/rfc9113
 pub (crate) fn find_http2_authority(bytes: &[u8]) -> Option<String> {
     let mut current = 0;

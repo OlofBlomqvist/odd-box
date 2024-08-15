@@ -25,7 +25,7 @@ forward_subdomains = false # optional, false by default: if the request is for s
 disable_tcp_tunnel_mode = false # optional, false by default
 https = true # optional, false by default: must be true if the target uses tls
 port = 443 # optional - 80 by default if https is false, 443 by default if https is true 
-
+# h2_hint = "H2"/"H2C" - optional: used to signal use of prior knowledge http2 or http2 over clear text. 
 
 [[hosted_process]] # hosted processes are ones that odd-box will keep running
 disable_tcp_tunnel_mode = false # optional, false by default
@@ -46,6 +46,7 @@ env_vars = [
     { key = "host", value = "odd-box" }
 ]
 disabled = true # optional, false by default: set to true to disable the process from running when odd-box is started and when using the start-all commands. you can still manually start it in the tui.
+# h2_hint = "H2"/"H2C" - optional: used to signal use of prior knowledge http2 or http2 over clear text. 
 
 
 [[hosted_process]]

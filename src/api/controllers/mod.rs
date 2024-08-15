@@ -1,12 +1,6 @@
-
-
 use axum::{http::StatusCode, response::{IntoResponse, Response}, Json, Router};
 use serde::{Deserialize, Serialize};
-
-use tower_http::cors::{Any, CorsLayer};
-
 use crate::global_state::GlobalState;
-
 
 pub mod sites;
 pub mod settings;

@@ -8,10 +8,9 @@ use hyper::{
     upgrade::OnUpgrade,
     HeaderMap, Request, Response, StatusCode, Version,
 };
-use hyper_rustls::ConfigBuilderExt;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 
-use rustls::{ClientConfig, ALL_VERSIONS};
+use rustls::ClientConfig;
 use std::{net::SocketAddr, task::Poll, time::Duration};
 use tungstenite::http;
 

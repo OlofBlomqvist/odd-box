@@ -1,7 +1,8 @@
 use std::net::SocketAddr;
-use axum::{extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::{Html, IntoResponse}, Router};
+use axum::{body::Body, extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::{Html, IntoResponse, Response}, Router};
 use futures_util::SinkExt;
 
+use hyper::StatusCode;
 use tower_http::cors::{Any, CorsLayer};
 use utoipa::{openapi::ExternalDocs, Modify, OpenApi};
 use utoipa_rapidoc::RapiDoc;
@@ -73,7 +74,6 @@ async fn set_cors(request: axum::extract::Request, next: axum::middleware::Next,
 
 pub (crate) async fn run(globally_shared_state: crate::global_state::GlobalState,port:Option<u16>,tracing_broadcaster:tokio::sync::broadcast::Sender::<String>) {
 
-
     if let Some(p) = port {
 
         let websocket_state = WebSocketGlobalState {
@@ -84,6 +84,10 @@ pub (crate) async fn run(globally_shared_state: crate::global_state::GlobalState
         
         let socket_address: SocketAddr = format!("127.0.0.1:{p}").parse().unwrap();
         let listener = tokio::net::TcpListener::bind(socket_address).await.unwrap();
+
+
+        let cors_env_var = std::env::vars().find(|(key,_)| key=="ODDBOX_CORS_ALLOWED_ORIGIN").map(|x|x.1.to_lowercase());
+        let cors_env_var_cloned_for_ws = cors_env_var.clone();
 
         let mut router = Router::new()
 
@@ -100,12 +104,13 @@ pub (crate) async fn run(globally_shared_state: crate::global_state::GlobalState
 
             
             // WEBSOCKET ROUTE FOR LOGS
-            .route("/ws/live_logs", axum::routing::get(ws_log_messages_handler).with_state(websocket_state.clone()));
+            .route("/ws/live_logs", axum::routing::get( move|ws,user_agent,origin,addr,state|
+                ws_log_messages_handler(ws,user_agent,origin,addr,state, cors_env_var_cloned_for_ws)).with_state(websocket_state.clone()));
 
 
         // in some cases one might want to allow CORS from a specific origin. this is not currently allowed to do from the config file
         // so we use an environment variable to set this. might change in the future if it becomes a common use case
-        if let Some((_,cors_var)) = std::env::vars().find(|(key,_)| key=="ODDBOX_CORS_ALLOWED_ORIGIN") { 
+        if let Some(cors_var) = cors_env_var { 
             router = router.layer(
                 CorsLayer::new()
                     .allow_methods(Any)
@@ -148,16 +153,78 @@ async fn script() -> impl IntoResponse {
 async fn ws_log_messages_handler(
     ws: WebSocketUpgrade,
     user_agent: Option<axum_extra::TypedHeader<axum_extra::headers::UserAgent>>,
+    origin: Option<axum_extra::TypedHeader<axum_extra::headers::Origin>>,
     axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<SocketAddr> ,
-    state : State<WebSocketGlobalState>
+    state : State<WebSocketGlobalState>,
+    cors_env_var : Option<String>
 ) -> impl axum::response::IntoResponse {
+
+
+    // we only care about limiting these connections if we receive an origin header which most browsers will send.
+    // if no custom env var is set, we will only allow connections from the admin api port on localhost.
+    // if a custom env var is set for cors, we will only allow connections from that origin.
+    // this check was added based on microsoft recomendations: 
+    // https://learn.microsoft.com/en-us/aspnet/core/fundamentals/websockets?view=aspnetcore-8.0
+    if let Some(origin_header) = origin {
+        
+        let lower_cased_orgin_from_client = origin_header.to_string().to_lowercase();
+
+        if let Some(lower_cased_cors_var) = cors_env_var {
+            
+            if &lower_cased_orgin_from_client != &lower_cased_cors_var {
+                tracing::warn!("Client origin does not match cors env var, denying connection");
+                return Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .header("reason", "bad origin")
+                .body(Body::from("origin not allowed."))
+                .unwrap()
+            } else {
+                tracing::debug!("Client origin matches cors env var, allowing connection");
+            }
+        } else {
+
+            let possibly_admin_port = state.global_state.1.read().await.admin_api_port;
+            
+            if let Some(p) = possibly_admin_port {
+                let expected_origin = format!("http://localhost:{p}");
+                if lower_cased_orgin_from_client != expected_origin {
+                    tracing::warn!("Client origin does not match '{expected_origin}', denying connection");
+                    return Response::builder()
+                        .status(StatusCode::FORBIDDEN)
+                        .header("reason", "bad origin")
+                        .body(Body::from("origin not allowed."))
+                        .unwrap()
+                } else {
+                    tracing::debug!("Client origin matches '{expected_origin}', allowing connection");
+                }
+            } else {
+                
+                tracing::warn!("No admin api port set in config file even though the admin api is clearly active. This could be because the admin api has been disabled at runtime without having restarted; otherwise it is a bug in oddbox.");
+                
+                return Response::builder()
+                    .status(StatusCode::FORBIDDEN)
+                    .header("reason", "bad origin or server misconfguration")
+                    .body(Body::from("something went wrong."))
+                    .unwrap()
+            }
+
+           
+        }
+    } else {
+        tracing::debug!("No origin header received, allowing connection");
+    }
+
+
     let user_agent = if let Some(axum_extra::TypedHeader(user_agent)) = user_agent {
         user_agent.to_string()
     } else {
-        String::from("Unknown browser")
+        String::from("Unknown client")
     };
+
     tracing::info!("`{user_agent}` at {addr} connected.");
-    ws.on_upgrade(move |socket| handle_socket(socket, addr,state.0))
+    let response = ws.on_upgrade(move |socket| handle_socket(socket, addr,state.0));
+    return response;
+
 }
 
 
