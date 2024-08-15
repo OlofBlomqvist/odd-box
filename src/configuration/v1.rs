@@ -377,6 +377,11 @@ impl std::fmt::Display for ConfigurationUpdateError {
 }
 
 impl OddBoxConfig {
+
+    pub fn save(&self) -> anyhow::Result<()> {
+        self.write_to_disk(self.path.clone().expect("must have been loaded from somewhere..").as_str())?;
+        Ok(())
+    }
     
     // note: this seems silly but its needed because neither toml-rs nor toml_edit supports any decent
     // formatting customization and ends up with spread out arrays of tables rather
