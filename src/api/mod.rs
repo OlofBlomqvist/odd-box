@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use axum::{extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::{Html, IntoResponse}, Router};
 use futures_util::SinkExt;
 
+use tower_http::cors::{Any, CorsLayer};
 use utoipa::{openapi::ExternalDocs, Modify, OpenApi};
 use utoipa_rapidoc::RapiDoc;
 use utoipa_redoc::{Redoc, Servable};
@@ -54,6 +55,22 @@ impl Modify for HaxAddon {
 }
 
 
+async fn set_cors(request: axum::extract::Request, next: axum::middleware::Next, cors_var: String) -> axum::response::Response {
+        
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        hyper::header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        axum::http::HeaderValue::from_str(&cors_var).expect("Invalid CORS value"),
+    );
+    
+    response.headers_mut().insert(hyper::header::ACCESS_CONTROL_ALLOW_METHODS,
+    axum::http::HeaderValue::from_static("GET, PUT, POST, DELETE, HEAD, OPTIONS")
+    );
+
+    response
+}
+
+
 pub (crate) async fn run(globally_shared_state: crate::global_state::GlobalState,port:Option<u16>,tracing_broadcaster:tokio::sync::broadcast::Sender::<String>) {
 
 
@@ -68,7 +85,7 @@ pub (crate) async fn run(globally_shared_state: crate::global_state::GlobalState
         let socket_address: SocketAddr = format!("127.0.0.1:{p}").parse().unwrap();
         let listener = tokio::net::TcpListener::bind(socket_address).await.unwrap();
 
-        let app = Router::new()
+        let mut router = Router::new()
 
             // API DOCS
             .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
@@ -83,14 +100,23 @@ pub (crate) async fn run(globally_shared_state: crate::global_state::GlobalState
 
             
             // WEBSOCKET ROUTE FOR LOGS
-            .route("/ws/live_logs", axum::routing::get(ws_log_messages_handler).with_state(websocket_state.clone()))
+            .route("/ws/live_logs", axum::routing::get(ws_log_messages_handler).with_state(websocket_state.clone()));
 
-            
-        ; 
+
+        // in some cases one might want to allow CORS from a specific origin. this is not currently allowed to do from the config file
+        // so we use an environment variable to set this. might change in the future if it becomes a common use case
+        if let Some((_,cors_var)) = std::env::vars().find(|(key,_)| key=="ODDBOX_CORS_ALLOWED_ORIGIN") { 
+            router = router.layer(
+                CorsLayer::new()
+                    .allow_methods(Any)
+                    .allow_headers(Any)
+                    .expose_headers(Any))
+            .layer(axum::middleware::from_fn(move |request: axum::extract::Request, next: axum::middleware::Next|set_cors(request,next,cors_var.clone())));
+        }; 
 
         tokio::spawn(broadcast_manager(websocket_state,tracing_broadcaster));
 
-        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+        axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
             .await
             .unwrap()
     }
@@ -117,7 +143,7 @@ async fn script() -> impl IntoResponse {
     operation_id="live_logs",
     get,
     tag = "Logs",
-    path = "/live_logs",
+    path = "/ws/live_logs",
 )]
 async fn ws_log_messages_handler(
     ws: WebSocketUpgrade,
