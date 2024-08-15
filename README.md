@@ -18,7 +18,7 @@ As configuration is done thru basic files (toml format) which are easy to share,
 - Remote target proxying
 - Terminating proxy that supports both HTTP/1.1 & HTTP2
 - TCP tunnelling for HTTP/1
-- TCP tunnelling for HTTPS/1 via SNI sniffing
+- TCP tunnelling for HTTPS/1 & HTTP2 via SNI sniffing
 - TCP tunnelling for HTTP/2 over HTTP/1 (h2c upgrade)
 - H2C via terminating proxy 
 - Automatic self-signed certs for all hosted processes
