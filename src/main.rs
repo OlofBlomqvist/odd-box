@@ -6,6 +6,8 @@ mod proxy;
 use http_proxy::ProcMessage;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use self_update::cargo_crate_version;
+use tracing_subscriber::layer::SubscriberExt;
+use std::fmt::Debug;
 use std::{borrow::BorrowMut, sync::Mutex};
 use std::time::Duration;
 use types::custom_error::*;
@@ -19,6 +21,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use crate::types::app_state::ProcState;
 mod tui;
 mod api;
+mod logging;
 use types::app_state::AppState;
 
 pub mod global_state {
@@ -363,30 +366,37 @@ async fn main() -> anyhow::Result<()> {
         None => LevelFilter::INFO
     };
 
+    let tracing_broadcaster = tokio::sync::broadcast::Sender::<String>::new(10);
+
     let use_tui = args.tui.unwrap_or_default();
     
     if !use_tui {
-        tracing_subscriber::FmtSubscriber::builder()       
-            .compact()
-            .with_max_level(tracing::Level::TRACE)
-            .with_env_filter(EnvFilter::from_default_env()
+        let fmt_layer = tracing_subscriber::fmt::layer()
+        .compact()
+        .with_thread_names(true)
+        .with_timer(
+            tracing_subscriber::fmt::time::OffsetTime::new(
+                time::UtcOffset::from_whole_seconds(
+                    chrono::Local::now().offset().local_minus_utc()
+                ).expect("time... works"), 
+                time::macros::format_description!("[hour]:[minute]:[second]")
+            )
+        );
+
+        let filter_layer = tracing_subscriber::EnvFilter::from_default_env()
             .add_directive(log_level.into())
             .add_directive("hyper=info".parse().expect("this directive will always work"))
-            .add_directive("h2=info".parse().expect("this directive will always work")))
-            .with_thread_names(true)
-            .with_timer(
-                tracing_subscriber::fmt::time::OffsetTime::new(
-                    time::UtcOffset::from_whole_seconds(
-                        chrono::Local::now().offset().local_minus_utc()
-                    ).expect("time... works"), 
-                    time::macros::format_description!("[hour]:[minute]:[second]")
-                )
-            )
-            .finish()
-            .init();
-    }
-    
+            .add_directive("h2=info".parse().expect("this directive will always work"));
 
+        // Create a new registry and add layers
+        let subscriber = tracing_subscriber::Registry::default()
+            .with(fmt_layer)
+            .with(filter_layer)
+            .with(logging::NonTuiLoggerLayer { broadcaster: tracing_broadcaster.clone() });
+
+        subscriber.init();
+    }
+   
 
     config.init(&cfg_path)?;
 
@@ -423,7 +433,7 @@ async fn main() -> anyhow::Result<()> {
         inner_state.site_states_map.insert(x.host_name.to_owned(), ProcState::Remote);
     }
 
-    let tracing_broadcaster = tokio::sync::broadcast::Sender::<String>::new(10);
+    
        
 
    

@@ -82,8 +82,8 @@ pub (crate) async fn run(globally_shared_state: crate::global_state::GlobalState
             .route("/script.js", axum::routing::get(script))
 
             
-            // WEBSOCKET ROUTE
-            .route("/ws", axum::routing::get(ws_handler).with_state(websocket_state.clone()))
+            // WEBSOCKET ROUTE FOR LOGS
+            .route("/ws/live_logs", axum::routing::get(ws_log_messages_handler).with_state(websocket_state.clone()))
 
             
         ; 
@@ -119,7 +119,7 @@ async fn script() -> impl IntoResponse {
     tag = "Logs",
     path = "/live_logs",
 )]
-async fn ws_handler(
+async fn ws_log_messages_handler(
     ws: WebSocketUpgrade,
     user_agent: Option<axum_extra::TypedHeader<axum_extra::headers::UserAgent>>,
     axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<SocketAddr> ,
