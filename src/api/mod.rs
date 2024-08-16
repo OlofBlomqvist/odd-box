@@ -159,60 +159,63 @@ async fn ws_log_messages_handler(
     cors_env_var : Option<String>
 ) -> impl axum::response::IntoResponse {
 
-
     // we only care about limiting these connections if we receive an origin header which most browsers will send.
     // if no custom env var is set, we will only allow connections from the admin api port on localhost.
     // if a custom env var is set for cors, we will only allow connections from that origin.
     // this check was added based on microsoft recomendations: 
     // https://learn.microsoft.com/en-us/aspnet/core/fundamentals/websockets?view=aspnetcore-8.0
-    if let Some(origin_header) = origin {
-        
-        let lower_cased_orgin_from_client = origin_header.to_string().to_lowercase();
+    match origin {
+        Some(origin_header) => {
 
-        if let Some(lower_cased_cors_var) = cors_env_var {
-            
-            if &lower_cased_orgin_from_client != &lower_cased_cors_var {
-                tracing::warn!("Client origin does not match cors env var, denying connection");
-                return Response::builder()
-                .status(StatusCode::FORBIDDEN)
-                .header("reason", "bad origin")
-                .body(Body::from("origin not allowed."))
-                .unwrap()
-            } else {
-                tracing::debug!("Client origin matches cors env var, allowing connection");
-            }
-        } else {
+            let lower_cased_orgin_from_client = origin_header.to_string().to_lowercase();
 
-            let possibly_admin_port = state.global_state.1.read().await.admin_api_port;
-            
-            if let Some(p) = possibly_admin_port {
-                let expected_origin = format!("http://localhost:{p}");
-                if lower_cased_orgin_from_client != expected_origin {
-                    tracing::warn!("Client origin does not match '{expected_origin}', denying connection");
+            if lower_cased_orgin_from_client == "*" {
+                tracing::trace!("Client origin is '*', allowing connection");
+            } else if let Some(lower_cased_cors_var) = cors_env_var {
+                
+                if &lower_cased_orgin_from_client != &lower_cased_cors_var {
+                    tracing::warn!("Client origin does not match cors env var, denying connection");
                     return Response::builder()
-                        .status(StatusCode::FORBIDDEN)
-                        .header("reason", "bad origin")
-                        .body(Body::from("origin not allowed."))
-                        .unwrap()
+                    .status(StatusCode::FORBIDDEN)
+                    .header("reason", "bad origin")
+                    .body(Body::from("origin not allowed."))
+                    .unwrap()
                 } else {
-                    tracing::debug!("Client origin matches '{expected_origin}', allowing connection");
+                    tracing::debug!("Client origin matches cors env var, allowing connection");
                 }
             } else {
-                
-                tracing::warn!("No admin api port set in config file even though the admin api is clearly active. This could be because the admin api has been disabled at runtime without having restarted; otherwise it is a bug in oddbox.");
-                
-                return Response::builder()
-                    .status(StatusCode::FORBIDDEN)
-                    .header("reason", "bad origin or server misconfguration")
-                    .body(Body::from("something went wrong."))
-                    .unwrap()
-            }
 
-           
-        }
-    } else {
-        tracing::debug!("No origin header received, allowing connection");
-    }
+                let possibly_admin_port = state.global_state.1.read().await.admin_api_port;
+                
+                if let Some(p) = possibly_admin_port {
+                    let expected_origin = format!("http://localhost:{p}");
+                    if lower_cased_orgin_from_client != expected_origin {
+                        tracing::warn!("Client origin does not match '{expected_origin}', denying connection");
+                        return Response::builder()
+                            .status(StatusCode::FORBIDDEN)
+                            .header("reason", "bad origin")
+                            .body(Body::from("origin not allowed."))
+                            .unwrap()
+                    } else {
+                        tracing::debug!("Client origin matches '{expected_origin}', allowing connection");
+                    }
+                } else {
+                    
+                    tracing::warn!("No admin api port set in config file even though the admin api is clearly active. This could be because the admin api has been disabled at runtime without having restarted; otherwise it is a bug in oddbox.");
+                    
+                    return Response::builder()
+                        .status(StatusCode::FORBIDDEN)
+                        .header("reason", "bad origin or server misconfguration")
+                        .body(Body::from("something went wrong."))
+                        .unwrap()
+                }
+
+            
+            }
+        },
+        None => tracing::debug!("No origin header received, allowing connection") 
+        
+    } 
 
 
     let user_agent = if let Some(axum_extra::TypedHeader(user_agent)) = user_agent {
