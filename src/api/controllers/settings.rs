@@ -49,13 +49,20 @@ impl From<crate::configuration::LogFormat> for BasicLogFormat {
             crate::configuration::LogFormat::dotnet => BasicLogFormat::Dotnet
         }
     }
-}impl From<BasicLogFormat> for crate::configuration::LogFormat {
+}
+impl From<BasicLogFormat> for crate::configuration::LogFormat {
     fn from(l: BasicLogFormat) -> Self {
         match l {
             BasicLogFormat::Standard => crate::configuration::LogFormat::standard,
             BasicLogFormat::Dotnet => crate::configuration::LogFormat::dotnet
         }
     }
+}
+
+#[derive(Serialize,Deserialize,Debug,Clone,ToSchema)]
+pub struct KvP {
+    pub key : String,
+    pub value : String
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize,ToSchema)]
@@ -70,7 +77,7 @@ pub struct OddBoxConfigGlobalPart {
     pub (crate) http_port : u16,
     pub (crate) tls_port : u16,
     pub (crate) auto_start : bool,
-    pub (crate) env_vars : HashMap<String,String>,
+    pub (crate) env_vars : Vec<KvP>,
     pub (crate) admin_api_port : u16,
     pub (crate) path : String
 }
@@ -87,7 +94,7 @@ pub struct SaveGlobalConfig{
     pub (crate) http_port : u16,
     pub (crate) tls_port : u16,
     pub (crate) auto_start : bool,
-    pub (crate) env_vars : HashMap<String,String>,
+    pub (crate) env_vars : Vec<KvP>,
     pub (crate) admin_api_port : u16
 }
 
@@ -115,9 +122,9 @@ pub (crate) async fn get_settings_handler(
         alpn : guard.alpn.unwrap_or(true),
         auto_start : guard.auto_start.unwrap_or(true),
         default_log_format : guard.default_log_format.clone().into(),
-        env_vars: HashMap::from_iter(guard.env_vars.clone().iter().map(|x|{
-            (x.key.clone(),x.value.clone())
-        })),
+        env_vars: guard.env_vars.clone().iter().map(|x|{
+            KvP { key : x.key.clone() , value : x.value.clone() }
+        }).collect(),
         ip: guard.ip.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)).to_string(),
         path: guard.path.clone().unwrap_or_default(),
         log_level: guard.log_level.clone().unwrap_or(crate::configuration::LogLevel::Info).into(),
@@ -148,7 +155,7 @@ pub (crate) async fn get_settings_handler(
 pub (crate) async fn set_settings_handler(
     axum::extract::State(global_state): axum::extract::State<GlobalState>,
     Json(new_settings): Json<SaveGlobalConfig>
-) -> axum::response::Result<impl IntoResponse,String> {
+) -> axum::response::Result<impl IntoResponse,impl IntoResponse> {
 
     let mut guard = global_state.1.write().await;
     
@@ -162,22 +169,22 @@ pub (crate) async fn set_settings_handler(
     guard.default_log_format = crate::configuration::LogFormat::from(new_settings.default_log_format.clone());
     guard.env_vars = new_settings.env_vars.iter().map(|x|{
         crate::configuration::EnvVar {
-            key: x.0.clone(),
-            value: x.1.clone()
+            key: x.key.clone(),
+            value: x.value.clone()
         }
     }).collect();
 
-    guard.ip = Some(new_settings.ip.parse().map_err(|e|format!("Invalid IP address provided, refusing to save configuration. {e:?}"))?);
+    guard.ip = Some(new_settings.ip.parse().map_err(|e|(StatusCode::BAD_REQUEST,format!("Invalid IP address provided, refusing to save configuration. {e:?}")))?);
     guard.log_level = Some(new_settings.log_level.clone().into());
 
     if std::path::Path::exists(std::path::Path::new(&new_settings.root_dir)) == false {
-        return Err(format!("Specified root directory does not exist on disk. Refusing to save configuration"));
+        return Err((StatusCode::BAD_REQUEST,format!("Specified root directory does not exist on disk. Refusing to save configuration")));
     }
 
     guard.root_dir = Some(new_settings.root_dir.clone());
 
     
-    guard.save().map_err(|e|format!("{}",e.to_string()))?;
+    guard.save().map_err(|e|(StatusCode::BAD_REQUEST,format!("{}",e.to_string())))?;
 
     tracing::debug!("Global settings updated thru api");
 

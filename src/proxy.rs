@@ -164,7 +164,7 @@ async fn listen_https(
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None).expect("should always be possible to create a tcp socket for tls");
     match socket.set_only_v6(false) {
         Ok(_) => {},
-        Err(e) => tracing::warn!("Failed to set_only_vs: {e:?}")
+        Err(e) => tracing::trace!("Failed to set_only_vs: {e:?}")
     };
     match socket.set_reuse_address(true) { // annoying as hell otherwise for quick resets
         Ok(_) => {},

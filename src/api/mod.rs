@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 use axum::{body::Body, extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::{Html, IntoResponse, Response}, Router};
-use futures_util::SinkExt;
+use futures_util::{SinkExt, StreamExt};
 
 use hyper::StatusCode;
 use tower_http::cors::{Any, CorsLayer};
@@ -222,52 +222,62 @@ async fn ws_log_messages_handler(
     };
 
     tracing::info!("`{user_agent}` at {addr} connected.");
+    
     let response = ws.on_upgrade(move |socket| handle_socket(socket, addr,state.0));
     return response;
 
 }
 
 
-async fn handle_socket(socket: WebSocket, who: SocketAddr, state: WebSocketGlobalState) {
-    
-    let (mut sender, _receiver) = futures_util::StreamExt::split(socket);
-
-    // // wait for client to send initial message 
-    // while let Some(Ok(msg)) = receiver.next().await {
-    //     tracing::info!("Received message from {who}: {msg:?}");
-    //     _ = sender.send(Message::Text(format!("HELLO THERE, YOU SAID {msg:?}"))).await;
-    //     break;
-    // }
-
-    // tracing::info!("ok client has configured what he needs to do... lets broadcast data to him from the global state");
-
-
+async fn handle_socket(client_socket: WebSocket, who: SocketAddr, state: WebSocketGlobalState) {
+    let (mut sender, mut receiver) = client_socket.split();
     let mut broadcast_receiver = state.broadcast_channel.subscribe();
 
-    tracing::info!("Initializing broadcast loop repeater for socket {:?}",who);
+    loop {
+        tokio::select! {
+            message = receiver.next() => match message {
+                Some(Ok(Message::Close(_))) => {
+                    tracing::trace!("Client {who} closed connection");
+                    break;
+                },
+                Some(Err(e)) => {
+                    tracing::trace!("Error receiving message from client {who}: {:?}", e);
+                    break;
+                },
+                None => {
+                    tracing::trace!("Client {who} disconnected");
+                    break;
+                },
+                _ => {
+                    // we dont care about incoming messages atm
+                }
+            },
+            broadcast_message = broadcast_receiver.recv() => {
+                match broadcast_message {
+                    Ok(msg) => {
+                        if sender.send(Message::Text(msg)).await.is_err() {
+                            tracing::trace!("Failed to send message to client {who}, disconnecting...");
+                            break;
+                        }
+                    },
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        tracing::trace!("Client {who} lagged behind on receiving broadcast messages");
+                    },
+                    Err(_) => {
+                        tracing::trace!("Broadcast channel closed or an error occurred for client {who}");
+                        break;
+                    },
+                }
+            }
 
-    while let Ok(msg) = broadcast_receiver.recv().await {
-        _ = sender.send(Message::Text(msg)).await;
+        }
     }
 
     tracing::info!("Websocket context {who} destroyed");
 }
 
 
-// todo - modify tracing layers so we receive all trace events here
 async fn broadcast_manager(state: WebSocketGlobalState,tracing_broadcaster:tokio::sync::broadcast::Sender::<String>) {
-    // loop {
-
-    //     if state.broadcast_channel.receiver_count() > 0 {
-    //         let data = {
-    //             let guard = state.global_state.read().await;
-    //             let serialized = guard.procs.iter().filter_map(|x|serde_json::to_string_pretty(&x).ok()).collect::<Vec<String>>();
-    //             serialized
-    //         };
-    //         _ = state.broadcast_channel.send(serde_json::to_string_pretty(&vec![data]).unwrap());
-    //     }
-    //     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    // }
 
     let mut broadcast_receiver = tracing_broadcaster.subscribe();
 
