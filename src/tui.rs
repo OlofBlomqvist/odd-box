@@ -401,8 +401,6 @@ pub (crate) async fn run(
   
 }
 
-// TODO - move all the state types to a separate module
-
 #[derive(Debug,Default)]
 pub struct TrafficTabState {
     pub test : String,
@@ -589,8 +587,6 @@ fn draw_logs(
         
         let level = x.lvl;
         
-        // todo - theme
-
         let s = match level {
             Level::ERROR => Style::default().fg(Color::Red),
             Level::TRACE => Style::default().fg(Color::Gray),
@@ -602,8 +598,6 @@ fn draw_logs(
         let nr_str = format!("{:1$} | ",i+1, item_count);
         let lvl_str = format!("{:>1$} ",x.lvl.as_str(),5);
         let thread_str = if let Some(n) = &x.thread {format!("{n} ")} else { format!("") };
-
-        // todo: theme
 
         let number = ratatui::text::Span::styled(nr_str.clone(),Style::default().fg(Color::DarkGray));
         let level = ratatui::text::Span::styled(lvl_str.clone(),s);

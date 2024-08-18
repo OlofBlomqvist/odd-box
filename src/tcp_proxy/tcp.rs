@@ -6,6 +6,7 @@ use std::{
     net::SocketAddr,
     sync::Arc,
 };
+use crate::configuration::v2::BackendFilter;
 use crate::global_state::GlobalState;
 use crate::tcp_proxy::tls::client_hello::TlsClientHello;
 use crate::tcp_proxy::tls::client_hello::TlsClientHelloError;
@@ -18,9 +19,8 @@ use tracing::*;
 /// Achieves TLS passthru by peeking at the ClientHello SNI ext data.
 #[derive(Debug,Eq,PartialEq,Hash,Clone)]
 pub struct ReverseTcpProxyTarget {
-    pub target_hostname: String,
-    pub target_http_port: Option<u16>,
-    pub target_tls_port: Option<u16>,
+    pub remote_target_config: Option<crate::configuration::v2::RemoteSiteConfig>,
+    pub backends: Vec<crate::configuration::v2::Backend>,
     pub host_name: String,
     pub is_hosted : bool,
     pub capture_subdomains: bool,
@@ -41,41 +41,43 @@ impl ReverseTcpProxyTargets {
         if let Some(x) = &cfg.hosted_process {
             for y in x.iter().filter(|xx|xx.disable_tcp_tunnel_mode.unwrap_or_default() == false) {
                 
-                let mut target_http_port = None;
-                let mut target_tls_port = None;
-                if y.https.unwrap_or_default() {
-                    target_tls_port = y.port;
+                let port = y.port.unwrap_or_default();
+                if port > 0 {
+                    tcp_targets.push(ReverseTcpProxyTarget {
+                        remote_target_config: None, // we dont need this for hosted processes
+                        capture_subdomains: y.capture_subdomains.unwrap_or_default(),
+                        forward_wildcard: y.forward_subdomains.unwrap_or_default(),
+                        backends: vec![crate::configuration::v2::Backend {
+                            address: y.host_name.to_owned(),
+                            https: y.https,
+                            port: port
+                        }],
+                        host_name: y.host_name.to_owned(),
+                        is_hosted: true,
+                        sub_domain: None
+                    })
                 } else {
-                    target_http_port = y.port;
+                    tracing::warn!("hosted process: {} has no port configured. skipping this target for tcp tunnel mode. this is most likely a bug in odd-box.",y.host_name);
                 }
-                tcp_targets.push(ReverseTcpProxyTarget { 
-                    capture_subdomains: y.capture_subdomains.unwrap_or_default(),
-                    forward_wildcard: y.forward_subdomains.unwrap_or_default(),
-                    target_http_port,
-                    target_tls_port,
-                    target_hostname: y.host_name.to_owned(),
-                    host_name: y.host_name.to_owned(),
-                    is_hosted: true,
-                    sub_domain: None
-                })
+
+               
             }
         }
 
         if let Some(x) = &cfg.remote_target {
             for y in x.iter().filter(|xx|xx.disable_tcp_tunnel_mode.unwrap_or_default() == false) {
-                let mut target_http_port = None;
-                let mut target_tls_port = None;
-                if y.https.unwrap_or_default() {
-                    target_tls_port = y.port;
-                } else {
-                    target_http_port = y.port;
-                }
+
+                // we support comma separated hostnames for the same target temporarily for remotes.
+                // in this mode we require all backends to have the same scheme and port configuration..
+                // this is temporary and will be removed once we have a v2 configuration format that 
+                // supports multiple backend configurations for the same hostname.
+
+
                 tcp_targets.push(ReverseTcpProxyTarget { 
+                    remote_target_config: Some(y.clone()),
                     capture_subdomains: y.capture_subdomains.unwrap_or_default(),
                     forward_wildcard: y.forward_subdomains.unwrap_or_default(),
-                    target_hostname: y.target_hostname.to_owned(), 
-                    target_http_port,
-                    target_tls_port,
+                    backends: y.backends.clone(),
                     host_name: y.host_name.to_owned(),
                     is_hosted: false,
                     sub_domain: None
@@ -93,21 +95,23 @@ impl ReverseTcpProxyTarget {
                 sub_domain: None,
                 capture_subdomains: x.capture_subdomains.unwrap_or_default(),
                 forward_wildcard: x.forward_subdomains.unwrap_or_default(),
-                target_hostname: x.target_hostname.clone(),
-                target_http_port: if x.https.unwrap_or_default() {None} else { x.port },
-                target_tls_port:if x.https.unwrap_or_default() {x.port} else { None },
+                backends: x.backends.clone(),
                 host_name: x.host_name.clone(),
-                is_hosted: false
+                is_hosted: false,
+                remote_target_config : Some(x.clone())
             },
             crate::http_proxy::Target::Proc(x) => ReverseTcpProxyTarget {
                 sub_domain: None,
                 capture_subdomains: x.capture_subdomains.unwrap_or_default(),
                 forward_wildcard: x.forward_subdomains.unwrap_or_default(),
-                target_hostname: x.host_name.clone(),
-                target_http_port: if x.https.unwrap_or_default() {None} else { x.port },
-                target_tls_port:if x.https.unwrap_or_default() {x.port} else { None },
+                backends: vec![crate::configuration::v2::Backend {
+                    address: x.host_name.to_owned(),
+                    https: x.https,
+                    port: x.port.expect("remote target must have a port configured")
+                }],
                 host_name: x.host_name.clone(),
-                is_hosted: true
+                is_hosted: true,
+                remote_target_config : None
             },
         }
     }
@@ -180,24 +184,22 @@ impl ReverseTcpProxy {
                 Some(ReverseTcpProxyTarget { 
                     capture_subdomains: x.capture_subdomains,
                     forward_wildcard: x.forward_wildcard,
-                    target_hostname: x.target_hostname.clone(), 
-                    target_http_port: x.target_http_port, 
-                    target_tls_port: x.target_tls_port,
+                    backends: x.backends.clone(),
                     host_name: x.host_name.clone(),
                     is_hosted: x.is_hosted,
-                    sub_domain: None
+                    sub_domain: None,
+                    remote_target_config: x.remote_target_config.clone()
                 })
             } else {
                 match Self::get_subdomain(parsed_name, &x.host_name) {
                     Some(subdomain) => Some(ReverseTcpProxyTarget {
                         capture_subdomains: x.capture_subdomains,
                         forward_wildcard: x.forward_wildcard,
-                        target_hostname: x.target_hostname.clone(),
-                        target_http_port: x.target_http_port,
-                        target_tls_port: x.target_tls_port,
+                        backends: x.backends.clone(),
                         host_name: x.host_name.clone(),
                         is_hosted: x.is_hosted,
                         sub_domain: Some(subdomain),
+                        remote_target_config: x.remote_target_config.clone()
                     }),
                     None => None,
                 }
@@ -384,33 +386,27 @@ impl ReverseTcpProxy {
         client_address: SocketAddr
     ) {
 
-        let resolved_target = {
+        // only remotes have more than one backend. hosted processes always have a single backend.
+        let primary_backend = if let Some(remconf) = &target.remote_target_config {
+            remconf.next_backend(&state, if incoming_traffic_is_tls { BackendFilter::Https } else { BackendFilter::Http }).await
+        } else {
+            target.backends.first().expect("target must have at least one backend").to_owned()
+        };
+
+
+        let resolved_target_address = {
             let subdomain = target.sub_domain.as_ref();
             if target.forward_wildcard && subdomain.is_some() {
                 tracing::debug!("tcp tunnel rewrote for subdomain: {:?}", subdomain);
-                format!("{:?}.{}", subdomain, target.target_hostname)
+                format!("{}.{}:{}", subdomain.unwrap(), primary_backend.address, primary_backend.port)
             } else {
-                target.target_hostname.clone()
+                format!("{}:{}", primary_backend.address, primary_backend.port)
             }
         };
 
-        let target_addr = {
-            if incoming_traffic_is_tls {
-                if let Some(tls_port) = target.target_tls_port {
-                    format!("{}:{}", resolved_target, tls_port)
-                } else if let Some(http_port) = target.target_http_port {
-                    format!("{}:{}", resolved_target, http_port)
-                } else {
-                    unreachable!()
-                }
-            } else if let Some(http_port) = target.target_http_port {
-                format!("{}:{}", resolved_target, http_port)
-            } else {
-                unreachable!()
-            }
-        };
-        
-        match TcpStream::connect(target_addr.clone()).await {
+        tracing::trace!("tcp tunneling to target: {resolved_target_address} (tls: {incoming_traffic_is_tls})");
+
+        match TcpStream::connect(resolved_target_address.clone()).await {
             Ok(mut rem_stream) => {
 
                 
@@ -419,7 +415,7 @@ impl ReverseTcpProxy {
 
                     let item = ProxyActiveConnection {
                         target,
-                        target_addr: format!("{target_addr} ({})",target_addr_socket.ip()),
+                        target_addr: format!("{resolved_target_address} ({})",target_addr_socket.ip()),
                         source_addr: source_addr.clone(),
                         creation_time: Local::now(),
                         description: None,
@@ -460,7 +456,7 @@ impl ReverseTcpProxy {
                    tracing::warn!("failed to read socket peer address..");
                 }
             },
-            Err(e) => warn!("failed to connect to target {target:?} (using addr: {target_addr}) --> {e:?}"),
+            Err(e) => warn!("failed to connect to target {target:?} (using addr: {resolved_target_address}) --> {e:?}"),
         }
     }
 

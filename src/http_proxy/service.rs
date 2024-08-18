@@ -120,7 +120,7 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
         }
         
         // handle normal proxy path
-        let f = handle(
+        let f = handle_http(
             self.remote_addr.expect("there must always be a client"),
             req,
             self.tx.clone(),
@@ -138,7 +138,7 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
 }
 
 #[allow(dead_code)]
-async fn handle(
+async fn handle_http(
     client_ip: std::net::SocketAddr, 
     req: Request<hyper::body::Incoming>,
     tx: Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
@@ -290,26 +290,25 @@ fn get_subdomain(requested_hostname: &str, backend_hostname: &str) -> Option<Str
 
 async fn perform_remote_forwarding(
     req_host_name:String,
-    is_https:bool,
+    _is_https:bool,
     state: GlobalState,
     client_ip:std::net::SocketAddr,
-    remote_target_config:&crate::configuration::v1::RemoteSiteConfig,
+    remote_target_config:&crate::configuration::v2::RemoteSiteConfig,
     req:hyper::Request<IncomingBody>,
     client_tls_config:rustls::ClientConfig
 ) -> Result<EpicResponse,CustomError> {
     
     
-    // if a target is marked with http, we wont try to use http
-    let enforce_https = remote_target_config.https.is_some_and(|x|x);
-   
-    let scheme = if enforce_https { "https" } else { "http" }; 
-
     let mut original_path_and_query = req.uri().path_and_query()
         .and_then(|x| Some(x.as_str())).unwrap_or_default();
     if original_path_and_query == "/" { original_path_and_query = ""}
-
-    let default_port = if enforce_https { 443 } else { 80 };
-
+   
+    let next_backend_target = remote_target_config.next_backend(&state, crate::configuration::v2::BackendFilter::Any).await;
+    
+    // if a target is marked with http, we wont try to use http
+    let enforce_https = next_backend_target.https.unwrap_or_default();
+   
+    let scheme = if enforce_https { "https" } else { "http" }; 
     
     let resolved_host_name = {
 
@@ -319,31 +318,29 @@ async fn perform_remote_forwarding(
         if forward_subdomains && subdomain.is_some() {
             let subdomain = subdomain.unwrap(); 
             tracing::debug!("remote forward terminating proxy rewrote subdomain: {subdomain}!");
-            format!("{subdomain}.{}", &remote_target_config.target_hostname)
+            format!("{subdomain}.{}", &next_backend_target.address)
         } else {
-            remote_target_config.target_hostname.clone()
+            next_backend_target.address.clone()
         }
     };
         
-
-        
     let target_url = format!("{scheme}://{}:{}{}",
         resolved_host_name,
-        remote_target_config.port.unwrap_or(default_port),
+        next_backend_target.port,
         original_path_and_query
     );
 
-    tracing::info!("Incoming request to '{}' for remote proxy target {target_url}",remote_target_config.host_name);
+    tracing::info!("Incoming request to '{}' for remote proxy target {target_url}",next_backend_target.address);
     let result = 
         proxy(
             &req_host_name,
-            is_https,
+            next_backend_target.https.unwrap_or_default(),
             state.clone(),
             req,
             &target_url,
             crate::http_proxy::Target::Remote(remote_target_config.clone()),
             client_ip,
-            client_tls_config
+            client_tls_config,
             
         ).await;
 

@@ -1,4 +1,4 @@
-use crate::configuration::v1::{InProcessSiteConfig, RemoteSiteConfig};
+use crate::configuration::v2::{InProcessSiteConfig, RemoteSiteConfig};
 
 use super::*;
 use axum::extract::{Query, State};

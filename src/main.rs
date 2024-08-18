@@ -6,6 +6,7 @@ mod proxy;
 use http_proxy::ProcMessage;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use self_update::cargo_crate_version;
+use tokio::sync::RwLock;
 use tracing_subscriber::layer::SubscriberExt;
 use std::fmt::Debug;
 use std::{borrow::BorrowMut, sync::Mutex};
@@ -25,14 +26,38 @@ mod logging;
 use types::app_state::AppState;
 
 pub mod global_state {
+    use std::collections::HashMap;
+
     use crate::http_proxy::ConfigWrapper;
 
     pub (crate) type GlobalState = 
+
         (   std::sync::Arc<tokio::sync::RwLock<crate::types::app_state::AppState>>,
-            std::sync::Arc<tokio::sync::RwLock<ConfigWrapper> >,
+            std::sync::Arc<tokio::sync::RwLock<ConfigWrapper>>,
             tokio::sync::broadcast::Sender<crate::http_proxy::ProcMessage>,
+
+            // we store target request counts here outside of the global app-state proxy stats
+            // as we do not want to lock them at the same time as the proxy stats. 
+            // this is purely done to avoid performance issues.
+            std::sync::Arc<
+                tokio::sync::RwLock<
+                    HashMap<String,
+                        std::sync::Arc<
+                        tokio::sync::RwLock<
+                            crate::TargetRequestCount>
+                        >
+                    >
+                >
+            >
         );
 }
+
+
+#[derive(Debug, Clone)]
+pub struct TargetRequestCount {
+    pub request_count : u128
+}
+
 
 #[derive(Debug)]
 struct DynamicCertResolver {
@@ -303,24 +328,11 @@ async fn main() -> anyhow::Result<()> {
     let mut file = std::fs::File::open(&cfg_path)?;
     let mut contents = String::new();
     file.read_to_string(&mut contents)?;
-
+    
+    
     let mut config: ConfigWrapper = 
         ConfigWrapper(match configuration::Config::parse(&contents) {
-            Ok(configuration::Config::V1(configuration)) => {
-                configuration
-            },
-            Ok(old_config) => {
-                eprintln!("Warning: you are using a legacy style configuration file, it will be automatically updated");
-                match old_config.try_upgrade() {
-                    Ok(configuration::Config::V1(configuration)) => {       
-                              
-                        configuration.write_to_disk(&cfg_path)?;
-                        configuration
-                    },
-                    Ok(_) => anyhow::bail!(format!("Unable to update the configuration file to new schema")),
-                    Err(e) => anyhow::bail!(e),
-                }
-            },
+            Ok(configuration) => configuration.try_upgrade_to_latest_version().expect("configuration upgrade failed. this is a bug in odd-box"),
             Err(e) => anyhow::bail!(e),
         });
     
@@ -434,18 +446,22 @@ async fn main() -> anyhow::Result<()> {
     }
 
     
-       
-
-   
-
     let shared_state : crate::global_state::GlobalState = 
+        // CURRENT APPSTATE
         (std::sync::Arc::new(            
             tokio::sync::RwLock::new(
                 inner_state
             )            
         ), 
+        
+        // CONFIGURATION
         shared_config.clone(),
-        tx.clone()
+        
+        // BROADCASTER
+        tx.clone(),
+
+        // TARGET REQUEST COUNTS FOR LB FEATURE
+        Arc::new(RwLock::new(HashMap::new()))
     );
 
     

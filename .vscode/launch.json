@@ -19,7 +19,7 @@
                     "kind": "bin"
                 }
             },
-            "args": ["C:/Users/oblink/Documents/visit/odd-box.toml","-p","80","-t","443"],
+            "args": ["odd-box-example-config.toml"],
             "cwd": "${workspaceFolder}"
         }
     ]

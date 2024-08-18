@@ -234,7 +234,7 @@ async fn handle_new_tcp_stream(
     tcp_stream:TcpStream,
     source_addr:SocketAddr,
     targets: Vec<ReverseTcpProxyTarget>,
-    expect_tls: bool,
+    incoming_connection_is_on_tls_port: bool,
     tx: std::sync::Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
     state: GlobalState,
 ) {
@@ -260,68 +260,66 @@ async fn handle_new_tcp_stream(
             typ: DataType::ClearText,
             http_version:_,
             target_host: Some(target)
-        }) if !expect_tls => {
+        }) if incoming_connection_is_on_tls_port == false => {
 
             if let Some(target) = tcp_proxy::ReverseTcpProxy::try_get_target_from_vec(targets, &target) {
-                if target.target_http_port.is_some() {
-                    
-                    
-                    if target.is_hosted {
-                        
-                        let proc_state = {
-                            let guard = state.0.read().await;
-                            match guard.site_states_map.get(&target.host_name) {
-                                Some(v) => Some(v.clone()),
-                                _ => None
-                            }
-                        };
-                        match proc_state {
-                            None => {
-                                tracing::warn!("error 0001 has occurred")
-                            },
-                            Some(app_state::ProcState::Stopped) 
-                            | Some(app_state::ProcState::Starting) => {
-                                _ = tx.send(ProcMessage::Start(target.host_name.clone()));
-                                let thn = target.host_name.clone();
-                                let mut has_started = false;
-                                // done here to allow non-browser clients to reach the target socket without receiving unexpected loading screen html blobs
-                                // as long as we are able to start the backing process within 10 seconds
-                                for _ in 0..2 {
-                                    tokio::time::sleep(Duration::from_secs(5)).await;
-                                    tracing::debug!("handling an incoming request to a stopped target, waiting for up to 10 seconds for {thn} to spin up - after this we will release the request to the terminating proxy and show a 'please wait' page instaead.");
-                                    {
-                                        let guard = state.0.read().await;
-                                        match guard.site_states_map.get(&target.host_name) {
-                                            Some(&ProcState::Running) => {
-                                                has_started = true;
-                                                break
-                                            },
-                                            _ => { }
+                
+                if target.backends.iter().any(|x|x.https.unwrap_or_default()==false) {
+
+                        if target.is_hosted {
+                            
+                            let proc_state = {
+                                let guard = state.0.read().await;
+                                match guard.site_states_map.get(&target.host_name) {
+                                    Some(v) => Some(v.clone()),
+                                    _ => None
+                                }
+                            };
+                            match proc_state {
+                                None => {
+                                    tracing::warn!("error 0001 has occurred")
+                                },
+                                Some(app_state::ProcState::Stopped) 
+                                | Some(app_state::ProcState::Starting) => {
+                                    _ = tx.send(ProcMessage::Start(target.host_name.clone()));
+                                    let thn = target.host_name.clone();
+                                    let mut has_started = false;
+                                    // done here to allow non-browser clients to reach the target socket without receiving unexpected loading screen html blobs
+                                    // as long as we are able to start the backing process within 10 seconds
+                                    for _ in 0..2 {
+                                        tokio::time::sleep(Duration::from_secs(5)).await;
+                                        tracing::debug!("handling an incoming request to a stopped target, waiting for up to 10 seconds for {thn} to spin up - after this we will release the request to the terminating proxy and show a 'please wait' page instaead.");
+                                        {
+                                            let guard = state.0.read().await;
+                                            match guard.site_states_map.get(&target.host_name) {
+                                                Some(&ProcState::Running) => {
+                                                    has_started = true;
+                                                    break
+                                                },
+                                                _ => { }
+                                            }
                                         }
                                     }
+                                    if has_started {
+                                        tracing::trace!("Using unencrypted tcp tunnel for remote target: {target:?}");
+                                        tcp_proxy::ReverseTcpProxy::tunnel(tcp_stream, target, false,state.clone(),source_addr).await;
+                                        return;
+                                    } else {
+                                        tracing::trace!("{thn} is still not running... handing this request over to the terminating proxy.")
+                                    }
                                 }
-                                if has_started {
+                                , _  => {
                                     tracing::trace!("Using unencrypted tcp tunnel for remote target: {target:?}");
                                     tcp_proxy::ReverseTcpProxy::tunnel(tcp_stream, target, false,state.clone(),source_addr).await;
                                     return;
-                                } else {
-                                    tracing::trace!("{thn} is still not running... handing this request over to the terminating proxy.")
                                 }
                             }
-                            ,_=> {
-                                tracing::trace!("Using unencrypted tcp tunnel for remote target: {target:?}");
-                                tcp_proxy::ReverseTcpProxy::tunnel(tcp_stream, target, false,state.clone(),source_addr).await;
-                                return;
-                             }
-                        }
 
-                    } else {
-                        tracing::trace!("Using unencrypted tcp tunnel for remote target: {target:?}");
-                        tcp_proxy::ReverseTcpProxy::tunnel(tcp_stream, target, false,state.clone(),source_addr).await;
-                        return;
-                    }
-                } else {
-                    tracing::debug!("peeked some clear text tcp data and found that the target exists but is not configured for clear text. we will use terminating mode for this..")
+                        } else {
+                            tracing::trace!("Using unencrypted tcp tunnel for remote target: {target:?}");
+                            tcp_proxy::ReverseTcpProxy::tunnel(tcp_stream, target, false,state.clone(),source_addr).await;
+                            return;
+                        }
                 }
             }
         },
@@ -332,17 +330,18 @@ async fn handle_new_tcp_stream(
             typ: DataType::TLS,
             http_version:_,
             target_host: Some(target)
-        }) if expect_tls => {
+        }) if incoming_connection_is_on_tls_port => {
             if let Some(target) = tcp_proxy::ReverseTcpProxy::try_get_target_from_vec(targets, &target) {
-                
-                if target.target_tls_port.is_some() {
-                    _ = tx.send(ProcMessage::Start(target.host_name.clone()));
+                 
+                if target.backends.iter().any(|x|x.https.unwrap_or_default()) {
+                    // at least one backend has https enabled so we will use the tls tunnel mode to there
                     tracing::info!("USING TCP PROXY FOR TLS TUNNEL TO TARGET {target:?}");
                     tcp_proxy::ReverseTcpProxy::tunnel(tcp_stream, target, true,state.clone(),source_addr).await;
                     return;
                 } else {
                     tracing::debug!("peeked some tls tcp data and found that the target exists but is not configured for https/tls. we will use terminating mode for this..")
                 }
+
             }
         },
         e => {

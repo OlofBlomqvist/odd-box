@@ -11,7 +11,7 @@ use std::time::Duration;
 use std::os::windows::process::CommandExt;
 
 pub (crate) async fn host(
-    proc: crate::configuration::v1::InProcessSiteConfig,
+    proc: crate::configuration::v2::InProcessSiteConfig,
     mut rcv:tokio::sync::broadcast::Receiver<ProcMessage>,
     state: GlobalState
 ) {

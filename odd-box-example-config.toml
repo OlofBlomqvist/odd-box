@@ -1,8 +1,8 @@
-version = "V1" # this is the configuration format version, dont change it
+version = "V2" # this is the configuration format version, dont change it
 root_dir = "~" # you can use $root_dir in env_var values and dir paths etc.
 log_level = "info" # trace,info,debug,info,warn,error
 alpn = false # optional - allows alpn negotiation for http/1.0 and h2 on tls connections
-admin_api_port = 6789 # optional - leave out to disable the admin api
+admin_api_port = 1234 # optional - leave out to disable the admin api
 port_range_start = 4200 # port range for automatic port assignment (the env var PORT will be set if you did not specify one manually for a process)
 default_log_format = "standard" # standard | dotnet
 ip = "127.0.0.1" # ip for proxy to listen to , can be ipv4/6
@@ -18,15 +18,18 @@ env_vars = [
 
 [[remote_target]] # remote targets are those that odd-box is not responsible for running
 host_name = "lobsters.localtest.me" # incoming name for binding to (frontend)
-target_hostname = "lobste.rs" # domain name or ip to proxy the request to (backend)
 capture_subdomains = false # optional, false by default: allows capturing wildcard requests such as test.lobsters.local
 forward_subdomains = false # optional, false by default: if the request is for subdomain.configureddomain.local with target example.com, 
                            # this option would cause the proxied request go to subdomain.example.com instead of example.com.
 disable_tcp_tunnel_mode = false # optional, false by default
-https = true # optional, false by default: must be true if the target uses tls
-port = 443 # optional - 80 by default if https is false, 443 by default if https is true 
+ # optional, false by default: must be true if the target uses tls
+# optional - 80 by default if https is false, 443 by default if https is true 
 # h2_hint = "H2"/"H2C" - optional: used to signal use of prior knowledge http2 or http2 over clear text. 
-
+backends = [ 
+    # list of backends. uses round-robin load balancing
+    { address = "lobste.rs", port = 443, https = true } , 
+    { address = "lobsters.dev", port = 443, https = true }
+]
 [[hosted_process]] # hosted processes are ones that odd-box will keep running
 disable_tcp_tunnel_mode = false # optional, false by default
 host_name = "some_host.local" # incoming name for binding to (frontend)

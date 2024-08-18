@@ -54,17 +54,29 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
             return Err(CustomError(format!("No target is configured to handle requests to {req_host_name}")))
         }
     };
-   
-    let enforce_https = match &target {
-        crate::http_proxy::Target::Remote(x) => x.https.unwrap_or_default(),
-        crate::http_proxy::Target::Proc(x) => x.https.unwrap_or_default(),
-    };
 
-    let default_port = if enforce_https { 443 } else { 80 };
+    let (target_host,port,enforce_https) = match &target {
+        crate::http_proxy::Target::Remote(x) => {
+             let next_backend = x.next_backend(&service.state, crate::configuration::v2::BackendFilter::Any).await;
+             (
+                next_backend.address.clone(),
+                next_backend.port,
+                next_backend.https.unwrap_or_default()
+             )
+        },
+        crate::http_proxy::Target::Proc(x) => {
 
-    let (target_host,port) = match &target {
-        crate::http_proxy::Target::Remote(x) => (x.target_hostname.clone(),x.port.unwrap_or(default_port)),
-        crate::http_proxy::Target::Proc(x) => (x.host_name.clone(),x.port.unwrap_or(default_port)),
+            let backend_is_https = x.https.unwrap_or_default();
+            let port = match x.port {
+                Some(p) => p,
+                None => if backend_is_https == true {443} else {80}                
+            };
+            (
+                x.host_name.clone(),
+                port,
+                backend_is_https
+            )
+        }
     };
 
     let svc_scheme = if service.is_https_only {"wss"} else { "ws" };

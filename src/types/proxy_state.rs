@@ -5,7 +5,7 @@ use crate::tcp_proxy::ReverseTcpProxyTarget;
 #[derive(Debug)]
 pub (crate) struct ProxyStats {
     pub (crate) received_tcp_connections : usize,
-    pub (crate) active_connections : HashMap<ConnectionKey,ProxyActiveConnection>,
+    pub (crate) active_connections : HashMap<ConnectionKey,ProxyActiveConnection>
 }
 
 

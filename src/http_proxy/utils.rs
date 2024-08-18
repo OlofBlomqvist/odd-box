@@ -17,7 +17,7 @@ use tungstenite::http;
 use lazy_static::lazy_static;
 
 use crate::{
-    configuration::v1::H2Hint, global_state::GlobalState, http_proxy::EpicResponse, tcp_proxy::ReverseTcpProxyTarget, types::{proxy_state::{ ConnectionKey, ProxyActiveConnection, ProxyActiveConnectionType }}, CustomError
+    configuration::v2::H2Hint, global_state::GlobalState, http_proxy::EpicResponse, tcp_proxy::ReverseTcpProxyTarget, types::proxy_state::{ ConnectionKey, ProxyActiveConnection, ProxyActiveConnectionType }, CustomError
 };
 lazy_static! {
     static ref TE_HEADER: HeaderName = HeaderName::from_static("te");
@@ -58,8 +58,8 @@ pub enum ProxyError {
 
 #[derive(Debug)]
 pub enum Target {
-    Remote(crate::configuration::v1::RemoteSiteConfig),
-    Proc(crate::configuration::v1::InProcessSiteConfig),
+    Remote(crate::configuration::v2::RemoteSiteConfig),
+    Proc(crate::configuration::v2::InProcessSiteConfig),
 }
 
 pub async fn proxy(
@@ -72,11 +72,12 @@ pub async fn proxy(
     client_ip: SocketAddr,
     client_tls_config: ClientConfig
 ) -> Result<ProxyCallResult, ProxyError> {
+
     
     let incoming_http_version = req.version();
     
     tracing::info!(
-        "Incoming {incoming_http_version:?} request to proxy from {client_ip:?} with target url: {target_url}"
+        "Incoming {incoming_http_version:?} request to terminating proxy from {client_ip:?} with target url: {target_url}"
     );
 
 
@@ -85,24 +86,22 @@ pub async fn proxy(
 
     let mut connector = { https_builder.https_or_http().enable_all_versions().build() };
 
-    let mut enforce_https = match &target {
-        Target::Remote(x) => x.https.unwrap_or_default(),
-        Target::Proc(x) => x.https.unwrap_or_default(),
-    };
+    let mut enforce_https = is_https;
 
     let request_upgrade_type = get_upgrade_type(req.headers());
 
     let request_upgraded = req.extensions_mut().remove::<OnUpgrade>();
 
-    let target_h2_hint = match &target {
-        Target::Remote(x) => x.h2_hint.clone(),
-        Target::Proc(x) => x.h2_hint.clone(),
-    };
-    
     let mut enforce_http2 = false;
     let mut target_url = target_url.to_string();
     
-    if let Some(hint) = target_h2_hint {
+
+    let h2_hint = match &target {
+        Target::Remote(r) => r.h2_hint.clone(),
+        Target::Proc(p) => p.h2_hint.clone(),
+    };
+
+    if let Some(hint) = h2_hint {
 
         match hint {
             H2Hint::H2 => {
