@@ -25,7 +25,7 @@ As configuration is done thru basic files (toml format) which are easy to share,
 
 ### Performance
 
-While the goal of this project **is not** to provide a state-of-the-art level performing proxy server for production environments, but rather a tool for simplifying local development scenarios, we do try to keep performance in mind.. Some  rudimentary testing on this authors development machine shows that TCP tunnel mode supports 100k+ requests per second while the intercepting proxy mode handles 20k+ requests per second in most cases. More specific measurements of different scenarios will be added here at some point.
+While the goal of this project **is not** to provide a state-of-the-art level performing proxy server for production environments, but rather a tool for simplifying local development scenarios, we do try to keep performance in mind.. Some  rudimentary testing on this authors development machine shows that TCP tunnel mode supports 170k+ requests per second while the terminating proxy mode handles ~30k requests per second in most cases. More specific measurements of different scenarios will be added here at some point. This was tested by using odd-box in front of a highly performant Caddy server using oha for benchmarking. There is much room for improvement here, especially for terminating mode.. It will be prioritized in to at some point :)
 
 ### Terminal User Interface
 
