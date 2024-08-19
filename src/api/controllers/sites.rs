@@ -311,15 +311,19 @@ pub (crate) async fn stop_handler(
     Query(query): Query<StopQueryParams>
 ) -> axum::response::Result<impl IntoResponse,SitesError> {
   
+    let signal = if query.hostname == "*" {
+        crate::http_proxy::ProcMessage::StartAll
+    } else {
+        crate::http_proxy::ProcMessage::Start(query.hostname)
+    };
+
    // todo - check if site exists and if its already stopped?
-    global_state.2.send(crate::http_proxy::ProcMessage::Stop(query.hostname)).map_err(|e|
+    global_state.2.send(signal).map_err(|e|
         SitesError::UnknownError(format!("{e:?}"))    
     )?;
     Ok(())
     
 }
-
-
 
     
 #[derive(Deserialize,IntoParams)]
@@ -348,8 +352,14 @@ pub (crate) async fn start_handler(
     Query(query): Query<StartQueryParams>
 ) -> axum::response::Result<impl IntoResponse,SitesError> {
   
+    let signal = if query.hostname == "*" {
+        crate::http_proxy::ProcMessage::StartAll
+    } else {
+        crate::http_proxy::ProcMessage::Start(query.hostname)
+    };
+
     // todo - check if site exists and if its already started?
-    global_state.2.send(crate::http_proxy::ProcMessage::Start(query.hostname)).map_err(|e|
+    global_state.2.send(signal).map_err(|e|
         SitesError::UnknownError(format!("{e:?}"))    
     )?;
     Ok(())
