@@ -55,6 +55,16 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly
+      
+      - name: Install NASM (Windows only)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          choco install nasm -y
+          
+      - name: Configure NASM for CMake (Windows only)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          $env:CMAKE_ASM_NASM_COMPILER = "nasm"
                       
       - name: Build
         run: |
