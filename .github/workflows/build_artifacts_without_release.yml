@@ -65,6 +65,15 @@ jobs:
         run: |
           $env:CMAKE_ASM_NASM_COMPILER = "nasm"
 
+      - name: Build
+        run: |
+          if ("${{ matrix.no_default_features }}" -eq "true") {
+            cargo build --release --verbose --no-default-features
+          } else {
+            cargo build --release --verbose
+          }
+        shell: pwsh
+
       - name: Rename Artifact
         run: mv ${{ matrix.artifact_path }} ${{ matrix.artifact_name }}
         
