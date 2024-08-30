@@ -56,13 +56,27 @@ jobs:
         with:
           toolchain: nightly
       
-      - name: Install NASM (Windows only)
+       # Step to install NASM on Windows
+      - name: Install NASM on Windows
+        if: startsWith(matrix.os, 'windows')
+        uses: jberezanski/chocolatey-setup@v1
+        with:
+          package-list: 'nasm'
+      
+      # Step to check if NASM is installed and in PATH
+      - name: Verify NASM Installation (Windows only)
         if: startsWith(matrix.os, 'windows')
         run: |
-          choco install nasm -y
-          # Add Chocolatey bin directory to PATH
-          $env:Path += ";C:\ProgramData\chocolatey\bin"
-
+          echo "Checking NASM version..."
+          if (!(Get-Command nasm -ErrorAction SilentlyContinue)) {
+            Write-Host "NASM not found in PATH. Installation might have failed."
+            exit 1
+          } else {
+            nasm -v
+          }
+        shell: pwsh
+      
+      # Step to configure NASM for CMake (if required)
       - name: Configure NASM for CMake (Windows only)
         if: startsWith(matrix.os, 'windows')
         run: |
