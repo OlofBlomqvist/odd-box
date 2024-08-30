@@ -1,44 +1,64 @@
-pub (crate) fn is_valid_http_request(bytes: &[u8]) -> bool {
-    // Convert bytes to string for easy manipulation; HTTP is ASCII based.
-    let request_str = match std::str::from_utf8(bytes) {
-        Ok(s) => s,
-        Err(_) => return false, // Not valid UTF-8, unlikely to be a valid HTTP request.
-    };
+use anyhow::bail;
+use hyper::http::Version;
 
-    // HTTP methods to check against.
-    let methods = [
-        "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "CONNECT",
+// note: this method is performance critical, be careful when changing it
+// todo: add as many tests as possible to ensure this method is correct and performant
+pub fn is_valid_http_request(bytes: &[u8]) -> anyhow::Result<Version> {
+    
+    const METHODS: &[&[u8]] = &[
+        b"GET ", b"POST ", b"PUT ", b"DELETE ", b"HEAD ", b"OPTIONS ", b"PATCH ", b"CONNECT ", b"TRACE ",
     ];
 
-    // Check if the request starts with a known HTTP method followed by a space.
-    let valid_start = methods
-        .iter()
-        .any(|&method| request_str.starts_with(&format!("{method} /")));
+    let mut method_found = false;
+    for &method in METHODS {
+        if bytes.starts_with(method) {
+            method_found = true;
+            break;
+        }
+    }
+    if !method_found {
+        bail!("this is not a http request. no method found");
+    }
 
-    // Check if the request contains a valid HTTP version.
-    let valid_version =
-        request_str.contains("HTTP/1.1\r\n") || request_str.contains("HTTP/1.0\r\n");
+    let version = if let Some(pos) = memchr::memmem::find(bytes, b" HTTP/1.1\r\n") {
+        Version::HTTP_11
+    } else if let Some(pos) = memchr::memmem::find(bytes, b" HTTP/1.0\r\n") {
+        Version::HTTP_10
+    } else if let Some(pos) = memchr::memmem::find(bytes, b" HTTP/2.0\r\n") {
+        Version::HTTP_2
+    } else if let Some(pos) = memchr::memmem::find(bytes, b" HTTP/3.0\r\n") {
+        Version::HTTP_3
+    } else if let Some(pos) = memchr::memmem::find(bytes, b" HTTP/0.9\r\n") {
+        Version::HTTP_09
+    } else {
+        if let Some(start) = bytes.windows(6).position(|window| window.starts_with(b"HTTP/")) {
+            let end = start + 8; // "HTTP/x.x"
+            if end <= bytes.len() {
+                let version_str = String::from_utf8_lossy(&bytes[start..end]);
+                bail!("unsupported http method: {}", version_str);
+            }
+        }
+        bail!("this is not a http request. no method found");
+    };
 
-    // Minimum validation for headers: at least one CRLF should be present after the initial request line.
-    let has_headers = request_str
-        .splitn(2, "\r\n")
-        .nth(1)
-        .map_or(false, |s| s.contains("\r\n"));
+    let has_headers = memchr::memmem::find(bytes, b"\r\n\r\n").is_some();
+    let is_valid = has_headers || matches!(version, Version::HTTP_09); // <-- no headers required in HTTP/0.9
 
-    // The request is considered valid if it starts with a known method, contains a valid HTTP version, and has headers.
-    valid_start && valid_version && has_headers
+    if is_valid {
+        Ok(version)
+    } else {
+        bail!("invalid http request");
+    }
+    
 }
 
-pub (crate) fn try_decode_http_host (http_request: &str) -> Option<String> {
-    // Split the request into lines
-    let lines: Vec<&str> = http_request.split("\r\n").collect();
-    // Iterate through each line to find the Host header
-    for line in lines {
-        if line.to_lowercase().starts_with("host:") {
-            // Extract the value part of the Host header
-            let parts: Vec<&str> = line.splitn(2, ": ").collect();
-            if parts.len() == 2 {
-                return Some(parts[1].to_string());
+// note: this method is performance critical, be careful when changing it
+// todo: add as many tests as possible to ensure this method is correct and performant
+pub fn try_decode_http_host(http_request: &str) -> Option<String> {
+    for line in http_request.split("\r\n") {
+        if line.len() > 5 && line[..5].eq_ignore_ascii_case("Host:") {
+            if let Some((_, host)) = line.split_once(": ") {
+                return Some(host.to_string());
             }
         }
     }

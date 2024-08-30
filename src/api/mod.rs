@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 use axum::{body::Body, extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::{Html, IntoResponse, Response}, Router};
 use futures_util::{SinkExt, StreamExt};
 
@@ -16,7 +16,7 @@ pub struct WebSocketGlobalState {
 
     pub broadcast_channel: tokio::sync::broadcast::Sender<String>,
 
-    pub global_state: crate::global_state::GlobalState
+    pub global_state: Arc<crate::global_state::GlobalState>
 }
 
 
@@ -72,7 +72,7 @@ async fn set_cors(request: axum::extract::Request, next: axum::middleware::Next,
 }
 
 
-pub (crate) async fn run(globally_shared_state: crate::global_state::GlobalState,port:Option<u16>,tracing_broadcaster:tokio::sync::broadcast::Sender::<String>) {
+pub async fn run(globally_shared_state: Arc<crate::global_state::GlobalState>,port:Option<u16>,tracing_broadcaster:tokio::sync::broadcast::Sender::<String>) {
 
     if let Some(p) = port {
 
@@ -185,7 +185,7 @@ async fn ws_log_messages_handler(
                 }
             } else {
 
-                let possibly_admin_port = state.global_state.1.read().await.admin_api_port;
+                let possibly_admin_port = state.global_state.config.read().await.admin_api_port;
                 
                 if let Some(p) = possibly_admin_port {
                     let expected_origin = format!("http://localhost:{p}");
@@ -224,7 +224,7 @@ async fn ws_log_messages_handler(
         String::from("Unknown client")
     };
 
-    tracing::info!("`{user_agent}` at {addr} connected.");
+    tracing::trace!("`{user_agent}` at {addr} connected.");
     
     let response = ws.on_upgrade(move |socket| handle_socket(socket, addr,state.0));
     return response;

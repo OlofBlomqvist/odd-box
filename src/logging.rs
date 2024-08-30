@@ -7,11 +7,11 @@ use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
 
 #[derive(Clone)]
-pub (crate) struct LogMsg {
-    pub (crate) msg: String,
-    pub (crate) lvl: tracing::Level,
-    pub (crate) src: String,
-    pub (crate) thread: Option<String>
+pub struct LogMsg {
+    pub msg: String,
+    pub lvl: tracing::Level,
+    pub src: String,
+    pub thread: Option<String>
 }
 
 
@@ -101,8 +101,8 @@ impl<S: Subscriber> tracing_subscriber::Layer<S> for NonTuiLoggerLayer {
 
 
 pub struct SharedLogBuffer {
-    pub (crate) logs: VecDeque<LogMsg>,
-    pub (crate) limit : Option<usize>
+    pub logs: VecDeque<LogMsg>,
+    pub limit : Option<usize>
 }
 
 impl SharedLogBuffer {
@@ -138,6 +138,7 @@ pub struct TuiLoggerLayer {
 
 impl<S: Subscriber> Layer<S> for TuiLoggerLayer {
     fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+    
         let metadata = event.metadata();
 
 

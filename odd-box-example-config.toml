@@ -1,20 +1,21 @@
-version = "V2" # this is the configuration format version, dont change it
-root_dir = "~" # you can use $root_dir in env_var values and dir paths etc.
-log_level = "info" # trace,info,debug,info,warn,error
-alpn = false # optional - allows alpn negotiation for http/1.0 and h2 on tls connections
-admin_api_port = 1234 # optional - leave out to disable the admin api
-port_range_start = 4200 # port range for automatic port assignment (the env var PORT will be set if you did not specify one manually for a process)
-default_log_format = "standard" # standard | dotnet
-ip = "127.0.0.1" # ip for proxy to listen to , can be ipv4/6
-http_port = 8080 # optional, 8080 by default
-tls_port = 4343 # optional, 4343 by default
+version = "V2"  # this is the configuration format version, dont change it
+alpn = false # optional - allows alpn negotiation for http/1.0 and h2 on tls connections 
+http_port = 8080  # optional, 8080 by default
+admin_api_port = 1234  # optional - leave out to disable the admin api
+ip = "127.0.0.1"  # ip for proxy to listen to , can be ipv4/6
+tls_port = 4343# optional, 4343 by default
 auto_start = false # optional, defaults to true - used as default value for configured sites. auto_start false means a site will not start automatically with odd-box,
                    # but it will still be automatically started on incoming requests to that site.
-env_vars = [ 
-    # these are global environment variables - they will be set for all hosted processes
-    { key = "GRPC_TRACE" , value = "http,http1,http_keepalive,http2_stream_state" },
-    { key = "GRPC_VERBOSITY" , value = "DEBUG" },
+root_dir = "~" # you can use $root_dir in env_var values and dir paths etc.
+log_level = "warn"  # trace,info,debug,info,warn,error
+port_range_start = 4200  # port range for automatic port assignment (the env var PORT will be set if you did not specify one manually for a process)
+default_log_format = "standard"
+env_vars = [
+   # these are global environment variables - they will be set for all hosted processes
+	{ key = "GRPC_TRACE", value = "http,http1,http_keepalive,http2_stream_state" },
+	{ key = "GRPC_VERBOSITY", value = "DEBUG" },
 ]
+
 
 [[remote_target]] # remote targets are those that odd-box is not responsible for running
 host_name = "lobsters.localtest.me" # incoming name for binding to (frontend)
@@ -24,43 +25,57 @@ forward_subdomains = false # optional, false by default: if the request is for s
 disable_tcp_tunnel_mode = false # optional, false by default
  # optional, false by default: must be true if the target uses tls
 # optional - 80 by default if https is false, 443 by default if https is true 
-# h2_hint = "H2"/"H2C" - optional: used to signal use of prior knowledge http2 or http2 over clear text. 
-backends = [ 
-    # list of backends. uses round-robin load balancing
-    { address = "lobste.rs", port = 443, https = true } , 
-    { address = "lobsters.dev", port = 443, https = true }
+#hints = ["H2","H2C","H2CPK"] # - optional: used to decide which protocol to use for the target
+backends = [
+	{ https = true, address="lobste.rs", port=443 },
+	{ https = true, address="lobsters.dev", port=443 }
 ]
-[[hosted_process]] # hosted processes are ones that odd-box will keep running
-disable_tcp_tunnel_mode = false # optional, false by default
-host_name = "some_host.local" # incoming name for binding to (frontend)
-dir = "$root_dir" # path where we should be located when running the binary file
-bin = "my_bin" # name or path of the binary that should be executed
-args = ["--test"] # any arguments you wish to pass to the binary
-log_format = "standard" # standard | dotnet
+
+[[hosted_process]] # hosted processes are those that odd-box is responsible for running
+host_name = "python.localtest.me"  # incoming name for binding to (frontend)
+dir = "$cfg_dir" # path where we should be located when running the binary file
+bin = "/usr/bin/python3" # name or path of the binary that should be executed
+args = [
+  # any arguments you wish to pass to the binary
+  "-m", 
+  "http.server", 
+  "$port"
+]
 auto_start = false # optional, uses global auto_start by default. set to false to prevent the process from starting when launching odd-box
-port = 443 # optional, defaults to 443 for https configurations and 80 otherwise
-https = true # must be set to https if the target expects tls connections
-capture_subdomains = false # optional, false by default: allows capturing wildcard requests such as test.lobsters.local
-forward_subdomains = false # optional, false by default: if the request is for subdomain.configureddomain.local with target example.com, 
-                           # this option would cause the proxied request go to subdomain.example.com instead of example.com.
+https = false # must be set to https if the target expects tls connections
 env_vars = [
-    # environment variables specific to this process
-    { key = "logserver", value = "http://www.example.com" },
-    { key = "host", value = "odd-box" }
+  # environment variables specific to this process
+  # 	{ key = "logserver", value = "http://www.example.com" },
+  # 	{ key = "host", value = "odd-box" },
 ]
-disabled = true # optional, false by default: set to true to disable the process from running when odd-box is started and when using the start-all commands. you can still manually start it in the tui.
-# h2_hint = "H2"/"H2C" - optional: used to signal use of prior knowledge http2 or http2 over clear text. 
 
 
-[[hosted_process]]
-host_name = "py.localtest.me"
-dir = "$cfg_dir"
-bin = "/usr/bin/python3"
-args = ["-m", "http.server", "8012"]
-auto_start = false
-https = false
-port = 8012
-capture_subdomains = false
-env_vars = [
-	{ key = "PORT", value = "8012" },
-]
+# [[hosted_process]]
+# host_name = "some_host.local"
+# dir = "$root_dir" 
+# bin = "my_bin"
+# args = [ # any arguments you wish to pass to the binary
+#   "--test"
+# ]
+# auto_start = false # optional, uses global auto_start by default. set to false to prevent the process from starting when launching odd-box
+# https = true # must be set to https if the target expects tls connections
+# port = 443 # optional, defaults to 443 for https configurations and 80 otherwise
+# env_vars = [
+#   # environment variables specific to this process
+# 	{ key = "logserver", value = "http://www.example.com" },
+# 	{ key = "host", value = "odd-box" },
+# ]
+
+# [[hosted_process]]
+# host_name = "caddy.localtest.me"
+# disable_tcp_tunnel_mode = true
+# port = 9999
+# bin = "/nix/store/aq5r61lmr9six0lyi6xikxwvnyp16dfy-user-environment/bin/caddy"
+# args = [
+#   "run",
+#   "--config",
+#   "./CaddyTest",
+#   "--adapter",
+#   "caddyfile"
+# ]
+

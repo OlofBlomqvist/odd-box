@@ -1,7 +1,7 @@
 use super::*;
 
 use utoipa::ToSchema;
-
+use crate::configuration::OddBoxConfiguration;
 
 
 #[derive(Debug,Serialize,Deserialize,Clone,ToSchema)]
@@ -67,34 +67,34 @@ pub struct KvP {
 #[derive(Debug, Clone, Serialize, Deserialize,ToSchema)]
 pub struct OddBoxConfigGlobalPart {
     #[schema(value_type = String)]
-    pub (crate) root_dir : String, 
-    pub (crate) log_level : BasicLogLevel,
-    pub (crate) alpn : bool,
-    pub (crate) port_range_start : u16,
-    pub (crate) default_log_format : BasicLogFormat,
-    pub (crate) ip : String,
-    pub (crate) http_port : u16,
-    pub (crate) tls_port : u16,
-    pub (crate) auto_start : bool,
-    pub (crate) env_vars : Vec<KvP>,
-    pub (crate) admin_api_port : u16,
-    pub (crate) path : String
+    pub root_dir : String, 
+    pub log_level : BasicLogLevel,
+    pub alpn : bool,
+    pub port_range_start : u16,
+    pub default_log_format : BasicLogFormat,
+    pub ip : String,
+    pub http_port : u16,
+    pub tls_port : u16,
+    pub auto_start : bool,
+    pub env_vars : Vec<KvP>,
+    pub admin_api_port : u16,
+    pub path : String
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize,ToSchema)]
 pub struct SaveGlobalConfig{
     #[schema(value_type = String)]
-    pub (crate) root_dir : String, 
-    pub (crate) log_level : BasicLogLevel,
-    pub (crate) alpn : bool,
-    pub (crate) port_range_start : u16,
-    pub (crate) default_log_format : BasicLogFormat,
-    pub (crate) ip : String,
-    pub (crate) http_port : u16,
-    pub (crate) tls_port : u16,
-    pub (crate) auto_start : bool,
-    pub (crate) env_vars : Vec<KvP>,
-    pub (crate) admin_api_port : u16
+    pub root_dir : String, 
+    pub log_level : BasicLogLevel,
+    pub alpn : bool,
+    pub port_range_start : u16,
+    pub default_log_format : BasicLogFormat,
+    pub ip : String,
+    pub http_port : u16,
+    pub tls_port : u16,
+    pub auto_start : bool,
+    pub env_vars : Vec<KvP>,
+    pub admin_api_port : u16
 }
 
 /// Get global settings
@@ -108,10 +108,10 @@ pub struct SaveGlobalConfig{
         (status = 500, description = "When something goes wrong", body = String),
     )
 )]
-pub (crate) async fn get_settings_handler(
-    axum::extract::State(global_state): axum::extract::State<GlobalState>,
+pub async fn get_settings_handler(
+    axum::extract::State(global_state): axum::extract::State<Arc<GlobalState>>,
 ) -> axum::response::Result<impl IntoResponse> {
-    let guard = global_state.1.read().await;
+    let guard = global_state.config.read().await;
     
     let cfg = OddBoxConfigGlobalPart {
         admin_api_port : guard.admin_api_port.unwrap_or(6789),
@@ -151,14 +151,13 @@ pub (crate) async fn get_settings_handler(
         (status = 500, description = "When something goes wrong", body = String),
     )
 )]
-pub (crate) async fn set_settings_handler(
-    axum::extract::State(global_state): axum::extract::State<GlobalState>,
+pub async fn set_settings_handler(
+    axum::extract::State(global_state): axum::extract::State<Arc<GlobalState>>,
     Json(new_settings): Json<SaveGlobalConfig>
 ) -> axum::response::Result<impl IntoResponse,impl IntoResponse> {
 
-    let mut guard = global_state.1.write().await;
+    let mut guard = global_state.config.write().await;
     
-
     guard.admin_api_port = Some(new_settings.admin_api_port);
     guard.http_port = Some(new_settings.http_port);
     guard.tls_port = Some(new_settings.tls_port);
@@ -183,7 +182,7 @@ pub (crate) async fn set_settings_handler(
     guard.root_dir = Some(new_settings.root_dir.clone());
 
     
-    guard.save().map_err(|e|(StatusCode::BAD_REQUEST,format!("{}",e.to_string())))?;
+    guard.write_to_disk().map_err(|e|(StatusCode::BAD_REQUEST,format!("{}",e.to_string())))?;
 
     tracing::debug!("Global settings updated thru api");
 

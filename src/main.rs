@@ -3,18 +3,28 @@ mod types;
 mod tcp_proxy;
 mod http_proxy;
 mod proxy;
+use configuration::v2::FullyResolvedInProcessSiteConfig;
+use dashmap::DashMap;
+use global_state::GlobalState;
+use configuration::v2::InProcessSiteConfig;
+use configuration::v2::RemoteSiteConfig;
+use configuration::OddBoxConfiguration;
 use http_proxy::ProcMessage;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use self_update::cargo_crate_version;
 use tokio::sync::RwLock;
 use tracing_subscriber::layer::SubscriberExt;
 use std::fmt::Debug;
-use std::{borrow::BorrowMut, sync::Mutex};
+use std::os::linux::raw::stat;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 use std::time::Duration;
 use types::custom_error::*;
 use std::collections::HashMap;
 use std::io::Read;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::EnvFilter;
 mod proc_host;
@@ -23,44 +33,44 @@ use crate::types::app_state::ProcState;
 mod tui;
 mod api;
 mod logging;
+mod tests;
 use types::app_state::AppState;
+use lazy_static::lazy_static;
 
-pub mod global_state {
-    use std::collections::HashMap;
-
-    use crate::http_proxy::ConfigWrapper;
-
-    pub (crate) type GlobalState = 
-
-        (   std::sync::Arc<tokio::sync::RwLock<crate::types::app_state::AppState>>,
-            std::sync::Arc<tokio::sync::RwLock<ConfigWrapper>>,
-            tokio::sync::broadcast::Sender<crate::http_proxy::ProcMessage>,
-
-            // we store target request counts here outside of the global app-state proxy stats
-            // as we do not want to lock them at the same time as the proxy stats. 
-            // this is purely done to avoid performance issues.
-            std::sync::Arc<
-                tokio::sync::RwLock<
-                    HashMap<String,
-                        std::sync::Arc<
-                        tokio::sync::RwLock<
-                            crate::TargetRequestCount>
-                        >
-                    >
-                >
-            >
-        );
+#[derive(Eq,PartialEq,Debug,Clone,Hash, Serialize, Deserialize)]
+pub struct ProcId { id: String }
+impl ProcId {
+    pub fn new() -> Self {
+        Self { id: uuid::Uuid::new_v4().to_string() }
+    }
 }
 
+lazy_static! {
+    static ref THREAD_MAP: Arc<Mutex<HashMap<ProcId, Weak<AtomicBool>>>> = Arc::new(Mutex::new(HashMap::new()));
+}
 
-#[derive(Debug, Clone)]
-pub struct TargetRequestCount {
-    pub request_count : u128
+static REQUEST_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+pub fn generate_unique_id() -> u64 {
+    REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
+pub mod global_state {
+    use std::{collections::HashMap, sync::atomic::AtomicU64};
+    #[derive(Debug)]
+    pub struct GlobalState {
+        pub app_state: std::sync::Arc<crate::types::app_state::AppState>,
+        pub config: std::sync::Arc<tokio::sync::RwLock<crate::configuration::ConfigWrapper>>,
+        pub broadcaster: tokio::sync::broadcast::Sender<crate::http_proxy::ProcMessage>,
+        pub target_request_counts: dashmap::DashMap<String, AtomicU64>,
+        pub request_count: std::sync::atomic::AtomicUsize
+    }
+    
 }
 
 
 #[derive(Debug)]
 struct DynamicCertResolver {
+    // todo: dashmap?
     cache: Mutex<HashMap<String, Arc<rustls::sign::CertifiedKey>>>,
 }
 
@@ -105,7 +115,7 @@ impl ResolvesServerCert for DynamicCertResolver {
                 return None
             }
             if let Ok(private_key) = my_rsa_private_keys(&key_path) {
-                if let Ok(rsa_signing_key) = rustls::crypto::ring::sign::any_supported_type(&private_key) {
+                if let Ok(rsa_signing_key) = rustls::crypto::aws_lc_rs::sign::any_supported_type(&private_key) {
                     let result = std::sync::Arc::new(rustls::sign::CertifiedKey::new(
                         cert_chain, 
                         rsa_signing_key
@@ -139,7 +149,7 @@ fn generate_cert_if_not_exist(hostname: &str, cert_path: &str,key_path: &str) ->
     let key_exists = std::fs::metadata(key_path).is_ok();
 
     if crt_exists && key_exists {
-        tracing::info!("Using existing certificate for {}",hostname);
+        tracing::debug!("Using existing certificate for {}",hostname);
         return Ok(())
     }
     
@@ -147,14 +157,14 @@ fn generate_cert_if_not_exist(hostname: &str, cert_path: &str,key_path: &str) ->
         return Err(String::from("Missing key or crt for this hostname. Remove both if you want to generate a new set, or add the missing one."))
     }
 
-    tracing::info!("Generating new certificate for site '{}'",hostname);
+    tracing::debug!("Generating new certificate for site '{}'",hostname);
     
 
     match rcgen::generate_simple_self_signed(
         vec![hostname.to_owned()]
     ) {
         Ok(cert) => {
-            tracing::info!("Generating new self-signed certificate for host '{}'!",hostname);
+            tracing::trace!("Generating new self-signed certificate for host '{}'!",hostname);
             let _ = std::fs::write(&cert_path, cert.cert.pem());
             let _ = std::fs::write(&key_path, &cert.key_pair.serialize_pem());
             Ok(())               
@@ -221,10 +231,10 @@ struct Args {
 }
 
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Result as JsonResult;
 
-use crate::configuration::{ConfigWrapper, EnvVar, LogLevel};
+use crate::configuration::{ConfigWrapper, LogLevel};
 #[derive(Deserialize, Debug, Clone)]
 struct Release {
     #[allow(dead_code)] html_url: Option<String>,
@@ -287,24 +297,113 @@ pub fn initialize_panic_handler() {
 }
 
 
-
+fn thread_cleaner() {
+    let mut map = THREAD_MAP.lock().unwrap();
+    map.retain(|_k,v| v.upgrade().is_some());
+}
 
 
 #[tokio::main(flavor="multi_thread")]
 async fn main() -> anyhow::Result<()> {
-    
 
-    initialize_panic_handler();
+    // spawn thread cleaner and loop ever 1 second
+    tokio::spawn(async move {
+        loop {
+            thread_cleaner();
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    });
 
     let args = Args::parse();
+    
+    let (filter, reload_handle) = tracing_subscriber::reload::Layer::new(
+        EnvFilter::from_default_env()
+            .add_directive("h2=info".parse().expect("this directive will always work"))
+            .add_directive("tokio_util=info".parse().expect("this directive will always work"))            
+            .add_directive("hyper=info".parse().expect("this directive will always work")));
+    
+    initialize_panic_handler();
 
+
+    
+
+    let (tx,_) = tokio::sync::broadcast::channel::<ProcMessage>(33);
+
+
+    let inner_state = AppState::new();
+    let temp_cfg = ConfigWrapper::wrapv2(configuration::v2::OddBoxV2Config { 
+        version: configuration::OddBoxConfigVersion::V2, 
+        root_dir: None, 
+        log_level: None, 
+        alpn: None, 
+        port_range_start: 4000, 
+        default_log_format: configuration::LogFormat::standard,
+        ip: None, 
+        http_port: None, 
+        tls_port: None, 
+        auto_start: None, 
+        env_vars: vec![], 
+        remote_target: None, 
+        hosted_process: None, 
+        admin_api_port: None, 
+        path: None 
+    }); {
+
+    };
+
+    let shared_config = std::sync::Arc::new(
+        tokio::sync::RwLock::new(temp_cfg)
+    );
+
+    let inner_state_arc = std::sync::Arc::new(inner_state);
+
+    let global_state = Arc::new(crate::global_state::GlobalState { 
+        app_state: inner_state_arc.clone(), 
+        config: shared_config.clone(), 
+        broadcaster:tx.clone(),
+        target_request_counts: DashMap::new(),
+        request_count: std::sync::atomic::AtomicUsize::new(0)
+    });
+
+
+
+    let tracing_broadcaster = tokio::sync::broadcast::Sender::<String>::new(10);
+    
+    let mut tui_thread = None;
+
+    // tui is explicit opt out via arg only
+    match args.tui {
+        Some(false) => {},
+        _ => {
+            tui::init();
+            tui_thread = Some(tokio::task::spawn(tui::run(
+                global_state.clone(),
+                tx.clone(), 
+                tracing_broadcaster.clone(),
+                filter
+            )))
+        },
+    }
+
+    
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+    let cstate = global_state.clone();
+    ctrlc::set_handler(move || {
+        cstate.app_state.exit.store(false, std::sync::atomic::Ordering::SeqCst);
+        r.store(false, std::sync::atomic::Ordering::SeqCst);
+    }).expect("Error setting Ctrl-C handler");
+
+
+
+    
     if args.update {
         _ = update().await;
         return Ok(());
     }
 
     if args.generate_example_cfg {
-        let cfg = crate::configuration::v1::example_v1();
+        let cfg = crate::configuration::v2::OddBoxV2Config::example();
         let serialized = toml::to_string_pretty(&cfg).unwrap();
         std::fs::write("odd-box-example-config.toml", serialized).unwrap();
         return Ok(())
@@ -331,7 +430,7 @@ async fn main() -> anyhow::Result<()> {
     
     
     let mut config: ConfigWrapper = 
-        ConfigWrapper(match configuration::Config::parse(&contents) {
+        ConfigWrapper(match configuration::OddBoxConfig::parse(&contents) {
             Ok(configuration) => configuration.try_upgrade_to_latest_version().expect("configuration upgrade failed. this is a bug in odd-box"),
             Err(e) => anyhow::bail!(e),
         });
@@ -378,11 +477,15 @@ async fn main() -> anyhow::Result<()> {
         None => LevelFilter::INFO
     };
 
-    let tracing_broadcaster = tokio::sync::broadcast::Sender::<String>::new(10);
+    reload_handle.reload(EnvFilter::from_default_env()
+    .add_directive("h2=info".parse().expect("this directive will always work"))
+    .add_directive("tokio_util=info".parse().expect("this directive will always work"))            
+    .add_directive("hyper=info".parse().expect("this directive will always work")).add_directive(log_level.into())).expect("Failed to reload filter");
 
-    let use_tui = args.tui.unwrap_or_default();
+
+
     
-    if !use_tui {
+    if tui_thread.is_none() {
         let fmt_layer = tracing_subscriber::fmt::layer()
         .compact()
         .with_thread_names(true)
@@ -428,93 +531,34 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // replace initial empty config with resolved one
+    let mut cfg_write_guard = shared_config.write().await;
+    *cfg_write_guard = config;
     
 
-    let sites_len = config.hosted_process.as_ref().and_then(|x|Some(x.len())).unwrap_or_default() as u16;
-
-    let (tx,_) = tokio::sync::broadcast::channel::<ProcMessage>(sites_len.max(1).into());
-
-
-   
-
-    let shared_config = std::sync::Arc::new(tokio::sync::RwLock::new(config));
     
-    let mut inner_state = AppState::new();
-
-    for x in shared_config.read().await.remote_target.as_ref().unwrap_or(&vec![]) {
-        inner_state.site_states_map.insert(x.host_name.to_owned(), ProcState::Remote);
+    for x in cfg_write_guard.remote_target.as_ref().unwrap_or(&vec![]) {
+        inner_state_arc.site_status_map.insert(x.host_name.to_owned(), ProcState::Remote);
     }
 
     
-    let shared_state : crate::global_state::GlobalState = 
-        // CURRENT APPSTATE
-        (std::sync::Arc::new(            
-            tokio::sync::RwLock::new(
-                inner_state
-            )            
-        ), 
-        
-        // CONFIGURATION
-        shared_config.clone(),
-        
-        // BROADCASTER
-        tx.clone(),
-
-        // TARGET REQUEST COUNTS FOR LB FEATURE
-        Arc::new(RwLock::new(HashMap::new()))
-    );
-
     
-    let mut shared_write_guard = shared_config.write().await;
-
-    let global_auto_start_default_value = shared_write_guard.auto_start.clone();
-    let port_range_start = shared_write_guard.port_range_start.clone();
     
-
-    let mut_procs = shared_write_guard.hosted_process.borrow_mut();
-    if let Some(processes) = mut_procs {
-        for (i, x) in processes.iter_mut().enumerate() {
-            
-            let auto_port = port_range_start + i as u16;
-            // if a custom PORT variable is set, we use it
-            if let Some(cp) = x.env_vars.iter().find(|x| x.key.to_lowercase() == "port") {
-                let custom_port = cp.value.parse::<u16>()?;
-                
-                if custom_port > sites_len {
-                    tracing::warn!("Using custom port for {} as specified in configuration! ({})", x.host_name, custom_port);
-                    x.set_port(custom_port);
-                } else if custom_port < 1 {
-                    anyhow::bail!("Invalid port configured for {}: {}.", x.host_name, cp.value);
-                } else {
-                    anyhow::bail!("Invalid port configured for {}: {}. Please use a port number above {}", 
-                        x.host_name, cp.value, sites_len + port_range_start);
-                }
-            } else if let Some(p) = x.port {
-                x.env_vars.push(EnvVar { key: "PORT".to_string(), value: p.to_string() });
-            }
-            else {
-                x.set_port(auto_port);
-                x.env_vars.push(EnvVar { key: "PORT".to_string(), value: auto_port.to_string() });
-            }
-
-    
-            tracing::trace!("Initializing {} on port {:?}", x.host_name, x.port);
-            
-    
-            if x.auto_start.is_none() {
-                x.auto_start = global_auto_start_default_value;
-            }
-    
-            tokio::task::spawn(proc_host::host(
-                x.clone(),
-                tx.subscribe(),
-                shared_state.clone()
-            ));
-        }
+    for x in cfg_write_guard.hosted_process.iter().flatten() {
+        let resolved_proc = cfg_write_guard.resolve_process_configuration(&x)?;
+        tokio::task::spawn(proc_host::host(
+            resolved_proc,
+            tx.subscribe(),
+            global_state.clone(),
+        ));
     }
+    
+    
+    drop(cfg_write_guard);
 
-    drop(shared_write_guard);
     let shared_read_guard = shared_config.read().await;
+
+    
 
     let srv_ip = if let Some(ip) = shared_read_guard.ip { ip.to_string() } else { "127.0.0.1".to_string() };
     let arced_tx = std::sync::Arc::new(tx.clone());
@@ -526,12 +570,12 @@ async fn main() -> anyhow::Result<()> {
             format!("{srv_ip}:{srv_port}").parse().expect("bind address for http must be valid.."),
             format!("{srv_ip}:{srv_tls_port}").parse().expect("bind address for https must be valid.."),
             arced_tx.clone(),
-            shared_state.clone(),
+            global_state.clone(),
             shutdown_signal
         ));
 
     let api_port = shared_read_guard.admin_api_port.clone();
-    let api_state = shared_state.clone();
+    let api_state = global_state.clone();
     let api_broadcaster = tracing_broadcaster.clone();
     
 
@@ -541,36 +585,27 @@ async fn main() -> anyhow::Result<()> {
         api::run(api_state,api_port, api_broadcaster).await
     });
    
-    
+    let use_tui = tui_thread.is_some();
 
-    if use_tui {
-        tui::init();
-        tui::run(EnvFilter::from_default_env()
-            .add_directive(log_level.into())
-            .add_directive("h2=info".parse().expect("this directive will always work"))
-            .add_directive("tokio_util=info".parse().expect("this directive will always work"))            
-            .add_directive("hyper=info".parse().expect("this directive will always work")),shared_state.clone(),tx.clone(),tracing_broadcaster.clone()).await;
+    if let Some(tui) = tui_thread{
+        _ = tui.await;
     } else {
-       let mut stdin = std::io::stdin();
-       let mut buf : [u8;1] = [0;1];
-       loop {
-            _ = stdin.read_exact(&mut buf);
-            if buf[0] == 3 || buf[0] == 113 {
-                tracing::info!("bye: {:?}",buf);
+        loop {
+            if running.load(std::sync::atomic::Ordering::SeqCst) != true {
+                tracing::info!("leaving main loop");
                 break;
-            } else {
-                tracing::info!("press 'q' or ctrl-c to quit, not {:?}",buf);
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            
-       }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
     }
 
     {
         tracing::warn!("Changing application state to EXIT");
-        let mut state = shared_state.0.write().await;
-        state.exit = true;
+        global_state.app_state.exit.store(true, std::sync::atomic::Ordering::SeqCst);
     }
+
+
+    
 
     if use_tui {
         println!("Waiting for processes to stop..");
@@ -583,15 +618,15 @@ async fn main() -> anyhow::Result<()> {
     }
  
     {
-        let state = shared_state.0.read().await;
-            for (name,status) in state.site_states_map.iter().filter(|x|x.1!=&ProcState::Remote) {
-                if use_tui {
-                    println!("{name} ==> {status:?}")
-                } else {
-                    tracing::info!("{name} ==> {status:?}")
-                }
+        for guard in global_state.app_state.site_status_map.iter().filter(|x|x.value()!=&ProcState::Remote) {
+            let (name,status) = guard.pair();
+            if use_tui {
+                println!("{name} ==> {status:?}")
+            } else {
+                tracing::info!("{name} ==> {status:?}")
             }
-    }
+        }
+}
 
     if use_tui {
         println!("Performing cleanup, please wait..");
@@ -612,6 +647,5 @@ async fn main() -> anyhow::Result<()> {
     _ = proxy_thread.await.ok();
 
     Ok(())
-
-
 }
+

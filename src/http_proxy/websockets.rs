@@ -33,7 +33,7 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
     
     tracing::trace!("Handling websocket request: {req_host_name:?} --> {req_path}");
     
-    let read_guard = service.state.1.read().await;
+    let read_guard = service.state.config.read().await;
 
     let processes = read_guard.hosted_process.clone().unwrap_or_default();
     let remote_targets = read_guard.0.clone().remote_target.unwrap_or_default();
@@ -56,8 +56,10 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
     };
 
     let (target_host,port,enforce_https) = match &target {
+        
         crate::http_proxy::Target::Remote(x) => {
-             let next_backend = x.next_backend(&service.state, crate::configuration::v2::BackendFilter::Any).await;
+             let next_backend = x.next_backend(&service.state, crate::configuration::v2::BackendFilter::Any).await
+                .ok_or(CustomError(format!("no backend found")))?;
              (
                 next_backend.address.clone(),
                 next_backend.port,
@@ -65,19 +67,20 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
              )
         },
         crate::http_proxy::Target::Proc(x) => {
-
             let backend_is_https = x.https.unwrap_or_default();
-            let port = match x.port {
-                Some(p) => p,
-                None => if backend_is_https == true {443} else {80}                
-            };
             (
                 x.host_name.clone(),
-                port,
+                x.active_port.unwrap_or_default(),
                 backend_is_https
             )
         }
     };
+
+    if 0 == port { 
+        tracing::warn!("No port found for target {target_host}");
+        return Err(CustomError(format!("no active port found for target {target_host} - possibly process is not running")));
+    };
+    
 
     let svc_scheme = if service.is_https_only {"wss"} else { "ws" };
    
@@ -85,7 +88,7 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
 
     let ws_url = format!("{proto}://{target_host}:{}{}",port,req_path);
     
-    tracing::info!("initiating websocket tunnel to {}",ws_url);
+    tracing::debug!("initiating websocket tunnel to {}",ws_url);
 
     let client_tls_config = ClientConfig::builder_with_protocol_versions(rustls::ALL_VERSIONS)
         .with_native_roots()
@@ -99,7 +102,7 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
         Some(tokio_tungstenite::Connector::Rustls(Arc::new(client_tls_config)))
     ).await {
         Ok(x) => {
-            tracing::info!("Successfully connected to target websocket");
+            tracing::debug!("Successfully connected to target websocket");
             x
         },
         Err(e) => {
@@ -110,8 +113,6 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
     };
     
     let target_version = upstream_client.1.version();
-    
-    //let hax : &tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream> = upstream_client.0.get_ref();
     
     let target_is_tls = match upstream_client.0.get_ref() {
         tokio_tungstenite::MaybeTlsStream::Rustls(_) => true,
@@ -178,22 +179,14 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
 }
 
 
-async fn add_connection(state:GlobalState,connection:ProxyActiveConnection) -> ConnectionKey {
-    let id = uuid::Uuid::new_v4();
-    let global_state = state.0.read().await;
-    let mut guard = global_state.statistics.write().expect("should always be able to add statistics");
-    let key = (
-        connection.source_addr.clone(),
-        id
-    );
-    _ = guard.active_connections.insert(key, connection);
+async fn add_connection(global_state:Arc<GlobalState>,connection:ProxyActiveConnection) -> ConnectionKey {
+    let key = crate::generate_unique_id();
+    _ = global_state.app_state.statistics.active_connections.insert(key, connection);
     key
 }
 
-async fn del_connection(state:GlobalState,key:&ConnectionKey) {
-    let global_state = state.0.read().await;
-    let mut guard = global_state.statistics.write().expect("should always be able to add statistics");
-    _ = guard.active_connections.remove(key);
+async fn del_connection(global_state:Arc<GlobalState>,key:&ConnectionKey) {
+    _ = global_state.app_state.statistics.active_connections.remove(key);
 }
 
 fn create_connection(
@@ -215,9 +208,12 @@ fn create_connection(
         };
 
     ProxyActiveConnection {
+        target_name: match target {
+            Target::Proc(p) => p.host_name.clone(),
+            Target::Remote(r) => r.host_name.clone()
+        },
         source_addr: client_addr.clone(),
         target_addr: target_addr.to_owned(),
-        target: ReverseTcpProxyTarget::from_target(target),
         creation_time: Local::now(),
         description: Some(format!("websocket connection")),
         connection_type: typ_info

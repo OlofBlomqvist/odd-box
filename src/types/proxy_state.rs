@@ -1,16 +1,17 @@
-use std::collections::HashMap;
 use std::net::SocketAddr;
-use crate::tcp_proxy::ReverseTcpProxyTarget;
+use std::sync::atomic::AtomicUsize;
 
 #[derive(Debug)]
-pub (crate) struct ProxyStats {
-    pub (crate) received_tcp_connections : usize,
-    pub (crate) active_connections : HashMap<ConnectionKey,ProxyActiveConnection>
+pub struct ProxyStats {
+    pub active_connections : dashmap::DashMap<ConnectionKey,ProxyActiveConnection>,
+    pub hosted_process_stats : dashmap::DashMap<crate::ProcId,AtomicUsize>,
+    pub remote_targets_stats : dashmap::DashMap<String,AtomicUsize>,
+    pub total_request_count : AtomicUsize
 }
 
 
 #[derive(Debug,Clone)]
-pub (crate) enum ProxyActiveConnectionType {
+pub enum ProxyActiveConnectionType {
     TcpTunnelUnencryptedHttp, 
     TcpTunnelTls,
     TerminatingHttp {
@@ -27,15 +28,15 @@ pub (crate) enum ProxyActiveConnectionType {
     }
 }
 
-pub type ConnectionKey = (SocketAddr,uuid::Uuid);
+pub type ConnectionKey = u64;
 
 #[derive(Debug,Clone)]
 #[allow(dead_code)]
-pub (crate) struct ProxyActiveConnection {
-    pub (crate) target : ReverseTcpProxyTarget,
-    pub (crate) creation_time : chrono::DateTime<chrono::Local>,
-    pub (crate) description : Option<String>,
-    pub (crate) connection_type : ProxyActiveConnectionType,
-    pub (crate) source_addr: SocketAddr,
-    pub (crate) target_addr: String
+pub struct ProxyActiveConnection {
+    pub target_name : String,
+    pub creation_time : chrono::DateTime<chrono::Local>,
+    pub description : Option<String>,
+    pub connection_type : ProxyActiveConnectionType,
+    pub source_addr: SocketAddr,
+    pub target_addr: String
 }

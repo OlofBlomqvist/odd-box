@@ -3,37 +3,46 @@ use std::net::Ipv4Addr;
 use std::path::Path;
 
 use anyhow::bail;
+use dashmap::DashMap;
 use serde::Serialize;
 use serde::Deserialize;
 use utoipa::ToSchema;
 use crate::global_state::GlobalState;
+use crate::types::app_state::ProcState;
+use crate::ProcId;
 
+use super::ConfigWrapper;
 use super::EnvVar;
 use super::LogFormat;
 use super::LogLevel;
+use super::OddBoxConfiguration;
 
 
-impl InProcessSiteConfig {
-    pub fn set_port(&mut self, port : u16) { 
-        self.port = Some(port) 
-    }
-}
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash)]
+pub struct InProcessSiteConfig {
+    
+    #[serde(skip, default = "crate::ProcId::new")] 
+    proc_id : ProcId,
 
+    /// This is set automatically each time we start a process so that we know which ports are in use
+    /// and can avoid conflicts when starting new processes. settings this in toml conf file will have no effect.
+    #[serde(skip)] // <-- dont want to even read or write this to the config file, nor exposed in the api docs
+    pub active_port : Option<u16>,
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub (crate) struct InProcessSiteConfig{
     /// This is mostly useful in case the target uses SNI sniffing/routing
     pub disable_tcp_tunnel_mode : Option<bool>,
     /// H2C or H2 - used to signal use of prior knowledge http2 or http2 over clear text. 
-    pub h2_hint : Option<H2Hint>,
+    pub hints : Option<Vec<Hint>>,
     pub host_name : String,
-    pub dir : String,
+    pub dir : Option<String>,
     pub bin : String,
-    pub args : Vec<String>,
-    pub env_vars : Vec<EnvVar>,
+    pub args : Option<Vec<String>>,
+    pub env_vars : Option<Vec<EnvVar>>,
     pub log_format: Option<LogFormat>,
-    /// Set this to false if you do not want this site to start automatically when odd-box starts
+    /// Set this to false if you do not want this site to start automatically when odd-box starts.
+    /// This also means that the site is excluded from the start_all command.
     pub auto_start: Option<bool>,
+    /// If this is set to None, the next available port will be used. Starting from the global port_range_start
     pub port: Option<u16>,
     pub https : Option<bool>,
     /// If you wish to use wildcard routing for any subdomain under the 'host_name'
@@ -43,30 +52,98 @@ pub (crate) struct InProcessSiteConfig{
     /// vs
     /// test.example.com -> test.internal.site 
     pub forward_subdomains : Option<bool>,
-    /// Set to true to prevent odd-box from starting this site automatically when it starts or using the 'start' command.
-    /// It can still be manually started by ctrl-clicking in the TUI. 
-    pub disabled: Option<bool>
-    // ^ perhaps we should remove disabled from v2 and instead only use auto_start... ?
+    /// If you wish to exclude this site from the start_all command.
+    /// This setting was previously called "disable" but has been renamed for clarity
+    pub exclude_from_start_all: Option<bool>
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash)]
+pub struct FullyResolvedInProcessSiteConfig {
+    pub excluded_from_start_all: bool,
+    pub proc_id : ProcId,
+    pub active_port : Option<u16>,
+    pub disable_tcp_tunnel_mode : Option<bool>,
+    pub hints : Option<Vec<Hint>>,
+    pub host_name : String,
+    pub dir : Option<String>,
+    pub bin : String,
+    pub args : Option<Vec<String>>,
+    pub env_vars : Option<Vec<EnvVar>>,
+    pub log_format: Option<LogFormat>,
+    pub auto_start: Option<bool>,
+    pub port: Option<u16>,
+    pub https : Option<bool>,
+    pub capture_subdomains : Option<bool>,
+    pub forward_subdomains : Option<bool>,
+}
+
+impl InProcessSiteConfig {
+    pub fn get_id(&self) -> &ProcId {
+        &self.proc_id
+    }
+}
+
+impl PartialEq for InProcessSiteConfig {
+    
+    fn eq(&self, other: &Self) -> bool {
+        compare_option_bool(self.disable_tcp_tunnel_mode,other.disable_tcp_tunnel_mode) &&
+        self.hints == other.hints &&
+        self.host_name == other.host_name &&
+        self.dir == other.dir &&
+        self.bin == other.bin &&
+        self.args == other.args &&
+        self.env_vars == other.env_vars &&
+        compare_option_log_format(&self.log_format,& other.log_format) &&
+        compare_option_bool(self.auto_start, other.auto_start) &&
+        self.port == other.port &&
+        self.https == other.https &&
+        compare_option_bool(self.capture_subdomains, other.capture_subdomains) &&
+        compare_option_bool(self.forward_subdomains, other.forward_subdomains)
+    }
+}
+
+impl Eq for InProcessSiteConfig {}
+fn compare_option_bool(a: Option<bool>, b: Option<bool>) -> bool {
+    let result = match (a, b) {
+        (None, Some(false)) | (Some(false), None) => true,
+        _ => a == b,
+    };
+    println!("Comparing Option<bool>: {:?} vs {:?} -- result: {result}", a, b);
+    result
+}
+
+fn compare_option_log_format(a: &Option<LogFormat>, b: &Option<LogFormat>) -> bool {
+    let result = match (a, b) {
+        (None, Some(LogFormat::standard)) | (Some(LogFormat::standard), None) => true,
+        _ => a == b,
+    };
+    println!("Comparing Option<LogFormat>: {:?} vs {:?} -- result: {result}", a, b);
+    result
 }
 
 #[derive(Debug, Eq,PartialEq,Hash, Clone, Serialize, Deserialize, ToSchema)]
-pub (crate) enum H2Hint {
+pub enum Hint {
+    /// Server supports http2 over tls
     H2,
-    H2C
+    /// Server supports http2 via clear text by using an upgrade header
+    H2C,
+    /// Server supports http2 via clear text by using prior knowledge
+    H2CPK
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema,Eq,PartialEq,Hash,)]
 pub struct Backend {
     pub address : String,
+    /// This can be zero in case the backend is a hosted process, in which case we will need to resolve the current active_port
     pub port: u16,
-    pub https : Option<bool>
+    pub https : Option<bool>,
+    /// H2C,H2,H2CPK - used to signal use of prior knowledge http2 or http2 over clear text. 
+    pub hints : Option<Vec<Hint>>,
 }
 
-
-#[derive(Debug, Eq,PartialEq,Hash, Clone, Serialize, Deserialize, ToSchema)]
-pub (crate) struct RemoteSiteConfig{
-    /// H2C or H2 - used to signal use of prior knowledge http2 or http2 over clear text. 
-    pub h2_hint : Option<H2Hint>,
+#[derive(Debug, Hash, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RemoteSiteConfig{
     pub host_name : String,
     pub backends : Vec<Backend>,
     /// If you wish to use wildcard routing for any subdomain under the 'host_name'
@@ -80,6 +157,18 @@ pub (crate) struct RemoteSiteConfig{
     pub forward_subdomains : Option<bool>
 }
 
+impl PartialEq for RemoteSiteConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.host_name == other.host_name &&
+        self.backends == other.backends &&
+        compare_option_bool(self.capture_subdomains, other.capture_subdomains) &&
+        compare_option_bool(self.disable_tcp_tunnel_mode, other.disable_tcp_tunnel_mode) &&
+        compare_option_bool(self.forward_subdomains, other.forward_subdomains)
+    }
+}
+
+impl Eq for RemoteSiteConfig {}
+
 pub enum BackendFilter {
     Http,
     Https,
@@ -92,353 +181,95 @@ fn filter_backend(backend: &Backend, filter: &BackendFilter) -> bool {
         BackendFilter::Any => true
     }
 }
+
 impl RemoteSiteConfig {
 
-    pub async fn next_backend(&self,state:&GlobalState, backend_filter: BackendFilter) -> Backend {
-            
 
-        let stats = state.3.clone();
+    pub async fn next_backend(&self,state:&GlobalState, backend_filter: BackendFilter) -> Option<Backend> {
             
-        let ro_guard = stats.read().await;
-        let seen_before = ro_guard.contains_key(&self.host_name);
-        
-        let count = if seen_before {
-            let existing_stats_for_this_target = ro_guard.get(&self.host_name).expect("we never remove items from the map so this should always be here").clone();
-            let mut guard = existing_stats_for_this_target.write().await;
-            guard.request_count += 1;
-            guard.request_count
-        } else {
-            drop(ro_guard);
-            let mut guard = stats.write().await;
-            let my_new_target_info = std::sync::Arc::new(tokio::sync::RwLock::new(crate::TargetRequestCount { request_count: 1 }));
-            guard.insert(self.host_name.clone(), my_new_target_info);
-            1
-        };
-        
         let filtered_backends = self.backends.iter().filter(|x|filter_backend(x,&backend_filter))
             .collect::<Vec<&crate::configuration::v2::Backend>>();
 
-        let selected_backend = *filtered_backends.get((count % (filtered_backends.len() as u128)) as usize )
+        if filtered_backends.len() == 1 { return Some(filtered_backends[0].clone()) };
+        if filtered_backends.len() == 0 { return None };
+        
+       
+        let count = match state.app_state.statistics.remote_targets_stats.get_mut(&self.host_name) {
+            Some(mut guard) => {
+                let (_k,v) = guard.pair_mut();
+                1 + v.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            },
+            None => {
+                state.app_state.statistics.remote_targets_stats.insert(self.host_name.clone(), std::sync::atomic::AtomicUsize::new(1));
+                1
+            }
+        } as usize;
+
+        let selected_backend = *filtered_backends.get((count % (filtered_backends.len() as usize)) as usize )
             .expect("we should always have at least one backend but found none. this is a bug in oddbox <service.rs>.");
 
-        selected_backend.clone()
+
+
+        Some(selected_backend.clone())
         
 
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize,ToSchema)]
-pub struct OddBoxConfig {
+#[derive(Debug, Clone, Serialize, Deserialize,ToSchema, PartialEq, Eq, Hash)]
+pub struct OddBoxV2Config {
     #[schema(value_type = String)]
-    pub (crate) version : super::OddBoxConfigVersion,
-    pub (crate) root_dir : Option<String>, 
+    pub version : super::OddBoxConfigVersion,
+    pub root_dir : Option<String>, 
     #[serde(default = "default_log_level")]
-    pub (crate) log_level : Option<LogLevel>,
+    pub log_level : Option<LogLevel>,
     /// Defaults to true. Lets you enable/disable h2/http11 tls alpn algs during initial connection phase. 
     #[serde(default = "true_option")]
-    pub (crate) alpn : Option<bool>,
-    pub (crate) port_range_start : u16,
+    pub alpn : Option<bool>,
+    pub port_range_start : u16,
     #[serde(default = "default_log_format")]
-    pub (crate) default_log_format : LogFormat,
+    pub default_log_format : LogFormat,
     #[schema(value_type = String)]
-    pub (crate) ip : Option<IpAddr>,
+    pub ip : Option<IpAddr>,
     #[serde(default = "default_http_port_8080")]
-    pub (crate) http_port : Option<u16>,
+    pub http_port : Option<u16>,
     #[serde(default = "default_https_port_4343")]
-    pub (crate) tls_port : Option<u16>,
+    pub tls_port : Option<u16>,
     #[serde(default = "true_option")]
-    pub (crate) auto_start : Option<bool>,
-    pub (crate) env_vars : Vec<EnvVar>,
-    pub (crate) remote_target : Option<Vec<RemoteSiteConfig>>,
-    pub (crate) hosted_process : Option<Vec<InProcessSiteConfig>>,
-    pub (crate) admin_api_port : Option<u16>,
-    pub (crate) path : Option<String>
+    pub auto_start : Option<bool>,
+    pub env_vars : Vec<EnvVar>,
+    pub remote_target : Option<Vec<RemoteSiteConfig>>,
+    pub hosted_process : Option<Vec<InProcessSiteConfig>>,
+    pub admin_api_port : Option<u16>,
+    pub path : Option<String>
 
 }
-fn default_log_level() -> Option<LogLevel> {
-    Some(LogLevel::Info)
-}
-fn default_log_format() -> LogFormat {
-    LogFormat::standard
-}
-fn default_https_port_4343() -> Option<u16> {
-    Some(4343)
-}
-fn default_http_port_8080() -> Option<u16> {
-    Some(8080)
-}
 
-fn true_option() -> Option<bool> {
-    Some(true)
-}
-
-impl OddBoxConfig {
-       
-
-    // Validates and populates variables in the configuration
-    pub fn init(&mut self,cfg_path:&str) -> anyhow::Result<()>  {
-        
-        self.path = Some(std::path::Path::new(&cfg_path).canonicalize()?.to_str().unwrap_or_default().into());
-
-
-        let resolved_home_dir_path = dirs::home_dir().ok_or(anyhow::anyhow!(String::from("Failed to resolve home directory.")))?;
-        let resolved_home_dir_str = resolved_home_dir_path.to_str().ok_or(anyhow::anyhow!(String::from("Failed to parse home directory.")))?;
-
-        tracing::info!("Resolved home directory: {}",&resolved_home_dir_str);
-
-        let cfg_dir = Self::get_parent(cfg_path)?;
-
-        if let Some(rd) = self.root_dir.as_mut() {
-            
-            if rd.contains("$root_dir") {
-                anyhow::bail!("it is clearly not a good idea to use $root_dir in the configuration of root dir...")
-            }
-
-            let rd_with_vars_replaced = rd
-                .replace("$cfg_dir", &cfg_dir)
-                .replace("~", resolved_home_dir_str);
-
-            let canonicalized_with_vars = 
-                match std::fs::canonicalize(rd_with_vars_replaced.clone()) {
-                    Ok(resolved_path) => {
-                        resolved_path.display().to_string()
-                            // we dont want to use ext path def on windows
-                            .replace("\\\\?\\", "")
-                    }
-                    Err(e) => {
-                        anyhow::bail!(format!("root_dir item in configuration ({rd}) resolved to this: '{rd_with_vars_replaced}' - error: {}", e));
-                    }
-                };
-            
-            *rd = canonicalized_with_vars;
-
-            tracing::debug!("$root_dir resolved to: {rd}")
-        }
-           
-        let cloned_root_dir = self.root_dir.clone();
+impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Config {
 
 
 
-
-        if let Some(procs) = self.hosted_process.as_deref_mut() {
-            for x in &mut procs.iter_mut() {
-                
-                if x.dir.len() < 5 { anyhow::bail!(format!("Invalid path configuration for {:?}",x))}
-                
-                Self::massage_proc(cfg_path, &cloned_root_dir, x)?;
-                
-
-                // basic sanity check..
-                if x.dir.contains("$root_dir") {
-                    anyhow::bail!("Invalid configuration: {x:?}. Missing root_dir in configuration file but referenced for this item..")
-                }
-
-                // if no log format is specified for the process but there is a global format, override it
-                if x.log_format.is_none() {
-                   x.log_format = Some(self.default_log_format.clone())
-                }
-            }
-        }
-
-       
-
-        Ok(())
-    }
-
-    pub fn is_valid(&self) -> anyhow::Result<()> {
-        
-        let mut all_host_names: Vec<&str> = vec![
-            self.remote_target.as_ref().and_then(|p|Some(p.iter().map(|x|x.host_name.as_str()).collect::<Vec<&str>>())).unwrap_or_default(), 
-            self.hosted_process.as_ref().and_then(|p|Some(p.iter().map(|x|x.host_name.as_str()).collect::<Vec<&str>>())).unwrap_or_default()      
-
-        ].concat();
-        
-        all_host_names.sort();
-        
-        let all_count = all_host_names.len();
-
-        all_host_names.dedup();
-
-        let unique_count = all_host_names.len();
-
-        if all_count != unique_count {
-            anyhow::bail!(format!("duplicated host names detected in config."))
-        }
-
-        Ok(())
-
-    }
-
-
-    fn get_parent(p:&str) -> anyhow::Result<String> {
-        if let Some(directory_path_str) = 
-            std::path::Path::new(&p)
-            .parent()
-            .map(|p| p.to_str().unwrap_or_default()) 
-        {
-            if directory_path_str.eq("") {
-                tracing::debug!("$cfg_dir resolved to '.'");
-                Ok(".".into())
-            } else {
-                tracing::debug!("$cfg_dir resolved to {directory_path_str}");
-                Ok(directory_path_str.into())
-            } 
-            
-        } else {
-            bail!(format!("Failed to resolve $cfg_dir"));
-        }   
-    }
-
-    fn massage_proc(cfg_path:&str,root_dir:&Option<String>, proc:&mut InProcessSiteConfig) -> anyhow::Result<()> {
-
-        let cfg_dir = Self::get_parent(&cfg_path)?;
-
-        let resolved_home_dir_path = dirs::home_dir().ok_or(anyhow::anyhow!(String::from("Failed to resolve home directory.")))?;
-        let resolved_home_dir_str = resolved_home_dir_path.to_str().ok_or(anyhow::anyhow!(String::from("Failed to parse home directory.")))?;
-        
-        let with_vars = |x:&str| -> String {
-            x.replace("$root_dir", & if let Some(rd) = &root_dir { rd.to_string() } else { "$root_dir".to_string() })
-            .replace("$cfg_dir", &cfg_dir)
-            .replace("~", resolved_home_dir_str)
+    fn write_to_disk(&self) -> anyhow::Result<()> {
+    
+        let current_path = if let Some(p) = &self.path {p} else {
+            bail!(ConfigurationUpdateError::Bug("No path found to the current configuration".into()))
         };
-
-        for a in &mut proc.args {
-            *a = with_vars(a)
-        }
-
-        proc.dir = with_vars(&proc.dir);
-        proc.bin = with_vars(&proc.bin);
-
-        Ok(())
-
-    }
-
-    pub (crate) async fn add_or_replace_hosted_process(&mut self,hostname:&str,mut item:InProcessSiteConfig,state:GlobalState) -> anyhow::Result<()> {
-        
-        Self::massage_proc(
-            &self.path.clone().unwrap_or_default(),
-            &self.root_dir,
-            &mut item
-        )?;
-
-        if let Some(hosted_site_configs) = &mut self.hosted_process {
-            
-           
-
-            for x in hosted_site_configs.iter_mut() {
-                if hostname == x.host_name {
-
-                    let (tx,mut rx) = tokio::sync::mpsc::channel(1);
-
-                    state.2.send(crate::http_proxy::ProcMessage::Delete(hostname.into(),tx))?;
-                            
-                    if rx.recv().await == Some(0) {
-                        // when we get this message, we know that the process has been stopped
-                        // and that the loop has been exited as well.
-                        tracing::debug!("Received a confirmation that the process was deleted");
-                    } else {
-                        tracing::debug!("Failed to receive a confirmation that the process was deleted. This is a bug in odd-box.");
-                    };
-
-
-                    break;
-                }
-            };
-
-            tracing::debug!("Pushing a new process to the configuration thru the admin api");
-            hosted_site_configs.retain(|x| x.host_name != item.host_name);
-            hosted_site_configs.retain(|x| x.host_name != hostname);
-            hosted_site_configs.push(item.clone());
-            
-            
-            tokio::task::spawn(crate::proc_host::host(
-                item.clone(),
-                state.2.subscribe(),
-                state.clone(),
-            ));
-            tracing::trace!("Spawned a new thread for site: {:?}",hostname);
-            
-            let mut guard = state.0.write().await;
-            guard.site_states_map.retain(|k,_v| k != hostname);
-            guard.site_states_map.insert(hostname.to_owned(), crate::types::app_state::ProcState::Stopped);    
-        }
     
-        
+        let formatted_toml = self.to_string()?;
     
-        if let Some(p) = &self.path {
-            self.write_to_disk(&p)
+        let original_path = Path::new(&current_path);
+        let backup_path = original_path.with_extension("toml.backup");
+        std::fs::rename(original_path, &backup_path)?;
+    
+        if let Err(e) = std::fs::write(current_path, formatted_toml) {
+            bail!("Failed to write config to disk: {e}")
         } else {
-            bail!(ConfigurationUpdateError::Bug("No path found to the current configuration".into()))
+            Ok(())
         }
-    
-       
     
     }
     
-    
-    pub (crate) async fn add_or_replace_remote_site(&mut self,hostname:&str,item:RemoteSiteConfig,state:GlobalState) -> anyhow::Result<()> {
-        
-
-        if let Some(sites) = self.remote_target.as_mut() {
-            // out with the old, in with the new
-            sites.retain(|x| x.host_name != hostname);
-            sites.retain(|x| x.host_name != item.host_name);
-            sites.push(item.clone());
-
-            // same as above but for the TUI state
-            let mut guard = state.0.write().await;
-            guard.site_states_map.retain(|k,_v| *k != item.host_name);
-            guard.site_states_map.retain(|k,_v| k != hostname);
-            guard.site_states_map.insert(hostname.to_owned(), crate::types::app_state::ProcState::Remote);
-        }
-    
-    
-        if let Some(p) = &self.path {
-            self.write_to_disk(&p)
-        } else {
-            bail!(ConfigurationUpdateError::Bug("No path found to the current configuration".into()))
-        }
-    
-    
-    }
-    
-
-
-}
-
-#[derive(Debug)]
-enum ConfigurationUpdateError {
-    Bug(String)
-}
-
-
-impl std::fmt::Display for ConfigurationUpdateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            // ConfigurationUpdateError::NotFound => {
-            //     f.write_str("No such hosted process found.")
-            // },
-            // ConfigurationUpdateError::FailedToSave(e) => {
-            //     f.write_fmt(format_args!("Failed to save due to error: {}",e))
-            // },
-            ConfigurationUpdateError::Bug(e) => {
-                f.write_fmt(format_args!("Failed to save due to a bug in odd-box: {}",e))
-            }
-        }
-    }
-}
-
-impl OddBoxConfig {
-
-    pub fn save(&self) -> anyhow::Result<()> {
-        self.write_to_disk(self.path.clone().expect("must have been loaded from somewhere..").as_str())?;
-        Ok(())
-    }
-    
-    // note: this seems silly but its needed because neither toml-rs nor toml_edit supports any decent
-    // formatting customization and ends up with spread out arrays of tables rather
-    // than inlining like we usually do for odd-box configs.
-    pub fn write_to_disk(&self,current_path:&str) -> anyhow::Result<()> {
+    fn to_string(&self) -> anyhow::Result<String>  {
         let mut formatted_toml = Vec::new();
 
         formatted_toml.push(format!("version = \"{:?}\"", self.version));
@@ -483,61 +314,78 @@ impl OddBoxConfig {
         formatted_toml.push(format!("default_log_format = \"{:?}\"", self.default_log_format ));
        
 
-        formatted_toml.push("env_vars = [".to_string());
-        for env_var in &self.env_vars {
-            formatted_toml.push(format!(
-                "\t{{ key = {:?}, value = {:?} }},",
-                env_var.key, env_var.value
-            ));
+        if &self.env_vars.len() > &0 {
+            formatted_toml.push("env_vars = [".to_string());
+            for env_var in &self.env_vars {
+                formatted_toml.push(format!(
+                    "\t{{ key = {:?}, value = {:?} }},",
+                    env_var.key, env_var.value
+                ));
+            }
+            formatted_toml.push("]".to_string());
         }
-        formatted_toml.push("]".to_string());
-
-        // TODO ---- backend config here
-
-        // if let Some(remote_sites) = &self.remote_target {
-        //     for site in remote_sites {
-        //         formatted_toml.push("\n[[remote_target]]".to_string());
-        //         formatted_toml.push(format!("host_name = {:?}", site.host_name));
-        //         formatted_toml.push(format!("target_hostname = {:?}", site.target_hostname));
-        //         if let Some(hint) = &site.h2_hint {
-        //             formatted_toml.push(format!("h2_hint = \"{:?}\"", hint));
-        //         }
+        
+        if let Some(remote_sites) = &self.remote_target {
+            for site in remote_sites {
+                formatted_toml.push("\n[[remote_target]]".to_string());
+                formatted_toml.push(format!("host_name = {:?}", site.host_name));
+           
+                if let Some(true) = site.forward_subdomains {
+                    formatted_toml.push(format!("forward_subdomains = true"));
+                }
                 
+                if let Some(true) = site.capture_subdomains {
+                    formatted_toml.push(format!("capture_subdomains = true"));
+                }
                 
-        //         if let Some(capture_subdomains) = site.capture_subdomains {
-        //             formatted_toml.push(format!("capture_subdomains = {}", capture_subdomains));
-        //         }
-                
-        //         if let Some(b) = site.https {
-        //             formatted_toml.push(format!("https = {}", b));
-        //         }
-        //         if let Some(http) = site.port {
-        //             formatted_toml.push(format!("port = {}", http));
-        //         }
+                if let Some(true) = site.disable_tcp_tunnel_mode {
+                    formatted_toml.push(format!("disable_tcp_tunnel_mode = {}", true));
+                }
 
-        //         if let Some(disable_tcp_tunnel_mode) = site.disable_tcp_tunnel_mode {
-        //             formatted_toml.push(format!("disable_tcp_tunnel_mode = {}", disable_tcp_tunnel_mode));
-        //         }
-        //     }
-        // }
+                formatted_toml.push("backends = [".to_string());
+
+                let backend_strings = site.backends.iter().map(|b| {
+                    let https = if let Some(true) = b.https { format!("https = true, ") } else { format!("") };
+                    
+                    let hints = if let Some(hints) = &b.hints {
+                        format!(", hints = [{}]",hints.iter().map(|h|format!("{h:?}")).collect::<Vec<String>>().join(", "))
+                    } else {
+                        String::new()
+                    };
+                    
+                    format!("\t{{ {}address=\"{}\", port={}{hints}}}",https,b.address, b.port)}
+
+                ).collect::<Vec<String>>();
+
+                formatted_toml.push(backend_strings.join(",\n"));
+
+                formatted_toml.push("]".to_string());
+           
+            }
+        }
 
         if let Some(processes) = &self.hosted_process {
             for process in processes {
                 formatted_toml.push("\n[[hosted_process]]".to_string());
                 formatted_toml.push(format!("host_name = {:?}", process.host_name));
-                formatted_toml.push(format!("dir = {:?}", process.dir));
+                if let Some(d) = &process.dir {
+                    formatted_toml.push(format!("dir = {:?}", d));
+                }
+
                 formatted_toml.push(format!("bin = {:?}", process.bin));
-                if let Some(hint) = &process.h2_hint {
-                    formatted_toml.push(format!("h2_hint = \"{:?}\"", hint));
+
+                if let Some(hint) = &process.hints {
+                    formatted_toml.push("h2_hints = [".to_string());
+                    let joint = hint.iter().map(|h| format!("{:?}", h)).collect::<Vec<String>>().join(", ");
+                    formatted_toml.push("]".to_string());
                 }
                 
-                let args = process.args.iter().map(|arg| format!("{:?}", arg)).collect::<Vec<_>>().join(", ");
-                formatted_toml.push(format!("args = [{}]", args));
+                let args = process.args.clone().unwrap_or_default().iter()
+                    .map(|arg| format!("\n  {:?}", arg)).collect::<Vec<_>>().join(", ");
+
+                formatted_toml.push(format!("args = [{}\n]", args));
                 
              
-          
-            
-                
                 if let Some(auto_start) = process.auto_start {
                     formatted_toml.push(format!("auto_start = {}", auto_start));
                 }
@@ -546,113 +394,232 @@ impl OddBoxConfig {
                 if let Some(b) = process.https {
                     formatted_toml.push(format!("https = {}", b));
                 }
-                if let Some(http) = process.port {
-                    formatted_toml.push(format!("port = {}", http));
+                if let Some(port) = process.port {
+                    formatted_toml.push(format!("port = {}", port));
                 }
                 
-                if let Some(capture_subdomains) = process.capture_subdomains {
-                    formatted_toml.push(format!("capture_subdomains = {}", capture_subdomains));
-                } else {
-                    formatted_toml.push(format!("capture_subdomains = {}", "false"));
+                if let Some(true) = process.capture_subdomains {
+                    formatted_toml.push(format!("capture_subdomains = {}", "true"));
                 }
 
-                formatted_toml.push("env_vars = [".to_string());
-                for env_var in &process.env_vars {
-                    formatted_toml.push(format!(
-                        "\t{{ key = {:?}, value = {:?} }},",
-                        env_var.key, env_var.value
-                    ));
+                if let Some(evars) = &process.env_vars {
+                    formatted_toml.push("env_vars = [".to_string());
+                    for env_var in evars {
+                        formatted_toml.push(format!(
+                            "\t{{ key = {:?}, value = {:?} }},",
+                            env_var.key, env_var.value
+                        ));
+                    }
+                    formatted_toml.push("]".to_string());
                 }
-                formatted_toml.push("]".to_string());
+                
 
             }
         }
+        Ok(formatted_toml.join("\n"))
+    }
+    fn example() -> OddBoxV2Config {
+        OddBoxV2Config {
+            path: None,
+            admin_api_port: None,
+            version: super::OddBoxConfigVersion::V2,
+            alpn: Some(false),
+            auto_start: Some(true),
+            default_log_format: LogFormat::standard,
+            env_vars: vec![
+                EnvVar { key: "some_key".into(), value:"some_val".into() },
+                EnvVar { key: "another_key".into(), value:"another_val".into() },
+            ],
+            ip: Some(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+            log_level: Some(LogLevel::Info),
+            http_port: Some(80),
+            port_range_start: 4200,
+            hosted_process: Some(vec![
+                InProcessSiteConfig {
+                    proc_id: crate::ProcId::new(),
+                    active_port: None,
+                    forward_subdomains: None,
+                    disable_tcp_tunnel_mode: Some(false),
+                    args: Some(vec!["--test".to_string()]),
+                    auto_start: Some(true),
+                    bin: "my_bin".into(),
+                    capture_subdomains: None,
+                    env_vars: Some(vec![
+                        EnvVar { key: "some_key".into(), value:"some_val".into() },
+                        EnvVar { key: "another_key".into(), value:"another_val".into() },
+                    ]),
+                    host_name: "some_host.local".into(),
+                    port: Some(443) ,
+                    log_format: Some(LogFormat::standard),
+                    dir: None,
+                    https: Some(true),
+                    hints: None,
+                    exclude_from_start_all: None
+                    
+                }
+            ]),
+            remote_target: Some(vec![
+                RemoteSiteConfig { 
+                    forward_subdomains: None,
+                    host_name: "lobsters.local".into(), 
+                    backends: vec![
+                        Backend {
+                            hints: None, 
+                            address: "lobste.rs".into(), 
+                            port: 443, 
+                            https: Some(true)
+                        }
+                    ], 
+                    capture_subdomains: Some(false), 
+                    disable_tcp_tunnel_mode: Some(false)
+                },
+                RemoteSiteConfig { 
+                    forward_subdomains: Some(true),                    
+                    host_name: "google.local".into(), 
+                    backends: vec![
+                        Backend {
+                            hints: None, 
+                            address: "google.com".into(), 
+                            port: 443, 
+                            https: Some(true)
+                        }
+                    ], 
+                    capture_subdomains: Some(false), 
+                    disable_tcp_tunnel_mode: Some(true)
+                }
+            ]),
+            root_dir: Some("/tmp".into()),
+            tls_port: Some(443)
 
-        let original_path = Path::new(current_path);
-        let backup_path = original_path.with_extension("toml.backup");
-        std::fs::rename(original_path, &backup_path)?;
-
-        if let Err(e) = std::fs::write(current_path, formatted_toml.join("\n")) {
-            bail!("Failed to write config to disk: {e}")
-        } else {
-            Ok(())
         }
+    }
 
+ }
+
+fn default_log_level() -> Option<LogLevel> {
+    Some(LogLevel::Info)
+}
+fn default_log_format() -> LogFormat {
+    LogFormat::standard
+}
+fn default_https_port_4343() -> Option<u16> {
+    Some(4343)
+}
+fn default_http_port_8080() -> Option<u16> {
+    Some(8080)
+}
+
+fn true_option() -> Option<bool> {
+    Some(true)
+}
+
+
+#[derive(Debug)]
+enum ConfigurationUpdateError {
+    Bug(String)
+}
+
+
+impl std::fmt::Display for ConfigurationUpdateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // ConfigurationUpdateError::NotFound => {
+            //     f.write_str("No such hosted process found.")
+            // },
+            // ConfigurationUpdateError::FailedToSave(e) => {
+            //     f.write_fmt(format_args!("Failed to save due to error: {}",e))
+            // },
+            ConfigurationUpdateError::Bug(e) => {
+                f.write_fmt(format_args!("Failed to save due to a bug in odd-box: {}",e))
+            }
+        }
     }
 }
 
 
 
-pub fn example_v2() -> OddBoxConfig {
-    OddBoxConfig {
-        path: None,
-        admin_api_port: None,
-        version: super::OddBoxConfigVersion::V2,
-        alpn: Some(false),
-        auto_start: Some(true),
-        default_log_format: LogFormat::standard,
-        env_vars: vec![
-            EnvVar { key: "some_key".into(), value:"some_val".into() },
-            EnvVar { key: "another_key".into(), value:"another_val".into() },
-        ],
-        ip: Some(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-        log_level: Some(LogLevel::Info),
-        http_port: Some(80),
-        port_range_start: 4200,
-        hosted_process: Some(vec![
-            InProcessSiteConfig {
-                forward_subdomains: None,
-                disable_tcp_tunnel_mode: Some(false),
-                args: vec!["--test".to_string()],
-                auto_start: Some(true),
-                bin: "my_bin".into(),
-                capture_subdomains: None,
-                env_vars: vec![
-                    EnvVar { key: "some_key".into(), value:"some_val".into() },
-                    EnvVar { key: "another_key".into(), value:"another_val".into() },
-                ],
-                host_name: "some_host.local".into(),
-                port: Some(443) ,
-                log_format: Some(LogFormat::standard),
-                dir: "/tmp".into(),
-                https: Some(true),
-                h2_hint: None, 
-                disabled :None
-                
-            }
-        ]),
-        remote_target: Some(vec![
-            RemoteSiteConfig { 
-                forward_subdomains: None,
-                h2_hint: None, 
-                host_name: "lobsters.local".into(), 
-                backends: vec![
-                    Backend {
-                        address: "lobste.rs".into(), 
-                        port: 443, 
-                        https: Some(true)
-                    }
-                ], 
-                capture_subdomains: Some(false), 
-                disable_tcp_tunnel_mode: Some(false)
-            },
-            RemoteSiteConfig { 
-                forward_subdomains: Some(true),
-                h2_hint: None, 
-                host_name: "google.local".into(), 
-                backends: vec![
-                    Backend {
-                        address: "google.com".into(), 
-                        port: 443, 
-                        https: Some(true)
-                    }
-                ], 
-                capture_subdomains: Some(false), 
-                disable_tcp_tunnel_mode: Some(true)
-            }
-        ]),
-        root_dir: Some("/tmp".into()),
-        tls_port: Some(443)
 
+
+// V1 ---> V2
+impl TryFrom<super::v1::OddBoxV1Config> for super::v2::OddBoxV2Config{
+
+    type Error = String;
+
+    fn try_from(old_config: super::v1::OddBoxV1Config) -> Result<Self, Self::Error> {
+        let new_config = super::v2::OddBoxV2Config {
+            path: None,
+            version: super::OddBoxConfigVersion::V2,
+            admin_api_port: None,
+            alpn: Some(false), // allowing alpn would be a breaking change for h2c when using old configuration format
+            auto_start: old_config.auto_start,
+            default_log_format: old_config.default_log_format,
+            env_vars: old_config.env_vars,
+            ip: old_config.ip,
+            log_level: old_config.log_level,
+            http_port: old_config.http_port,
+            port_range_start: old_config.port_range_start,
+            hosted_process: Some(old_config.hosted_process.unwrap_or_default().into_iter().map(|x|{
+                super::v2::InProcessSiteConfig {
+                    exclude_from_start_all: None,
+                    proc_id: crate::ProcId::new(),
+                    active_port: None,
+                    forward_subdomains: x.forward_subdomains,
+                    disable_tcp_tunnel_mode: x.disable_tcp_tunnel_mode,
+                    args: if x.args.len() > 0 { Some(x.args) } else { None },
+                    auto_start: {
+                        if x.disabled != x.auto_start {
+                            tracing::warn!("Your configuration contains both auto_start and disabled for the same process. The auto_start setting will be used. Please remove the disabled setting as it is no longer used.")
+                        }
+                        if let Some(d) = x.disabled {
+                            Some(!d)
+                        } else if let Some(a) = x.auto_start { 
+                            Some(a) 
+                        } else { 
+                            None 
+                        }
+                    },
+                    bin: x.bin,
+                    capture_subdomains: x.capture_subdomains,
+                    env_vars: if x.env_vars.len() > 0 { Some(x.env_vars) } else { None },
+                    host_name: x.host_name,
+                    port: x.port,
+                    log_format: x.log_format,
+                    dir: if x.dir.is_empty() { None } else { Some(x.dir) },
+                    https: x.https,
+                    hints: match x.h2_hint {
+                        Some(super::H2Hint::H2) => Some(vec![crate::configuration::v2::Hint::H2]),
+                        Some(super::H2Hint::H2C) => Some(vec![crate::configuration::v2::Hint::H2C]),               
+                        None => None,
+                    }
+                    
+                }
+            }).collect()),
+            remote_target: Some(old_config.remote_target.unwrap_or_default().iter().map(|x|{
+                super::v2::RemoteSiteConfig {
+                    disable_tcp_tunnel_mode: x.disable_tcp_tunnel_mode,
+                    capture_subdomains: x.capture_subdomains,
+                    forward_subdomains: x.forward_subdomains,
+                    backends: vec![
+                        super::v2::Backend {
+                            hints: match x.h2_hint {
+                                Some(super::H2Hint::H2) => Some(vec![crate::configuration::v2::Hint::H2]),
+                                Some(super::H2Hint::H2C) => Some(vec![crate::configuration::v2::Hint::H2C]),               
+                                None => None,
+                            },
+                            address: x.target_hostname.clone(),
+                            port: if let Some(p) = x.port {p} else {
+                                if x.https.unwrap_or_default() { 443 } else { 80 }
+                            },
+                            https: x.https
+                        }
+                    ],
+                    host_name: x.host_name.clone(),                    
+                }
+            }).collect()),
+            root_dir: old_config.root_dir,
+            tls_port: old_config.tls_port
+
+        };
+        Ok(new_config)
     }
 }
