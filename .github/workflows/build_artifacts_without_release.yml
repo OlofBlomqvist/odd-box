@@ -55,43 +55,16 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly
-      
-       # Step to install NASM on Windows
-      - name: Install NASM on Windows
+                
+      - name: Install NASM
         if: startsWith(matrix.os, 'windows')
-        uses: jberezanski/chocolatey-setup@v1
-        with:
-          package-list: 'nasm'
-      
-      # Step to check if NASM is installed and in PATH
-      - name: Verify NASM Installation (Windows only)
-        if: startsWith(matrix.os, 'windows')
-        run: |
-          echo "Checking NASM version..."
-          if (!(Get-Command nasm -ErrorAction SilentlyContinue)) {
-            Write-Host "NASM not found in PATH. Installation might have failed."
-            exit 1
-          } else {
-            nasm -v
-          }
-        shell: pwsh
-      
-      # Step to configure NASM for CMake (if required)
+        uses: ilammy/setup-nasm@v1
+
       - name: Configure NASM for CMake (Windows only)
         if: startsWith(matrix.os, 'windows')
         run: |
           $env:CMAKE_ASM_NASM_COMPILER = "nasm"
-                      
-      - name: Build
-        run: |
-          if ("${{ matrix.no_default_features }}" -eq "true") {
-            cargo build --release --verbose --no-default-features
-          } else {
-            cargo build --release --verbose
-          }
-        shell: pwsh
 
-        
       - name: Rename Artifact
         run: mv ${{ matrix.artifact_path }} ${{ matrix.artifact_name }}
         
