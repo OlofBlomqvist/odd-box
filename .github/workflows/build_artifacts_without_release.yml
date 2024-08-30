@@ -60,7 +60,14 @@ jobs:
         if: startsWith(matrix.os, 'windows')
         run: |
           choco install nasm -y
-          
+          # Add NASM to PATH
+          $nasmPath = "C:\ProgramData\chocolatey\lib\nasm\tools\nasm"
+          if (Test-Path $nasmPath) {
+            $env:Path += ";$nasmPath"
+          } else {
+            Write-Error "NASM path not found!"
+          }
+
       - name: Configure NASM for CMake (Windows only)
         if: startsWith(matrix.os, 'windows')
         run: |
