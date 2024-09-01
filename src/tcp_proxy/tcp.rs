@@ -465,68 +465,68 @@ impl ReverseTcpProxy {
         }
     }
 
-    #[instrument(skip_all)]
-    pub async fn listen(&self,shutdown_signal:std::sync::Arc<Notify>,state: Arc<GlobalState>,) -> Result<(), std::io::Error> {
+    // #[instrument(skip_all)]
+    // pub async fn listen_tcp_only(&self,shutdown_signal:std::sync::Arc<Notify>,state: Arc<GlobalState>,) -> Result<(), std::io::Error> {
 
-        tracing::info!("Starting TCP proxy on {:?}",self.socket_addr);
-        let listener = TcpListener::bind(self.socket_addr).await?;
+    //     tracing::info!("Starting TCP proxy on {:?}",self.socket_addr);
+    //     let listener = TcpListener::bind(self.socket_addr).await?;
 
-        loop {
-            let local_state_clone = state.clone();
-            tokio::select! {
-                Ok((tcp_stream, client_address)) = listener.accept() => {
+    //     loop {
+    //         let local_state_clone = state.clone();
+    //         tokio::select! {
+    //             Ok((tcp_stream, client_address)) = listener.accept() => {
                     
-                    let peek_result = Self::peek_tcp_stream(&tcp_stream, client_address).await;
+    //                 let peek_result = Self::peek_tcp_stream(&tcp_stream, client_address).await;
                     
-                    let targets_arc = self.targets.clone();
+    //                 let targets_arc = self.targets.clone();
                     
-                    tokio::spawn(async move {
-                        match peek_result {
-                            Ok(PeekResult {
-                                typ,
-                                http_version : _,
-                                target_host : Some(target_host)
-                            }) => {
-                                let is_tls = match typ {
-                                    DataType::TLS => true,
-                                    _ => false,
-                                };
+    //                 tokio::spawn(async move {
+    //                     match peek_result {
+    //                         Ok(PeekResult {
+    //                             typ,
+    //                             http_version : _,
+    //                             target_host : Some(target_host)
+    //                         }) => {
+    //                             let is_tls = match typ {
+    //                                 DataType::TLS => true,
+    //                                 _ => false,
+    //                             };
                                 
-                                fn filter_fun(p: &ReverseTcpProxyTarget, target_host: &str) -> Option<ReverseTcpProxyTarget> {
-                                    ReverseTcpProxy::req_target_filter_map(p, target_host)
-                                }
+    //                             fn filter_fun(p: &ReverseTcpProxyTarget, target_host: &str) -> Option<ReverseTcpProxyTarget> {
+    //                                 ReverseTcpProxy::req_target_filter_map(p, target_host)
+    //                             }
                                 
-                                let target_host_str = target_host.as_str();
-                                if let Some(t) = targets_arc.try_find(|p| filter_fun(p, target_host_str)).await {
-                                    _ = Self::tunnel(
-                                        tcp_stream,
-                                        t,
-                                        is_tls,
-                                        local_state_clone,
-                                        client_address
-                                    ).await;
-                                } else {
-                                    tracing::debug!("no such target is configured: {target_host:?}")
-                                }
-                            },
-                            Ok(_) => {
-                                tracing::debug!("could not find a host name so we dont know where to proxy this traffic. giving up on this stream!")
-                            }
-                            Err(e) => {
-                                tracing::debug!("giving up on this stream due to error: {e:?}")
-                            },
-                        }
-                    });
+    //                             let target_host_str = target_host.as_str();
+    //                             if let Some(t) = targets_arc.try_find(|p| filter_fun(p, target_host_str)).await {
+    //                                 _ = Self::tunnel(
+    //                                     tcp_stream,
+    //                                     t,
+    //                                     is_tls,
+    //                                     local_state_clone,
+    //                                     client_address
+    //                                 ).await;
+    //                             } else {
+    //                                 tracing::debug!("no such target is configured: {target_host:?}")
+    //                             }
+    //                         },
+    //                         Ok(_) => {
+    //                             tracing::debug!("could not find a host name so we dont know where to proxy this traffic. giving up on this stream!")
+    //                         }
+    //                         Err(e) => {
+    //                             tracing::debug!("giving up on this stream due to error: {e:?}")
+    //                         },
+    //                     }
+    //                 });
 
-                },
-                _ = shutdown_signal.notified() => {
-                    break;
-                },
-            }
-        }
+    //             },
+    //             _ = shutdown_signal.notified() => {
+    //                 break;
+    //             },
+    //         }
+    //     }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 }
 
 

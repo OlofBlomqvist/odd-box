@@ -3,16 +3,14 @@ use std::sync::Arc;
 use ratatui::layout::{ Constraint, Flex, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::widgets::{ Cell, Row, Scrollbar, ScrollbarOrientation, Table};
-use tokio::sync::RwLockWriteGuard;
 use crate::global_state::GlobalState;
-use crate::types::app_state::*;
 use crate::types::tui_state::TuiState;
 use super::Theme;
 
 
 pub fn draw(
     f: &mut ratatui::Frame,
-    mut global_state: Arc<GlobalState>,
+    _global_state: Arc<GlobalState>,
     tui_state: &mut TuiState,
     area: Rect,
     theme: &Theme
@@ -21,7 +19,7 @@ pub fn draw(
 
     let headers = [ "Site", "Source", "Target", "Description"];
     
-    let rows : Vec<Vec<String>> =  crate::THREAD_MAP.lock().unwrap().iter().map(|(thread_id, _thread_info)| {
+    let rows : Vec<Vec<String>> =  crate::PROC_THREAD_MAP.lock().unwrap().iter().map(|(thread_id, _thread_info)| {
         let typ = "some thread";
         let description = format!("{}",typ);
         vec![
@@ -34,16 +32,16 @@ pub fn draw(
 
     let wrapped_line_count = rows.len();
     
-    tui_state.log_tab_stage.scroll_state.total_rows = wrapped_line_count;
+    tui_state.threads_tab_state.scroll_state.total_rows = wrapped_line_count;
     
-    let height_of_logs_area = area.height.saturating_sub(0); // header and footer
-    tui_state.log_tab_stage.scroll_state.area_height = height_of_logs_area as usize;
-    tui_state.log_tab_stage.scroll_state.area_width = area.width as usize;
+    let height_of_threads_area = area.height.saturating_sub(0); // header and footer
+    tui_state.threads_tab_state.scroll_state.area_height = height_of_threads_area as usize;
+    tui_state.threads_tab_state.scroll_state.area_width = area.width as usize;
 
     let header_height = 1;
     let visible_rows = area.height as usize - header_height;
 
-    let start = tui_state.log_tab_stage.scroll_state.vertical_scroll.unwrap_or_default();
+    let start = tui_state.threads_tab_state.scroll_state.vertical_scroll.unwrap_or_default();
     let end = std::cmp::min(start + visible_rows, rows.len());
 
     let is_dark_theme = matches!(&theme,Theme::Dark(_));
@@ -78,8 +76,8 @@ pub fn draw(
     }).collect();
     
 
-    tui_state.log_tab_stage.scroll_state.visible_rows = display_rows.iter().len() as usize;
-    tui_state.log_tab_stage.scroll_state.total_rows = rows.len();
+    tui_state.threads_tab_state.scroll_state.visible_rows = display_rows.iter().len() as usize;
+    tui_state.threads_tab_state.scroll_state.total_rows = rows.len();
 
     let widths = [
         Constraint::Fill(1), 
@@ -113,17 +111,17 @@ pub fn draw(
         .orientation(ScrollbarOrientation::VerticalRight);
 
     let height_of_traf_area = area.height.saturating_sub(2); 
-    tui_state.log_tab_stage.scroll_state.area_height = height_of_traf_area as usize;
+    tui_state.threads_tab_state.scroll_state.area_height = height_of_traf_area as usize;
     
-    tui_state.log_tab_stage.scroll_state.vertical_scroll_state = tui_state.log_tab_stage.scroll_state.vertical_scroll_state.content_length(rows.len().saturating_sub(height_of_traf_area as usize));
+    tui_state.threads_tab_state.scroll_state.vertical_scroll_state = tui_state.threads_tab_state.scroll_state.vertical_scroll_state.content_length(rows.len().saturating_sub(height_of_traf_area as usize));
     
-    if tui_state.log_tab_stage.scroll_state.scroll_bar_hovered {
+    if tui_state.threads_tab_state.scroll_state.scroll_bar_hovered {
         scrollbar = scrollbar.thumb_style(Style::default().fg(Color::Yellow).bg(Color::Red));
     }
 
     let scrollbar_area = Rect::new(area.right() - 1, area.top(), 1, area.height);
 
-    f.render_stateful_widget(scrollbar,scrollbar_area, &mut tui_state.log_tab_stage.scroll_state.vertical_scroll_state);
+    f.render_stateful_widget(scrollbar,scrollbar_area, &mut tui_state.threads_tab_state.scroll_state.vertical_scroll_state);
 
     
 }

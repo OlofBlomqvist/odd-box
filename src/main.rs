@@ -3,6 +3,7 @@ mod types;
 mod tcp_proxy;
 mod http_proxy;
 mod proxy;
+use anyhow::bail;
 use configuration::v2::FullyResolvedInProcessSiteConfig;
 use dashmap::DashMap;
 use global_state::GlobalState;
@@ -10,7 +11,8 @@ use configuration::v2::InProcessSiteConfig;
 use configuration::v2::RemoteSiteConfig;
 use configuration::OddBoxConfiguration;
 use http_proxy::ProcMessage;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use ratatui::text::ToLine;
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use self_update::cargo_crate_version;
 use tracing_subscriber::layer::SubscriberExt;
 use std::fmt::Debug;
@@ -44,7 +46,7 @@ impl ProcId {
 }
 
 lazy_static! {
-    static ref THREAD_MAP: Arc<Mutex<HashMap<ProcId, Weak<AtomicBool>>>> = Arc::new(Mutex::new(HashMap::new()));
+    static ref PROC_THREAD_MAP: Arc<Mutex<HashMap<ProcId, Weak<AtomicBool>>>> = Arc::new(Mutex::new(HashMap::new()));
 }
 
 static REQUEST_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -69,13 +71,13 @@ pub mod global_state {
 #[derive(Debug)]
 struct DynamicCertResolver {
     // todo: dashmap?
-    cache: Mutex<HashMap<String, Arc<rustls::sign::CertifiedKey>>>,
+    cache: Mutex<HashMap<String, Arc<tokio_rustls::rustls::sign::CertifiedKey>>>,
 }
 
-use rustls::server::{ClientHello, ResolvesServerCert};
+use tokio_rustls::rustls::server::{ClientHello, ResolvesServerCert};
 
 impl ResolvesServerCert for DynamicCertResolver {
-    fn resolve(&self, client_hello: ClientHello) -> Option<std::sync::Arc<rustls::sign::CertifiedKey>> {
+    fn resolve(&self, client_hello: ClientHello) -> Option<std::sync::Arc<tokio_rustls::rustls::sign::CertifiedKey>> {
         
         let server_name = client_hello.server_name()?;
         
@@ -113,8 +115,8 @@ impl ResolvesServerCert for DynamicCertResolver {
                 return None
             }
             if let Ok(private_key) = my_rsa_private_keys(&key_path) {
-                if let Ok(rsa_signing_key) = rustls::crypto::aws_lc_rs::sign::any_supported_type(&private_key) {
-                    let result = std::sync::Arc::new(rustls::sign::CertifiedKey::new(
+                if let Ok(rsa_signing_key) = tokio_rustls::rustls::crypto::aws_lc_rs::sign::any_supported_type(&private_key) {
+                    let result = std::sync::Arc::new(tokio_rustls::rustls::sign::CertifiedKey::new(
                         cert_chain, 
                         rsa_signing_key
                     ));
@@ -187,7 +189,7 @@ fn my_rsa_private_keys(path: &str) -> Result<PrivateKeyDer, String> {
     let file = File::open(&path).map_err(|e|format!("{e:?}"))?;
     let mut reader = BufReader::new(file);
     let mut keys = rustls_pemfile::pkcs8_private_keys(&mut reader)
-        .collect::<Result<Vec<rustls::pki_types::PrivatePkcs8KeyDer>,_>>().map_err(|e|format!("{e:?}"))?;
+        .collect::<Result<Vec<tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer>,_>>().map_err(|e|format!("{e:?}"))?;
 
     match keys.len() {
         0 => Err(format!("No PKCS8-encoded private key found in {path}").into()),
@@ -296,7 +298,7 @@ pub fn initialize_panic_handler() {
 
 
 fn thread_cleaner() {
-    let mut map = THREAD_MAP.lock().unwrap();
+    let mut map = PROC_THREAD_MAP.lock().unwrap();
     map.retain(|_k,v| v.upgrade().is_some());
 }
 
@@ -304,25 +306,54 @@ fn thread_cleaner() {
 #[tokio::main(flavor="multi_thread")]
 async fn main() -> anyhow::Result<()> {
 
-    // spawn thread cleaner and loop ever 1 second
-    tokio::spawn(async move {
-        loop {
-            thread_cleaner();
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-    });
-
     let args = Args::parse();
+    let tui_flag = args.tui.unwrap_or(true);
+    
+    if args.update {
+        _ = update().await;
+        return Ok(());
+    }
+
+    initialize_panic_handler();
+
+    let result = inner(&args).await;
+    
+    if tui_flag {
+        use crossterm::{
+            event::DisableMouseCapture,
+            execute,
+            terminal::{disable_raw_mode, LeaveAlternateScreen},
+        };
+        _ = disable_raw_mode();
+        let mut stdout = std::io::stdout();
+        _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture);
+    }
+    
+    match result {
+        Ok(_) => {
+            std::process::exit(0);
+        },
+        Err(e) => {
+            println!("odd-box exited with error: {:?}",e);
+            std::process::exit(1);
+        }
+    }
+
+
+
+}
+
+async fn inner(
+    args:&Args
+) -> anyhow::Result<()> {
+    
+    
     
     let (filter, reload_handle) = tracing_subscriber::reload::Layer::new(
         EnvFilter::from_default_env()
             .add_directive("h2=info".parse().expect("this directive will always work"))
             .add_directive("tokio_util=info".parse().expect("this directive will always work"))            
             .add_directive("hyper=info".parse().expect("this directive will always work")));
-    
-    initialize_panic_handler();
-
-
     
 
     let (tx,_) = tokio::sync::broadcast::channel::<ProcMessage>(33);
@@ -394,12 +425,6 @@ async fn main() -> anyhow::Result<()> {
 
 
 
-    
-    if args.update {
-        _ = update().await;
-        return Ok(());
-    }
-
     if args.generate_example_cfg {
         let cfg = crate::configuration::v2::OddBoxV2Config::example();
         let serialized = toml::to_string_pretty(&cfg).unwrap();
@@ -409,8 +434,8 @@ async fn main() -> anyhow::Result<()> {
 
     // By default we use odd-box.toml, and otherwise we try to read from Config.toml
     let cfg_path = 
-        if let Some(cfg) = args.configuration {
-            cfg
+        if let Some(cfg) = &args.configuration {
+            cfg.to_string()
         } else {
             if std::fs::metadata("odd-box.toml").is_ok() {
                 "odd-box.toml".to_owned()
@@ -428,7 +453,7 @@ async fn main() -> anyhow::Result<()> {
     
     
     let mut config: ConfigWrapper = 
-        ConfigWrapper(match configuration::OddBoxConfig::parse(&contents) {
+        ConfigWrapper::new(match configuration::OddBoxConfig::parse(&contents) {
             Ok(configuration) => configuration.try_upgrade_to_latest_version().expect("configuration upgrade failed. this is a bug in odd-box"),
             Err(e) => anyhow::bail!(e),
         });
@@ -436,12 +461,12 @@ async fn main() -> anyhow::Result<()> {
     config.is_valid()?;
 
     // some times we are invoked with specific sites to run
-    if let Some(sites) = args.enable_site {
+    if let Some(sites) = &args.enable_site {
         if config.hosted_process.as_ref().map_or(true, Vec::is_empty) {
             anyhow::bail!("You have not configured any sites yet..".to_string());
         }
     
-        for site in &sites {
+        for site in sites {
             let site_config = config.hosted_process.as_ref()
                 .and_then(|processes| processes.iter().find(|x| &x.host_name == site));
     
@@ -529,28 +554,32 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // replace initial empty config with resolved one
-    let mut cfg_write_guard = shared_config.write().await;
-    *cfg_write_guard = config;
-    
 
     
-    for x in cfg_write_guard.remote_target.as_ref().unwrap_or(&vec![]) {
+    for x in config.remote_target.as_ref().unwrap_or(&vec![]) {
         inner_state_arc.site_status_map.insert(x.host_name.to_owned(), ProcState::Remote);
     }
 
     
     
-    
-    for x in cfg_write_guard.hosted_process.iter().flatten() {
-        let resolved_proc = cfg_write_guard.resolve_process_configuration(&x)?;
-        tokio::task::spawn(proc_host::host(
-            resolved_proc,
-            tx.subscribe(),
-            global_state.clone(),
-        ));
+    // todo: clean this up
+    for x in config.hosted_process.clone().iter().flatten() {
+        match config.resolve_process_configuration(&x) {
+            Ok(x) => {
+                tokio::task::spawn(proc_host::host(
+                    x,
+                    tx.subscribe(),
+                    global_state.clone(),
+                ));
+            }
+            Err(e) => bail!("Failed to resolve process configuration for:\n=====================================================\n{:?}.\n=====================================================\n\nThe error was: {:?}",x,e)
+        }
     }
     
+    
+    // replace initial empty config with resolved one
+    let mut cfg_write_guard = shared_config.write().await;
+    *cfg_write_guard = config;
     
     drop(cfg_write_guard);
 
@@ -582,6 +611,14 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(async move {
         api::run(api_state,api_port, api_broadcaster).await
     });
+
+    // spawn thread cleaner and loop ever 1 second
+    tokio::spawn(async move {
+        loop {
+            thread_cleaner();
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    });
    
     let use_tui = tui_thread.is_some();
 
@@ -593,7 +630,7 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!("leaving main loop");
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(Duration::from_millis(2000)).await;
         }
     }
 
@@ -624,26 +661,10 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!("{name} ==> {status:?}")
             }
         }
-}
+    }
 
-    if use_tui {
-        println!("Performing cleanup, please wait..");
-                
-        use crossterm::{
-            event::DisableMouseCapture,
-            execute,
-            terminal::{disable_raw_mode, LeaveAlternateScreen},
-        };
-        _ = disable_raw_mode();
-        let mut stdout = std::io::stdout();
-        _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture);
-    } else {
-        tracing::info!("Performing cleanup, please wait..");
-    } 
-    
     _ = proxy_thread.abort();
     _ = proxy_thread.await.ok();
 
     Ok(())
 }
-

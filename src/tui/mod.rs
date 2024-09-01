@@ -1,10 +1,8 @@
-use axum_extra::handler::Or;
 use crossterm::event::{KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Margin};
 use ratatui::style::{Color, Modifier, Style };
 use ratatui::text::Line;
 use ratatui::widgets::{BorderType, List, ListItem };
-use tokio::sync::RwLockWriteGuard;
 use tokio::task;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -12,9 +10,9 @@ use std::io::Stdout;
 use crate::global_state::GlobalState;
 use crate::logging::SharedLogBuffer;
 use crate::logging::LogMsg;
-use crate::types::app_state::{self, *};
+use crate::types::app_state::*;
 use crate::types::tui_state::{Page, TuiState};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use crate::http_proxy::ProcMessage;
 
@@ -119,35 +117,11 @@ pub async fn run(
             let tx = tx.clone();
            
             let mut last_key_time = tokio::time::Instant::now();
-            let debounce_duration = Duration::from_millis(100);
+            let debounce_duration = Duration::from_millis(300);
             
             let mut tui_state = crate::types::tui_state::TuiState::new();
 
             loop {
-
-                {
-
-                    if global_state.app_state.exit.load(std::sync::atomic::Ordering::SeqCst) == true {
-                        if global_state.app_state.site_status_map.iter().find(|x|
-                               x.value() == &ProcState::Stopping 
-                            || x.value() == &ProcState::Running
-                            || x.value() == &ProcState::Starting 
-                            
-                        ).is_none() {
-                            break; // nothing is running,stopping or starting.. we can exit now
-                        }
-                    }
-                }
-
-                if count > 100 {
-                    theme = match dark_light::detect() {
-                        dark_light::Mode::Dark => Theme::Dark(dark_style),
-                        dark_light::Mode::Light => Theme::Light(light_style),
-                        dark_light::Mode::Default => Theme::Dark(dark_style),
-                    };
-                    count = 0;
-                
-                }
                 
                 // KEEP LOCK SHORT TO AVOID DEADLOCK
                 {
@@ -158,22 +132,43 @@ pub async fn run(
                             f,
                             global_state.clone(),
                             &mut tui_state,
-                             &log_buffer,&theme
+                            &log_buffer,&theme
                         )
                     )?;
                 }
+                
+            
+                if global_state.app_state.exit.load(std::sync::atomic::Ordering::SeqCst) == true {
+                    if global_state.app_state.site_status_map.iter().find(|x|
+                            x.value() == &ProcState::Stopping 
+                        || x.value() == &ProcState::Running
+                        || x.value() == &ProcState::Starting 
+                        
+                    ).is_none() {
+                        break; // nothing is running,stopping or starting.. we can exit now
+                    }
+                }
+            
 
-                // }
-
-
-                // Handle input
-                if event::poll(std::time::Duration::from_millis(20))? {
-                    let now = tokio::time::Instant::now();
-                    let time_since_last_keypress = now.duration_since(last_key_time);
+                if count > 100 {
+                    theme = match dark_light::detect() {
+                        dark_light::Mode::Dark => Theme::Dark(dark_style),
+                        dark_light::Mode::Light => Theme::Light(light_style),
+                        dark_light::Mode::Default => Theme::Dark(dark_style),
+                    };
+                    count = 0;
+                
+                }
+            
+                if let Ok(true) = event::poll(std::time::Duration::from_millis(100)) {
+                    
+                
                     let (current_page,sites_open) = {
                         (tui_state.current_page.clone(),tui_state.show_apps_window)
                     };
+                    
                     let evt = event::read()?;
+                
                     match evt {
                         Event::Key(KeyEvent { 
                             code: crossterm::event::KeyCode::Char('c'),
@@ -185,6 +180,7 @@ pub async fn run(
                             break;
                         },
                         Event::Mouse(mouse) => {
+                                
                                 if sites_open {
                                     match mouse.kind {
                                         event::MouseEventKind::Moved => {
@@ -252,8 +248,6 @@ pub async fn run(
                         }
                         Event::Key(key) => {
 
-                            if time_since_last_keypress >= debounce_duration { 
-                                last_key_time = now;
                                 match key.code {
                                     KeyCode::Esc | KeyCode::Char('q')  => {
                                         {
@@ -412,8 +406,10 @@ pub async fn run(
                                         {
                                             for mut guard in global_state.app_state.site_status_map.iter_mut() {
                                                 let (_k,state) = guard.pair_mut();
-                                                if let ProcState::Running = state {
-                                                    *state = ProcState::Stopping;
+                                                match state {
+                                                    ProcState::Faulty =>  *state = ProcState::Stopping,
+                                                    ProcState::Running =>  *state = ProcState::Stopping,
+                                                    _ => {}
                                                 }
                                             }
                                         }
@@ -423,6 +419,9 @@ pub async fn run(
                                         {
                                             for mut guard in global_state.app_state.site_status_map.iter_mut() {
                                                 let (_k,state) = guard.pair_mut();
+                                                if disabled_items.contains(_k) {
+                                                    continue;
+                                                }
                                                 if let ProcState::Running = state {
                                                     *state = ProcState::Starting;
                                                 }
@@ -439,15 +438,20 @@ pub async fn run(
                                     }
                             }
                             
-                                
-                                
-                            }
+
+                            // }
+
+
                             
                         },
                         _=> {}
                     }
-                
+                        
                 }
+            
+            
+                    
+                
             } 
             Result::<(), std::io::Error>::Ok(())
         })
@@ -476,7 +480,7 @@ fn dark_theme() -> Style {
 fn light_theme() -> Style {
     Style::default()
         .fg(Color::Black) // Text color
-       // .bg(Color::White) // Background color
+        //.bg(Color::White) // Background color
         .add_modifier(Modifier::ITALIC) // Text modifier
 }
 
@@ -502,7 +506,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
     };
 
 
-    let size = f.size();
+    let size = f.area();
     if size.height < 10 || size.width < 10 {
         return
     }
@@ -560,7 +564,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
         
         .divider(ratatui::text::Span::raw("|"));
 
-    let frame_margin = &Margin { horizontal: 1, vertical: 1 };
+    let frame_margin = Margin { horizontal: 1, vertical: 1 };
 
     match tui_state.current_page {
         Page::Logs => logs_widget::draw(f,global_state.clone(),tui_state,log_buffer,main_area[0].inner(frame_margin),&theme),
@@ -586,7 +590,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
     
 
     // render the tab bar on top of the tab content
-    f.render_widget(tabs, main_area[0].inner(&Margin { horizontal: 2, vertical: 0 }));
+    f.render_widget(tabs, main_area[0].inner(Margin { horizontal: 2, vertical: 0 }));
 
     if tui_state.show_apps_window {
 
@@ -660,9 +664,9 @@ fn draw_ui<B: ratatui::backend::Backend>(
                     ),
                     &ProcState::Stopping => Style::default().fg(
                         if is_dark_theme {
-                                Color::Black
+                                Color::Cyan
                             } else {
-                                Color::Yellow
+                                Color::Black
                             }
                     ),
                     &ProcState::Remote => Style::default().fg(

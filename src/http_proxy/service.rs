@@ -150,7 +150,7 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
                     Ok(x)
                 },
                 Err(e) => {
-                    Err(CustomError(format!("yeah that was not cool {e:?}")))
+                    Err(CustomError(format!("{e:?}")))
                 },
             }
         })
@@ -172,15 +172,6 @@ async fn handle_http_request(
 ) -> Result<EpicResponse, CustomError> {
     
 
-
-
-    let cfg_clone = { state.config.read().await.0.clone()} ;
-
-
-    // let mut response = EpicResponse::new(create_epic_string_full_body(&"hey nerd"));
-    // *response.status_mut() = StatusCode::OK;
-
-    // return Ok(response);
 
     let req_host_name = 
         if let Some(hh) = req.headers().get("host") { 
@@ -211,23 +202,30 @@ async fn handle_http_request(
     }
     
 
+
     
-    let found_target = if let Some(processes) = &cfg_clone.hosted_process {
-        processes.iter().find(|p| {
-            req_host_name == p.host_name
-            || p.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",p.host_name))
-    })
-    } else {
-        None
+    let mut found_hosted_target = {
+        let cfg_guard = state.config.read().await;
+        if let Some(processes) = &cfg_guard.hosted_process {
+            if let Some(pp) = processes.iter().find(|p| {
+                req_host_name == p.host_name
+                || p.capture_subdomains.unwrap_or_default() 
+                && req_host_name.ends_with(&format!(".{}",p.host_name))
+            }) {
+                Some(pp.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     };
 
-    
 
-
-    if let Some(target_cfg) = found_target {
+    if let Some(target_proc_cfg) = found_hosted_target {
 
         let current_target_status : Option<crate::ProcState> = {
-            let info = state.app_state.site_status_map.get(&target_cfg.host_name);
+            let info = state.app_state.site_status_map.get(&target_proc_cfg.host_name);
             match info {
                 Some(data) => Some(data.value().clone()),
                 None => None,
@@ -238,7 +236,7 @@ async fn handle_http_request(
             Some(ProcState::Running) | Some(ProcState::Faulty) | Some(ProcState::Starting) => {},
             _ => {
                 // auto start site in case its been disabled by other requests
-                _ = tx.send(super::ProcMessage::Start(target_cfg.host_name.to_owned())).map_err(|e|format!("{e:?}"));
+                _ = tx.send(super::ProcMessage::Start(target_proc_cfg.host_name.to_owned())).map_err(|e|format!("{e:?}"));
             }
         }
 
@@ -258,13 +256,36 @@ async fn handle_http_request(
             }
         }
 
-        let port = if let Some(active_port) = target_cfg.active_port {
+        
+        // re-read config from global state in case it was not started before
+        if target_proc_cfg.active_port.is_none() {
+            found_hosted_target = {
+                let cfg_guard = state.config.read().await;
+                if let Some(processes) = &cfg_guard.hosted_process {
+                    if let Some(pp) = processes.iter().find(|p| {
+                        req_host_name == p.host_name
+                        || p.capture_subdomains.unwrap_or_default() 
+                        && req_host_name.ends_with(&format!(".{}",p.host_name))
+                    }) {
+                        Some(pp.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+        }
+
+
+
+        let port = if let Some(active_port) = target_proc_cfg.active_port {
             active_port
         } else {
             return Err(CustomError(format!("No active port found for {req_host_name}")))
         };
         
-        let enforce_https = target_cfg.https.is_some_and(|x|x);
+        let enforce_https = target_proc_cfg.https.is_some_and(|x|x);
         let scheme = if enforce_https { "https" } else { "http" };
 
         let mut original_path_and_query = req.uri().path_and_query()
@@ -273,28 +294,23 @@ async fn handle_http_request(
 
 
         let parsed_host_name = {
-            let forward_subdomains = target_cfg.forward_subdomains.unwrap_or_default();
+            let forward_subdomains = target_proc_cfg.forward_subdomains.unwrap_or_default();
             if forward_subdomains {
-                if let Some(subdomain) = get_subdomain(&req_host_name, &target_cfg.host_name) {
-                    Cow::Owned(format!("{subdomain}.{}", &target_cfg.host_name))
+                if let Some(subdomain) = get_subdomain(&req_host_name, &target_proc_cfg.host_name) {
+                    Cow::Owned(format!("{subdomain}.{}", &target_proc_cfg.host_name))
                 } else {
-                    Cow::Borrowed(&target_cfg.host_name)
+                    Cow::Borrowed(&target_proc_cfg.host_name)
                 }
             } else {
-                Cow::Borrowed(&target_cfg.host_name)
+                Cow::Borrowed(&target_proc_cfg.host_name)
             }
         };
 
-        // THE RESOLVED HOSTNAME SHOULD BE ADDED AS A HOST HEADER HERE.
-
-        // using ip to avoid dns lookup for local targets
-        // todo - should this be opt in/out ?
         let target_url = format!("{scheme}://{}:{}{}",
             parsed_host_name,
             port,
             original_path_and_query
         );
-
         
         // we add the host flag manually in proxy method, this is only to avoid dns lookup for local targets.
         // todo: opt in/out via cfg
@@ -304,12 +320,9 @@ async fn handle_http_request(
             original_path_and_query
         );
 
-        let target_cfg = (*target_cfg).clone();
+        let target_cfg = target_proc_cfg.clone();
         let hints = target_cfg.hints.clone();
         let target = crate::http_proxy::Target::Proc(target_cfg);
-
-        // return Ok(EpicResponse::new(create_epic_string_full_body(&"hey nerd!!!")));
-        
 
         let result = 
             proxy(
@@ -317,7 +330,7 @@ async fn handle_http_request(
                 is_https,
                 state.clone(),
                 req,
-                &target_url,
+                &skip_dns_for_local_target_url,
                 target,
                 client_ip,
                 client,
@@ -337,7 +350,7 @@ async fn handle_http_request(
 
     else {
         
-        if let Some(remote_target_cfg) = cfg_clone.remote_target.clone().unwrap_or_default().iter().find(|p|{
+        if let Some(remote_target_cfg) = &state.config.read().await.remote_target.clone().unwrap_or_default().iter().find(|p|{
             //tracing::info!("comparing incoming req: {} vs {} ",req_host_name,p.host_name);
             req_host_name == p.host_name
             || p.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",p.host_name))

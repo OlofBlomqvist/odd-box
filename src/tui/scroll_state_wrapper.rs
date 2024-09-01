@@ -52,7 +52,7 @@ impl ScrollStateWrapper {
         } else {
             1.0
         }.max(1.0);
-        let horizontal_match = column as usize >= self.area_width - 1 && column as usize <= self.area_width + 1;
+        let horizontal_match = column as usize >= self.area_width.saturating_sub(1)  && column as usize <= self.area_width.saturating_add(1);
         let vertical_match = (row as isize >= thumb_position as isize - 2) && row as usize <= (thumb_position + thumb_size + 1.0) as usize;
         //self.dbg = format!("dragging pos: {row}/{column} - vscroll: {} - tpos: {thumb_position}  | V: {vertical_match}, H: {horizontal_match}",vscroll);
         self.scroll_bar_hovered = horizontal_match && vertical_match;

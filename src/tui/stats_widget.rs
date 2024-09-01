@@ -3,9 +3,7 @@ use std::sync::Arc;
 use ratatui::layout::{Offset, Rect};
 use ratatui::style::{Color, Stylize};
 use ratatui::widgets::Paragraph;
-use tokio::sync::RwLockWriteGuard;
 use crate::global_state::GlobalState;
-use crate::types::app_state::*;
 use crate::types::tui_state::TuiState;
 use super::Theme;
 
@@ -15,7 +13,7 @@ use super::Theme;
 pub fn draw(
     f: &mut ratatui::Frame, 
     global_state: Arc<GlobalState>,
-    tui_state: &mut TuiState,
+    _tui_state: &mut TuiState,
     area: Rect,
     _theme: &Theme
 ) {

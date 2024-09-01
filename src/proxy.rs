@@ -48,7 +48,7 @@ pub async fn listen(
         global_state: state.clone()
     });
 
-    let client_tls_config = rustls::ClientConfig::builder_with_protocol_versions(rustls::ALL_VERSIONS)
+    let client_tls_config = tokio_rustls::rustls::ClientConfig::builder_with_protocol_versions(tokio_rustls::rustls::ALL_VERSIONS)
         // todo - add support for accepting self-signed certificates etc
         // .dangerous()
         // .with_custom_certificate_verifier(verifier)
@@ -120,9 +120,8 @@ pub async fn listen(
     
 } 
 
-// a lazy static atomic usize to keep count of active tcp connections:
 lazy_static! {
-    static ref ACTIVE_TCP_CONNECTIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    static ref ACTIVE_TCP_CONNECTIONS_SEMAPHORE : tokio::sync::Semaphore = tokio::sync::Semaphore::new(666);
 } 
 
 async fn listen_http(
@@ -131,46 +130,46 @@ async fn listen_http(
     state: Arc<GlobalState>,
     terminating_service_template: ReverseProxyService,
     targets: Arc<ReverseTcpProxyTargets>,
-    shutdown_signal: Arc<Notify> 
+    _shutdown_signal: Arc<Notify> 
 ) {
     
     let socket = TcpSocket::new_v4().expect("new v4 socket should always work");
     socket.set_reuseaddr(true).expect("set reuseaddr fail?");
     socket.bind(bind_addr).expect(&format!("must be able to bind http serveraddr {bind_addr:?}"));
    
-    let listener = socket.listen(3000).expect("must be able to bind http listener.");
-
-    // // TODO - let shutdown_signal = shutdown_signal.clone();
-    // _ = shutdown_signal.notified() => {
-    //     //                     eprintln!("stream aborted due to app shutdown."); break
-    //     //                 }
+    let listener = socket.listen(128).expect("must be able to bind http listener.");
 
     loop {
+
+        // should use semaphore here to limit the number of active connections
 
         if state.app_state.exit.load(std::sync::atomic::Ordering::SeqCst) {
             tracing::debug!("exiting http server loop due to receiving shutdown signal.");
             break;
         }
 
-        if ACTIVE_TCP_CONNECTIONS.load(std::sync::atomic::Ordering::SeqCst) >= 666 {
-               tokio::time::sleep(Duration::from_millis(10)).await;
-               continue;  
-        }
+        let permit = if let Ok(p) = ACTIVE_TCP_CONNECTIONS_SEMAPHORE.acquire().await {
+            p
+        } else {
+            tracing::warn!("Error acquiring semaphore permit.. This is a bug in odd-box :<");
+            break
+        };
+
+
 
         match listener.accept().await {
             Ok((tcp_stream,source_addr)) => {
                
-                let c = ACTIVE_TCP_CONNECTIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                tracing::trace!("accepted connection! current active: {}", 1+c);
+                tracing::trace!("accepted connection! current active: {}/666", ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
                 let mut service: ReverseProxyService = terminating_service_template.clone();
                 service.remote_addr = Some(source_addr);
                 let arc_clone_targets = targets.clone();     
                 let tx = tx.clone();
                 let state = state.clone();
                 tokio::spawn(async move {                   
+                    let _moved_permit = permit;          
                     handle_new_tcp_stream(None,service, tcp_stream, source_addr, arc_clone_targets, false,tx.clone(),state.clone())
                         .await;
-                    ACTIVE_TCP_CONNECTIONS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                 });
                 
 
@@ -212,7 +211,7 @@ async fn listen_https(
     state: Arc<GlobalState>,
     terminating_service_template: ReverseProxyService,
     targets: Arc<ReverseTcpProxyTargets>,
-    shutdown_signal: Arc<Notify>
+    _shutdown_signal: Arc<Notify>
 ) {
 
     use socket2::{Domain,Type};
@@ -230,11 +229,11 @@ async fn listen_https(
     socket.listen(128).expect("we must be able to listen to https addr socket..");
     let listener: std::net::TcpListener = socket.into();
     listener.set_nonblocking(true).expect("must be able to set_nonblocking on https listener");
-    let tcp_listener = tokio::net::TcpListener::from_std(listener).expect("we must be able to listen to https port..");
+    let tokio_listener = tokio::net::TcpListener::from_std(listener).expect("we must be able to listen to https port..");
     
 
     let mut rustls_config = 
-        rustls::ServerConfig::builder()
+    tokio_rustls::rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_cert_resolver(Arc::new(crate::DynamicCertResolver {
                 cache: std::sync::Mutex::new(HashMap::new())
@@ -248,37 +247,46 @@ async fn listen_https(
     let arced_tls_config = std::sync::Arc::new(rustls_config);
 
     loop {
-        //tracing::trace!("waiting for new https connection..");
-        let targets_arc = targets.clone();   
 
-        tokio::select!{ 
-            Ok((tcp_stream, source_addr)) = tcp_listener.accept() => {
-                tracing::trace!("tcp listener accepted a new https connection");
+        // should use semaphore here to limit the number of active connections
+
+        if state.app_state.exit.load(std::sync::atomic::Ordering::SeqCst) {
+            tracing::debug!("exiting http server loop due to receiving shutdown signal.");
+            break;
+        }
+
+        let permit = if let Ok(p) = ACTIVE_TCP_CONNECTIONS_SEMAPHORE.acquire().await {
+            p
+        } else {
+            tracing::warn!("Error acquiring semaphore permit.. This is a bug in odd-box :<");
+            break
+        };
+
+
+        match tokio_listener.accept().await {
+            Ok((tcp_stream,source_addr)) => {
+               
+                tracing::trace!("accepted connection! current active: {}/666", ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
                 let mut service: ReverseProxyService = terminating_service_template.clone();
                 service.remote_addr = Some(source_addr);
-                let shutdown_signal = shutdown_signal.clone();
-                let arc_targets_clone = targets_arc.clone();       
+                let arc_clone_targets = targets.clone();     
                 let tx = tx.clone();
-                let arced_tls_config = arced_tls_config.clone();
+                let arced_tls_config = Some(arced_tls_config.clone());
                 let state = state.clone();
-                tokio::task::spawn(async move {
-                    tokio::select!{ 
-                        _ = handle_new_tcp_stream(Some(arced_tls_config),service, tcp_stream, source_addr, arc_targets_clone, true,tx.clone(),state.clone()) => {
-                            tracing::trace!("https tcp stream handled");
-
-                        }
-                        _ = shutdown_signal.notified() => {
-                            eprintln!("https tcp stream aborted due to app shutdown.");
-                        }
-                    };
+                tokio::spawn(async move {      
+                    let _moved_permit = permit;             
+                    handle_new_tcp_stream(arced_tls_config,service, tcp_stream, source_addr, arc_clone_targets, true,tx.clone(),state.clone())
+                        .await;
                 });
-               
-            },
-            _ = shutdown_signal.notified() => {
-                tracing::debug!("exiting https server loop due to receiving shutdown signal.");
-                break;
+                
+
+            }
+            Err(e) => {
+                tracing::warn!("error accepting tcp connection: {:?}", e);
+                //break;
             }
         }
+       
     }
     tracing::warn!("listen_https went bye bye.")
 }
@@ -286,7 +294,7 @@ async fn listen_https(
 // this will peek in to the incoming tcp stream and either create a direct tcp tunnel (passthru mode)
 // or hand it off to the terminating http/https hyper services
 async fn handle_new_tcp_stream(
-    rustls_config: Option<std::sync::Arc<rustls::ServerConfig>>,
+    rustls_config: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
     service:ReverseProxyService,
     tcp_stream:TcpStream,
     source_addr:SocketAddr,

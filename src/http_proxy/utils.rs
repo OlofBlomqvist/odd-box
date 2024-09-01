@@ -110,7 +110,7 @@ pub async fn proxy(
             }
         }
     }
-    let mut target_url = target_url.to_string();
+    
     // Handle upgrade headers
     if let Some(typ) = &request_upgrade_type {
         if typ.to_uppercase()=="H2C" {
@@ -191,7 +191,7 @@ pub async fn proxy(
     );
 
 
-    tracing::warn!("Sending request:\n{:?}", proxied_request);
+    tracing::trace!("Sending request:\n{:?}", proxied_request);
 
 
     // todo - prevent making a connection if client already has too many tcp connections open
@@ -202,14 +202,14 @@ pub async fn proxy(
             .map_err(ProxyError::LegacyError)?
     };
 
-    tracing::warn!(
+    tracing::trace!(
         "GOT THIS RESPONSE FROM REQ TO '{target_url}' : {:?}",response
     );
     
     // if the backend agreed to upgrade to some other protocol, we will create a bidirectional tunnel for the client and backend to communicate directly.
     if response.status() == StatusCode::SWITCHING_PROTOCOLS {
         let response_upgrade_type = get_upgrade_type(response.headers());
-        tracing::warn!("RESPONSE IS TO UPGRADE TO : {response_upgrade_type:?}.");
+        tracing::trace!("RESPONSE IS TO UPGRADE TO : {response_upgrade_type:?}.");
         if request_upgrade_type == response_upgrade_type {
             if let Some(request_upgraded) = request_upgraded {
 
@@ -225,7 +225,7 @@ pub async fn proxy(
 
                     let upgraded = match request_upgraded.await {
                         Err(e) => {
-                            tracing::warn!("failed to upgrade req: {e:?}");
+                            tracing::trace!("failed to upgrade req: {e:?}");
                             
                             return;
                         }

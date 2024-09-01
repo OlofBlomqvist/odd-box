@@ -6,7 +6,7 @@ ip = "127.0.0.1"
 tls_port = 4343
 auto_start = false
 root_dir = "~"
-log_level = "trace"
+log_level = "warn"
 port_range_start = 4200
 default_log_format = "standard"
 env_vars = [
@@ -16,7 +16,7 @@ env_vars = [
 
 [[remote_target]]
 host_name = "caddy-lb-terminated.localtest.me"
-disable_tcp_tunnel_mode = true
+disable_tcp_tunnel_mode = false
 backends = [
 	{ https = false, address="127.0.0.1", port=9999 },
   { https = false, address="127.0.0.1", port=9999 }
@@ -25,7 +25,7 @@ backends = [
 
 [[hosted_process]]
 host_name = "caddy-proc-terminated.localtest.me"
-disable_tcp_tunnel_mode = true
+disable_tcp_tunnel_mode = false
 auto_start = true
 port = 9999
 dir = "$cfg_dir"

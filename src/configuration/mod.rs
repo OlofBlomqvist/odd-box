@@ -28,7 +28,11 @@ pub enum OddBoxConfig {
 }
 
 #[derive(Debug,Clone)]
-pub struct ConfigWrapper(pub v2::OddBoxV2Config);
+pub struct ConfigWrapper(
+    pub v2::OddBoxV2Config,
+    Option<String> // <-- resolved path cache - todo, use and rename
+);
+
 
 impl std::ops::Deref for ConfigWrapper {
     type Target = v2::OddBoxV2Config;
@@ -44,7 +48,7 @@ impl std::ops::DerefMut for ConfigWrapper {
 
 impl ConfigWrapper {
     pub fn wrapv2(config:v2::OddBoxV2Config) -> Self {
-        ConfigWrapper(config)
+        ConfigWrapper(config,None)
     }
 }
 
@@ -163,8 +167,9 @@ impl OddBoxConfig {
 
 
 impl ConfigWrapper {
-    
-    
+    pub fn new(cfg:v2::OddBoxV2Config) -> Self {
+        ConfigWrapper(cfg,None)
+    }
     pub fn init(&mut self,cfg_path:&str) -> anyhow::Result<()>  {
         self.path = Some(std::path::Path::new(&cfg_path).canonicalize()?.to_str().unwrap_or_default().into());
         Ok(())
@@ -225,19 +230,28 @@ impl ConfigWrapper {
     }
 
 
-    pub fn get_parent(p:&str) -> anyhow::Result<String> {
+    pub fn get_parent(&mut self) -> anyhow::Result<String> {
+        // todo - use cache and clear on path change
+        // if let Some(pre_resolved) = &self.1 {
+        //     return Ok(pre_resolved.to_string())
+        // }
+        let p = self.path.clone().ok_or(anyhow::anyhow!(String::from("Failed to resolve path.")))?;
         if let Some(directory_path_str) = 
             std::path::Path::new(&p)
             .parent()
             .map(|p| p.to_str().unwrap_or_default()) 
         {
             if directory_path_str.eq("") {
-                tracing::debug!("$cfg_dir resolved to '.'");
-                Ok(".".into())
+                tracing::trace!("$cfg_dir resolved to '.'");
+                let xx = ".".to_string();
+                //self.1 = Some(xx.clone());
+                Ok(xx)
             } else {
-                tracing::debug!("$cfg_dir resolved to {directory_path_str}");
-                Ok(directory_path_str.into())
-            } 
+                tracing::trace!("$cfg_dir resolved to {directory_path_str}");
+                let xx = directory_path_str.to_string();
+                //self.1 = Some(xx.clone());
+                Ok(xx)
+            }
             
         } else {
             bail!(format!("Failed to resolve $cfg_dir"));
@@ -246,7 +260,7 @@ impl ConfigWrapper {
 
     
     // ---> port-mapping...
-    pub async fn add_or_replace_hosted_process(&mut self,hostname:&str,mut item:crate::InProcessSiteConfig,state:Arc<crate::GlobalState>) -> anyhow::Result<()> {
+    pub async fn add_or_replace_hosted_process(&mut self,hostname:&str,item:crate::InProcessSiteConfig,state:Arc<crate::GlobalState>) -> anyhow::Result<()> {
         
         if let Some(hosted_site_configs) = &mut self.hosted_process {
             
@@ -451,7 +465,7 @@ impl ConfigWrapper {
     // it is done this way in order to avoid changing the global state of the configuration in to the resolved state
     // since that would then be saved to disk and we would lose the original configuration with dynamic variables
     // making configuration files less portable.
-    pub fn resolve_process_configuration(&self,proc:&crate::InProcessSiteConfig) -> anyhow::Result<crate::FullyResolvedInProcessSiteConfig> {
+    pub fn resolve_process_configuration(&mut self,proc:&crate::InProcessSiteConfig) -> anyhow::Result<crate::FullyResolvedInProcessSiteConfig> {
 
         let mut resolved_proc = crate::FullyResolvedInProcessSiteConfig {
             excluded_from_start_all: proc.exclude_from_start_all.unwrap_or(false),
@@ -477,7 +491,7 @@ impl ConfigWrapper {
 
         // tracing::info!("Resolved home directory: {}",&resolved_home_dir_str);
 
-        let cfg_dir = Self::get_parent(&self.path.clone().expect("all configurations need a path on disk. if you see this, there is a bug in odd-box."))?;
+        let cfg_dir = self.get_parent()?;
 
 
         let root_dir = if let Some(rd) = &self.root_dir {

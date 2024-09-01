@@ -2,10 +2,9 @@ use std::{net::SocketAddr, sync::Arc};
 use chrono::Local;
 use hyper_tungstenite::HyperWebsocket;
 use hyper::{body::Incoming as IncomingBody, Request};
-use rustls::ClientConfig;
+use tokio_rustls::rustls::ClientConfig;
 use crate::{global_state::GlobalState, CustomError};
 use futures_util::{SinkExt,StreamExt};
-use crate::tcp_proxy::ReverseTcpProxyTarget;
 use super::{ReverseProxyService, Target};
 use crate::types::proxy_state::{
     ConnectionKey, 
@@ -90,7 +89,7 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
     
     tracing::debug!("initiating websocket tunnel to {}",ws_url);
 
-    let client_tls_config = ClientConfig::builder_with_protocol_versions(rustls::ALL_VERSIONS)
+    let client_tls_config = ClientConfig::builder_with_protocol_versions(tokio_rustls::rustls::ALL_VERSIONS)
         .with_native_roots()
         .expect("should always be able to build a tls client")
         .with_no_client_auth();
