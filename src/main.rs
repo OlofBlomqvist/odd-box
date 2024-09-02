@@ -11,7 +11,6 @@ use configuration::v2::InProcessSiteConfig;
 use configuration::v2::RemoteSiteConfig;
 use configuration::OddBoxConfiguration;
 use http_proxy::ProcMessage;
-use ratatui::text::ToLine;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use self_update::cargo_crate_version;
 use tracing_subscriber::layer::SubscriberExt;
@@ -62,7 +61,7 @@ pub fn generate_unique_id() -> u64 {
 }
 
 pub mod global_state {
-    use std::{collections::HashMap, sync::atomic::AtomicU64};
+    use std::{sync::atomic::AtomicU64};
     #[derive(Debug)]
     pub struct GlobalState {
         pub app_state: std::sync::Arc<crate::types::app_state::AppState>,

@@ -2,25 +2,23 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 use bytes::Bytes;
-use http_body::{Body, Frame};
-use http_body_util::combinators::BoxBody;
-use http_body_util::{BodyExt, Either, Full, StreamBody};
+use http_body::Frame;
+
+use http_body_util::{Either, Full, StreamBody};
 use hyper::service::Service;
 use hyper::{body::Incoming as IncomingBody, Request, Response};
 use hyper_rustls::HttpsConnector;
-use hyper_util::client::legacy::connect::{Connection, HttpConnector};
+use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
-use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio_stream::wrappers::ReceiverStream;
-use tower_http::services::fs::ServeFileSystemResponseBody;
 use std::future::Future;
 use std::pin::Pin;
 use crate::global_state::GlobalState;
 use crate::types::app_state::ProcState;
 use crate::CustomError;
-use hyper::{upgrade, Method, StatusCode};
+use hyper::{Method, StatusCode};
 use lazy_static::lazy_static;
 use super::{ProcMessage, ReverseProxyService, WrappedNormalResponse};
 use super::proxy;
@@ -196,15 +194,11 @@ async fn handle_http_request(
         })
         .unwrap_or_else(std::collections::HashMap::new);
 
-    // TODO - try remove this for perf
     if let Some(r) = intercept_local_commands(&req_host_name,&params,req_path,tx.clone()).await {
         return Ok(r)
     }
     
-
-
-    
-    let mut found_hosted_target = {
+    let found_hosted_target = {
         let cfg_guard = state.config.read().await;
         if let Some(processes) = &cfg_guard.hosted_process {
             if let Some(pp) = processes.iter().find(|p| {
@@ -242,7 +236,7 @@ async fn handle_http_request(
 
         
         if let Some(cts) = current_target_status {
-            if cts == crate::ProcState::Stopped || cts == crate::ProcState::Starting {
+            if cts == crate::ProcState::Stopped || cts == crate::ProcState::Starting || cts == crate::ProcState::Faulty {
                 match req.method() {
                     &Method::GET => {
                         // todo - opt in/out via cfg ?
@@ -256,33 +250,11 @@ async fn handle_http_request(
             }
         }
 
-        
-        // re-read config from global state in case it was not started before
-        if target_proc_cfg.active_port.is_none() {
-            found_hosted_target = {
-                let cfg_guard = state.config.read().await;
-                if let Some(processes) = &cfg_guard.hosted_process {
-                    if let Some(pp) = processes.iter().find(|p| {
-                        req_host_name == p.host_name
-                        || p.capture_subdomains.unwrap_or_default() 
-                        && req_host_name.ends_with(&format!(".{}",p.host_name))
-                    }) {
-                        Some(pp.clone())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            };
-        }
-
-
 
         let port = if let Some(active_port) = target_proc_cfg.active_port {
             active_port
         } else {
-            return Err(CustomError(format!("No active port found for {req_host_name}")))
+            return Err(CustomError(format!("No active port found for {req_host_name}.")))
         };
         
         let enforce_https = target_proc_cfg.https.is_some_and(|x|x);

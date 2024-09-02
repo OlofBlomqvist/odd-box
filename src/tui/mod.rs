@@ -117,8 +117,8 @@ pub async fn run(
             
             let tx = tx.clone();
            
-            let mut last_key_time = tokio::time::Instant::now();
-            let debounce_duration = Duration::from_millis(300);
+            let _last_key_time = tokio::time::Instant::now();
+            let _debounce_duration = Duration::from_millis(300);
             
             let mut tui_state = crate::types::tui_state::TuiState::new();
 

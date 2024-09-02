@@ -1,8 +1,5 @@
-use std::borrow::BorrowMut;
-
 #[allow(unused)]
 use crate::configuration::OddBoxConfiguration;
-use crate::http_proxy::ConfigWrapper;
 
 #[test] pub fn legacy_upgrade() {
     let legacy_config = crate::configuration::legacy::OddBoxLegacyConfig::example();

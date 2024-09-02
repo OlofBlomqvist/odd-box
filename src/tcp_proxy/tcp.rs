@@ -1,6 +1,5 @@
 use chrono::Local;
 use hyper::Version;
-use tokio::sync::Notify;
 use std::net::IpAddr;
 use std::{
     net::SocketAddr,
@@ -11,7 +10,7 @@ use crate::global_state::GlobalState;
 use crate::tcp_proxy::tls::client_hello::TlsClientHello;
 use crate::tcp_proxy::tls::client_hello::TlsClientHelloError;
 use crate::types::proxy_state::{ProxyActiveConnection, ProxyActiveConnectionType};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 use tracing::*;
 
 
@@ -102,36 +101,6 @@ impl ReverseTcpProxyTargets {
 
         None
         
-    }
-}
-
-impl ReverseTcpProxyTarget {
-    pub fn from_target(target:crate::http_proxy::Target) -> Self {
-        match &target {
-            crate::http_proxy::Target::Remote(x) => ReverseTcpProxyTarget {
-                sub_domain: None,
-                capture_subdomains: x.capture_subdomains.unwrap_or_default(),
-                forward_wildcard: x.forward_subdomains.unwrap_or_default(),
-                backends: x.backends.clone(),
-                host_name: x.host_name.clone(),
-                is_hosted: false,
-                remote_target_config : Some(x.clone())
-            },
-            crate::http_proxy::Target::Proc(x) => ReverseTcpProxyTarget {
-                sub_domain: None,
-                capture_subdomains: x.capture_subdomains.unwrap_or_default(),
-                forward_wildcard: x.forward_subdomains.unwrap_or_default(),
-                backends: vec![crate::configuration::v2::Backend {
-                    hints: x.hints.clone(),
-                    address: x.host_name.to_owned(),
-                    https: x.https,
-                    port: x.active_port.unwrap_or_default()
-                }],
-                host_name: x.host_name.clone(),
-                is_hosted: true,
-                remote_target_config : None
-            },
-        }
     }
 }
 

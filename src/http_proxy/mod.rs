@@ -9,7 +9,6 @@ use hyper_util::client::legacy::{connect::HttpConnector, Client};
 pub use service::*;
 use tokio::sync::mpsc::Sender;
 pub use utils::*;
-pub use crate::configuration::ConfigWrapper;
 use crate::global_state::GlobalState;
 
 #[derive(Clone,Debug)]

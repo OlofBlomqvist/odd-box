@@ -29,8 +29,7 @@ pub enum OddBoxConfig {
 
 #[derive(Debug,Clone)]
 pub struct ConfigWrapper(
-    pub v2::OddBoxV2Config,
-    Option<String> // <-- resolved path cache - todo, use and rename
+    pub v2::OddBoxV2Config
 );
 
 
@@ -48,7 +47,7 @@ impl std::ops::DerefMut for ConfigWrapper {
 
 impl ConfigWrapper {
     pub fn wrapv2(config:v2::OddBoxV2Config) -> Self {
-        ConfigWrapper(config,None)
+        ConfigWrapper(config)
     }
 }
 
@@ -168,7 +167,7 @@ impl OddBoxConfig {
 
 impl ConfigWrapper {
     pub fn new(cfg:v2::OddBoxV2Config) -> Self {
-        ConfigWrapper(cfg,None)
+        ConfigWrapper(cfg)
     }
     pub fn init(&mut self,cfg_path:&str) -> anyhow::Result<()>  {
         self.path = Some(std::path::Path::new(&cfg_path).canonicalize()?.to_str().unwrap_or_default().into());

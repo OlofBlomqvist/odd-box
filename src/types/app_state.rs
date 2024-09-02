@@ -1,17 +1,9 @@
-use std::collections::HashMap;
-use std::default;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
-use ratatui::prelude::Rect;
 use utoipa::ToSchema;
-use crate::types::tui_state::LogPageState;
-use crate::types::tui_state::Page;
-use crate::types::tui_state::ThreadsTabState;
-use crate::types::tui_state::ConnectionsTabState;
 use std::sync::Arc;
 use crate::types::proxy_state::*;
 use ratatui::widgets::ListState;
-use crate::ProcMessage;
 
 #[derive(Debug,PartialEq,Clone,serde::Serialize,ToSchema)]
 pub enum ProcState {

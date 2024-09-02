@@ -2,21 +2,21 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use futures_util::task::UnsafeFutureObj;
-use hyper::body::Incoming;
-use hyper::Method;
-use hyper::Uri;
+
+
+
+
 use hyper_rustls::ConfigBuilderExt;
-use hyper_util::client::legacy::connect::Connection;
+
 use lazy_static::lazy_static;
-use reqwest::Request;
+
 use socket2::Socket;
 use tokio::net::TcpSocket;
 use tokio::net::TcpStream;
 use tokio::sync::Notify;
 use tokio_rustls::TlsAcceptor;
-use tungstenite::util::NonBlockingResult;
-use url::Url;
+
+
 
 use crate::configuration::ConfigWrapper;
 use crate::global_state::GlobalState;
@@ -27,10 +27,10 @@ use crate::tcp_proxy;
 use crate::http_proxy;
 use crate::tcp_proxy::DataType;
 use crate::tcp_proxy::PeekResult;
-use crate::tcp_proxy::ReverseTcpProxyTarget;
+
 use crate::tcp_proxy::ReverseTcpProxyTargets;
 use crate::types::app_state;
-use crate::types::app_state::ProcState;
+
 
 pub async fn listen(
     _cfg: std::sync::Arc<tokio::sync::RwLock<ConfigWrapper>>, 
@@ -305,7 +305,7 @@ async fn handle_new_tcp_stream(
 ) {
 
 
-    let n = state.request_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let _n = state.request_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     //tracing::warn!("handle_new_tcp_stream ({})!",n+1);
     //tracing::info!("handle_new_tcp_stream called with expect tls: {expect_tls}");
 

@@ -20,15 +20,15 @@ pub fn is_valid_http_request(bytes: &[u8]) -> anyhow::Result<Version> {
         bail!("this is not a http request. no method found");
     }
 
-    let version = if let Some(pos) = memchr::memmem::find(bytes, b" HTTP/1.1\r\n") {
+    let version = if let Some(_pos) = memchr::memmem::find(bytes, b" HTTP/1.1\r\n") {
         Version::HTTP_11
-    } else if let Some(pos) = memchr::memmem::find(bytes, b" HTTP/1.0\r\n") {
+    } else if let Some(_pos) = memchr::memmem::find(bytes, b" HTTP/1.0\r\n") {
         Version::HTTP_10
-    } else if let Some(pos) = memchr::memmem::find(bytes, b" HTTP/2.0\r\n") {
+    } else if let Some(_pos) = memchr::memmem::find(bytes, b" HTTP/2.0\r\n") {
         Version::HTTP_2
-    } else if let Some(pos) = memchr::memmem::find(bytes, b" HTTP/3.0\r\n") {
+    } else if let Some(_pos) = memchr::memmem::find(bytes, b" HTTP/3.0\r\n") {
         Version::HTTP_3
-    } else if let Some(pos) = memchr::memmem::find(bytes, b" HTTP/0.9\r\n") {
+    } else if let Some(_pos) = memchr::memmem::find(bytes, b" HTTP/0.9\r\n") {
         Version::HTTP_09
     } else {
         if let Some(start) = bytes.windows(6).position(|window| window.starts_with(b"HTTP/")) {

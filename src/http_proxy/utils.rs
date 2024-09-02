@@ -3,17 +3,17 @@ use futures_util::FutureExt;
 use http_body::Frame;
 use http_body_util::BodyExt;
 use hyper::{
-    body::Incoming, client::conn::http1::Builder, header::{HeaderName, HeaderValue, InvalidHeaderValue, ToStrError, HOST}, upgrade::OnUpgrade, HeaderMap, Request, Response, StatusCode, Version
+    body::Incoming, header::{HeaderName, HeaderValue, InvalidHeaderValue, ToStrError}, upgrade::OnUpgrade, HeaderMap, Request, Response, StatusCode, Version
 };
 use hyper_rustls::HttpsConnector;
-use hyper_util::{client::legacy::{connect::HttpConnector, Client}, rt::{TokioExecutor, TokioIo}};
-use std::{borrow::Cow, net::SocketAddr, sync::Arc, task::Poll, time::Duration};
+use hyper_util::{client::legacy::{connect::HttpConnector, Client}, rt::TokioIo};
+use std::{net::SocketAddr, sync::Arc, task::Poll, time::Duration};
 use tungstenite::http;
 
 use lazy_static::lazy_static;
 
 use crate::{
-    configuration::v2::Hint, global_state::GlobalState, http_proxy::EpicResponse, tcp_proxy::ReverseTcpProxyTarget, types::proxy_state::{ ConnectionKey, ProxyActiveConnection, ProxyActiveConnectionType }, CustomError
+    configuration::v2::Hint, global_state::GlobalState, http_proxy::EpicResponse, types::proxy_state::{ ConnectionKey, ProxyActiveConnection, ProxyActiveConnectionType }, CustomError
 };
 lazy_static! {
     static ref TE_HEADER: HeaderName = HeaderName::from_static("te");
@@ -93,7 +93,7 @@ pub async fn proxy(
     
     let mut backend_supports_prior_knowledge_http2_over_tls = false;
     let mut backend_supports_http2_over_clear_text_via_h2c_upgrade_header = false;
-    let mut backend_supports_http2_h2c_using_prior_knowledge = false;
+    let mut _backend_supports_http2_h2c_using_prior_knowledge = false;
     let mut use_prior_knowledge_http2 = false;
     let mut use_h2c_upgrade_header = false;
     
@@ -106,7 +106,7 @@ pub async fn proxy(
                 backend_supports_http2_over_clear_text_via_h2c_upgrade_header = true;
             },
             Hint::H2CPK => {
-                backend_supports_http2_h2c_using_prior_knowledge = true;
+                _backend_supports_http2_h2c_using_prior_knowledge = true;
             }
         }
     }
@@ -147,12 +147,13 @@ pub async fn proxy(
         }
     }
 
+    // FFR:
     // ---------------------------------------------------------------------------------------------
     // H2 THRU ALPN -- SUPPORTS HTTP2 OVER TLS
     // H2 PRIOR KNOWLEDGE -- SUPPORTS HTTP2 OVER TLS
     // H2C PRIOR KNOWLEDGE -- SUPPORTS HTTP2 OVER CLEAR TEXT
     // H2C UPGRADE HEADER -- SUPPORTS HTTP2 OVER CLEAR TEXT VIA UPGRADE HEADER
-    // if backend does not support http2, we will just use http1.1 and act like nothing happened.
+    // if backend does not support http2, we should just use http1.1 and act like nothing happened.
     // ---------------------------------------------------------------------------------------------
     
 
@@ -551,7 +552,7 @@ fn del_connection(state:Arc<GlobalState>,key:&ConnectionKey) {
 fn create_connection(
     req:&Request<Incoming>,
     incoming_http_version: Version,
-    target:Target,
+    _target:Target,
     client_addr:&SocketAddr,
     target_scheme: &str,
     target_http_version: hyper::http::Version,

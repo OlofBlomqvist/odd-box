@@ -1,5 +1,5 @@
-use crate::configuration::{EnvVar, LogFormat};
-use crate::global_state::{self, GlobalState};
+use crate::configuration::LogFormat;
+use crate::global_state::GlobalState;
 use crate::http_proxy::ProcMessage;
 use crate::types::app_state::ProcState;
 use std::collections::HashMap;
@@ -217,7 +217,7 @@ pub async fn host(
             use std::os::windows::process::CommandExt;
             
             #[cfg(target_os = "windows")] 
-            let cmd = Command::new(bin_path)
+            let cmdx = Command::new(bin_path)
                 .args(pre_resolved_args)
                 .envs(&process_specific_environment_variables)
                 .current_dir(&workdir)

@@ -1,6 +1,5 @@
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
-use anyhow::bail;
 use serde::Serialize;
 use serde::Deserialize;
 use utoipa::ToSchema;
