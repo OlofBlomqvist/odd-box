@@ -1,3 +1,4 @@
+use std::borrow::BorrowMut;
 use std::sync::Arc;
 
 use ratatui::layout::{Flex, Rect};
@@ -17,9 +18,15 @@ pub fn draw(
     area: Rect,
     theme: &Theme
 ) {
+
+    let size = area.as_size();
+    if size.height < 10 || size.width < 10 {
+        return
+    }
+
     let headers = [ "Site", "Source", "Target", "Description"];
     
-    let rows : Vec<Vec<String>> = global_state.app_state.statistics.active_connections.iter().map(|guard| {
+    let items : Vec<Vec<String>> = global_state.app_state.statistics.active_connections.iter().map(|guard| {
         let (_,active_connection) = guard.pair();
         let typ = match &active_connection.connection_type {
             ProxyActiveConnectionType::TcpTunnelUnencryptedHttp => "UNENCRYPTED TCP TUNNEL".to_string(),
@@ -48,16 +55,30 @@ pub fn draw(
         ]
     }).collect();
 
+    let height_of_connections_area = area.height.saturating_sub(0); // header and footer
+    let scroll_pos = { tui_state.connections_tab_state.scroll_state.vertical_scroll };
+    let scrollbar_hovered = tui_state.connections_tab_state.scroll_state.scroll_bar_hovered;
+    let max_scroll_pos = items.len().saturating_sub(height_of_connections_area as usize);
     
+    let visible_rows = area.height as usize;
 
-    let header_height = 1;
-    let visible_rows = area.height as usize - header_height;
-    let start = tui_state.connections_tab_state.scroll_state.vertical_scroll.unwrap_or_default();
-    let end = std::cmp::min(start + visible_rows, rows.len());
+
+   // let header_height = 1;
+    //let visible_rows = area.height as usize - header_height;
+    let start = scroll_pos.unwrap_or(max_scroll_pos);
+    let end = std::cmp::min(start + visible_rows, items.len() - 1);
+
+
+    
+    if start > items.len() || end > items.len() || start >= end {
+        return
+    }
 
     let is_dark_theme = matches!(&theme,Theme::Dark(_));
+
     
-    let display_rows = &rows[start..end];
+
+    let display_rows = &items[start..end];
 
     let odd_row_bg = if is_dark_theme { Color::from_hsl(15.0, 10.0, 10.0) } else {
         Color::Rgb(250,250,250)
@@ -88,7 +109,7 @@ pub fn draw(
     
 
     tui_state.connections_tab_state.scroll_state.visible_rows = display_rows.iter().len() as usize;
-    tui_state.connections_tab_state.scroll_state.total_rows = rows.len();
+    tui_state.connections_tab_state.scroll_state.total_rows = items.len();
 
     let widths = [
         Constraint::Fill(1), 
@@ -114,7 +135,7 @@ pub fn draw(
     f.render_widget(table, area);
 
 
-    let scrollbar = Scrollbar::default()
+    let mut scrollbar = Scrollbar::default()
         .style(Style::default())
         .orientation(ScrollbarOrientation::VerticalRight)
         .begin_symbol(Some("↑"))
@@ -124,11 +145,20 @@ pub fn draw(
     let height_of_traf_area = area.height.saturating_sub(2); 
     tui_state.connections_tab_state.scroll_state.area_height = height_of_traf_area as usize;
     
-    tui_state.connections_tab_state.scroll_state.vertical_scroll_state = tui_state.connections_tab_state.scroll_state.vertical_scroll_state.content_length(rows.len().saturating_sub(height_of_traf_area as usize));
+    tui_state.connections_tab_state.scroll_state.vertical_scroll_state = tui_state.connections_tab_state.scroll_state.vertical_scroll_state.content_length(items.len().saturating_sub(height_of_traf_area as usize));
     
-    let scrollbar_area = Rect::new(area.right() - 1, area.top(), 1, area.height);
 
-    f.render_stateful_widget(scrollbar,scrollbar_area, &mut tui_state.connections_tab_state.scroll_state.vertical_scroll_state);
+    if scrollbar_hovered {
+        scrollbar = scrollbar.thumb_style(Style::default().fg(Color::Yellow).bg(Color::Red));
+    }
+
+    let scrollbar_state = tui_state.connections_tab_state.scroll_state.vertical_scroll_state.borrow_mut();
+    *scrollbar_state = scrollbar_state.content_length(items.len().saturating_sub(height_of_connections_area as usize));
+
+    if scroll_pos.is_none() {
+        *scrollbar_state = scrollbar_state.position(items.len().saturating_sub(height_of_connections_area as usize));
+    }
+    f.render_stateful_widget(scrollbar,area, &mut tui_state.connections_tab_state.scroll_state.vertical_scroll_state);
 
 }
 

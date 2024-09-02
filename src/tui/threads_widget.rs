@@ -16,6 +16,12 @@ pub fn draw(
     theme: &Theme
 ) {
 
+    let size = area.as_size();
+    if size.height < 10 || size.width < 10 {
+        return
+    }
+
+
 
     let headers = [ "TaskId", "Pid", "HostName", "Port"];
     

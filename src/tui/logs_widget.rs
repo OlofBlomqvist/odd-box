@@ -19,6 +19,11 @@ pub fn draw(
     area: Rect,
     _theme: &Theme
 ) {
+    
+    let size = area.as_size();
+    if size.height < 10 || size.width < 10 {
+        return
+    }
 
     let mut buffer = log_buffer.lock().expect("locking shared buffer mutex should always work");
 
@@ -116,7 +121,7 @@ pub fn draw(
     let visible_rows = area.height as usize;
 
     let start = scroll_pos.unwrap_or(max_scroll_pos);
-    let end = std::cmp::min(start + visible_rows, items.len());
+    let end = std::cmp::min(start + visible_rows, items.len() - 1);
 
 
     if start > items.len() || end > items.len() || start >= end {

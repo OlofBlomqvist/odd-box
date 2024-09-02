@@ -16,16 +16,43 @@ env_vars = [
 
 [[remote_target]]
 host_name = "caddy-lb-terminated.localtest.me"
-disable_tcp_tunnel_mode = false
+disable_tcp_tunnel_mode = true
 backends = [
-	{ https = false, address="127.0.0.1", port=9999 },
-  { https = false, address="127.0.0.1", port=9999 }
+	{ https = false, address="127.0.0.1", port=9999, hints = ["NOH2"] },
+  { https = false, address="127.0.0.1", port=8888, hints = ["NOH2"] }
   
 ]
 
 [[hosted_process]]
 host_name = "caddy-proc-terminated.localtest.me"
+disable_tcp_tunnel_mode = true
+hints = ["NOH2"]
+auto_start = true
+port = 8888
+dir = "$cfg_dir"
+bin = "/nix/store/aq5r61lmr9six0lyi6xikxwvnyp16dfy-user-environment/bin/caddy"
+args = [
+  "run",
+  "--config",
+  "./CaddyTest2",
+  "--adapter",
+  "caddyfile"
+]
+
+[[remote_target]]
+host_name = "caddy-lb-tcp.localtest.me"
 disable_tcp_tunnel_mode = false
+hints = ["NOH2"]
+backends = [
+	{ https = false, address="127.0.0.1", port=9999 },
+  { https = false, address="127.0.0.1", port=8888 }
+  
+]
+
+[[hosted_process]]
+host_name = "caddy-proc-tcp.localtest.me"
+disable_tcp_tunnel_mode = false
+hints = ["NOH2"]
 auto_start = true
 port = 9999
 dir = "$cfg_dir"
@@ -33,7 +60,7 @@ bin = "/nix/store/aq5r61lmr9six0lyi6xikxwvnyp16dfy-user-environment/bin/caddy"
 args = [
   "run",
   "--config",
-  "./CaddyTest",
+  "./CaddyTest1",
   "--adapter",
   "caddyfile"
 ]

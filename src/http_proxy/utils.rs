@@ -96,6 +96,7 @@ pub async fn proxy(
     let mut _backend_supports_http2_h2c_using_prior_knowledge = false;
     let mut use_prior_knowledge_http2 = false;
     let mut use_h2c_upgrade_header = false;
+    let mut backend_might_support_h2 = true;
     
     for x in &backend.hints.iter().flatten().collect::<Vec<&Hint>>() {
         match x {
@@ -107,6 +108,9 @@ pub async fn proxy(
             },
             Hint::H2CPK => {
                 _backend_supports_http2_h2c_using_prior_knowledge = true;
+            },
+            Hint::NOH2 => {
+                backend_might_support_h2 = false
             }
         }
     }
@@ -157,10 +161,11 @@ pub async fn proxy(
     // ---------------------------------------------------------------------------------------------
     
 
-    let client = if use_prior_knowledge_http2 {
+    let client = if backend_might_support_h2 && use_prior_knowledge_http2 {
         *proxied_request.version_mut() = Version::HTTP_2;
         &h2_only_client // this requires the backend to support h2 prior knowledge or h2 selection by alpn 
     } else {
+        *proxied_request.version_mut() = Version::HTTP_11;
         &client // this will use the default http1 client, which will upgrade to h2 if the backend supports it thru upgrade header or alpn
     };
 

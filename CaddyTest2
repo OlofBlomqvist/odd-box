@@ -1,0 +1,9 @@
+{
+    log {
+        level DEBUG
+        output stdout
+    }
+}
+:8888 {
+    respond "pong"
+}

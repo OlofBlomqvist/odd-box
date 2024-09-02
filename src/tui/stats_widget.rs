@@ -18,11 +18,17 @@ pub fn draw(
     _theme: &Theme
 ) {
 
+    let size = area.as_size();
+    if size.height < 20 || size.width < 50 {
+        return
+    }
+
+
     let total_received_tcp_connections = global_state.request_count.load(std::sync::atomic::Ordering::Relaxed);
 
     let p = Paragraph::new(format!("Total received TCP connections: {total_received_tcp_connections}"));
     let p2 = Paragraph::new(format!("..More to come on this page at some point! :D")).fg(Color::DarkGray);
-    
+
     f.render_widget(p, area.offset(Offset{x:4,y:2}));
     f.render_widget(p2, area.offset(Offset{x:4,y:4}));
 }

@@ -125,7 +125,8 @@ pub enum Hint {
     /// Server supports http2 via clear text by using an upgrade header
     H2C,
     /// Server supports http2 via clear text by using prior knowledge
-    H2CPK
+    H2CPK,
+    NOH2
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema,Eq,PartialEq,Hash,)]

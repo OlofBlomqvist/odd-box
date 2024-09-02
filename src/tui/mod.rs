@@ -117,9 +117,6 @@ pub async fn run(
             
             let tx = tx.clone();
            
-            let _last_key_time = tokio::time::Instant::now();
-            let _debounce_duration = Duration::from_millis(300);
-            
             let mut tui_state = crate::types::tui_state::TuiState::new();
 
             loop {
@@ -127,7 +124,6 @@ pub async fn run(
                 // KEEP LOCK SHORT TO AVOID DEADLOCK
                 {
                     let mut terminal = terminal.lock().await;
-
                     terminal.draw(|f| 
                         draw_ui::<CrosstermBackend<Stdout>>(
                             f,
@@ -136,6 +132,7 @@ pub async fn run(
                             &log_buffer,&theme
                         )
                     )?;
+                        
                 }
                 
             
@@ -238,7 +235,6 @@ pub async fn run(
                                     },
                                     Page::Threads => {
                                         match mouse.kind {
-
                                             event::MouseEventKind::Drag(event::MouseButton::Left) => {
                                                 tui_state.threads_tab_state.scroll_state.handle_mouse_drag(mouse.column,mouse.row);
                                             }
@@ -256,6 +252,12 @@ pub async fn run(
                                     },
                                     Page::Connections => {
                                         match mouse.kind {
+                                            event::MouseEventKind::Drag(event::MouseButton::Left) => {
+                                                tui_state.connections_tab_state.scroll_state.handle_mouse_drag(mouse.column,mouse.row);
+                                            }
+                                            event::MouseEventKind::Moved => {
+                                                tui_state.connections_tab_state.scroll_state.handle_mouse_move(mouse.column,mouse.row);
+                                            }
                                             event::MouseEventKind::ScrollDown => {
                                                 tui_state.connections_tab_state.scroll_state.scroll_down(Some(10));
                                             },
@@ -530,6 +532,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
 
 
     let size = f.area();
+    
     if size.height < 10 || size.width < 10 {
         return
     }
