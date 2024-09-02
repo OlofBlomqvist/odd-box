@@ -22,10 +22,11 @@ As configuration is done thru basic files (toml format) which are easy to share,
 - TCP tunnelling for HTTP/2 over HTTP/1 (h2c upgrade)
 - H2C via terminating proxy 
 - Automatic self-signed certs for all hosted processes
-
+- Basic round-robin loadbalancing for remote targets
+ 
 ### Performance
 
-While the goal of this project **is not** to provide a state-of-the-art level performing proxy server for production environments, but rather a tool for simplifying local development scenarios, we do try to keep performance in mind.. Some  rudimentary testing on this authors development machine shows that TCP tunnel mode supports 170k+ requests per second while the terminating proxy mode handles ~30k requests per second in most cases. More specific measurements of different scenarios will be added here at some point. This was tested by using odd-box in front of a highly performant Caddy server using oha for benchmarking. There is much room for improvement here, especially for terminating mode.. It will be prioritized in to at some point :)
+While the goal of this project **is not** to provide a state-of-the-art level performing proxy server for production environments, but rather a tool for simplifying local development scenarios, we do try to keep performance in mind.. Some  rudimentary testing on this authors development machine shows that TCP tunnel mode supports 200k+ requests per second while the terminating proxy mode handles 100k+ requests per second. More specific measurements of different scenarios will be added here at some point. This was tested by using odd-box in front of a highly performant Caddy server using oha for benchmarking. There is much room for improvement here, especially for terminating mode.. It will be prioritized in to at some point :)
 
 ### Terminal User Interface
 
@@ -51,16 +52,17 @@ See the odd-box-example-config.toml file in this repository for details around h
 
 ### Configuration Variables
 
-| Variable   | Description                      |
-|------------|----------------------------------|
-| $root_dir  | Resolves to whatever you set it to in the global configuration section. |
-| $cfg_dir   | Resolves to the directory which the configuration toml file was read from. |
+| Variable    | Description                      |
+|-------------|----------------------------------|
+| $root_dir   | Resolves to whatever you set it to in the global configuration section. |
+| $cfg_dir    | Resolves to the directory which the configuration toml file was read from. |
+| $port       | Resolves to whatever port has been specified in the configuration. Only used for hosted processes. |
 
 ### Workflow tips
 
 If you are hosting a local project that you are currently working on, and want to do a rebuild without having to manually start and stop your site - you may want to consider having a pre-build step that does it for you:
 
-You can enable or disable all sites or specific ones using the http://localhost:port/START and http://localhost:port/STOP endpoints, optionally using query parameter "?proc=my_site" to stop or start a specific site. Sites start automatically again on the next request). The same can be acomplished thru the admin-api if you enable it.
+You can enable or disable all sites or specific ones using the http://localhost:port/START and http://localhost:port/STOP endpoints, optionally using query parameter "?proc=my_site" to stop or start a specific site. Sites start automatically again on the next request. The same can be acomplished thru the admin-api if you enable it.
 
 ### DNS
 

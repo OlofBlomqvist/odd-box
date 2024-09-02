@@ -1,4 +1,4 @@
-version = "V1" 
+version = "V2" 
 root_dir = "~"
 log_level = "info" 
 port_range_start = 4200
@@ -6,12 +6,15 @@ env_vars = []
 
 [[remote_target]] 
 host_name = "lobsters.localtest.me" 
-target_hostname = "lobste.rs"
+backends = [ 
+    { address = "lobste.rs", port = 443, https = true } , 
+    { address = "lobsters.dev", port = 443, https = true }
+]
 
 [[hosted_process]]
 host_name = "py.localtest.me"
 dir = "$cfg_dir"
 bin = "/usr/bin/python3"
-args = ["-m", "http.server", "8012"]
+args = ["-m", "http.server", "$port"]
 port = 8012
 env_vars = []

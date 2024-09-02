@@ -3,14 +3,14 @@ use super::extension::SniParserError;
 use super::extension::TlsExtensionType;
 
 #[derive(Debug)]
-pub (crate) enum TlsClientHelloError {
+pub enum TlsClientHelloError {
     NotTLSHandshake,
     NotClientHello,
     MessageIncomplete(#[allow(dead_code)]usize),
 }
 
 #[derive(Debug)]
-pub (crate) struct TlsClientHello {
+pub struct TlsClientHello {
     protocol_version: (u8, u8),
     random: Vec<u8>,
     session_id: Vec<u8>,
@@ -114,7 +114,7 @@ impl TlsClientHello {
         }
     }
 
-    pub (crate) fn read_sni_hostname(&self) -> Result<String, SniParserError> {
+    pub fn read_sni_hostname(&self) -> Result<String, SniParserError> {
         for extension in &self.extensions {
             if let TlsExtensionType::ServerName = extension.typ {
                       // SNI extension type

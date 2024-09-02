@@ -3,21 +3,17 @@ use futures_util::FutureExt;
 use http_body::Frame;
 use http_body_util::BodyExt;
 use hyper::{
-    body::Incoming,
-    header::{HeaderName, HeaderValue, InvalidHeaderValue, ToStrError, HOST},
-    upgrade::OnUpgrade,
-    HeaderMap, Request, Response, StatusCode, Version,
+    body::Incoming, header::{HeaderName, HeaderValue, InvalidHeaderValue, ToStrError}, upgrade::OnUpgrade, HeaderMap, Request, Response, StatusCode, Version
 };
-use hyper_util::rt::{TokioExecutor, TokioIo};
-
-use rustls::ClientConfig;
-use std::{net::SocketAddr, task::Poll, time::Duration};
+use hyper_rustls::HttpsConnector;
+use hyper_util::{client::legacy::{connect::HttpConnector, Client}, rt::TokioIo};
+use std::{net::SocketAddr, sync::Arc, task::Poll, time::Duration};
 use tungstenite::http;
 
 use lazy_static::lazy_static;
 
 use crate::{
-    configuration::v1::H2Hint, global_state::GlobalState, http_proxy::EpicResponse, tcp_proxy::ReverseTcpProxyTarget, types::{proxy_state::{ ConnectionKey, ProxyActiveConnection, ProxyActiveConnectionType }}, CustomError
+    configuration::v2::Hint, global_state::GlobalState, http_proxy::EpicResponse, types::proxy_state::{ ConnectionKey, ProxyActiveConnection, ProxyActiveConnectionType }, CustomError
 };
 lazy_static! {
     static ref TE_HEADER: HeaderName = HeaderName::from_static("te");
@@ -58,152 +54,168 @@ pub enum ProxyError {
 
 #[derive(Debug)]
 pub enum Target {
-    Remote(crate::configuration::v1::RemoteSiteConfig),
-    Proc(crate::configuration::v1::InProcessSiteConfig),
+    Remote(crate::configuration::v2::RemoteSiteConfig),
+    Proc(crate::configuration::v2::InProcessSiteConfig),
 }
 
+// We don't care about the original call scheme, version, etc.
+// The target_url is the full URL to the target, including the scheme, it is expected that 
+// our caller has already determined if the target is http or https depending on whatever backend was selected.
+// The job of this method is simply to create a new request with the target url and the original request's headers.
+// while also selecting http version and handling upgraded connections.  
+// TODO: simplify the signature, we dont need it to be this complicated..
 pub async fn proxy(
-    _req_host_name: &str,
-    is_https:bool,
-    state: GlobalState,
+    req_host_name: &str,
+    original_connection_is_https:bool,
+    state: Arc<GlobalState>,
     mut req: hyper::Request<hyper::body::Incoming>,
     target_url: &str,
     target: Target,
     client_ip: SocketAddr,
-    client_tls_config: ClientConfig
+    client:  Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
+    h2_only_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
+    _fallback_url: &str,
+    use_https_to_backend_target: bool,
+    backend: crate::configuration::v2::Backend
 ) -> Result<ProxyCallResult, ProxyError> {
+
     
     let incoming_http_version = req.version();
-    
-    tracing::info!(
-        "Incoming {incoming_http_version:?} request to proxy from {client_ip:?} with target url: {target_url}"
-    );
-
-
-    let https_builder =
-        hyper_rustls::HttpsConnectorBuilder::default().with_tls_config(client_tls_config);
-
-    let mut connector = { https_builder.https_or_http().enable_all_versions().build() };
-
-    let mut enforce_https = match &target {
-        Target::Remote(x) => x.https.unwrap_or_default(),
-        Target::Proc(x) => x.https.unwrap_or_default(),
-    };
-
     let request_upgrade_type = get_upgrade_type(req.headers());
-
     let request_upgraded = req.extensions_mut().remove::<OnUpgrade>();
 
-    let target_h2_hint = match &target {
-        Target::Remote(x) => x.h2_hint.clone(),
-        Target::Proc(x) => x.h2_hint.clone(),
-    };
-    
-    let mut enforce_http2 = false;
-    let mut target_url = target_url.to_string();
-    
-    if let Some(hint) = target_h2_hint {
 
-        match hint {
-            H2Hint::H2 => {
-                tracing::debug!("H2 HINT DETECTED");
-                enforce_http2 = true;
-            }
-            H2Hint::H2C => {
-                tracing::debug!("H2C HINT DETECTED");
-                target_url = target_url.replace("https://", "http://").to_string();
-                if enforce_https {
-                    tracing::warn!("Suspicious configuration for target: {target_url}. the domain is marked both with https and h2c.. will connect using h2c..")
-                }
-                enforce_https = false;
-                enforce_http2 = true;
+
+    tracing::trace!(
+        "Incoming {incoming_http_version:?} request to terminating proxy from {client_ip:?} with target url: {target_url}!"
+    );
+    
+    
+    let mut backend_supports_prior_knowledge_http2_over_tls = false;
+    let mut backend_supports_http2_over_clear_text_via_h2c_upgrade_header = false;
+    let mut _backend_supports_http2_h2c_using_prior_knowledge = false;
+    let mut use_prior_knowledge_http2 = false;
+    let mut use_h2c_upgrade_header = false;
+    let mut backend_might_support_h2 = true;
+    
+    for x in &backend.hints.iter().flatten().collect::<Vec<&Hint>>() {
+        match x {
+            Hint::H2 => {
+                backend_supports_prior_knowledge_http2_over_tls = true;
+            },
+            Hint::H2C => {
+                backend_supports_http2_over_clear_text_via_h2c_upgrade_header = true;
+            },
+            Hint::H2CPK => {
+                _backend_supports_http2_h2c_using_prior_knowledge = true;
+            },
+            Hint::NOH2 => {
+                backend_might_support_h2 = false
             }
         }
-
-    } else {
-        if !is_https && req.version() == Version::HTTP_2 {
-            *req.version_mut() = Version::HTTP_2;
-                target_url = target_url.replace("https://", "http://").to_string();
-                if enforce_https {
-                    tracing::warn!("Suspicious request: h2c request incoming to proxy but target is https.. this is bound to fail..")
-                } else {
-                    tracing::debug!("Incoming prior knowledge h2c request to {target_url}")
-                }
-                enforce_https = false;
-                enforce_http2 = true;
+    }
+    
+    // Handle upgrade headers
+    if let Some(typ) = &request_upgrade_type {
+        if typ.to_uppercase()=="H2C" {
+            // if backend_supports_http2_over_clear_text_via_h2c_upgrade_header {
+            //     tracing::trace!("Client used h2c header and backend supports h2c upgrades, this should be fine!")
+            // } else {
+            //     tracing::trace!("Client used {typ:?} header. The backend has no hint that it supports h2c but we will attempt to upgrade anyway.");
+            // }
+            use_h2c_upgrade_header = true;
         } else {
-            
-            // in most other cases it seems safe to just start from http/1.1
-            *req.version_mut() = Version::HTTP_11;
+            //tracing::trace!("Client requested upgrade to {typ:?}. We don't know if the backend supports it, but we will try anyway.");
+            // note: wont be websocket here as that is handled in another route
         }
     }
 
-    if enforce_http2 && req.version() != Version::HTTP_2 {
-        return Err(ProxyError::OddBoxError(format!("connection to {target_url} is only allowed over http2 due to h2/h2c hint on target site.")));
-    }
-
-    if enforce_http2 {
-        tracing::trace!("enforcing http2!");        
-        *req.version_mut() = Version::HTTP_2;
-    }
-    if enforce_https {
-        tracing::trace!("enforcing https!");
-        connector.enforce_https();
-    }
-
+    
     let mut proxied_request =
-        create_proxied_request(&target_url, req, request_upgrade_type.as_ref())?;
+        create_proxied_request(&target_url, req, request_upgrade_type.as_ref(), &req_host_name)?;
 
+    
+    if proxied_request.version() == Version::HTTP_2 {
+        // if client connected to us with http2, we will attempt to do so with the backend as well..
+        // todo: not sure this is what we want to do but this is how the old code worked and i dont want to change it right now.
+        use_prior_knowledge_http2 = true;
+    } else if backend_supports_prior_knowledge_http2_over_tls && use_https_to_backend_target {
+        use_prior_knowledge_http2 = true;
+    } else if backend_supports_http2_over_clear_text_via_h2c_upgrade_header && !use_https_to_backend_target {
+        use_prior_knowledge_http2 = true;
+    } else if backend_supports_http2_over_clear_text_via_h2c_upgrade_header && !use_https_to_backend_target {
+        if use_h2c_upgrade_header {
+            use_prior_knowledge_http2 = false;
+        } else {
+            tracing::warn!("Backend supports h2c but client did not request it. Falling back to http1.1.");
+        }
+    }
 
-    let target_scheme = if enforce_https || target_url.to_lowercase().starts_with("https") {
-        "https"
+    // FFR:
+    // ---------------------------------------------------------------------------------------------
+    // H2 THRU ALPN -- SUPPORTS HTTP2 OVER TLS
+    // H2 PRIOR KNOWLEDGE -- SUPPORTS HTTP2 OVER TLS
+    // H2C PRIOR KNOWLEDGE -- SUPPORTS HTTP2 OVER CLEAR TEXT
+    // H2C UPGRADE HEADER -- SUPPORTS HTTP2 OVER CLEAR TEXT VIA UPGRADE HEADER
+    // if backend does not support http2, we should just use http1.1 and act like nothing happened.
+    // ---------------------------------------------------------------------------------------------
+    
+
+    let client = if backend_might_support_h2 && use_prior_knowledge_http2 {
+        *proxied_request.version_mut() = Version::HTTP_2;
+        &h2_only_client // this requires the backend to support h2 prior knowledge or h2 selection by alpn 
     } else {
-        "http(s?)" // stupidest thing I've ever seen..
-                   // we dont know if it will be upgraded at this point, and we dont upgrade the con info after this step..
+        *proxied_request.version_mut() = Version::HTTP_11;
+        &client // this will use the default http1 client, which will upgrade to h2 if the backend supports it thru upgrade header or alpn
     };
 
+    
+    let req_is_https = proxied_request.uri().scheme().is_some_and(|x|*x==http::uri::Scheme::HTTPS);
+    let target_scheme_info_str = if use_https_to_backend_target != req_is_https {
+        tracing::warn!("Target URL scheme does not match use_https_to_backend_target setting. This is a bug in odd-box, please report it. Will fallback to using the target URL scheme ({}).",target_url);
+        if req_is_https {
+            "https"
+        } else {
+            "http"
+        }
+    } else if use_https_to_backend_target {
+        "https" 
+    } else {
+        "http"
+    };
 
+    
     let con: ProxyActiveConnection = create_connection(
         &proxied_request, 
         incoming_http_version,
         target, 
         &client_ip, 
-        target_scheme, 
+        target_scheme_info_str, 
         proxied_request.version(), 
         &target_url, 
-        is_https
+        original_connection_is_https
     );
 
 
     tracing::trace!("Sending request:\n{:?}", proxied_request);
 
-    if enforce_https {
-        _ = proxied_request
-            .headers_mut()
-            .remove("upgrade-insecure-requests");
-        _ = proxied_request.headers_mut().remove("host");
-    }
-    
-    let executor = TokioExecutor::new();
+
+    // todo - prevent making a connection if client already has too many tcp connections open
     let mut response = {
-        hyper_util::client::legacy::Builder::new(executor)
-            .http2_only(enforce_http2)
-            .build(connector)
+        client
             .request(proxied_request)
             .await
             .map_err(ProxyError::LegacyError)?
     };
 
-    
-
     tracing::trace!(
-        "GOT THIS RESPONSE FROM REQ TO '{target_url}' : {:?}",
-        response
+        "GOT THIS RESPONSE FROM REQ TO '{target_url}' : {:?}",response
     );
-
+    
+    // if the backend agreed to upgrade to some other protocol, we will create a bidirectional tunnel for the client and backend to communicate directly.
     if response.status() == StatusCode::SWITCHING_PROTOCOLS {
         let response_upgrade_type = get_upgrade_type(response.headers());
-        tracing::info!("RESPONSE IS TO UPGRADE TO : {response_upgrade_type:?}!!!");
+        tracing::trace!("RESPONSE IS TO UPGRADE TO : {response_upgrade_type:?}.");
         if request_upgrade_type == response_upgrade_type {
             if let Some(request_upgraded) = request_upgraded {
 
@@ -219,7 +231,7 @@ pub async fn proxy(
 
                     let upgraded = match request_upgraded.await {
                         Err(e) => {
-                            tracing::warn!("failed to upgrade req: {e:?}");
+                            tracing::trace!("failed to upgrade req: {e:?}");
                             
                             return;
                         }
@@ -245,7 +257,7 @@ pub async fn proxy(
                             
 
                 let response = super::create_simple_response_from_incoming(
-                        WrappedNormalResponse::new(response,state.clone(),con).await
+                        WrappedNormalResponse::new(response,state.clone(),con)
                     )
                     .await.map_err(|e|ProxyError::OddBoxError(format!("{e:?}")))?;
 
@@ -262,11 +274,12 @@ pub async fn proxy(
             )))
         }
     } else {
-                
+        // Got a normal response from the backend, we will just forward it to the client!       
         let proxied_response = create_proxied_response(response);
-        Ok(ProxyCallResult::NormalResponse(WrappedNormalResponse::new(proxied_response,state.clone(),con).await))
+        Ok(ProxyCallResult::NormalResponse(WrappedNormalResponse::new(proxied_response,state.clone(),con)))
     }
 }
+
 
 
 
@@ -280,6 +293,7 @@ impl Drop for WrappedNormalResponseBody {
             //tracing::trace!("dropping active connection due to body drop");
             on_drop();
         }   
+        
     }
 }
 pub struct WrappedNormalResponse {
@@ -290,9 +304,11 @@ impl WrappedNormalResponse {
     pub fn into_parts(self) -> (http::response::Parts,WrappedNormalResponseBody) {
         (self.a,self.b)
     }
-    pub async fn new(res:Response<Incoming>,state: GlobalState,con: ProxyActiveConnection) -> Self {
-        //tracing::trace!("Adding connection for this WrappedNormalResponse.");
-        let con_key = add_connection(state.clone(), con).await;
+
+    
+    pub fn new(res:Response<Incoming>,state: Arc<GlobalState>,con: ProxyActiveConnection) -> Self {
+        tracing::trace!("Adding connection for this WrappedNormalResponse.");
+        let con_key = add_connection(state.clone(), con);
         let drop_state = state.clone();        
         
         let on_drop: Box<dyn FnOnce() + Send + 'static> = Box::new(move || {
@@ -301,8 +317,9 @@ impl WrappedNormalResponse {
             tokio::spawn(async move {
                 //tracing::trace!("Dropping connection for this WrappedNormalResponse (with 1s delay for visibility in ui).");
                 tokio::time::sleep(Duration::from_secs(1)).await;
-                del_connection(state, &con_key).await;
+                del_connection(state, &con_key);
             });
+
         });
 
         let (a,b) = res.into_parts();
@@ -315,18 +332,23 @@ impl WrappedNormalResponse {
 impl hyper::body::Body for WrappedNormalResponseBody {
     type Data = bytes::Bytes;
     type Error = hyper::Error;
+
     fn poll_frame(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-         match self.b.frame().poll_unpin(cx) {
-            Poll::Ready(Some(data)) => Poll::Ready(Some(data)),
-            Poll::Ready(None) =>  Poll::Ready(None),            
-            Poll::Pending => Poll::Pending
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        match self.b.frame().poll_unpin(cx) {
+            Poll::Ready(Some(Ok(data))) => Poll::Ready(Some(Ok(data))),
+            Poll::Ready(Some(Err(e))) => {
+                // Handle error properly here
+                tracing::error!("Error while polling frame: {:?}", e);
+                Poll::Ready(Some(Err(e)))
+            }
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
         }
     }
 }
-
 fn get_upgrade_type(headers: &HeaderMap) -> Option<String> {
     // note: this is not really legal for http/1, but in reallity it is used when doing h2c upgrade from http/1 -> http/2..
     // (http1 normally would only allow in connect but we dont care here)
@@ -350,36 +372,40 @@ fn create_proxied_request<B>(
     target_url: &str,
     mut request: Request<B>,
     upgrade_type: Option<&String>,
+    req_host_name: &str
 ) -> Result<Request<B>, ProxyError> {
-    // replace the target uri
-    *request.uri_mut() = target_url
-        .parse()
-        .expect(&format!("the target url is not valid: {:?}", target_url));
+    
+    // replace the uri
+    let target_uri = target_url.parse::<http::Uri>()
+        .map_err(|e| ProxyError::InvalidUri(e))?;
+    *request.uri_mut() = target_uri;
+    
+    
+    // we want to pass the original host header to the backend (the one that the client requested)
+    // and not the one we are connecting to as that might as well just be an internal name or IP.
+    if let Ok(v) = HeaderValue::from_str(req_host_name) {
+        _ = request.headers_mut().insert("host",v);
+    } else {
+        tracing::warn!("Failed to insert host header for '{req_host_name}'. Falling back to direct hostname call rather than 127.0.0.1.");
+        _ = request.uri_mut().host().replace(req_host_name);
+    }    
 
-    let uri = request.uri().clone();
+    // we will decide to use https or not to the backend ourselves, no need to forward this.
+    _ = request
+        .headers_mut()
+        .remove("upgrade-insecure-requests");
 
-    // replace the host header if it exists
-    let headers = request.headers_mut();
-    if let Some(x) = headers.get_mut(HOST) {
-        if let Some(new_host) = uri.host() {
-            tracing::trace!("Replaced original host header: {:?} with {}", x, new_host);
-            *x = HeaderValue::from_str(new_host).map_err(map_to_err)?;
-        }
-    };
-
+    // add the upgrade headers back if we are upgrading, so that the backend also knows what to do.
     if let Some(value) = upgrade_type {
-        tracing::trace!("Repopulate upgrade headers! :: {value}");
-
-        request
-            .headers_mut()
-            .insert(&*UPGRADE_HEADER, value.parse().map_err(map_to_err)?);
-        request
-            .headers_mut()
-            .insert(&*CONNECTION_HEADER, HeaderValue::from_str(value).map_err(map_to_err)?);
+        tracing::trace!("Re-populate upgrade headers! :: {value}");
+        let value_header = HeaderValue::from_str(value).map_err(map_to_err)?;
+        let headers = request.headers_mut();
+        headers.insert(&*UPGRADE_HEADER, value_header.clone());
+        headers.insert(&*CONNECTION_HEADER, value_header);
     }
-
     Ok(request)
 }
+
 
 impl From<hyper_util::client::legacy::Error> for ProxyError {
     fn from(err: hyper_util::client::legacy::Error) -> ProxyError {
@@ -514,47 +540,44 @@ pub async fn h2_stream_test(
 
 
 
-async fn add_connection(state:GlobalState,connection:ProxyActiveConnection) -> ConnectionKey {
-    let id = uuid::Uuid::new_v4();
-    let global_state = state.0.read().await;
-    let mut guard = global_state.statistics.write().expect("should always be able to add connections to state.");
-    let key = (
-        connection.source_addr.clone(),
-        id
-    );
-    _ = guard.active_connections.insert(key, connection);
-    key
+fn add_connection(state:Arc<GlobalState>,connection:ProxyActiveConnection) -> ConnectionKey {
+    
+    let id: u64 = crate::generate_unique_id();
+    let app_state = state.app_state.clone();
+    _ = app_state.statistics.active_connections.insert(id, connection);
+    id
 }
 
-async fn del_connection(state:GlobalState,key:&ConnectionKey) {
-    let global_state = state.0.read().await;
-    let mut guard = global_state.statistics.write().expect("should always be able to delete connections from state.");
+fn del_connection(state:Arc<GlobalState>,key:&ConnectionKey) {
+    let app_state = state.app_state.clone();
+    let guard = app_state.statistics.clone();
     _ = guard.active_connections.remove(key);
 }
 
 fn create_connection(
     req:&Request<Incoming>,
     incoming_http_version: Version,
-    target:Target,
+    _target:Target,
     client_addr:&SocketAddr,
     target_scheme: &str,
     target_http_version: hyper::http::Version,
     target_addr: &str,
     incoming_known_tls_only: bool
 ) -> ProxyActiveConnection {
-    
+    let uri = req.uri();
     let typ_info = 
         ProxyActiveConnectionType::TerminatingHttp { 
-            incoming_scheme: req.uri().scheme_str().unwrap_or(if incoming_known_tls_only { "HTTPS" } else {"HTTP"} ).to_owned(), 
+            incoming_scheme: uri.scheme_str().unwrap_or(if incoming_known_tls_only { "HTTPS" } else {"HTTP"} ).to_owned(), 
             incoming_http_version: format!("{:?}",incoming_http_version), 
             outgoing_http_version: format!("{:?}",target_http_version), 
             outgoing_scheme: target_scheme.to_owned()
         };
 
     ProxyActiveConnection {
+        target_name: uri.to_string(),
         source_addr: client_addr.clone(),
         target_addr: target_addr.to_owned(),
-        target: ReverseTcpProxyTarget::from_target(target),
+        //target: ReverseTcpProxyTarget::from_target(target),
         creation_time: Local::now(),
         description: None,
         connection_type: typ_info

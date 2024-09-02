@@ -2,16 +2,17 @@ use std::collections::VecDeque;
 use std::{collections::HashMap, sync::Arc};
 
 use std::sync::Mutex;
+
 use tracing::Subscriber;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
 
 #[derive(Clone)]
-pub (crate) struct LogMsg {
-    pub (crate) msg: String,
-    pub (crate) lvl: tracing::Level,
-    pub (crate) src: String,
-    pub (crate) thread: Option<String>
+pub struct LogMsg {
+    pub msg: String,
+    pub lvl: tracing::Level,
+    pub src: String,
+    pub thread: Option<String>
 }
 
 
@@ -101,8 +102,9 @@ impl<S: Subscriber> tracing_subscriber::Layer<S> for NonTuiLoggerLayer {
 
 
 pub struct SharedLogBuffer {
-    pub (crate) logs: VecDeque<LogMsg>,
-    pub (crate) limit : Option<usize>
+    pub logs: VecDeque<LogMsg>,
+    pub limit : Option<usize>,
+    pub pause : bool
 }
 
 impl SharedLogBuffer {
@@ -110,12 +112,15 @@ impl SharedLogBuffer {
     pub fn new() -> Self {
         SharedLogBuffer {
             logs: VecDeque::new(),
-            limit: Some(500)
+            limit: Some(500),
+            pause: false
         }
     }
 
     fn push(&mut self, message: LogMsg) {
-
+        if self.pause {
+            return
+        }
         self.logs.push_back(message);
         match self.limit {
             Some(x) => {
@@ -123,7 +128,12 @@ impl SharedLogBuffer {
                     self.logs.pop_front();
                 }
             },
-            None => {},
+            None => {
+                // hard max even if user is scrolled up in the tui
+                while self.logs.len() > 1000 {
+                    self.logs.pop_front();
+                }
+            },
         }
         
     }
@@ -138,6 +148,7 @@ pub struct TuiLoggerLayer {
 
 impl<S: Subscriber> Layer<S> for TuiLoggerLayer {
     fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+    
         let metadata = event.metadata();
 
 

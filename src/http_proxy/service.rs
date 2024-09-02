@@ -1,10 +1,15 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 use bytes::Bytes;
 use http_body::Frame;
+
 use http_body_util::{Either, Full, StreamBody};
 use hyper::service::Service;
 use hyper::{body::Incoming as IncomingBody, Request, Response};
+use hyper_rustls::HttpsConnector;
+use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use tokio::net::TcpStream;
 use tokio_stream::wrappers::ReceiverStream;
@@ -14,9 +19,10 @@ use crate::global_state::GlobalState;
 use crate::types::app_state::ProcState;
 use crate::CustomError;
 use hyper::{Method, StatusCode};
-
+use lazy_static::lazy_static;
 use super::{ProcMessage, ReverseProxyService, WrappedNormalResponse};
 use super::proxy;
+
 
 
 pub enum SomeIo {
@@ -25,18 +31,21 @@ pub enum SomeIo {
 
 }
 
-pub (crate) async fn serve(service:ReverseProxyService,io:SomeIo) {
-
+lazy_static! {
+    static ref SERVER_ONE: hyper_util::server::conn::auto::Builder<TokioExecutor> = 
+        hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
+}
+pub async fn serve(service:ReverseProxyService,io:SomeIo) {
+    
     let result = match io {
         SomeIo::Https(tls_stream) => {
-            hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
-                .serve_connection_with_upgrades(tls_stream, service).await
+            SERVER_ONE.serve_connection_with_upgrades(tls_stream, service).await
         },
         SomeIo::Http(tcp_stream) => {
-            
-            hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
+            SERVER_ONE
                .serve_connection_with_upgrades(tcp_stream, service).await
-        }
+        },
+        
     };
     match result {
         Ok(_) => {},
@@ -65,7 +74,7 @@ pub type EpicBody =
         FullOrStreamBody
     >;
 
-pub(crate) type EpicResponse = hyper::Response<EpicBody>;
+pub type EpicResponse = hyper::Response<EpicBody>;
 
 
 pub fn create_response_channel(buf_size:usize) -> (
@@ -101,9 +110,12 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
     type Response = EpicResponse;
     type Error = CustomError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    
     fn call(&self, req: hyper::Request<hyper::body::Incoming>) -> Self::Future {    
 
         tracing::trace!("INCOMING REQ: {:?}",req);
+        tracing::trace!("VERSION: {:?}",req.version());
 
         // handle websocket upgrades separately
         if hyper_tungstenite::is_upgrade_request(&req) {
@@ -120,17 +132,25 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
         }
         
         // handle normal proxy path
-        let f = handle(
+        let f = handle_http_request(
             self.remote_addr.expect("there must always be a client"),
             req,
             self.tx.clone(),
             self.state.clone(),
             self.is_https_only,
-            self.client_tls_config.clone()
+            self.client.clone(),
+            self.h2_client.clone()
         );
         
         return Box::pin(async move {
-            f.await
+            match f.await {
+                Ok(x) => {
+                    Ok(x)
+                },
+                Err(e) => {
+                    Err(CustomError(format!("{e:?}")))
+                },
+            }
         })
     
 
@@ -138,15 +158,19 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
 }
 
 #[allow(dead_code)]
-async fn handle(
+async fn handle_http_request(
     client_ip: std::net::SocketAddr, 
     req: Request<hyper::body::Incoming>,
     tx: Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
-    state: GlobalState,
+    state: Arc<GlobalState>,
     is_https:bool,
-    client_tls_config:rustls::ClientConfig
+    client:  Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
+    h2_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
+
 ) -> Result<EpicResponse, CustomError> {
     
+
+
     let req_host_name = 
         if let Some(hh) = req.headers().get("host") { 
             let hostname_and_port = hh.to_str().map_err(|e|CustomError(format!("{e:?}")))?.to_string();
@@ -155,6 +179,7 @@ async fn handle(
             req.uri().authority().ok_or(CustomError(format!("No hostname and no Authority found")))?.host().to_string()
         };
 
+    
     tracing::trace!("Handling request from {client_ip:?} on hostname {req_host_name:?}");
     
     let req_path = req.uri().path();
@@ -169,42 +194,52 @@ async fn handle(
         })
         .unwrap_or_else(std::collections::HashMap::new);
 
-        
     if let Some(r) = intercept_local_commands(&req_host_name,&params,req_path,tx.clone()).await {
         return Ok(r)
     }
     
-    let guarded = state.1.read().await;
+    let found_hosted_target = {
+        let cfg_guard = state.config.read().await;
+        if let Some(processes) = &cfg_guard.hosted_process {
+            if let Some(pp) = processes.iter().find(|p| {
+                req_host_name == p.host_name
+                || p.capture_subdomains.unwrap_or_default() 
+                && req_host_name.ends_with(&format!(".{}",p.host_name))
+            }) {
+                Some(pp.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
 
-    let processes = guarded.hosted_process.clone().unwrap_or_default();
-    if let Some(target_cfg) = processes.iter().find(|p| {
-            req_host_name == p.host_name
-            || p.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",p.host_name))
-    }) {
+
+    if let Some(target_proc_cfg) = found_hosted_target {
 
         let current_target_status : Option<crate::ProcState> = {
-            let guard = state.0.read().await;
-            let info = guard.site_states_map.iter().find(|x|x.0==&target_cfg.host_name);
+            let info = state.app_state.site_status_map.get(&target_proc_cfg.host_name);
             match info {
-                Some((_,target_state)) => Some(target_state.clone()),
+                Some(data) => Some(data.value().clone()),
                 None => None,
             }
         };
 
         match current_target_status {
-            Some(ProcState::Running) => {},
-            None => {},
+            Some(ProcState::Running) | Some(ProcState::Faulty) | Some(ProcState::Starting) => {},
             _ => {
                 // auto start site in case its been disabled by other requests
-                _ = tx.send(super::ProcMessage::Start(target_cfg.host_name.to_owned())).map_err(|e|format!("{e:?}"));
+                _ = tx.send(super::ProcMessage::Start(target_proc_cfg.host_name.to_owned())).map_err(|e|format!("{e:?}"));
             }
         }
 
         
         if let Some(cts) = current_target_status {
-            if cts == crate::ProcState::Stopped || cts == crate::ProcState::Starting {
+            if cts == crate::ProcState::Stopped || cts == crate::ProcState::Starting || cts == crate::ProcState::Faulty {
                 match req.method() {
                     &Method::GET => {
+                        // todo - opt in/out via cfg ?
                         return Ok(EpicResponse::new(create_epic_string_full_body(&please_wait_response())))
                     }  
                     _ => {
@@ -214,61 +249,91 @@ async fn handle(
                 }                 
             }
         }
+
+
+        let port = if let Some(active_port) = target_proc_cfg.active_port {
+            active_port
+        } else {
+            return Err(CustomError(format!("No active port found for {req_host_name}.")))
+        };
         
-        let enforce_https = target_cfg.https.is_some_and(|x|x);
+        let enforce_https = target_proc_cfg.https.is_some_and(|x|x);
         let scheme = if enforce_https { "https" } else { "http" };
 
         let mut original_path_and_query = req.uri().path_and_query()
             .and_then(|x| Some(x.as_str())).unwrap_or_default();
         if original_path_and_query == "/" { original_path_and_query = ""}
 
-        let default_port = if enforce_https { 443 } else { 80 };
 
-        let resolved_host_name = {
-            let forward_subdomains = target_cfg.forward_subdomains.unwrap_or_default();
+        let parsed_host_name = {
+            let forward_subdomains = target_proc_cfg.forward_subdomains.unwrap_or_default();
             if forward_subdomains {
-                if let Some(subdomain) = get_subdomain(&req_host_name, &target_cfg.host_name) {
-                    tracing::debug!("in-proc forward terminating proxy rewrote subdomain: {subdomain}!");
-                    format!("{subdomain}.{}", &target_cfg.host_name)
+                if let Some(subdomain) = get_subdomain(&req_host_name, &target_proc_cfg.host_name) {
+                    Cow::Owned(format!("{subdomain}.{}", &target_proc_cfg.host_name))
                 } else {
-                    target_cfg.host_name.clone()
+                    Cow::Borrowed(&target_proc_cfg.host_name)
                 }
             } else {
-                target_cfg.host_name.clone()
+                Cow::Borrowed(&target_proc_cfg.host_name)
             }
         };
-        
 
-        tracing::info!("USING THIS RESOLVED TARGET: {resolved_host_name}");
         let target_url = format!("{scheme}://{}:{}{}",
-            resolved_host_name,
-            target_cfg.port.unwrap_or(default_port),
+            parsed_host_name,
+            port,
+            original_path_and_query
+        );
+        
+        // we add the host flag manually in proxy method, this is only to avoid dns lookup for local targets.
+        // todo: opt in/out via cfg
+        let skip_dns_for_local_target_url = format!("{scheme}://{}:{}{}",
+            "127.0.0.1",
+            port,
             original_path_and_query
         );
 
-        let target = crate::http_proxy::Target::Proc(target_cfg.clone());
-        
-        let result = 
-            proxy(&req_host_name,is_https,state.clone(),req,&target_url,target,client_ip,client_tls_config).await;
+        let target_cfg = target_proc_cfg.clone();
+        let hints = target_cfg.hints.clone();
+        let target = crate::http_proxy::Target::Proc(target_cfg);
 
-        map_result(&req_host_name,result).await
+        let result = 
+            proxy(
+                &parsed_host_name,
+                is_https,
+                state.clone(),
+                req,
+                &skip_dns_for_local_target_url,
+                target,
+                client_ip,
+                client,
+                h2_client,
+                &target_url,
+                enforce_https,
+                crate::configuration::v2::Backend {
+                    hints: hints,
+                    address: parsed_host_name.to_string(),
+                    port: port,
+                    https: Some(enforce_https)
+                }
+            ).await;
+
+        map_result(&target_url,result).await
     }
 
     else {
         
-        let config = &state.1.read().await.0;
-        if let Some(remote_target_cfg) = config.remote_target.clone().unwrap_or_default().iter().find(|p|{
+        if let Some(remote_target_cfg) = &state.config.read().await.remote_target.clone().unwrap_or_default().iter().find(|p|{
             //tracing::info!("comparing incoming req: {} vs {} ",req_host_name,p.host_name);
             req_host_name == p.host_name
             || p.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",p.host_name))
         }) {
 
-            return perform_remote_forwarding(req_host_name,is_https,state.clone(),client_ip,remote_target_cfg,req,client_tls_config).await
+            return perform_remote_forwarding(req_host_name,is_https,state.clone(),client_ip,remote_target_cfg,req,client.clone(),h2_client.clone()).await
         }
 
         tracing::warn!("Received request that does not match any known target: {:?}", req_host_name);
         let body_str = format!("Sorry, I don't know how to proxy this request.. {:?}", req);
-
+        
         let mut response = EpicResponse::new(create_epic_string_full_body(&body_str));
         *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
         Ok(response)
@@ -290,61 +355,66 @@ fn get_subdomain(requested_hostname: &str, backend_hostname: &str) -> Option<Str
 
 async fn perform_remote_forwarding(
     req_host_name:String,
-    is_https:bool,
-    state: GlobalState,
+    _is_https:bool,
+    state: Arc<GlobalState>,
     client_ip:std::net::SocketAddr,
-    remote_target_config:&crate::configuration::v1::RemoteSiteConfig,
+    remote_target_config:&crate::configuration::v2::RemoteSiteConfig,
     req:hyper::Request<IncomingBody>,
-    client_tls_config:rustls::ClientConfig
+    client:  Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
+    h2_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
 ) -> Result<EpicResponse,CustomError> {
     
     
-    // if a target is marked with http, we wont try to use http
-    let enforce_https = remote_target_config.https.is_some_and(|x|x);
-   
-    let scheme = if enforce_https { "https" } else { "http" }; 
-
     let mut original_path_and_query = req.uri().path_and_query()
         .and_then(|x| Some(x.as_str())).unwrap_or_default();
     if original_path_and_query == "/" { original_path_and_query = ""}
-
-    let default_port = if enforce_https { 443 } else { 80 };
-
+   
+    let next_backend_target = if let Some(b) = remote_target_config.next_backend(&state, crate::configuration::v2::BackendFilter::Any).await {
+        b
+    } else {
+        return Err(CustomError("No backend found".to_string()))
+    };
+    
+    // if a target is marked with http, we wont try to use http
+    let enforce_https = next_backend_target.https.unwrap_or_default();
+   
+    let scheme = if enforce_https { "https" } else { "http" }; 
     
     let resolved_host_name = {
 
-        let forward_subdomains = remote_target_config.forward_subdomains.unwrap_or_default();
-        let subdomain = get_subdomain(&req_host_name, &remote_target_config.host_name);
-        
-        if forward_subdomains && subdomain.is_some() {
-            let subdomain = subdomain.unwrap(); 
-            tracing::debug!("remote forward terminating proxy rewrote subdomain: {subdomain}!");
-            format!("{subdomain}.{}", &remote_target_config.target_hostname)
+        if remote_target_config.forward_subdomains.unwrap_or_default() {
+            if let Some(subdomain) = get_subdomain(&req_host_name, &remote_target_config.host_name) {
+            //tracing::debug!("remote forward terminating proxy rewrote subdomain: {subdomain}!");
+                format!("{subdomain}.{}", &next_backend_target.address)
+            } else {
+                next_backend_target.address.clone()
+            }
         } else {
-            remote_target_config.target_hostname.clone()
+            next_backend_target.address.clone()
         }
     };
         
-
-        
     let target_url = format!("{scheme}://{}:{}{}",
         resolved_host_name,
-        remote_target_config.port.unwrap_or(default_port),
+        next_backend_target.port,
         original_path_and_query
     );
 
-    tracing::info!("Incoming request to '{}' for remote proxy target {target_url}",remote_target_config.host_name);
+    //tracing::info!("Incoming request to '{}' for remote proxy target {target_url}",next_backend_target.address);
     let result = 
         proxy(
             &req_host_name,
-            is_https,
+            next_backend_target.https.unwrap_or_default(),
             state.clone(),
             req,
             &target_url,
             crate::http_proxy::Target::Remote(remote_target_config.clone()),
             client_ip,
-            client_tls_config
-            
+            client,
+            h2_client,
+            &target_url,
+            next_backend_target.https.unwrap_or_default(),
+            next_backend_target
         ).await;
 
     map_result(&target_url,result).await
@@ -354,49 +424,49 @@ async fn perform_remote_forwarding(
 async fn map_result(target_url:&str,result:Result<crate::http_proxy::ProxyCallResult,crate::http_proxy::ProxyError>) -> Result<EpicResponse,CustomError> {
     
     match result {
-       Ok(super::ProxyCallResult::EpicResponse(epic_response)) => {
+        Ok(super::ProxyCallResult::EpicResponse(epic_response)) => {
             return Ok(epic_response)
-       }
-       Ok(crate::http_proxy::ProxyCallResult::NormalResponse(response)) => {
+        }
+        Ok(crate::http_proxy::ProxyCallResult::NormalResponse(response)) => {
                 return create_simple_response_from_incoming(response).await;
         }
         Err(crate::http_proxy::ProxyError::LegacyError(error)) => {
-            tracing::info!("HyperLegacyError - Failed to call {}: {error:?}", &target_url);
+            tracing::debug!("HyperLegacyError - Failed to call {}: {error:?}", &target_url);
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(create_epic_string_full_body(&format!("HyperLegacyError - {error:?}")))
                 .expect("body building always works"))
         },
         Err(crate::http_proxy::ProxyError::HyperError(error)) => {
-            tracing::info!("HyperError - Failed to call {}: {error:?}", &target_url);
+            tracing::debug!("HyperError - Failed to call {}: {error:?}", &target_url);
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(create_epic_string_full_body(&format!("HyperError - {error:?}")))
                 .expect("body building always works"))
         },
         Err(crate::http_proxy::ProxyError::OddBoxError(error)) => {
-            tracing::info!("OddBoxError - Failed to call {}: {error:?}", &target_url);
+            tracing::debug!("OddBoxError - Failed to call {}: {error:?}", &target_url);
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(create_epic_string_full_body(&format!("ODD-BOX-ERROR: {error:?}")))
                 .expect("body building always works"))
         },
         Err(crate::http_proxy::ProxyError::ForwardHeaderError) => {
-            tracing::info!("ForwardHeaderError - Failed to call {}", &target_url);
+            tracing::debug!("ForwardHeaderError - Failed to call {}", &target_url);
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(create_epic_string_full_body("ForwardHeaderError"))
                 .expect("body building always works"))
         },
         Err(crate::http_proxy::ProxyError::InvalidUri(error)) => {
-            tracing::info!("InvalidUri - Failed to call {}: {error:?}", &target_url);
+            tracing::debug!("InvalidUri - Failed to call {}: {error:?}", &target_url);
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(create_epic_string_full_body(&format!("InvalidUri: {error:?}")))
                 .expect("body building always works"))
         }, 
         Err(crate::http_proxy::ProxyError::UpgradeError(error)) => {
-            tracing::info!("UpgradeError - Failed to call {}: {error:?}", &target_url);
+            tracing::debug!("UpgradeError - Failed to call {}: {error:?}", &target_url);
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(create_epic_string_full_body(&format!("UpgradeError: {error:?}")))
@@ -406,6 +476,10 @@ async fn map_result(target_url:&str,result:Result<crate::http_proxy::ProxyCallRe
 }
 
 
+// TODO:
+//        make this it opt-in with cfg v2.
+//        make it true when coming from legacy or v1 to have backward compatibility
+//        (we have admin-api for this now and so it is bad for performance to use this instead)
 async fn intercept_local_commands(
     req_host_name:&str,
     params:&std::collections::HashMap<String, String>,
@@ -428,13 +502,13 @@ async fn intercept_local_commands(
 
         let html = r#"
             <center>
-                <h2>All sites stopped by your command</h2>
+                <h2>Stop signal received.</h2>
                 
                 <form action="/START">
                     <input type="submit" value="Resume" />
                 </form>            
 
-                <p>The proxy will also resume if you visit any of the sites</p>
+                <p>The proxy will also resume if you visit any of the stopped sites</p>
             </center>
         "#;
         return Some(EpicResponse::new(create_epic_string_full_body(html)))
@@ -457,7 +531,7 @@ async fn intercept_local_commands(
 
         let html = r#"
             <center>
-                <h2>All sites resumed</h2>
+                <h2>Start signal received.</h2>
                 
                 <form action="/STOP">
                     <input type="submit" value="Stop" />
@@ -471,6 +545,8 @@ async fn intercept_local_commands(
     None
 }
 
+// TODO - package these mjs/jsons with the binary if we want to keep it as is
+// otherwise get rid of the deps
 fn please_wait_response() -> String {
     r#"
         <!DOCTYPE html>

@@ -1,6 +1,6 @@
 
 #[derive(Debug, PartialEq, Eq,Clone)]
-pub (crate) enum TlsExtensionType {
+pub enum TlsExtensionType {
     ServerName, // 0x0000
     MaxFragmentLength, // 0x0001
     StatusRequest, // 0x0005
@@ -18,7 +18,7 @@ pub (crate) enum TlsExtensionType {
 }
 
 #[derive(Debug)]
-pub (crate) struct TlsExtension {
+pub struct TlsExtension {
     pub typ : TlsExtensionType,
     pub data : Vec<u8>
 }
@@ -75,7 +75,7 @@ impl Into<u16> for TlsExtensionType {
 
 
 #[derive(Debug)]
-pub (crate) enum SniParserError {
+pub enum SniParserError {
     NoSniFound,
     InvalidExtensionFormat,
     Utf8Error(#[allow(dead_code)]std::str::Utf8Error),

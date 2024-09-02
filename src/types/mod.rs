@@ -1,4 +1,5 @@
-pub (crate) mod custom_error;
-pub (crate) mod statistics;
-pub (crate) mod app_state;
-pub (crate) mod proxy_state;
+pub mod custom_error;
+pub mod statistics;
+pub mod app_state;
+pub mod proxy_state;
+pub mod tui_state;

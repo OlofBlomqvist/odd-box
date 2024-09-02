@@ -1,0 +1,77 @@
+version = "V2"
+alpn = false
+http_port = 8080
+admin_api_port = 1234
+ip = "127.0.0.1"
+tls_port = 4343
+auto_start = false
+root_dir = "~"
+log_level = "warn"
+port_range_start = 4200
+default_log_format = "standard"
+env_vars = [
+	{ key = "GRPC_TRACE", value = "http,http1,http_keepalive,http2_stream_state" },
+	{ key = "GRPC_VERBOSITY", value = "DEBUG" },
+]
+
+[[remote_target]]
+host_name = "caddy-lb-terminated.localtest.me"
+disable_tcp_tunnel_mode = true
+backends = [
+	{ https = false, address="127.0.0.1", port=9999, hints = ["NOH2"] },
+  { https = false, address="127.0.0.1", port=8888, hints = ["NOH2"] }
+  
+]
+
+[[hosted_process]]
+host_name = "caddy-proc-terminated.localtest.me"
+disable_tcp_tunnel_mode = true
+hints = ["NOH2"]
+auto_start = true
+port = 8888
+dir = "$cfg_dir"
+bin = "/nix/store/aq5r61lmr9six0lyi6xikxwvnyp16dfy-user-environment/bin/caddy"
+args = [
+  "run",
+  "--config",
+  "./CaddyTest2",
+  "--adapter",
+  "caddyfile"
+]
+
+[[remote_target]]
+host_name = "caddy-lb-tcp.localtest.me"
+disable_tcp_tunnel_mode = false
+hints = ["NOH2"]
+backends = [
+	{ https = false, address="127.0.0.1", port=9999 },
+  { https = false, address="127.0.0.1", port=8888 }
+  
+]
+
+[[hosted_process]]
+host_name = "caddy-proc-tcp.localtest.me"
+disable_tcp_tunnel_mode = false
+hints = ["NOH2"]
+auto_start = true
+port = 9999
+dir = "$cfg_dir"
+bin = "/nix/store/aq5r61lmr9six0lyi6xikxwvnyp16dfy-user-environment/bin/caddy"
+args = [
+  "run",
+  "--config",
+  "./CaddyTest1",
+  "--adapter",
+  "caddyfile"
+]
+
+
+
+[[remote_target]]
+host_name = "lobsters.localtest.me"
+disable_tcp_tunnel_mode = true
+backends = [
+	{ https = true, address="lobste.rs", port=443 },
+	# { https = true, address="lobsters.dev", port=443 },
+  { https = false, address="nnerastoundinglushmorning.neverssl.com", port=80 }
+]

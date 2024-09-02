@@ -2,7 +2,7 @@ use hpack::Decoder;
 
 #[allow(dead_code)]
 // https://datatracker.ietf.org/doc/html/rfc9113
-pub (crate) fn find_http2_authority(bytes: &[u8]) -> Option<String> {
+pub fn find_http2_authority(bytes: &[u8]) -> Option<String> {
     let mut current = 0;
     while current + 9 <= bytes.len() {
         let length =
@@ -59,7 +59,7 @@ fn decompress_hpack(fragment: &[u8]) -> Result<Vec<(String, String)>, String> {
 }
 
 // https://datatracker.ietf.org/doc/html/rfc9113
-pub (crate) fn is_valid_http2_request(bytes: &[u8]) -> bool {
+pub fn is_valid_http2_request(bytes: &[u8]) -> bool {
     // HTTP/2 client connection preface
     let http2_preface = b"PRI * HTTP/2.0"; // ...\r\n\r\nSM\r\n\r\n
     // Check if the bytes start with the HTTP/2 preface

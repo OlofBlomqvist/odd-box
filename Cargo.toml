@@ -1,7 +1,7 @@
 [package]
 name = "odd-box"
 description = "dead simple reverse proxy server"
-version = "0.0.14"
+version = "0.1.0"
 edition = "2021"
 authors = ["Olof Blomqvist <olof@twnet.se>"]
 repository = "https://github.com/OlofBlomqvist/odd-box"
@@ -9,65 +9,44 @@ license-file = "LICENSE"
 
 [dependencies]
 dirs = "5.0.1"
-futures-util = "0.3.28"
-hyper = { version = "1.1.0" , features=["http2","client","server"] }
-hyper-util = { version = "0.1.1", features = ["full"] }
+futures-util = "0.3.30"
+hyper = { version = "1.4.1" , features=["http2","client","server"] }
+hyper-util = { version = "0.1.7", features = ["full"] }
 regex = "1.9.5"
 serde = { version = "1.0.88", features = ["derive"] }
-tokio = { version = "1.32.0", features = ["full"] }
-tokio-tungstenite = { version="0.21.0" , features = ["__rustls-tls"] }
+tokio = { version = "1.39.3", features = ["full"] }
+tokio-tungstenite = { version="0.23.1" , features = ["__rustls-tls"] }
 toml = "0.8.4"
 tracing = "0.1.37"
 tracing-subscriber = { version="0.3.18", features=[ "env-filter","std","fmt","time"] }
 url = "2.4.1"
-
-hyper-trust-dns = { version = "0.5.0", features = [
-  "rustls-http2",
-  "dnssec-ring",
-  "dns-over-https-rustls",
-  "rustls-webpki"
-] }
-
 lazy_static = "1.4.0"
-unicase = "2.7.0"
-hyper-tls = "0.6.0"
 clap = { version="4.4.7", features=["derive"]}
-rustls = "0.22.2"
-tokio-rustls = "0.25.0"
+rustls = "0.23.12"
+tokio-rustls = "0.26.0"
 rustls-pemfile = "2.0.0"
 rcgen = "0.13.1"
 socket2 = "0.5.5"
-hyper-tungstenite = "0.13.0"
-
-ratatui = "0.26.2"
-#ratatui = { git = "https://github.com/ratatui-org/ratatui" }
-crossterm = { version = "0.27.0"  }
+hyper-tungstenite = "0.14.0"
+ratatui = "0.28.1"
+crossterm = { version = "0.28.1"  }
 chrono = "0.4.31"
-
 time = {version="0.3.30",features=["macros","formatting","parsing"]}
 reqwest = { version = "0.12.4", features = ["json"] }
 serde_json = "1.0.111"
-self_update = "0.40.0"
-bytes = "1.5.0"
+self_update = "0.41.0"
+bytes = "1.7.1"
 http-body-util = "0.1.0"
-#active-win-pos-rs = "0.8.3"
-h2 = "0.4.2"
-hyper-rustls = { version = "0.26.0", features = ["http2"] }
-hyper-hickory = "0.7.0"
-http-body = "1.0.0"
-tokio-stream = "0.1.14"
-
+hyper-rustls = { version = "0.27.2", features = ["http2"] }
+http-body = "1.0.1"
+tokio-stream = "0.1.15"
+ctrlc = "3.2"
 hpack = { version = "0.3.0"  }
 webpki = { version = "0.22.4"  }
 anyhow = "1.0.79"
 uuid = { version = "1.7.0", features = ["v4"] }
-tungstenite = "0.21.0"
-tokio-util = "0.7.10"
-toml_edit = "0.22.6"
-serde_yaml = "0.9.32"
-ahash = "0.8.7"
+tungstenite = "0.24.0"
 dark-light = "1.0.0"
-#console-subscriber = "0.2.0"
 
 # === MANAGEMENT API ============================================
 axum = { version="0.7.5",features=["ws"] }
@@ -77,13 +56,14 @@ utoipa-rapidoc = { version = "4.0.0", features = ["axum"] }
 utoipa-redoc = { version = "4.0.0", features = ["axum"] }
 utoipauto = "0.1.10"
 tower-http = { version = "0.5.2" , features = ["fs","cors","trace"]}
-async-trait = "0.1.79"
+async-trait = "0.1.81"
 axum-extra = { version = "0.9.3", features = ["typed-header"] }
+memchr = "2.7.4"
+dashmap = "6.0.1"
 # ===============================================================
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.52.0", features = ["Win32","Win32_Foundation","Win32_System","Win32_System_Console"] }
-
+windows = { version = "0.58.0", features = ["Win32","Win32_Foundation","Win32_System","Win32_System_Console"] }
 
 
 
@@ -91,6 +71,6 @@ windows = { version = "0.52.0", features = ["Win32","Win32_Foundation","Win32_Sy
 opt-level = 'z'     # Optimize for size
 #lto = true          # Enable link-time optimization
 #codegen-units = 1   # Reduce number of codegen units to increase optimizations
-# panic = 'abort'     # Abort on panic
+#panic = 'abort'     # Abort on panic
 #strip = true        # Strip symbols from binary*
-#debug = true
+#debug = false

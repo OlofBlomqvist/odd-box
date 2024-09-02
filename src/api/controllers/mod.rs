@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{http::StatusCode, response::{IntoResponse, Response}, Json, Router};
 use serde::{Deserialize, Serialize};
 use crate::global_state::GlobalState;
@@ -5,7 +7,7 @@ use crate::global_state::GlobalState;
 pub mod sites;
 pub mod settings;
 
-pub (crate) async fn routes(state:GlobalState) -> Router {
+pub async fn routes(state:Arc<GlobalState>) -> Router {
 
     let sites = Router::new()
         .route("/sites", axum::routing::post(sites::update_handler)).with_state(state.clone())
