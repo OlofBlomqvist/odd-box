@@ -14,7 +14,6 @@ use crate::logging::LogMsg;
 use crate::types::app_state::*;
 use crate::types::tui_state::{Page, TuiState};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use crate::http_proxy::ProcMessage;
 
 use serde::ser::SerializeStruct;
@@ -532,7 +531,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
 
 
     let size = f.area();
-    
+
     if size.height < 10 || size.width < 10 {
         return
     }
