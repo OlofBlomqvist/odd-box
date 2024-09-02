@@ -15,6 +15,6 @@ backends = [
 host_name = "py.localtest.me"
 dir = "$cfg_dir"
 bin = "/usr/bin/python3"
-args = ["-m", "http.server", "8012"]
+args = ["-m", "http.server", "$port"]
 port = 8012
 env_vars = []

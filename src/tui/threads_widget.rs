@@ -17,16 +17,15 @@ pub fn draw(
 ) {
 
 
-    let headers = [ "Site", "Source", "Target", "Description"];
+    let headers = [ "TaskId", "Pid", "HostName", "Port"];
     
-    let rows : Vec<Vec<String>> =  crate::PROC_THREAD_MAP.lock().unwrap().iter().map(|(thread_id, _thread_info)| {
-        let typ = "some thread";
-        let description = format!("{}",typ);
+    let rows : Vec<Vec<String>> =  crate::PROC_THREAD_MAP.iter().map(|guard| {
+        let (thread_id, thread_info) = guard.pair();
         vec![
-            format!("{:?}",thread_id),
-            "something else".to_string(), 
-            "more stuff".to_string(), 
-            description
+            format!("{}",thread_id.id),
+            format!("{:?}",thread_info.pid),
+            format!("{}",thread_info.config.host_name), 
+            format!("{:?}",thread_info.config.active_port)
         ]
     }).collect();
 

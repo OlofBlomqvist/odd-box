@@ -362,10 +362,6 @@ async fn handle_http_request(
         tracing::warn!("Received request that does not match any known target: {:?}", req_host_name);
         let body_str = format!("Sorry, I don't know how to proxy this request.. {:?}", req);
         
-
-        // TODO --- even this seems to cause tcp_closing issues at extreme load ..
-
-
         let mut response = EpicResponse::new(create_epic_string_full_body(&body_str));
         *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
         Ok(response)
@@ -534,13 +530,13 @@ async fn intercept_local_commands(
 
         let html = r#"
             <center>
-                <h2>All sites stopped by your command</h2>
+                <h2>Stop signal received.</h2>
                 
                 <form action="/START">
                     <input type="submit" value="Resume" />
                 </form>            
 
-                <p>The proxy will also resume if you visit any of the sites</p>
+                <p>The proxy will also resume if you visit any of the stopped sites</p>
             </center>
         "#;
         return Some(EpicResponse::new(create_epic_string_full_body(html)))
@@ -563,7 +559,7 @@ async fn intercept_local_commands(
 
         let html = r#"
             <center>
-                <h2>All sites resumed</h2>
+                <h2>Start signal received.</h2>
                 
                 <form action="/STOP">
                     <input type="submit" value="Stop" />

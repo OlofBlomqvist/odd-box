@@ -17,11 +17,13 @@ pub async fn host(
 ) {
 
     let my_arc = std::sync::Arc::new(AtomicBool::new(true));
-    {
-        let thread_map_guard = crate::PROC_THREAD_MAP.clone();
-        let mut thread_map = thread_map_guard.lock().unwrap();
-        thread_map.insert(resolved_proc.proc_id.clone(), std::sync::Arc::<AtomicBool>::downgrade(&my_arc));
-    }
+
+    crate::PROC_THREAD_MAP.insert(resolved_proc.proc_id.clone(), crate::ProcInfo { 
+        config: resolved_proc.clone(),
+        pid: None,
+        liveness_ptr: std::sync::Arc::<AtomicBool>::downgrade(&my_arc) 
+    });
+
 
 
     // if auto_start is not set in the config, we assume that user wants to start site automatically like before
@@ -54,6 +56,19 @@ pub async fn host(
     let mut selected_port: Option<u16> = None;
 
     loop {
+
+        {
+            let entry = crate::PROC_THREAD_MAP.get_mut(&resolved_proc.proc_id);
+            match entry {
+                Some(mut item) => {
+                    item.pid = None;
+                },
+                None => {
+                    tracing::warn!("Something has gone very wrong! A thread is missing from the global thread map.. this is a bug in odd-box.")
+                }
+            }
+        }
+
         tokio::time::sleep(Duration::from_millis(200)).await;
         let mut time_to_sleep_ms_after_loop = 500;
         // scope for clarity
@@ -134,6 +149,7 @@ pub async fn host(
                 
                 if let Ok(p) = guard.set_active_port(&mut resolved_proc) {
                     selected_port = Some(p);
+                    resolved_proc.active_port = selected_port;
                 }
                 
                 if selected_port.is_none() {
@@ -226,7 +242,19 @@ pub async fn host(
 
                     
                     state.app_state.site_status_map.insert(resolved_proc.host_name.clone(), ProcState::Running);
-                    
+                    {
+                        let entry = crate::PROC_THREAD_MAP.get_mut(&resolved_proc.proc_id);
+                        match entry {
+                            Some(mut item) => {
+                                item.pid = Some(child.id().to_string());
+                                // this is the only thing that is supposed to change during the lifetime of a proc loop
+                                item.config.active_port = resolved_proc.active_port;
+                            },
+                            None => {
+                                tracing::warn!("Something has gone very wrong! A thread is missing from the global thread map.. this is a bug in odd-box.")
+                            }
+                        }
+                    }
 
                     //let stdin = child.stdin.take().expect("Failed to capture stdin");
 

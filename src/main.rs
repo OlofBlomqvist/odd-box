@@ -45,8 +45,15 @@ impl ProcId {
     }
 }
 
+#[derive(Debug)]
+pub struct ProcInfo {
+    pub liveness_ptr : Weak<AtomicBool>,
+    pub config : FullyResolvedInProcessSiteConfig,
+    pub pid : Option<String>
+}
+
 lazy_static! {
-    static ref PROC_THREAD_MAP: Arc<Mutex<HashMap<ProcId, Weak<AtomicBool>>>> = Arc::new(Mutex::new(HashMap::new()));
+    static ref PROC_THREAD_MAP: Arc<DashMap<ProcId, ProcInfo>> = Arc::new(DashMap::new());
 }
 
 static REQUEST_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -298,8 +305,7 @@ pub fn initialize_panic_handler() {
 
 
 fn thread_cleaner() {
-    let mut map = PROC_THREAD_MAP.lock().unwrap();
-    map.retain(|_k,v| v.upgrade().is_some());
+    PROC_THREAD_MAP.retain(|_k,v| v.liveness_ptr.upgrade().is_some());
 }
 
 
