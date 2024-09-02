@@ -176,6 +176,9 @@ impl ConfigWrapper {
 
     pub fn is_valid(&self) -> anyhow::Result<()> {
 
+        // TODO:
+        // - check for invalid hint combinations
+
         if self.env_vars.iter().any(|x| x.key.eq_ignore_ascii_case("port")) {
             anyhow::bail!("Invalid configuration. You cannot use 'port' as a global environment variable");
         }

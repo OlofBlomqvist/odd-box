@@ -205,9 +205,6 @@ pub async fn host(
         
             state.app_state.site_status_map.insert(resolved_proc.host_name.clone(), ProcState::Starting);
         
-
-
-
             const _CREATE_NO_WINDOW: u32 = 0x08000000;
             
             #[cfg(target_os = "windows")] 
