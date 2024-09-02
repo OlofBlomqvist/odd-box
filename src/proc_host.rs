@@ -217,7 +217,7 @@ pub async fn host(
             use std::os::windows::process::CommandExt;
             
             #[cfg(target_os = "windows")] 
-            let cmdx = Command::new(bin_path)
+            let cmd = Command::new(bin_path)
                 .args(pre_resolved_args)
                 .envs(&process_specific_environment_variables)
                 .current_dir(&workdir)
