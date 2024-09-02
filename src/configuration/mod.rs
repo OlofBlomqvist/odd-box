@@ -176,46 +176,38 @@ impl ConfigWrapper {
 
     pub fn is_valid(&self) -> anyhow::Result<()> {
 
-        for x in self.env_vars.iter() {
-            if x.key.to_lowercase().trim() == "port" {
-                anyhow::bail!(format!("Invalid configuration. You cannot use 'port' as a global environment variable"));
+        if self.env_vars.iter().any(|x| x.key.eq_ignore_ascii_case("port")) {
+            anyhow::bail!("Invalid configuration. You cannot use 'port' as a global environment variable");
+        }
+    
+        let mut host_names = std::collections::HashMap::new();
+        let mut ports = std::collections::HashMap::new();
+    
+        for process in self.hosted_process.clone().unwrap_or_default() {
+  
+            host_names
+                .entry(process.host_name.clone())
+                .and_modify(|count| *count += 1)
+                .or_insert(1);
+    
+            if let Some(port) = process.port {
+                ports
+                    .entry(port)
+                    .or_insert_with(Vec::new)
+                    .push(process.host_name.clone());
             }
-        };
-        
-        // ALL HOST NAMES ARE UNIQUE
-        let mut all_host_names: Vec<&str> = vec![
-            self.remote_target.as_ref().and_then(|p|Some(p.iter().map(|x|x.host_name.as_str()).collect::<Vec<&str>>())).unwrap_or_default(), 
-            self.hosted_process.as_ref().and_then(|p|Some(p.iter().map(|x|x.host_name.as_str()).collect::<Vec<&str>>())).unwrap_or_default()      
-
-        ].concat();
-        all_host_names.sort();
-        let all_count = all_host_names.len();
-        all_host_names.dedup();
-        let unique_count = all_host_names.len();
-        if all_count != unique_count {
-            anyhow::bail!(format!("You have more than one hosted process configured with the same host_name... not allowed."))
-        }
-
-        // ALL HOSTED SERVICES USE DIFFERENT PORTS
-        let mut all_ports = self.hosted_process.clone().unwrap_or_default().iter().filter_map(|x|x.port).collect::<Vec<u16>>();
-        all_ports.sort();
-        let all_count = all_ports.len();
-        all_ports.dedup();
-        let unique_count = all_ports.len();
-        if all_count != unique_count {
-            anyhow::bail!(format!("You have more than one hosted process configured with the same port... not allowed."))
-        }
-
-        // NO HOSTED PROCESS USES AN ENV VAR FOR PORT THAT DIFFERS FROM THE PORT SPECIFIED IN ITS CONFIG
-        // TODO: this is just horrible
-        for x in self.hosted_process.clone().unwrap_or_default() {
-            if let Some(port) = x.port {
-                if let Some(env_vars) = x.env_vars {
+    
+            if let Some(port) = process.port {
+                if let Some(env_vars) = process.env_vars {
                     for env_var in env_vars {
-                        if env_var.key.to_lowercase().trim() == "port" {
-                            if let Ok(parsed_port) = env_var.value.parse::<u16>() {
-                                if parsed_port != port {
-                                    anyhow::bail!(format!("Environment variable PORT for {} does not match the port specified in the configuration.\nIt is recommended you do not specify the PORT environment variable explicitly but instead rely on the port setting -\nit will automatically inject the port variable to the process-local context.",x.host_name))
+                        if env_var.key.eq_ignore_ascii_case("port") {
+                            if let Ok(env_port) = env_var.value.parse::<u16>() {
+                                if env_port != port {
+                                    anyhow::bail!(format!(
+                                        "Environment variable PORT for '{}' does not match the port specified in the configuration.\n\
+                                        It is recommended to rely on the port setting - it will automatically inject the port variable to the process-local context.",
+                                        process.host_name
+                                    ));
                                 }
                             }
                         }
@@ -223,11 +215,39 @@ impl ConfigWrapper {
                 }
             }
         }
-
+    
+        let duplicate_host_names: Vec<String> = host_names
+            .into_iter()
+            .filter_map(|(name, count)| if count > 1 { Some(name) } else { None })
+            .collect();
+    
+        if !duplicate_host_names.is_empty() {
+            anyhow::bail!(format!(
+                "Duplicate host names found: {}",
+                duplicate_host_names.join(", ")
+            ));
+        }
+    
+        let duplicate_ports: Vec<(u16, Vec<String>)> = ports
+            .into_iter()
+            .filter(|(_, sites)| sites.len() > 1)
+            .collect();
+    
+        if !duplicate_ports.is_empty() {
+            let conflict_details: Vec<String> = duplicate_ports
+                .into_iter()
+                .map(|(port, sites)| format!("Port {}: [{}]", port, sites.join(", ")))
+                .collect();
+    
+            anyhow::bail!(format!(
+                "Duplicate ports found with conflicting sites: {}",
+                conflict_details.join("; ")
+            ));
+        }
+    
         Ok(())
-
     }
-
+    
 
     pub fn get_parent(&mut self) -> anyhow::Result<String> {
         // todo - use cache and clear on path change
