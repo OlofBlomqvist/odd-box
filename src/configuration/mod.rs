@@ -387,7 +387,6 @@ impl ConfigWrapper {
     }
 
 
-    // TODO - this does not work correctly. it doesnt use the PORT from procs config but always auto.
     pub fn set_active_port(&mut self, resolved_proc:&mut FullyResolvedInProcessSiteConfig) -> anyhow::Result<u16> {
       
     
@@ -464,6 +463,7 @@ impl ConfigWrapper {
     // it is done this way in order to avoid changing the global state of the configuration in to the resolved state
     // since that would then be saved to disk and we would lose the original configuration with dynamic variables
     // making configuration files less portable.
+    // todo - cache resolved configurations by hash?
     pub fn resolve_process_configuration(&mut self,proc:&crate::InProcessSiteConfig) -> anyhow::Result<crate::FullyResolvedInProcessSiteConfig> {
 
         let mut resolved_proc = crate::FullyResolvedInProcessSiteConfig {
