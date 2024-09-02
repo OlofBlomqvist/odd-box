@@ -4,6 +4,7 @@ use ratatui::style::{Color, Modifier, Style };
 use ratatui::text::Line;
 use ratatui::widgets::{BorderType, List, ListItem };
 use tokio::task;
+use tracing::Level;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use std::io::Stdout;
@@ -171,6 +172,27 @@ pub async fn run(
                 
                     match evt {
                         Event::Key(KeyEvent { 
+                            code: crossterm::event::KeyCode::Char(' '),
+                            modifiers: KeyModifiers::NONE,
+                            kind: _, 
+                            state:_ 
+                        }) if tui_state.current_page==Page::Logs => {
+                            
+                            let mut buf = log_buffer.lock().expect("must always be able to lock log buffer");
+                            buf.pause = !buf.pause;
+                            let paused = buf.pause;
+                            buf.logs.push_back(LogMsg {
+                                msg: if paused { 
+                                    format!("LOGGING PAUSED! PRESS SPACE TO RESUME.") 
+                                } else {
+                                    format!("LOGGING RESUMED! PRESS SPACE TO PAUSE.") 
+                                },
+                                lvl: Level::WARN,
+                                src: String::from("odd-box tracing"),
+                                thread: None,
+                            });
+                        }
+                        Event::Key(KeyEvent { 
                             code: crossterm::event::KeyCode::Char('c'),
                             modifiers: KeyModifiers::CONTROL,
                             kind: _, 
@@ -309,6 +331,7 @@ pub async fn run(
                                             KeyCode::Enter => {
                                                 tui_state.log_tab_stage.scroll_state.vertical_scroll = None;
                                                 let mut buf = log_buffer.lock().expect("must always be able to lock log buffer");
+                                                // immediate effect instead of waiting for next log item
                                                 match buf.limit {
                                                     Some(x) => {
                                                         while buf.logs.len() > x {
@@ -764,6 +787,9 @@ fn draw_ui<B: ratatui::backend::Backend>(
         help_bar_text.push(ratatui::text::Span::raw("| tab: toggle page"));
     }
 
+    if tui_state.current_page == Page::Logs {
+        help_bar_text.push(ratatui::text::Span::raw("| space: un/pause logging"));
+    }
 
     // // DEBUG
     // help_bar_text.push(ratatui::text::Span::raw(format!("| DBG: {}", 

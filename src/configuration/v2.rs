@@ -375,8 +375,9 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
                 formatted_toml.push(format!("bin = {:?}", process.bin));
 
                 if let Some(hint) = &process.hints {
-                    formatted_toml.push("h2_hints = [".to_string());
+                    formatted_toml.push("hints = [".to_string());
                     let joint = hint.iter().map(|h| format!("{:?}", h)).collect::<Vec<String>>().join(", ");
+                    formatted_toml.push(joint);
                     formatted_toml.push("]".to_string());
                 }
                 

@@ -103,7 +103,8 @@ impl<S: Subscriber> tracing_subscriber::Layer<S> for NonTuiLoggerLayer {
 
 pub struct SharedLogBuffer {
     pub logs: VecDeque<LogMsg>,
-    pub limit : Option<usize>
+    pub limit : Option<usize>,
+    pub pause : bool
 }
 
 impl SharedLogBuffer {
@@ -111,12 +112,15 @@ impl SharedLogBuffer {
     pub fn new() -> Self {
         SharedLogBuffer {
             logs: VecDeque::new(),
-            limit: Some(500)
+            limit: Some(500),
+            pause: false
         }
     }
 
     fn push(&mut self, message: LogMsg) {
-
+        if self.pause {
+            return
+        }
         self.logs.push_back(message);
         match self.limit {
             Some(x) => {
@@ -124,7 +128,12 @@ impl SharedLogBuffer {
                     self.logs.pop_front();
                 }
             },
-            None => {},
+            None => {
+                // hard max even if user is scrolled up in the tui
+                while self.logs.len() > 1000 {
+                    self.logs.pop_front();
+                }
+            },
         }
         
     }
