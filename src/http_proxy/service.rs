@@ -486,8 +486,12 @@ async fn intercept_local_commands(
     req_path:&str,
     tx:Arc<tokio::sync::broadcast::Sender<ProcMessage>>
 ) -> Option<EpicResponse> {
+
+    if req_host_name != "127.0.0.1" && req_host_name != "localhost" {
+        return None
+    }
     
-    if (req_host_name == "127.0.0.1"||req_host_name == "localhost") && req_path.eq("/STOP") {
+    if req_path.eq("/STOP") {
         let target : Option<&String> = params.get("proc");
         
         let s = target.unwrap_or(&String::from("all")).clone();
@@ -514,7 +518,7 @@ async fn intercept_local_commands(
         return Some(EpicResponse::new(create_epic_string_full_body(html)))
     } 
     
-    if (req_host_name == "127.0.0.1"||req_host_name == "localhost") && req_path.eq("/START") {
+    if req_path.eq("/START") {
         
 
         let target : Option<&String> = params.get("proc");
