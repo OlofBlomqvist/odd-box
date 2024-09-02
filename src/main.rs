@@ -235,7 +235,10 @@ struct Args {
     update: bool,
 
     #[arg(long)]
-    generate_example_cfg : bool
+    generate_example_cfg : bool,
+
+    #[arg(long)]
+    upgrade_config: bool
 }
 
 
@@ -467,6 +470,8 @@ async fn inner(
     
     config.is_valid()?;
 
+
+
     // some times we are invoked with specific sites to run
     if let Some(sites) = &args.enable_site {
         if config.hosted_process.as_ref().map_or(true, Vec::is_empty) {
@@ -544,6 +549,11 @@ async fn inner(
    
 
     config.init(&cfg_path)?;
+    
+    if args.upgrade_config {
+        config.write_to_disk()?;
+    }
+    
 
     let srv_port : u16 = if let Some(p) = args.port { p } else { config.http_port.unwrap_or(8080) } ;
     let srv_tls_port : u16 = if let Some(p) = args.tls_port { p } else { config.tls_port.unwrap_or(4343) } ;
