@@ -90,13 +90,6 @@ pub async fn run(
     let dark_style = dark_theme();
     let light_style = light_theme();
 
-    let mut theme = match dark_light::detect() {
-        dark_light::Mode::Dark => Theme::Dark(dark_style),
-        dark_light::Mode::Light => Theme::Light(light_style),
-        dark_light::Mode::Default => Theme::Dark(dark_style),
-    };
-
-    let mut count = 0;
 
     let disabled_items : Vec<String> =  global_state.config.read().await.hosted_process.clone().unwrap_or_default().iter_mut().filter_map( |x| 
       if x.auto_start.unwrap_or_default() { 
@@ -113,12 +106,31 @@ pub async fn run(
         let state = global_state.clone();
         let tx = tx.clone();
         task::spawn(async move {
+
+
+            let mut theme = match dark_light::detect() {
+                dark_light::Mode::Dark => Theme::Dark(dark_style),
+                dark_light::Mode::Light => Theme::Light(light_style),
+                dark_light::Mode::Default => Theme::Dark(dark_style),
+            };
+
+            let mut count = 0;
             
             let tx = tx.clone();
            
             let mut tui_state = crate::types::tui_state::TuiState::new();
 
             loop {
+                
+                if count > 100 {
+                    theme = match dark_light::detect() {
+                        dark_light::Mode::Dark => Theme::Dark(dark_style),
+                        dark_light::Mode::Light => Theme::Light(light_style),
+                        dark_light::Mode::Default => Theme::Dark(dark_style)
+                    };
+                    count = 0;
+                
+                }
                 
                 // KEEP LOCK SHORT TO AVOID DEADLOCK
                 {
@@ -128,7 +140,8 @@ pub async fn run(
                             f,
                             global_state.clone(),
                             &mut tui_state,
-                            &log_buffer,&theme
+                            &log_buffer,
+                            &theme
                         )
                     )?;
                         
@@ -147,15 +160,6 @@ pub async fn run(
                 }
             
 
-                if count > 100 {
-                    theme = match dark_light::detect() {
-                        dark_light::Mode::Dark => Theme::Dark(dark_style),
-                        dark_light::Mode::Light => Theme::Light(light_style),
-                        dark_light::Mode::Default => Theme::Dark(dark_style),
-                    };
-                    count = 0;
-                
-                }
             
                 if let Ok(true) = event::poll(std::time::Duration::from_millis(100)) {
                     
@@ -505,7 +509,7 @@ fn light_theme() -> Style {
     Style::default()
         .fg(Color::Black) // Text color
         //.bg(Color::White) // Background color
-        .add_modifier(Modifier::ITALIC) // Text modifier
+        .add_modifier(Modifier::BOLD) // Text modifier
 }
 
 #[derive(Clone)]
@@ -513,21 +517,22 @@ pub enum Theme {
     Light(Style),
     Dark(Style)
 }
+impl Theme {
+    fn inner_cloned(&self) -> Style {
+        match self {
+            Theme::Light(x) => *x,
+            Theme::Dark(x) => *x,
+        }
+    }
+}
 
 fn draw_ui<B: ratatui::backend::Backend>(
     f: &mut ratatui::Frame, 
     global_state: Arc<GlobalState>,
     tui_state: &mut TuiState,
     log_buffer: &Arc<Mutex<SharedLogBuffer>>, 
-    theme: &Theme
+    theme: &Theme,
 ) {
-
-    
-    let is_dark_theme = matches!(&theme,Theme::Dark(_));
-    let theme_style = match theme {
-        Theme::Light(s) => s,
-        Theme::Dark(s) => s
-    };
 
 
     let size = f.area();
@@ -566,7 +571,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
 
     // let totrows = app_state.traffic_tab_state.total_rows;
     // let traheight = size.height;
-    
+    let is_dark_theme = matches!(&theme,Theme::Dark(_));
     let tabs =  ratatui::widgets::Tabs::new(
         vec![
             "[1] Logs", 
@@ -601,7 +606,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
     let frame = 
         Block::new()
         .border_style(
-            if matches!(&theme,Theme::Dark(_)) {
+            if is_dark_theme {
                 Style::new().fg(Color::DarkGray)
             } else {
                 Style::new().fg(Color::DarkGray)
@@ -642,7 +647,6 @@ fn draw_ui<B: ratatui::backend::Backend>(
                     (a.to_string(),b.to_owned())
                 }).collect();
 
-            // todo -- no clone
             procly.sort_by_key(|k| k.0.clone());
             
             let start_idx = col_idx * sites_area_height as usize;
@@ -655,7 +659,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
                     width: col.width,
                     height: 1,  // Assuming each ListItem is one line high
                 };
-
+                
                 site_rects.push((item_rect,id.to_string()));
 
                 let mut s = match state {
@@ -668,9 +672,9 @@ fn draw_ui<B: ratatui::backend::Backend>(
                     ),
                     &ProcState::Faulty => Style::default().fg(
                         if is_dark_theme {
-                                Color::Rgb(200, 150, 150)
+                                Color::LightMagenta
                             } else {
-                                Color::Rgb(200, 150, 150)
+                                Color::Black
                             }
                     ),
                     &ProcState::Starting => Style::default().fg(
@@ -703,26 +707,27 @@ fn draw_ui<B: ratatui::backend::Backend>(
                     ),
                 };
 
-                let mut id_style = theme_style.clone();
+                let mut id_style = theme.inner_cloned();
                 if let Some(hovered) = &tui_state.currently_hovered_site {
                     if hovered == id {
                         id_style = id_style.add_modifier(Modifier::BOLD);
                         s = if is_dark_theme { s.bg(Color::Gray) } else { s.bg(Color::Gray) };
-                    }
+                    } 
                 }
             
                 
-                let message = ratatui::text::Span::styled(format!(" {id} "),id_style);
+                let message = ratatui::text::Span::styled(format!(" {id} "),
+                    id_style);
 
                 let status = match state {
                     &ProcState::Running => ratatui::text::Span::styled(format!("{:?}",state),s),
-                    &ProcState::Faulty => ratatui::text::Span::styled(format!("{:?} (retrying in 5s)",state),s),
+                    &ProcState::Faulty => ratatui::text::Span::styled(format!("{state:?} (retrying in 5s)"),s),
                     &ProcState::Starting => ratatui::text::Span::styled(format!("{:?}",state),s),
                     &ProcState::Stopped => ratatui::text::Span::styled(format!("{:?}",state),s),
                     &ProcState::Stopping => ratatui::text::Span::styled(format!("{:?}..",state),s),
                     &ProcState::Remote => ratatui::text::Span::styled(format!("{:?}",state),s)
                 };
-        
+
                 ListItem::new(Line::from(vec![
                     message,
                     status
@@ -744,11 +749,10 @@ fn draw_ui<B: ratatui::backend::Backend>(
                                 Style::default().fg(Color::Blue)
                             }
                         )
-                )
-                .highlight_style(Style::default().add_modifier(Modifier::BOLD))
-                .highlight_symbol(">> ");
+                );
             
             f.render_widget(sites_list, *col);
+            
         }
 
         tui_state.site_rects = site_rects;
