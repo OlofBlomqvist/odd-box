@@ -76,6 +76,11 @@ Since odd-box spawns your defined binaries, you should be careful not to run odd
 
 #### MacOS:
 
+```zsh
+brew tap OlofBlomqvist/repo
+brew install obbbox
+```
+
 Do not run this application using sudo. If you want to listen to port 80, configure a redirect to a non-restricted port such as 8080, and configure odd-box to use that (port=8080) instead.
 
 ```bash
