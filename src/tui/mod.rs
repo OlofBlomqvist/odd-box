@@ -675,7 +675,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
                     ),
                     &ProcState::Starting => Style::default().fg(
                         if is_dark_theme {
-                                Color::Green
+                                Color::LightGreen
                             } else {
                                 Color::Green
                             }
