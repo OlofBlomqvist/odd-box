@@ -66,7 +66,7 @@ pub fn draw(
    // let header_height = 1;
     //let visible_rows = area.height as usize - header_height;
     let start = scroll_pos.unwrap_or(max_scroll_pos);
-    let end = std::cmp::min(start + visible_rows, items.len() - 1);
+    let end = std::cmp::min(start + visible_rows, items.len());
 
 
     
