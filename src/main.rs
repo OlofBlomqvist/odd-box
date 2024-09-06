@@ -7,6 +7,7 @@ mod http_proxy;
 mod proxy;
 use anyhow::bail;
 use configuration::v2::FullyResolvedInProcessSiteConfig;
+use configuration::LogFormat;
 use dashmap::DashMap;
 use global_state::GlobalState;
 use configuration::v2::InProcessSiteConfig;
@@ -231,12 +232,19 @@ struct Args {
     #[arg(long)]
     enable_site: Option<Vec<String>>,
 
+    /// Updates odd-box to the latest release from github.
     #[arg(long)]
     update: bool,
 
+    /// Creates a configuration file with default values.
     #[arg(long)]
     generate_example_cfg : bool,
 
+    /// Create a bare minimum example configuration file. 
+    #[arg(long)]
+    init: bool,
+
+    /// Upgrade configuration file to latest version.
     #[arg(long)]
     upgrade_config: bool
 }
@@ -436,11 +444,13 @@ async fn inner(
 
 
     if args.generate_example_cfg {
-        let cfg = crate::configuration::v2::OddBoxV2Config::example();
-        let serialized = toml::to_string_pretty(&cfg).unwrap();
-        std::fs::write("odd-box-example-config.toml", serialized).unwrap();
+        generate_config("odd-box-example-config.toml",true)?;
+        return Ok(())
+    } else if args.init {
+        generate_config("odd-box.toml",false)?;
         return Ok(())
     }
+
 
     // By default we use odd-box.toml, and otherwise we try to read from Config.toml
     let cfg_path = 
@@ -684,4 +694,37 @@ async fn inner(
     _ = proxy_thread.await.ok();
 
     Ok(())
+}
+
+
+fn generate_config(file_name:&str, fill_example:bool) -> anyhow::Result<()> {
+
+    let current_working_dir = std::env::current_dir()?;
+    let file_path = current_working_dir.join(file_name);
+
+    if std::path::Path::exists(std::path::Path::new(file_name)) {
+        return Err(anyhow::anyhow!(format!("File already exists: {file_path:?}")));
+    }
+
+    let mut cfg = crate::configuration::v2::OddBoxV2Config::example();
+    
+    if fill_example == false {
+        cfg.hosted_process = None;
+        cfg.remote_target = None;
+        cfg.env_vars = vec![];
+        cfg.alpn = None;
+        cfg.admin_api_port = None;
+        cfg.auto_start = None;
+        cfg.http_port = None;
+        cfg.tls_port = None;
+        cfg.ip = None;
+        cfg.log_level = None;
+        cfg.default_log_format = LogFormat::standard;
+    }
+
+    let serialized = cfg.to_string()?;
+    std::fs::write(&file_path, serialized).unwrap();
+    tracing::info!("Example configuration written to {file_path:?}");
+    return Ok(())
+
 }

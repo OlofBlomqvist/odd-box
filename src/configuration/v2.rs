@@ -320,6 +320,8 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
                 ));
             }
             formatted_toml.push("]".to_string());
+        } else {
+            formatted_toml.push("env_vars = []".to_string());
         }
         
         if let Some(remote_sites) = &self.remote_target {
