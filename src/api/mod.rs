@@ -72,59 +72,57 @@ async fn set_cors(request: axum::extract::Request, next: axum::middleware::Next,
 }
 
 
-pub async fn run(globally_shared_state: Arc<crate::global_state::GlobalState>,port:Option<u16>,tracing_broadcaster:tokio::sync::broadcast::Sender::<String>) {
+pub async fn run(globally_shared_state: Arc<crate::global_state::GlobalState>,port:u16,tracing_broadcaster:tokio::sync::broadcast::Sender::<String>) {
 
-    if let Some(p) = port {
+    let websocket_state = WebSocketGlobalState {
 
-        let websocket_state = WebSocketGlobalState {
+        broadcast_channel: tokio::sync::broadcast::channel(10).0,
+        global_state: globally_shared_state.clone()
+    };
+    
+    let socket_address: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+    let listener = tokio::net::TcpListener::bind(socket_address).await.unwrap();
 
-            broadcast_channel: tokio::sync::broadcast::channel(10).0,
-            global_state: globally_shared_state.clone()
-        };
+
+    let cors_env_var = std::env::vars().find(|(key,_)| key=="ODDBOX_CORS_ALLOWED_ORIGIN").map(|x|x.1.to_lowercase());
+    let cors_env_var_cloned_for_ws = cors_env_var.clone();
+
+    let mut router = Router::new()
+
+        // API DOCS
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        .merge(Redoc::with_url("/redoc", ApiDoc::openapi()))
+        .merge(RapiDoc::new("/api-docs/openapi.json").path("/rapidoc"))
         
-        let socket_address: SocketAddr = format!("127.0.0.1:{p}").parse().unwrap();
-        let listener = tokio::net::TcpListener::bind(socket_address).await.unwrap();
+            // API ROUTES
+        .merge(crate::api::controllers::routes(globally_shared_state.clone()).await)
+
+        .route("/", axum::routing::get(root))
+        .route("/script.js", axum::routing::get(script))
+
+        
+        // WEBSOCKET ROUTE FOR LOGS
+        .route("/ws/live_logs", axum::routing::get( move|ws,user_agent,origin,addr,state|
+            ws_log_messages_handler(ws,user_agent,origin,addr,state, cors_env_var_cloned_for_ws)).with_state(websocket_state.clone()));
 
 
-        let cors_env_var = std::env::vars().find(|(key,_)| key=="ODDBOX_CORS_ALLOWED_ORIGIN").map(|x|x.1.to_lowercase());
-        let cors_env_var_cloned_for_ws = cors_env_var.clone();
+    // in some cases one might want to allow CORS from a specific origin. this is not currently allowed to do from the config file
+    // so we use an environment variable to set this. might change in the future if it becomes a common use case
+    if let Some(cors_var) = cors_env_var { 
+        router = router.layer(
+            CorsLayer::new()
+                .allow_methods(Any)
+                .allow_headers(Any)
+                .expose_headers(Any))
+        .layer(axum::middleware::from_fn(move |request: axum::extract::Request, next: axum::middleware::Next|set_cors(request,next,cors_var.clone())));
+    }; 
 
-        let mut router = Router::new()
+    tokio::spawn(broadcast_manager(websocket_state,tracing_broadcaster));
 
-            // API DOCS
-            .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
-            .merge(Redoc::with_url("/redoc", ApiDoc::openapi()))
-            .merge(RapiDoc::new("/api-docs/openapi.json").path("/rapidoc"))
-            
-             // API ROUTES
-            .merge(crate::api::controllers::routes(globally_shared_state.clone()).await)
-
-            .route("/", axum::routing::get(root))
-            .route("/script.js", axum::routing::get(script))
-
-            
-            // WEBSOCKET ROUTE FOR LOGS
-            .route("/ws/live_logs", axum::routing::get( move|ws,user_agent,origin,addr,state|
-                ws_log_messages_handler(ws,user_agent,origin,addr,state, cors_env_var_cloned_for_ws)).with_state(websocket_state.clone()));
-
-
-        // in some cases one might want to allow CORS from a specific origin. this is not currently allowed to do from the config file
-        // so we use an environment variable to set this. might change in the future if it becomes a common use case
-        if let Some(cors_var) = cors_env_var { 
-            router = router.layer(
-                CorsLayer::new()
-                    .allow_methods(Any)
-                    .allow_headers(Any)
-                    .expose_headers(Any))
-            .layer(axum::middleware::from_fn(move |request: axum::extract::Request, next: axum::middleware::Next|set_cors(request,next,cors_var.clone())));
-        }; 
-
-        tokio::spawn(broadcast_manager(websocket_state,tracing_broadcaster));
-
-        axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
-            .await
-            .unwrap()
-    }
+    axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
+        .await
+        .unwrap()
+    
 }
 
 // Define the handler function for the root path

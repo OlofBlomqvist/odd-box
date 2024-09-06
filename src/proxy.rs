@@ -1,23 +1,14 @@
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-
-
-
-
 use hyper_rustls::ConfigBuilderExt;
-
 use lazy_static::lazy_static;
-
 use socket2::Socket;
 use tokio::net::TcpSocket;
 use tokio::net::TcpStream;
 use tokio::sync::Notify;
 use tokio_rustls::TlsAcceptor;
-
-
-
+use crate::certs::DynamicCertResolver;
 use crate::configuration::ConfigWrapper;
 use crate::global_state::GlobalState;
 use crate::http_proxy::SomeIo;
@@ -27,7 +18,6 @@ use crate::tcp_proxy;
 use crate::http_proxy;
 use crate::tcp_proxy::DataType;
 use crate::tcp_proxy::PeekResult;
-
 use crate::tcp_proxy::ReverseTcpProxyTargets;
 use crate::types::app_state;
 
@@ -235,9 +225,7 @@ async fn listen_https(
     let mut rustls_config = 
     tokio_rustls::rustls::ServerConfig::builder()
             .with_no_client_auth()
-            .with_cert_resolver(Arc::new(crate::DynamicCertResolver {
-                cache: std::sync::Mutex::new(HashMap::new())
-            }));
+            .with_cert_resolver(Arc::new(DynamicCertResolver::new()));
         
     if let Some(true) = state.config.read().await.alpn {
         rustls_config.alpn_protocols.push("h2".into());

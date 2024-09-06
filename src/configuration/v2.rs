@@ -7,7 +7,7 @@ use serde::Serialize;
 use serde::Deserialize;
 use utoipa::ToSchema;
 use crate::global_state::GlobalState;
-use crate::ProcId;
+use crate::types::proc_info::ProcId;
 
 use super::EnvVar;
 use super::LogFormat;
@@ -17,7 +17,7 @@ use super::LogLevel;
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash)]
 pub struct InProcessSiteConfig {
     
-    #[serde(skip, default = "crate::ProcId::new")] 
+    #[serde(skip, default = "crate::types::proc_info::ProcId::new")] 
     proc_id : ProcId,
 
     /// This is set automatically each time we start a process so that we know which ports are in use
@@ -436,7 +436,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
             port_range_start: 4200,
             hosted_process: Some(vec![
                 InProcessSiteConfig {
-                    proc_id: crate::ProcId::new(),
+                    proc_id: ProcId::new(),
                     active_port: None,
                     forward_subdomains: None,
                     disable_tcp_tunnel_mode: Some(false),
@@ -561,7 +561,7 @@ impl TryFrom<super::v1::OddBoxV1Config> for super::v2::OddBoxV2Config{
             hosted_process: Some(old_config.hosted_process.unwrap_or_default().into_iter().map(|x|{
                 super::v2::InProcessSiteConfig {
                     exclude_from_start_all: None,
-                    proc_id: crate::ProcId::new(),
+                    proc_id: ProcId::new(),
                     active_port: None,
                     forward_subdomains: x.forward_subdomains,
                     disable_tcp_tunnel_mode: x.disable_tcp_tunnel_mode,

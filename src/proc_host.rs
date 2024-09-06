@@ -18,12 +18,13 @@ pub async fn host(
 
     let my_arc = std::sync::Arc::new(AtomicBool::new(true));
 
-    crate::PROC_THREAD_MAP.insert(resolved_proc.proc_id.clone(), crate::ProcInfo { 
+    crate::PROC_THREAD_MAP.insert(resolved_proc.proc_id.clone(), crate::types::proc_info::ProcInfo { 
         config: resolved_proc.clone(),
         pid: None,
         liveness_ptr: std::sync::Arc::<AtomicBool>::downgrade(&my_arc) 
     });
 
+    state.app_state.site_status_map.insert(resolved_proc.host_name.clone(), ProcState::Stopped);
 
 
     // if auto_start is not set in the config, we assume that user wants to start site automatically like before
@@ -388,7 +389,7 @@ pub async fn host(
                     state.app_state.site_status_map.insert(resolved_proc.host_name.clone(), ProcState::Faulty);
                     time_to_sleep_ms_after_loop = 5000; // wait 5 seconds before restarting but NOT in here as we have a lock
                 } else {
-                    tracing::info!("[{}] Stopped due to exit signal. Will not restart.",resolved_proc.host_name);
+                    tracing::info!("[{}] Stopped due to exit signal. Bye!",resolved_proc.host_name);
                     break
                 }
             }
@@ -396,6 +397,5 @@ pub async fn host(
         }
         tokio::time::sleep(Duration::from_millis(time_to_sleep_ms_after_loop)).await;
     }
-   
 }
 

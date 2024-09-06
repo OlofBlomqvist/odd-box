@@ -491,6 +491,8 @@ pub async fn run(
     _ = disable_raw_mode().ok();
     let mut stdout = std::io::stdout();
     execute!(stdout, LeaveAlternateScreen, DisableMouseCapture).expect("should always be possible to leave tui");
+
+    println!("odd-box tui thread exited.")
   
 }
 

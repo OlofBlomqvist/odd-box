@@ -1,10 +1,12 @@
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicUsize;
 
+use super::proc_info::ProcId;
+
 #[derive(Debug)]
 pub struct ProxyStats {
     pub active_connections : dashmap::DashMap<ConnectionKey,ProxyActiveConnection>,
-    pub hosted_process_stats : dashmap::DashMap<crate::ProcId,AtomicUsize>,
+    pub hosted_process_stats : dashmap::DashMap<ProcId,AtomicUsize>,
     pub remote_targets_stats : dashmap::DashMap<String,AtomicUsize>,
     pub total_request_count : AtomicUsize
 }
