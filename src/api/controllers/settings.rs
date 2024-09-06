@@ -66,7 +66,6 @@ pub struct KvP {
 
 #[derive(Debug, Clone, Serialize, Deserialize,ToSchema)]
 pub struct OddBoxConfigGlobalPart {
-    #[schema(value_type = String)]
     pub root_dir : String, 
     pub log_level : BasicLogLevel,
     pub alpn : bool,
@@ -83,7 +82,6 @@ pub struct OddBoxConfigGlobalPart {
 
 #[derive(Debug, Clone, Serialize, Deserialize,ToSchema)]
 pub struct SaveGlobalConfig{
-    #[schema(value_type = String)]
     pub root_dir : String, 
     pub log_level : BasicLogLevel,
     pub alpn : bool,
@@ -158,6 +156,10 @@ pub async fn set_settings_handler(
 
     let mut guard = global_state.config.write().await;
     
+    if 1 == 2 {
+        return Err((StatusCode::BAD_REQUEST,format!("this wont ever happen, its just to poke the compiler so it knows the error type")));
+    }
+
     guard.admin_api_port = Some(new_settings.admin_api_port);
     guard.http_port = Some(new_settings.http_port);
     guard.tls_port = Some(new_settings.tls_port);
@@ -175,11 +177,12 @@ pub async fn set_settings_handler(
     guard.ip = Some(new_settings.ip.parse().map_err(|e|(StatusCode::BAD_REQUEST,format!("Invalid IP address provided, refusing to save configuration. {e:?}")))?);
     guard.log_level = Some(new_settings.log_level.clone().into());
 
-    if std::path::Path::exists(std::path::Path::new(&new_settings.root_dir)) == false {
-        return Err((StatusCode::BAD_REQUEST,format!("Specified root directory does not exist on disk. Refusing to save configuration")));
+    if new_settings.root_dir.trim()=="" {
+        guard.root_dir = None;
+    } else {
+        guard.root_dir = Some(new_settings.root_dir.clone());
     }
-
-    guard.root_dir = Some(new_settings.root_dir.clone());
+    
 
     
     guard.write_to_disk().map_err(|e|(StatusCode::BAD_REQUEST,format!("{}",e.to_string())))?;

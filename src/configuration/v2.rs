@@ -347,7 +347,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
                     let https = if let Some(true) = b.https { format!("https = true, ") } else { format!("") };
                     
                     let hints = if let Some(hints) = &b.hints {
-                        format!(", hints = [{}]",hints.iter().map(|h|format!("{h:?}")).collect::<Vec<String>>().join(", "))
+                        format!(", hints = [{}]",hints.iter().map(|h|format!("'{h:?}'")).collect::<Vec<String>>().join(", "))
                     } else {
                         String::new()
                     };
@@ -375,7 +375,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
 
                 if let Some(hint) = &process.hints {
                     formatted_toml.push("hints = [".to_string());
-                    let joint = hint.iter().map(|h| format!("{:?}", h)).collect::<Vec<String>>().join(", ");
+                    let joint = hint.iter().map(|h| format!("'{:?}'", h)).collect::<Vec<String>>().join(", ");
                     formatted_toml.push(joint);
                     formatted_toml.push("]".to_string());
                 }
