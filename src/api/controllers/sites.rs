@@ -282,10 +282,6 @@ pub async fn delete_handler(
 }
 
 
-
-
-
-
     
 #[derive(Deserialize,IntoParams)]
 #[into_params(
@@ -314,9 +310,9 @@ pub async fn stop_handler(
 ) -> axum::response::Result<impl IntoResponse,SitesError> {
   
     let signal = if query.hostname == "*" {
-        crate::http_proxy::ProcMessage::StartAll
+        crate::http_proxy::ProcMessage::StopAll
     } else {
-        crate::http_proxy::ProcMessage::Start(query.hostname)
+        crate::http_proxy::ProcMessage::Stop(query.hostname)
     };
 
    // todo - check if site exists and if its already stopped?
