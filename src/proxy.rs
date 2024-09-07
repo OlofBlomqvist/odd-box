@@ -185,8 +185,21 @@ async fn accept_tcp_stream_via_tls_terminating_proxy_service(
     service.is_https_only = true;
     let tls_acceptor = tls_acceptor.clone();
     match tls_acceptor.accept(tcp_stream).await {
-        Ok(tcp_stream) => {
-            let io = hyper_util::rt::TokioIo::new(tcp_stream);       
+        Ok(tls_tcp_stream) => {
+            
+            // TODO:
+            // - no unwrap
+            // - verify that we are actually serving this domain..
+            // - need to also support doing this on startup for all configured domains
+            // - need to also support this when a new domain is added via admin api
+            // - ^ possibly not at all here then?
+            let srv_name = tls_tcp_stream.get_ref().1.server_name().unwrap();
+            if let Ok(c) = service.state.cert_resolver.lets_encrypt_manager.try_get_cert(srv_name).await {
+                println!("got cert for {srv_name}");
+                service.state.cert_resolver.add_cert(srv_name, c);
+            }
+            
+            let io = hyper_util::rt::TokioIo::new(tls_tcp_stream);       
             http_proxy::serve(service, SomeIo::Https(io)).await;
         },
         Err(e) => {
@@ -221,11 +234,10 @@ async fn listen_https(
     listener.set_nonblocking(true).expect("must be able to set_nonblocking on https listener");
     let tokio_listener = tokio::net::TcpListener::from_std(listener).expect("we must be able to listen to https port..");
     
-
     let mut rustls_config = 
     tokio_rustls::rustls::ServerConfig::builder()
             .with_no_client_auth()
-            .with_cert_resolver(Arc::new(DynamicCertResolver::new()));
+            .with_cert_resolver(state.cert_resolver.clone());
         
     if let Some(true) = state.config.read().await.alpn {
         rustls_config.alpn_protocols.push("h2".into());

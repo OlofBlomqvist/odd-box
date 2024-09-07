@@ -41,7 +41,7 @@ mod certs;
 mod self_update;
 use types::app_state::AppState;
 use lazy_static::lazy_static;
-
+mod letsencrypt;
 
 lazy_static! {
     static ref PROC_THREAD_MAP: Arc<DashMap<ProcId, ProcInfo>> = Arc::new(DashMap::new());
@@ -54,13 +54,16 @@ pub fn generate_unique_id() -> u64 {
 
 pub mod global_state {
     use std::sync::atomic::AtomicU64;
+
+    use crate::certs::DynamicCertResolver;
     #[derive(Debug)]
     pub struct GlobalState {
         pub app_state: std::sync::Arc<crate::types::app_state::AppState>,
         pub config: std::sync::Arc<tokio::sync::RwLock<crate::configuration::ConfigWrapper>>,
         pub broadcaster: tokio::sync::broadcast::Sender<crate::http_proxy::ProcMessage>,
         pub target_request_counts: dashmap::DashMap<String, AtomicU64>,
-        pub request_count: std::sync::atomic::AtomicUsize
+        pub request_count: std::sync::atomic::AtomicUsize,
+        pub cert_resolver: std::sync::Arc<DynamicCertResolver>
     }
     
 }
@@ -204,6 +207,7 @@ async fn main() -> anyhow::Result<()> {
     let api_broadcaster = tracing_broadcaster.clone();
     let shared_config = std::sync::Arc::new(tokio::sync::RwLock::new(config));
     let global_state = Arc::new(crate::global_state::GlobalState { 
+        cert_resolver: Arc::new(certs::DynamicCertResolver::new().await),
         app_state: inner_state_arc.clone(), 
         config: shared_config.clone(), 
         broadcaster:tx.clone(),

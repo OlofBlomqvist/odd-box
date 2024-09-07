@@ -25,7 +25,7 @@ clap = { version="4.4.7", features=["derive"]}
 rustls = "0.23.12"
 tokio-rustls = "0.26.0"
 rustls-pemfile = "2.0.0"
-rcgen = "0.13.1"
+rcgen = { version = "0.13.1", features = ["aws_lc_rs"] }
 socket2 = "0.5.5"
 hyper-tungstenite = "0.14.0"
 ratatui = "0.28.1"
@@ -47,6 +47,16 @@ anyhow = "1.0.79"
 uuid = { version = "1.7.0", features = ["v4"] }
 tungstenite = "0.24.0"
 dark-light = "1.0.0"
+memchr = "2.7.4"
+dashmap = "6.0.1"
+base64 = "0.22.1"
+josekit = "0.8.7"
+ring = "0.17.8"
+pem = "3.0.4"
+rsa = "0.9.6"
+jsonwebkey-convert = { version="0.3.0",features = ["pem_support"] }
+num-bigint = "0.4.6"
+simple_asn1 = { version = "=0.5.1", optional = true }
 
 # === MANAGEMENT API ============================================
 axum = { version="0.7.5",features=["ws"] }
@@ -58,8 +68,9 @@ utoipauto = "0.1.10"
 tower-http = { version = "0.5.2" , features = ["fs","cors","trace"]}
 async-trait = "0.1.81"
 axum-extra = { version = "0.9.3", features = ["typed-header"] }
-memchr = "2.7.4"
-dashmap = "6.0.1"
+jsonwebtoken = "9.3.0"
+sha256 = "1.5.0"
+sha2 = "0.10.8"
 # ===============================================================
 
 [target.'cfg(windows)'.dependencies]

@@ -5,12 +5,18 @@ use tokio_rustls::rustls::server::{ClientHello, ResolvesServerCert};
 #[derive(Debug)]
 pub struct DynamicCertResolver {
     cache: DashMap<String, std::sync::Arc<tokio_rustls::rustls::sign::CertifiedKey>>,
+    pub lets_encrypt_manager: crate::letsencrypt::CertManager
 }
 
 impl DynamicCertResolver {
-    pub fn new() -> Self {
+    pub fn add_cert(&self, domain: &str, cert:std::sync::Arc<tokio_rustls::rustls::sign::CertifiedKey>) {        
+        self.cache.insert(domain.to_string(), cert);
+    }
+    pub async fn new() -> Self {
         DynamicCertResolver {
             cache: DashMap::new(),
+            lets_encrypt_manager: 
+                crate::letsencrypt::CertManager::new().await.unwrap()
         }
     }
 }
@@ -110,7 +116,7 @@ fn generate_cert_if_not_exist(hostname: &str, cert_path: &str,key_path: &str) ->
 }
 
 
-fn my_certs(path: &str) -> Result<Vec<CertificateDer<'static>>, std::io::Error> {
+pub fn my_certs(path: &str) -> Result<Vec<CertificateDer<'static>>, std::io::Error> {
     let cert_file = File::open(path)?;
     let mut reader = BufReader::new(cert_file);
     let certs = rustls_pemfile::certs(&mut reader);
@@ -120,7 +126,7 @@ fn my_certs(path: &str) -> Result<Vec<CertificateDer<'static>>, std::io::Error> 
     }).collect())
 }
 
-fn my_rsa_private_keys(path: &str) -> Result<PrivateKeyDer, String> {
+pub fn my_rsa_private_keys(path: &str) -> Result<PrivateKeyDer, String> {
 
     let file = File::open(&path).map_err(|e|format!("{e:?}"))?;
     let mut reader = BufReader::new(file);
