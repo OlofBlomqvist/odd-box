@@ -25,7 +25,7 @@ clap = { version="4.4.7", features=["derive"]}
 rustls = "0.23.12"
 tokio-rustls = "0.26.0"
 rustls-pemfile = "2.0.0"
-rcgen = { version = "0.13.1", features = ["aws_lc_rs"] }
+rcgen = { version = "0.13.1", features = ["aws_lc_rs","pem"] }
 socket2 = "0.5.5"
 hyper-tungstenite = "0.14.0"
 ratatui = "0.28.1"

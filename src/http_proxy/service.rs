@@ -130,6 +130,40 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
                f.await
             })
         }
+
+        // handle letsencrypt verification requests
+        if req.uri().path().starts_with("/.well-known/acme-challenge/") {
+            let host = req.headers().get("host").unwrap().to_str().unwrap().to_string();
+            // strip any :port from host:
+            let host = host.split(":").collect::<Vec<&str>>()[0].to_string();
+            let f = async move {
+                let host = host;
+                tracing::info!("Got incoming LE req for {host:?}");
+                // http://whatever_domain/.well-known/acme-challenge/<TOKEN>
+                crate::letsencrypt::DOMAIN_TO_CHALLENGE_TOKEN_MAP.get(&host)
+                    .map(|x| {
+                        let (_domain_name,challenge_token) = x.pair();
+                        tracing::info!("Got incoming LE req and found challenge for {host} : {challenge_token:?}");
+                        if let Some(response) = crate::letsencrypt::CHALLENGE_MAP.get(challenge_token) {
+                            let (_,response) = response.pair();
+                            tracing::info!("Responding with challenge response: {response:?}");
+                            Ok(EpicResponse::new(create_epic_string_full_body(response)))
+                        } else {
+                            tracing::info!("Responding no response... because no challenge found for {host}");
+                            Ok(EpicResponse::new(create_epic_string_full_body("nothing here 1")))
+                        } 
+                    })
+                    .unwrap_or_else(|| {
+                        tracing::warn!("Got incoming LE req but no challenge found for {host:?}");
+                        Ok(EpicResponse::new(create_epic_string_full_body("nothing here 2")))
+                    })
+            };
+            return Box::pin(async move {
+                f.await
+            })
+        } else {
+            tracing::warn!("Got incoming req that is not for acme challenge: {:?}",req.uri());
+        }
         
         // handle normal proxy path
         let f = handle_http_request(

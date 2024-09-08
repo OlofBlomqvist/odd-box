@@ -54,7 +54,11 @@ impl ReverseTcpProxyTargets {
                     forward_wildcard: y.forward_subdomains.unwrap_or_default(),
                     backends: vec![crate::configuration::v2::Backend {
                         hints: y.hints.clone(),
-                        address: y.host_name.to_owned(),
+                        // TODO - configurable ?
+                        // (This was required when incoming request used a public dns name
+                        // in order to avoid loopback issues. Most likely need to change in more places
+                        // for public dns names to work correctly)
+                        address: "127.0.0.1".to_string(), //y.host_name.to_owned(), // --- configurable
                         https: y.https,
                         port: y.active_port.unwrap_or_default()
                     }],
@@ -373,7 +377,6 @@ impl ReverseTcpProxy {
             tracing::warn!("no active target port found for target {target:?}, wont be able to establish a tcp connection for site {}",target.host_name);
             return
         };
-
 
         let resolved_target_address = {
             let subdomain = target.sub_domain.as_ref();

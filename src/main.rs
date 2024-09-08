@@ -236,8 +236,11 @@ async fn main() -> anyhow::Result<()> {
             EnvFilter::from_default_env()
                 .add_directive(log_level.into())
                 .add_directive("h2=info".parse().expect("this directive will always work"))
-                .add_directive("tokio_util=info".parse().expect("this directive will always work"))            
+                .add_directive("tokio_util=info".parse().expect("this directive will always work"))     
+                .add_directive("rustls=info".parse().expect("this directive will always work"))
+                .add_directive("mio=info".parse().expect("this directive will always work"))                            
                 .add_directive("hyper=info".parse().expect("this directive will always work")));
+            // ^ todo: perhaps invert this logic
         tui::init();
         tui_task = Some(tokio::spawn(tui::run(
             global_state.clone(),
@@ -259,8 +262,12 @@ async fn main() -> anyhow::Result<()> {
             );
         let filter_layer = tracing_subscriber::EnvFilter::from_default_env()
             .add_directive(log_level.into())
-            .add_directive("hyper=info".parse().expect("this directive will always work"))
-            .add_directive("h2=info".parse().expect("this directive will always work"));
+            .add_directive("h2=info".parse().expect("this directive will always work"))
+            .add_directive("tokio_util=info".parse().expect("this directive will always work"))     
+            .add_directive("rustls=info".parse().expect("this directive will always work"))
+            .add_directive("mio=info".parse().expect("this directive will always work"))                            
+            .add_directive("hyper=info".parse().expect("this directive will always work"));
+        // ^ todo: perhaps invert this logic
 
         let subscriber = tracing_subscriber::Registry::default()
             .with(fmt_layer)
@@ -361,10 +368,10 @@ async fn main() -> anyhow::Result<()> {
             }
 
             if tui_flag {
-                println!("Waiting for processes to die: ");
+                println!("Waiting for processes to die..");
                 println!("{}",awaited_processed.join("\n"));
             } else {
-                tracing::warn!("Waiting for hosted processes to die:");
+                tracing::warn!("Waiting for hosted processes to die..");
                 for p in awaited_processed {
                     tracing::warn!("{p}");
                 }

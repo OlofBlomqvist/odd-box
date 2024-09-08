@@ -4,7 +4,7 @@ http_port = 8080
 admin_api_port = 1234
 ip = "127.0.0.1"
 tls_port = 4343
-auto_start = false
+auto_start = true
 root_dir = "~"
 log_level = "trace"
 port_range_start = 4200
@@ -14,59 +14,83 @@ env_vars = [
 	{ key = "GRPC_VERBOSITY", value = "DEBUG" },
 ]
 
-[[remote_target]]
-host_name = "caddy-lb-terminated.localtest.me"
+# [[remote_target]]
+# host_name = "caddy-lb-terminated.localtest.me"
+# disable_tcp_tunnel_mode = true
+# backends = [
+# 	{ address="127.0.0.1", port=9999, hints = ['NOH2']},
+# 	{ address="127.0.0.1", port=8888, hints = ['NOH2']}
+# ]
+
+# [[remote_target]]
+# host_name = "caddy-lb-tcp.localtest.me"
+# backends = [
+# 	{ address="127.0.0.1", port=9999},
+# 	{ address="127.0.0.1", port=8888}
+# ]
+
+
+[[hosted_process]] # hosted processes are those that odd-box is responsible for running
+host_name = "test3.cruma.io"  # incoming name for binding to (frontend)
 disable_tcp_tunnel_mode = true
-backends = [
-	{ address="127.0.0.1", port=9999, hints = ['NOH2']},
-	{ address="127.0.0.1", port=8888, hints = ['NOH2']}
-]
-
-[[remote_target]]
-host_name = "caddy-lb-tcp.localtest.me"
-backends = [
-	{ address="127.0.0.1", port=9999},
-	{ address="127.0.0.1", port=8888}
-]
-
-[[remote_target]]
-host_name = "lobsters.localtest.me"
-disable_tcp_tunnel_mode = true
-backends = [
-	{ https = true, address="lobste.rs", port=443},
-	{ address="nnerastoundinglushmorning.neverssl.com", port=80}
-]
-
-[[hosted_process]]
-host_name = "caddy-proc-terminated.localtest.me"
-dir = "$cfg_dir"
-bin = "/nix/store/aq5r61lmr9six0lyi6xikxwvnyp16dfy-user-environment/bin/caddy"
-hints = [
-'NOH2'
-]
+dir = "$cfg_dir" # path where we should be located when running the binary file
+bin = "/usr/bin/python3.9" # name or path of the binary that should be executed
 args = [
-  "run", 
-  "--config", 
-  "./CaddyTest2", 
-  "--adapter", 
-  "caddyfile"
+  # any arguments you wish to pass to the binary
+  "-m", 
+  "http.server", 
+  "$port"
 ]
-auto_start = true
-port = 8888
+auto_start = true # optional, uses global auto_start by default. set to false to prevent the process from starting when launching odd-box
+https = false # must be set to https if the target expects tls connections
+env_vars = [
+  # environment variables specific to this process
+  # 	{ key = "logserver", value = "http://www.example.com" },
+  # 	{ key = "host", value = "odd-box" },
+]
 
-[[hosted_process]]
-host_name = "caddy-proc-tcp.localtest.me"
-dir = "$cfg_dir"
-bin = "/nix/store/aq5r61lmr9six0lyi6xikxwvnyp16dfy-user-environment/bin/caddy"
-hints = [
-'NOH2'
-]
-args = [
-  "run", 
-  "--config", 
-  "./CaddyTest1", 
-  "--adapter", 
-  "caddyfile"
-]
-auto_start = true
-port = 9999
+
+# [[remote_target]]
+# host_name = "lobsters.localtest.me"
+# disable_tcp_tunnel_mode = true
+# backends = [
+# 	{ https = true, address="lobste.rs", port=443},
+# 	{ address="nnerastoundinglushmorning.neverssl.com", port=80}
+# ]
+
+# [[hosted_process]]
+# host_name = "caddy-proc-terminated.localtest.me"
+# dir = "$cfg_dir"
+# bin = "/nix/store/aq5r61lmr9six0lyi6xikxwvnyp16dfy-user-environment/bin/caddy"
+# hints = [
+# 'NOH2'
+# ]
+# args = [
+#   "run", 
+#   "--config", 
+#   "./CaddyTest2", 
+#   "--adapter", 
+#   "caddyfile"
+# ]
+# auto_start = true
+# port = 8888
+
+# [[hosted_process]]
+# host_name = "caddy-proc-tcp.localtest.me"
+# dir = "$cfg_dir"
+# bin = "/nix/store/aq5r61lmr9six0lyi6xikxwvnyp16dfy-user-environment/bin/caddy"
+# hints = [
+# 'NOH2'
+# ]
+# args = [
+#   "run", 
+#   "--config", 
+#   "./CaddyTest1", 
+#   "--adapter", 
+#   "caddyfile"
+# ]
+# auto_start = true
+# port = 9999
+
+
+

@@ -8,7 +8,6 @@ use tokio::net::TcpSocket;
 use tokio::net::TcpStream;
 use tokio::sync::Notify;
 use tokio_rustls::TlsAcceptor;
-use crate::certs::DynamicCertResolver;
 use crate::configuration::ConfigWrapper;
 use crate::global_state::GlobalState;
 use crate::http_proxy::SomeIo;
@@ -185,20 +184,7 @@ async fn accept_tcp_stream_via_tls_terminating_proxy_service(
     service.is_https_only = true;
     let tls_acceptor = tls_acceptor.clone();
     match tls_acceptor.accept(tcp_stream).await {
-        Ok(tls_tcp_stream) => {
-            
-            // TODO:
-            // - no unwrap
-            // - verify that we are actually serving this domain..
-            // - need to also support doing this on startup for all configured domains
-            // - need to also support this when a new domain is added via admin api
-            // - ^ possibly not at all here then?
-            let srv_name = tls_tcp_stream.get_ref().1.server_name().unwrap();
-            if let Ok(c) = service.state.cert_resolver.lets_encrypt_manager.try_get_cert(srv_name).await {
-                println!("got cert for {srv_name}");
-                service.state.cert_resolver.add_cert(srv_name, c);
-            }
-            
+        Ok(tls_tcp_stream) => { 
             let io = hyper_util::rt::TokioIo::new(tls_tcp_stream);       
             http_proxy::serve(service, SomeIo::Https(io)).await;
         },
@@ -393,8 +379,42 @@ async fn handle_new_tcp_stream(
             http_version:_,
             target_host: Some(target_host_name)
         }) if incoming_connection_is_on_tls_port => {
+
+            // TODO - should not do cert stuff here but at startup and on config modification
+
+            let host_name = target_host_name.to_lowercase();
+            
+            let all_host_names = {
+                let guard = state.config.read().await;
+                guard.hosted_process
+                    .iter()
+                    .flatten()
+                    .map(|x|x.host_name.to_lowercase())
+                    .chain(
+                        guard.remote_target
+                            .iter()
+                            .flatten()
+                            .map(|x|x.host_name.to_lowercase())).collect::<Vec<String>>()
+            };
+            
+            if !all_host_names.contains(&host_name) {
+                tracing::warn!("Received a request for a host name that is not configured in the config file: {host_name}");
+                return;
+            }
+        
+            // Trigger certificate generation if we do not have a certificate for this host
+            match service.state.cert_resolver.lets_encrypt_manager.try_get_cert(&host_name).await {
+                Ok(c) => {
+                    tracing::info!("Successfully got lets-encrypt certificate for {host_name}");
+                    service.state.cert_resolver.add_cert(&host_name, c);
+                },
+                Err(e) => {
+                    tracing::warn!("Failed to get lets-encrypt certificate for {host_name}: {e:?}");
+                }
+            }
+            
             if let Some(target) = targets.try_find(move |p|tcp_proxy::ReverseTcpProxy::req_target_filter_map(&p, &target_host_name)).await {
-                 
+                
                 if target.backends.iter().any(|x|x.https.unwrap_or_default()) {
                     // at least one backend has https enabled so we will use the tls tunnel mode to there
                     tracing::trace!("USING TCP PROXY FOR TLS TUNNEL TO TARGET {target:?}");
@@ -404,6 +424,9 @@ async fn handle_new_tcp_stream(
                     tracing::debug!("peeked some tls tcp data and found that the target exists but is not configured for https/tls. we will use terminating mode for this..")
                 }
 
+
+            } else {
+                tracing::warn!("We do not have any site configured for '{host_name}' that allows tcp tunnelling.. will use terminating proxy instead.");
             }
         },
         e => {
@@ -411,6 +434,8 @@ async fn handle_new_tcp_stream(
 
         },
     }
+
+
 
     // If we are unable to peek the tcp packet or the target is not configured in a way which allows for tcp tunnelling
     // we will hand the stream off to the terminating proxy service instead.

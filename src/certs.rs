@@ -26,9 +26,13 @@ impl ResolvesServerCert for DynamicCertResolver {
         
         let server_name = client_hello.server_name()?;
         
+        // TODO - this needs to be opt in thru config, possibly per site?
+
         if let Some(certified_key) = self.cache.get(server_name) {
             tracing::trace!("Returning a cached certificate for {:?}",server_name);
             return Some(certified_key.clone());
+        } else {
+            return None;            
         }
     
 
