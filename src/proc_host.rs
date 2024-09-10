@@ -289,6 +289,7 @@ pub async fn host(
                                             current_log_level = 2;
                                             trimmed = trimmed.replace("info:", "").trim().to_string()
                                         }
+                                       // TODO - support for separate log levels between odd-box and its hosted processes ?
                                         match &current_log_level {
                                             1 => tracing::debug!("{}",trimmed),
                                             2 => tracing::info!("{}",trimmed), 

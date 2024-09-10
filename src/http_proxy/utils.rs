@@ -193,7 +193,8 @@ pub async fn proxy(
         target_scheme_info_str, 
         proxied_request.version(), 
         &target_url, 
-        original_connection_is_https
+        original_connection_is_https,
+        req_host_name.to_string()
     );
 
 
@@ -562,7 +563,8 @@ fn create_connection(
     target_scheme: &str,
     target_http_version: hyper::http::Version,
     target_addr: &str,
-    incoming_known_tls_only: bool
+    incoming_known_tls_only: bool,
+    target_host_name : String
 ) -> ProxyActiveConnection {
     let uri = req.uri();
     let typ_info = 
@@ -574,7 +576,7 @@ fn create_connection(
         };
 
     ProxyActiveConnection {
-        target_name: uri.to_string(),
+        target_name: target_host_name,
         source_addr: client_addr.clone(),
         target_addr: target_addr.to_owned(),
         //target: ReverseTcpProxyTarget::from_target(target),

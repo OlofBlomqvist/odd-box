@@ -232,7 +232,9 @@ async fn main() -> anyhow::Result<()> {
             EnvFilter::from_default_env()
                 .add_directive(log_level.into())
                 .add_directive("h2=info".parse().expect("this directive will always work"))
-                .add_directive("tokio_util=info".parse().expect("this directive will always work"))            
+                .add_directive("tokio_util=info".parse().expect("this directive will always work"))      
+                .add_directive("zbus=warn".parse().expect("this directive will always work"))      
+                .add_directive("tokio=warn".parse().expect("this directive will always work")) 
                 .add_directive("hyper=info".parse().expect("this directive will always work")));
         tui::init();
         tui_task = Some(tokio::spawn(tui::run(
@@ -256,7 +258,9 @@ async fn main() -> anyhow::Result<()> {
         let filter_layer = tracing_subscriber::EnvFilter::from_default_env()
             .add_directive(log_level.into())
             .add_directive("hyper=info".parse().expect("this directive will always work"))
-            .add_directive("h2=info".parse().expect("this directive will always work"));
+            .add_directive("h2=info".parse().expect("this directive will always work"))
+            .add_directive("zbus=warn".parse().expect("this directive will always work"))    
+            .add_directive("tokio=warn".parse().expect("this directive will always work"))      ;
 
         let subscriber = tracing_subscriber::Registry::default()
             .with(fmt_layer)

@@ -239,7 +239,6 @@ pub struct OddBoxV2Config {
     pub hosted_process : Option<Vec<InProcessSiteConfig>>,
     pub admin_api_port : Option<u16>,
     pub path : Option<String>
-
 }
 
 impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Config {

@@ -143,18 +143,24 @@ impl TlsClientHello {
 
 
 
-impl TryFrom<&[u8]> for TlsClientHello{
+impl TryFrom<&[u8]> for TlsClientHello {
     type Error = TlsClientHelloError;
-    fn try_from(data: &[u8]) -> Result<Self,Self::Error> {
+    
+    fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
         let mut current = 0;
 
+        // Check for minimum length for TLS Handshake
         if data.len() < 6 || data[current] != 0x16 {
             return Err(TlsClientHelloError::NotTLSHandshake);
         }
         current += 1; // Skip handshake type
+        
+        if data.len() < current + 4 {
+            return Err(TlsClientHelloError::MessageIncomplete(current));
+        }
         current += 4; // Skip version and length of the record layer
     
-        if data[current] != 0x01 {
+        if data.len() <= current || data[current] != 0x01 {
             return Err(TlsClientHelloError::NotClientHello);
         }
         current += 1; // Skip HandshakeType
@@ -164,23 +170,47 @@ impl TryFrom<&[u8]> for TlsClientHello{
         }
         current += 3; // Skip length of the ClientHello message
     
+        if data.len() < current + 2 {
+            return Err(TlsClientHelloError::MessageIncomplete(current));
+        }
         let protocol_version = (data[current], data[current + 1]);
         current += 2; // Skip ProtocolVersion
     
+        if data.len() < current + 32 {
+            return Err(TlsClientHelloError::MessageIncomplete(current));
+        }
         let random = data[current..current + 32].to_vec();
         current += 32; // Skip Random
     
+        if data.len() <= current {
+            return Err(TlsClientHelloError::MessageIncomplete(current));
+        }
         let session_id_length = data[current] as usize;
+        if data.len() < current + 1 + session_id_length {
+            return Err(TlsClientHelloError::MessageIncomplete(current));
+        }
         let session_id = data[current + 1..current + 1 + session_id_length].to_vec();
         current += 1 + session_id_length; // Skip SessionID
     
+        if data.len() < current + 2 {
+            return Err(TlsClientHelloError::MessageIncomplete(current));
+        }
         let cipher_suites_length = u16::from_be_bytes([data[current], data[current + 1]]) as usize;
+        if data.len() < current + 2 + cipher_suites_length {
+            return Err(TlsClientHelloError::MessageIncomplete(current));
+        }
         let cipher_suites = (0..cipher_suites_length / 2)
             .map(|i| u16::from_be_bytes([data[current + 2 + i * 2], data[current + 3 + i * 2]]))
             .collect();
         current += 2 + cipher_suites_length; // Skip CipherSuites
     
+        if data.len() <= current {
+            return Err(TlsClientHelloError::MessageIncomplete(current));
+        }
         let compression_methods_length = data[current] as usize;
+        if data.len() < current + 1 + compression_methods_length {
+            return Err(TlsClientHelloError::MessageIncomplete(current));
+        }
         let compression_methods =
             data[current + 1..current + 1 + compression_methods_length].to_vec();
         current += 1 + compression_methods_length; // Skip CompressionMethods
@@ -193,6 +223,10 @@ impl TryFrom<&[u8]> for TlsClientHello{
     
         let mut extensions = Vec::new();
         let extensions_end = current + extensions_length;
+        
+        if data.len() < extensions_end {
+            return Err(TlsClientHelloError::MessageIncomplete(current));
+        }
     
         while current + 4 <= extensions_end {
             let typ = u16::from_be_bytes([data[current], data[current + 1]]);
@@ -207,7 +241,7 @@ impl TryFrom<&[u8]> for TlsClientHello{
                 return Err(TlsClientHelloError::MessageIncomplete(current));
             }
             let data = data[current..current + extension_length].to_vec();
-            extensions.push(TlsExtension::new(typ.into(),data));
+            extensions.push(TlsExtension::new(typ.into(), data));
             current += extension_length; // Move past this extension's data
         }
     

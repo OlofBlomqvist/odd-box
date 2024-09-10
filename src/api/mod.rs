@@ -156,7 +156,7 @@ async fn ws_log_messages_handler(
     state : State<WebSocketGlobalState>,
     cors_env_var : Option<String>
 ) -> impl axum::response::IntoResponse {
-
+    
     // we only care about limiting these connections if we receive an origin header which most browsers will send.
     // if no custom env var is set, we will only allow connections from the admin api port on localhost.
     // if a custom env var is set for cors, we will only allow connections from that origin.
