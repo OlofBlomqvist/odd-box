@@ -39,8 +39,8 @@ There is a basic administration API that can be enabled by adding "admin_api_por
 
 ### Screenshot(s)
 
-**odd-box v0.0.9:**
-![Screenshot of oddbox v0.0.9](/screenshot.png)
+**odd-box v0.1.2:**
+![Screenshot of oddbox v0.1.2](/screenshot.png)
 
 ### Configuration
 
