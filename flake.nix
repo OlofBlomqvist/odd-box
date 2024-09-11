@@ -6,7 +6,7 @@
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay.url = "github:oxalica/rust-overlay";
   };
-
+github:OlofBlomqvist/odd-box
   outputs = { self, nixpkgs, flake-utils, rust-overlay, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
@@ -24,7 +24,7 @@
         packages.default = pkgs.rustPlatform.buildRustPackage rec {
 
             pname = "odd-box";
-            version = "0.0.14";
+            version = "0.1.2";
             src = ./.;
 
             cargoLock = {
