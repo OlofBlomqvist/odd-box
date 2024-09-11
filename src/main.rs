@@ -159,6 +159,12 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
     
+    if args.config_schema {
+        let schema = schemars::schema_for!(crate::configuration::v2::OddBoxV2Config);
+        println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+        return Ok(());
+    }
+
     if args.update {
         _ = self_update::update().await;
         return Ok(());

@@ -52,20 +52,20 @@ impl ConfigWrapper {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize,ToSchema,PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize,ToSchema,PartialEq, Eq, Hash, schemars::JsonSchema)]
 pub struct EnvVar {
     pub key: String,
     pub value: String,
 }
 
-#[derive(Serialize,Deserialize,Debug,Clone,ToSchema,PartialEq, Eq, Hash)]
+#[derive(Serialize,Deserialize,Debug,Clone,ToSchema,PartialEq, Eq, Hash, schemars::JsonSchema)]
 #[allow(non_camel_case_types)]
 pub enum LogFormat {
     standard,
     dotnet
 }
 
-#[derive(Debug,Serialize,Clone,ToSchema, PartialEq, Eq, Hash)]
+#[derive(Debug,Serialize,Clone,ToSchema, PartialEq, Eq, Hash, schemars::JsonSchema)]
 pub enum LogLevel {
     Trace,
     Debug,
@@ -108,7 +108,7 @@ impl<'de> Deserialize<'de> for LogLevel {
 }
 
 
-#[derive(Debug,Clone,Serialize,Deserialize,Default,ToSchema,PartialEq, Eq, Hash)]
+#[derive(Debug,Clone,Serialize,Deserialize,Default,ToSchema,PartialEq, Eq, Hash, schemars::JsonSchema)]
 pub enum OddBoxConfigVersion {
     #[default] Unmarked,
     V1,

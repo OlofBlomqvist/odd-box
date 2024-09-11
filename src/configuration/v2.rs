@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::path::Path;
-
+use schemars::JsonSchema;
 use anyhow::bail;
 use serde::Serialize;
 use serde::Deserialize;
@@ -14,7 +14,7 @@ use super::LogFormat;
 use super::LogLevel;
 
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash, JsonSchema)]
 pub struct InProcessSiteConfig {
     
     #[serde(skip, default = "crate::types::proc_info::ProcId::new")] 
@@ -118,7 +118,7 @@ fn compare_option_log_format(a: &Option<LogFormat>, b: &Option<LogFormat>) -> bo
     result
 }
 
-#[derive(Debug, Eq,PartialEq,Hash, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Eq,PartialEq,Hash, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub enum Hint {
     /// Server supports http2 over tls
     H2,
@@ -129,7 +129,7 @@ pub enum Hint {
     NOH2
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema,Eq,PartialEq,Hash,)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema,Eq,PartialEq,Hash, JsonSchema)]
 pub struct Backend {
     pub address : String,
     /// This can be zero in case the backend is a hosted process, in which case we will need to resolve the current active_port
@@ -139,7 +139,7 @@ pub struct Backend {
     pub hints : Option<Vec<Hint>>,
 }
 
-#[derive(Debug, Hash, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Hash, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct RemoteSiteConfig{
     pub host_name : String,
     pub backends : Vec<Backend>,
@@ -213,7 +213,7 @@ impl RemoteSiteConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize,ToSchema, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize,ToSchema, PartialEq, Eq, Hash, JsonSchema)]
 pub struct OddBoxV2Config {
     #[schema(value_type = String)]
     pub version : super::OddBoxConfigVersion,

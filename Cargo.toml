@@ -9,6 +9,7 @@ license-file = "LICENSE"
 
 [dependencies]
 dirs = "5.0.1"
+schemars = { version = "0.8.21", features = ["chrono"] }
 futures-util = "0.3.30"
 hyper = { version = "1.4.1" , features=["http2","client","server"] }
 hyper-util = { version = "0.1.7", features = ["full"] }
