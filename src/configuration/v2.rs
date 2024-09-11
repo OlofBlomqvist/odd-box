@@ -266,8 +266,15 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
     }
     
     fn to_string(&self) -> anyhow::Result<String>  {
+
+        if self.version != crate::configuration::OddBoxConfigVersion::V2  {
+            panic!("This is a bug in odd-box. The configuration version is not V2. This should not happen.");
+        }
+
         let mut formatted_toml = Vec::new();
 
+        formatted_toml.push(format!("#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.json"));
+        
         formatted_toml.push(format!("version = \"{:?}\"", self.version));
         
         if let Some(alpn) = self.alpn {
