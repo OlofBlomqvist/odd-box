@@ -1,3 +1,4 @@
+#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.json
 version = "V2"
 alpn = false
 http_port = 8080
@@ -6,7 +7,7 @@ ip = "127.0.0.1"
 tls_port = 4343
 auto_start = false
 root_dir = "~"
-log_level = "trace"
+log_level = "Trace"
 port_range_start = 4200
 default_log_format = "standard"
 env_vars = [

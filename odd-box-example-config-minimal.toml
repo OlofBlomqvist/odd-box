@@ -1,6 +1,8 @@
+#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.json
+
 version = "V2" 
 root_dir = "~"
-log_level = "info" 
+log_level = "Info" 
 port_range_start = 4200
 env_vars = []
 
