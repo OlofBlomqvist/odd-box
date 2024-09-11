@@ -31,12 +31,11 @@ You can also build it yourself, or install it using brew, cargo, nix or devbox; 
  
 ### Performance
 
-While the goal of this project **is not** to provide a state-of-the-art level performing proxy server for production environments, but rather a tool for simplifying local development scenarios, we do try to keep performance in mind.. Some  rudimentary testing on this authors development machine shows that TCP tunnel mode supports 200k+ requests per second while the terminating proxy mode handles 100k+ requests per second. More specific measurements of different scenarios will be added here at some point. This was tested by using odd-box in front of a highly performant Caddy server using oha for benchmarking. There is much room for improvement here, especially for terminating mode.. It will be prioritized in to at some point :)
+While the goal of this project is not to provide a state-of-the-art level performing proxy server for production environments, but rather a tool for simplifying local development scenarios, we do **try to** ~~keep performance in mind~~ **be blazingly fast** :-) Seriously though, performance is actually pretty good but it is not a priority (yet).
 
 ### Terminal User Interface
 
-The TUI is fairly simple basic; it provides an easy way to see which sites are running, the log outputs and all currently active connections.
-It is possible to opt-out of TUI mode by supplying the argument: "--tui=false" when starting odd-box. 
+The TUI is fairly simple basic; it provides an easy way to see which sites are running, the log outputs and all currently active connections. It is possible to opt-out of TUI mode by supplying the argument: "--tui=false" when starting odd-box. 
 
 ### API
 
