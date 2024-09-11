@@ -367,10 +367,10 @@ async fn main() -> anyhow::Result<()> {
             }
 
             if tui_flag {
-                println!("Waiting for processes to die: ");
+                println!("Waiting for processes to die.. ");
                 println!("{}",awaited_processed.join("\n"));
             } else {
-                tracing::warn!("Waiting for hosted processes to die:");
+                tracing::warn!("Waiting for hosted processes to die..");
                 for p in awaited_processed {
                     tracing::warn!("{p}");
                 }

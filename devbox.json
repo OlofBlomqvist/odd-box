@@ -2,7 +2,8 @@
     "packages": [
         "rustup@latest",
         "libiconv@latest",
-	"nodejs@18"
+	"nodejs@18",
+	"python@latest"
     ],
     "shell": {
         "init_hook": [

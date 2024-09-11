@@ -37,6 +37,128 @@
         }
       }
     },
+    "nodejs@18": {
+      "last_modified": "2024-08-31T10:12:23Z",
+      "plugin_version": "0.0.2",
+      "resolved": "github:NixOS/nixpkgs/5629520edecb69630a3f4d17d3d33fc96c13f6fe#nodejs_18",
+      "source": "devbox-search",
+      "version": "18.20.4",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/5k3b4l24qray412x35q95y067ll51rv5-nodejs-18.20.4",
+              "default": true
+            },
+            {
+              "name": "libv8",
+              "path": "/nix/store/8caswslyz5x5y9sl44bx7vbdy67a92px-nodejs-18.20.4-libv8"
+            }
+          ],
+          "store_path": "/nix/store/5k3b4l24qray412x35q95y067ll51rv5-nodejs-18.20.4"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/577kjc9ygkxrfrbxillh7dgdhka8ic2w-nodejs-18.20.4",
+              "default": true
+            },
+            {
+              "name": "libv8",
+              "path": "/nix/store/nm6szz0g799gfpwhsnv14nmjvzk8mi0c-nodejs-18.20.4-libv8"
+            }
+          ],
+          "store_path": "/nix/store/577kjc9ygkxrfrbxillh7dgdhka8ic2w-nodejs-18.20.4"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/djai3vmv7w8aivdld68jcn04kw0j0b6s-nodejs-18.20.4",
+              "default": true
+            },
+            {
+              "name": "libv8",
+              "path": "/nix/store/g0prz3qlq0mmifmd9l1wikx7prgg02sb-nodejs-18.20.4-libv8"
+            }
+          ],
+          "store_path": "/nix/store/djai3vmv7w8aivdld68jcn04kw0j0b6s-nodejs-18.20.4"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/cs678lm3zzl18wnfr88sag2c0j3y5ya9-nodejs-18.20.4",
+              "default": true
+            },
+            {
+              "name": "libv8",
+              "path": "/nix/store/k1gnid54y4nw7kgysw9ik29as6wqak9k-nodejs-18.20.4-libv8"
+            }
+          ],
+          "store_path": "/nix/store/cs678lm3zzl18wnfr88sag2c0j3y5ya9-nodejs-18.20.4"
+        }
+      }
+    },
+    "python@latest": {
+      "last_modified": "2024-08-31T10:12:23Z",
+      "plugin_version": "0.0.3",
+      "resolved": "github:NixOS/nixpkgs/5629520edecb69630a3f4d17d3d33fc96c13f6fe#python3",
+      "source": "devbox-search",
+      "version": "3.12.5",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/75j38g8ii1nqkmpf6sdlj3s5dyah3gas-python3-3.12.5",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/75j38g8ii1nqkmpf6sdlj3s5dyah3gas-python3-3.12.5"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/ajjwc8k8sk3ksrl3dq4fsg83m1j8n8s3-python3-3.12.5",
+              "default": true
+            },
+            {
+              "name": "debug",
+              "path": "/nix/store/9qvs74485a1v5255w2ps0xf4rxww6w89-python3-3.12.5-debug"
+            }
+          ],
+          "store_path": "/nix/store/ajjwc8k8sk3ksrl3dq4fsg83m1j8n8s3-python3-3.12.5"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/rv3rj95fxv57c7qwgl43qa7n0fabdy0a-python3-3.12.5",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/rv3rj95fxv57c7qwgl43qa7n0fabdy0a-python3-3.12.5"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/pgb120fb7srbh418v4i2a70aq1w9dawd-python3-3.12.5",
+              "default": true
+            },
+            {
+              "name": "debug",
+              "path": "/nix/store/4ws5lqhgsxdpfb924n49ma6ll7i8x0hf-python3-3.12.5-debug"
+            }
+          ],
+          "store_path": "/nix/store/pgb120fb7srbh418v4i2a70aq1w9dawd-python3-3.12.5"
+        }
+      }
+    },
     "rustup@latest": {
       "last_modified": "2024-08-31T10:12:23Z",
       "plugin_version": "0.0.1",

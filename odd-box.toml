@@ -42,7 +42,7 @@ backends = [
 host_name = "caddy-proc-terminated.localtest.me"
 disable_tcp_tunnel_mode = true
 dir = "$cfg_dir"
-bin = "/nix/store/aq5r61lmr9six0lyi6xikxwvnyp16dfy-user-environment/bin/caddy"
+bin = "caddy"
 hints = [
 'NOH2'
 ]
@@ -59,7 +59,7 @@ port = 8888
 [[hosted_process]]
 host_name = "caddy-proc-tcp.localtest.me"
 dir = "$cfg_dir"
-bin = "/nix/store/aq5r61lmr9six0lyi6xikxwvnyp16dfy-user-environment/bin/caddy"
+bin = "caddy"
 hints = [
 'NOH2'
 ]
@@ -72,3 +72,11 @@ args = [
 ]
 auto_start = true
 port = 9999
+
+[[hosted_process]]
+host_name = "cruma.io"
+dir = "$cfg_dir"
+bin = "python"
+args = ["-m", "http.server", "$port"]
+port = 8515
+env_vars = []
