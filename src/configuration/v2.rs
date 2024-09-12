@@ -50,7 +50,10 @@ pub struct InProcessSiteConfig {
     pub forward_subdomains : Option<bool>,
     /// If you wish to exclude this site from the start_all command.
     /// This setting was previously called "disable" but has been renamed for clarity
-    pub exclude_from_start_all: Option<bool>
+    pub exclude_from_start_all: Option<bool>,
+    /// If you want to use lets-encrypt for generating certificates automatically for this site.
+    /// Defaults to false. This feature will disable tcp tunnel mode.
+    pub enable_lets_encrypt: Option<bool>
 }
 
 
@@ -151,7 +154,10 @@ pub struct RemoteSiteConfig{
     /// test.example.com -> internal.site
     /// vs
     /// test.example.com -> test.internal.site 
-    pub forward_subdomains : Option<bool>
+    pub forward_subdomains : Option<bool>,
+    /// If you want to use lets-encrypt for generating certificates automatically for this site.
+    /// Defaults to false. This feature will disable tcp tunnel mode.
+    pub enable_lets_encrypt: Option<bool>
 }
 
 impl PartialEq for RemoteSiteConfig {
@@ -238,7 +244,8 @@ pub struct OddBoxV2Config {
     pub remote_target : Option<Vec<RemoteSiteConfig>>,
     pub hosted_process : Option<Vec<InProcessSiteConfig>>,
     pub admin_api_port : Option<u16>,
-    pub path : Option<String>
+    pub path : Option<String>,
+    pub lets_encrypt_account_email: Option<String>
 }
 
 impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Config {
@@ -426,6 +433,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
     }
     fn example() -> OddBoxV2Config {
         OddBoxV2Config {
+            lets_encrypt_account_email: None,
             path: None,
             admin_api_port: None,
             version: super::OddBoxConfigVersion::V2,
@@ -442,6 +450,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
             port_range_start: 4200,
             hosted_process: Some(vec![
                 InProcessSiteConfig {
+                    enable_lets_encrypt: Some(false),
                     proc_id: ProcId::new(),
                     active_port: None,
                     forward_subdomains: None,
@@ -466,6 +475,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
             ]),
             remote_target: Some(vec![
                 RemoteSiteConfig { 
+                    enable_lets_encrypt: Some(false),
                     forward_subdomains: None,
                     host_name: "lobsters.local".into(), 
                     backends: vec![
@@ -480,6 +490,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
                     disable_tcp_tunnel_mode: Some(false)
                 },
                 RemoteSiteConfig { 
+                    enable_lets_encrypt: Some(false),
                     forward_subdomains: Some(true),                    
                     host_name: "google.local".into(), 
                     backends: vec![
@@ -553,6 +564,7 @@ impl TryFrom<super::v1::OddBoxV1Config> for super::v2::OddBoxV2Config{
 
     fn try_from(old_config: super::v1::OddBoxV1Config) -> Result<Self, Self::Error> {
         let new_config = super::v2::OddBoxV2Config {
+            lets_encrypt_account_email: None,
             path: None,
             version: super::OddBoxConfigVersion::V2,
             admin_api_port: None,
@@ -566,6 +578,7 @@ impl TryFrom<super::v1::OddBoxV1Config> for super::v2::OddBoxV2Config{
             port_range_start: old_config.port_range_start,
             hosted_process: Some(old_config.hosted_process.unwrap_or_default().into_iter().map(|x|{
                 super::v2::InProcessSiteConfig {
+                    enable_lets_encrypt: Some(false),
                     exclude_from_start_all: None,
                     proc_id: ProcId::new(),
                     active_port: None,
@@ -602,6 +615,7 @@ impl TryFrom<super::v1::OddBoxV1Config> for super::v2::OddBoxV2Config{
             }).collect()),
             remote_target: Some(old_config.remote_target.unwrap_or_default().iter().map(|x|{
                 super::v2::RemoteSiteConfig {
+                    enable_lets_encrypt: Some(false),
                     disable_tcp_tunnel_mode: x.disable_tcp_tunnel_mode,
                     capture_subdomains: x.capture_subdomains,
                     forward_subdomains: x.forward_subdomains,

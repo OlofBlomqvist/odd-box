@@ -302,7 +302,7 @@ impl ReverseTcpProxy {
             let subdomain = target.sub_domain.as_ref();
             if target.forward_wildcard && subdomain.is_some() {
                 tracing::debug!("tcp tunnel rewrote for subdomain: {:?}", subdomain);
-                format!("{}.{}:{}", subdomain.unwrap(), primary_backend.address, primary_backend.port )
+                format!("{}.{}:{}", subdomain.expect("we just validated subdomain so it must exist"), primary_backend.address, primary_backend.port )
             } else {
                 format!("{}:{}", primary_backend.address, primary_backend.port )
             }

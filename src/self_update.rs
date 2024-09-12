@@ -36,10 +36,10 @@ pub async fn update() -> anyhow::Result<()> {
             } else {
                 false
             }
-        }).next().unwrap().clone();
+        }).next().expect("failed to read github data").clone();
 
     let current_version = cargo_crate_version!();
-    let latest_tag = latest_release.tag_name.unwrap();
+    let latest_tag = latest_release.tag_name.expect("tag name not found");
     if format!("v{current_version}") == latest_tag {
         println!("already running latest version: {latest_tag}");
         return Ok(())

@@ -43,7 +43,7 @@ pub async fn listen(
         // .with_custom_certificate_verifier(verifier)
         
         .with_native_roots()
-        .unwrap()
+        .expect("must be able to create tls configuration")
         .with_no_client_auth();
 
         
@@ -68,11 +68,7 @@ pub async fn listen(
         .http2_only(true)
         .build(connector);
 
- 
-    // let c2 = reqwest::Client::builder().build().unwrap();
-    // let what = c2.execute(Request::new(Method::DELETE, Url::parse("what").unwrap()));
-    
-  
+
     let terminating_proxy_service = ReverseProxyService { 
         resolved_target: None,
         state:state.clone(), 
@@ -309,11 +305,11 @@ async fn handle_new_tcp_stream(
         
         // we see that this is cleartext data, and we expect clear text data, and we also extracted a hostname by peeking.
         // at this point, we should check if the target is NOT configured for https (tls) before forwarding.
-        Ok((PeekResult {
+        Ok(PeekResult {
             typ: DataType::ClearText,
             http_version:_,
             target_host: Some(target)
-        })) if incoming_connection_is_on_tls_port == false => {
+        }) if incoming_connection_is_on_tls_port == false => {
             
             if let Some(target) = targets.try_find(&target.clone(),move |p|tcp_proxy::ReverseTcpProxy::req_target_filter_map(p,&target )).await {
                 fresh_service_template_with_source_info.resolved_target = Some(target.clone());
@@ -386,11 +382,11 @@ async fn handle_new_tcp_stream(
         
         // we see that this is tls data, and we expect tls data, and we also extracted a hostname by peeking.
         // at this point, we should check if the target is configured for https (tls) before forwarding.
-        Ok((PeekResult {
+        Ok(PeekResult {
             typ: DataType::TLS,
             http_version:_,
             target_host: Some(target_host_name)
-        })) if incoming_connection_is_on_tls_port => {
+        }) if incoming_connection_is_on_tls_port => {
 
             // TODO - should not do cert stuff here but at startup and on config modification
 
@@ -414,16 +410,6 @@ async fn handle_new_tcp_stream(
                 return;
             }
         
-            // Trigger certificate generation if we do not have a certificate for this host
-            match fresh_service_template_with_source_info.state.cert_resolver.lets_encrypt_manager.try_get_cert(&host_name).await {
-                Ok(c) => {
-                    tracing::info!("Successfully got lets-encrypt certificate for {host_name}");
-                    fresh_service_template_with_source_info.state.cert_resolver.add_cert(&host_name, c);
-                },
-                Err(e) => {
-                    tracing::warn!("Failed to get lets-encrypt certificate for {host_name}: {e:?}");
-                }
-            }
             
             
             if let Some(target) = targets.try_find(&target_host_name.to_string(),move |p|tcp_proxy::ReverseTcpProxy::req_target_filter_map(p, &target_host_name)).await {

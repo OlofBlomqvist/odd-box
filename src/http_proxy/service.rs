@@ -134,7 +134,21 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
 
         // handle letsencrypt verification requests
         if req.uri().path().starts_with("/.well-known/acme-challenge/") {
-            let host = req.headers().get("host").unwrap().to_str().unwrap().to_string();
+
+            let host = match req.headers().get("host") {
+                Some(value) => match value.to_str() {
+                    Ok(host_str) => host_str.to_string(),
+                    Err(e) => {
+                        tracing::error!("Failed to convert host header to string: {:?}", e);
+                        return Box::pin(async move { Err(CustomError(format!("{e:?}"))) });
+                    }
+                },
+                None => {
+                    tracing::error!("Host header not found");
+                    return Box::pin(async move { Err(CustomError(format!("Host header not found"))) });
+                }
+            };
+
             // strip any :port from host:
             let host = host.split(":").collect::<Vec<&str>>()[0].to_string();
             let f = async move {

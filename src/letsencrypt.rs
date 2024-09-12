@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 use anyhow::{bail, Context};
 use base64::engine::general_purpose;
@@ -14,7 +15,9 @@ use josekit::jwk::Jwk;
 use serde_json::Value;
 use tokio_rustls::rustls::sign::CertifiedKey;
 
+use crate::global_state::GlobalState;
 
+// TODO - move this to disk for persistance?
 lazy_static::lazy_static! {
     pub static ref CHALLENGE_MAP: DashMap<String, String> = DashMap::new();
     pub static ref DOMAIN_TO_CHALLENGE_TOKEN_MAP: DashMap<String, String> = DashMap::new();
@@ -37,24 +40,26 @@ pub struct CertManager {
     client: Client,
     account_rsa_key_pair: josekit::jwk::alg::rsa::RsaKeyPair,
     account_url: String,
-    directory: Directory,
+    directory: Directory
 }
 
 
-// TODO
-// - LINK TO THE SPECIFIC PARTS OF THE ACME SPEC?
-// - CLEAN UP THE PRINTLN
-// - ERROR HANDLING
 impl CertManager { 
 
-    // todo : printlns
-    /// Register a new ACME account and returns account url
-    async fn register_acme_account(client: &Client, directory: &Directory, account_key_pair: &josekit::jwk::alg::rsa::RsaKeyPair) -> anyhow::Result<String> {
+    // Note: this method is called prior to the tracing being initialized and thus must use println! for logging.
+    async fn register_acme_account(account_email:&str,client: &Client, directory: &Directory, account_key_pair: &josekit::jwk::alg::rsa::RsaKeyPair) -> anyhow::Result<String> {
+        
+        let email_regex = regex::Regex::new( r"(?i)^[a-z0-9!#$%&'+/=?^_{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_{|}~-]+)@(?:a-z0-9?.)+[a-z]{2,}$" ).unwrap();
+        let email_is_valid = email_regex.is_match(account_email);
+        if email_is_valid == false {
+            bail!("Invalid email address: {}", account_email);
+        }
+
         // Create payload for new account registration
         let payload = json!({
             "termsOfServiceAgreed": true,
             // todo: add config option for this email
-            "contact": ["mailto:example@cruma.io"] 
+            "contact": [format!("mailto:{}",account_email)] 
         });
 
         let nonce = Self::fetch_nonce(&client, &directory.new_nonce).await.context("fetch nonce")?;
@@ -75,10 +80,10 @@ impl CertManager {
         if res.status().is_success() {
             if let Some(location) = res.headers().get("Location") {
                 let account_url = location.to_str()?.to_string();
-                tracing::info!("ACME account registered successfully! Account URL: {}", account_url);
+                println!("ACME account registered successfully! Account URL: {}", account_url);
 
                 let account_info: serde_json::Value = res.json().await?;
-                tracing::info!("Account info: {:?}", account_info);
+                println!("ACME account info: {:?}", account_info);
 
                 Ok(account_url)
             } else {
@@ -98,16 +103,16 @@ impl CertManager {
             .ok_or("Failed to fetch nonce")
             .map_err(anyhow::Error::msg)?;
 
-        let s = nonce.to_str().unwrap().to_string();
+        let s = nonce.to_str()?.to_string();
         Ok(s)
     }
 
-
-    pub async fn new() -> anyhow::Result<Self> {
+    // Note: this method is called prior to the tracing being initialized and thus must use println! for logging.
+    pub async fn new(account_email:&str) -> anyhow::Result<Self> {
         let client = Client::new();
         let account_key_path = ".odd_box_cache/lets_encrypt_account_key.pem";
         let account_key_pair = if !std::path::Path::exists(Path::new(account_key_path)) {
-            let key_pair = josekit::jwk::alg::rsa::RsaKeyPair::generate(2048).unwrap();
+            let key_pair = josekit::jwk::alg::rsa::RsaKeyPair::generate(2048)?;
             let mut file = std::fs::File::create(account_key_path)?;
             let bytes = key_pair.to_pem_private_key();
             file.write_all(&bytes)?;
@@ -126,12 +131,11 @@ impl CertManager {
         let acc_url_path = ".odd_box_cache/lets_encrypt_account_url";
         let account_url = if std::path::Path::exists(std::path::Path::new(acc_url_path)) {
             let account_url = std::fs::read_to_string(acc_url_path)?;
-            tracing::info!("Account already registered: {}", account_url);
+            println!("Account already registered: {}", account_url);
             account_url
         } else {
-            tracing::info!("Registering a new ACME account...");
-            
-            let url = Self::register_acme_account(&client, &directory, &account_key_pair).await.context("register acme account")?;
+            println!("Registering a new ACME account...");
+            let url = Self::register_acme_account(&account_email,&client, &directory, &account_key_pair).await.context("register acme account")?;
             std::fs::write(acc_url_path, &url)?;
             url
         };
@@ -144,7 +148,9 @@ impl CertManager {
         })
     }
     
-    pub async fn try_get_cert(&self, domain_name: &str) -> anyhow::Result<std::sync::Arc<CertifiedKey>> {
+    /// This method will try to find a certificate for the given name in the .odd_box_cache/lets_encrypt directory
+    /// before attempting to create a new certificate via lets-encrypt.
+    pub async fn get_or_create_cert(&self, domain_name: &str) -> anyhow::Result<CertifiedKey> {
         
         let odd_cache_base = ".odd_box_cache/lets_encrypt";
 
@@ -174,13 +180,12 @@ impl CertManager {
             let key_string = std::fs::read_to_string(&key_file_path)?;
 
             let cert_chain = crate::certs::extract_cert_from_pem_str(crt_string)?;
-            let private_key = crate::certs::extract_priv_key_from_pem(key_string).unwrap();
+            let private_key = crate::certs::extract_priv_key_from_pem(key_string)?;
 
             
-
             let rsa_signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&private_key)
                 .map_err(|e| anyhow::anyhow!("Failed to create signing key: {:?}", e))?;
-            let certified_key = std::sync::Arc::new(CertifiedKey::new(cert_chain, rsa_signing_key));
+            let certified_key = CertifiedKey::new(cert_chain, rsa_signing_key);
 
             return Ok(certified_key);
         }
@@ -212,11 +217,11 @@ impl CertManager {
         tracing::info!("Certificate and key saved to disk for domain: {}. Path: {}", domain_name, key_file_path);
 
         let cert_chain = crate::certs::extract_cert_from_pem_str(the_new_cert.clone())?;
-        let private_key = crate::certs::extract_priv_key_from_pem(the_new_cert.clone()).unwrap();
+        let private_key = crate::certs::extract_priv_key_from_pem(the_new_cert.clone())?;
 
         let rsa_signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&private_key)
             .map_err(|e| anyhow::anyhow!("Failed to create signing key: {:?}", e))?;
-        let certified_key = std::sync::Arc::new(CertifiedKey::new(cert_chain, rsa_signing_key));
+        let certified_key = CertifiedKey::new(cert_chain, rsa_signing_key);
 
         Ok(certified_key)
     }
@@ -241,7 +246,7 @@ impl CertManager {
             }]
         });
 
-        let signed_request = Self::sign_request(&self.account_rsa_key_pair, Some(&payload), &nonce, &directory.new_order, Some(&self.account_url)).unwrap();
+        let signed_request = Self::sign_request(&self.account_rsa_key_pair, Some(&payload), &nonce, &directory.new_order, Some(&self.account_url))?;
 
         let res = self.client
             .post(&directory.new_order)
@@ -254,20 +259,25 @@ impl CertManager {
             .headers()
             .get("Location")
             .ok_or_else(|| anyhow::anyhow!("Order URL not found in Location header"))?
-            .to_str()
-            .unwrap()
+            .to_str()?
             .to_string();
 
 
         if res.status().is_success() {
             let body: serde_json::Value = res.json().await?;
             tracing::info!("Order created: {:?}", body);
-            let auth_url = body["authorizations"][0].as_str().unwrap().to_string();
-            let finalize_url = body["finalize"].as_str().unwrap().to_string();
+            let auth_url = body["authorizations"]
+                .get(0)
+                .and_then(|url| url.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Authorization URL not found"))?
+                .to_string();
+            let finalize_url = body["finalize"]
+                .get(0)
+                .and_then(|url| url.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Finalize URL not found"))?
+                .to_string();
 
-            tracing::info!("Order created, authorization URL: {}", auth_url);
-            tracing::info!("Order URL: {}", order_url);
-            tracing::info!("Order created, authorization URL: {}", auth_url);
+            tracing::info!("LE Order URL: {}", order_url);
             Ok((auth_url,finalize_url,order_url))
         } else {
             anyhow::bail!("Failed to create order")
@@ -287,24 +297,42 @@ impl CertManager {
         if !res.status().is_success() {
             anyhow::bail!("Failed to fetch authorization details");
         }
-
         let body: serde_json::Value = res.json().await?;
         let challenge = body["challenges"]
             .as_array()
-            .unwrap()
-            .iter()
-            .find(|ch| ch["type"] == "http-01")
-            .ok_or("No HTTP-01 challenge found")
-            .map_err(anyhow::Error::msg)?;
+            .and_then(|challenges| {
+            challenges
+                .iter()
+                .find(|ch| ch["type"] == "http-01")
+            })
+            .ok_or_else(|| anyhow::Error::msg("No HTTP-01 challenge found"))?;
 
-        if challenge["status"] == "valid" {
-            return Ok(body["challenges"][0]["validationRecord"][0]["url"].as_str().unwrap().to_string())
+        if let Some(status) = challenge.get("status") {
+            if status == "valid" {
+                if let Some(url) = body.get("challenges")
+                    .and_then(|challenges| challenges.get(0))
+                    .and_then(|challenge| challenge.get("validationRecord"))
+                    .and_then(|validation_record| validation_record.get(0))
+                    .and_then(|record| record.get("url"))
+                    .and_then(|url| url.as_str())
+                {
+                    return Ok(url.to_string());
+                } else {
+                    return Err(anyhow::anyhow!("URL not found in the expected JSON structure"));
+                }
+            } else {
+                tracing::info!("Got new http-01 challenge with status {:?}", status);
+            }
         } else {
-            tracing::info!("Got new http-01 challenge with status {:?}", challenge["status"]);
+            tracing::info!("Challenge status not found in JSON");
         }
 
-        let token = challenge["token"].as_str().unwrap();
-        let key_authorization = self.generate_key_authorization(token).unwrap();
+
+        let token = challenge.get("token")
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Token not found or is not a string in the challenge JSON"))?;
+
+        let key_authorization = self.generate_key_authorization(token)?;
 
         tracing::info!("saving challenge token {:?} and key auth {:?}", token,key_authorization);
  
@@ -317,7 +345,7 @@ impl CertManager {
         tracing::info!("GOT THIS CHALLENGE: {:?}",challenge);
 
         // Notify Let's Encrypt to validate the challenge :o
-        let challenge_url = challenge["url"].as_str().unwrap();
+        let challenge_url = challenge["url"].as_str().ok_or_else(||anyhow::anyhow!("Challenge URL not found"))?;
         let nonce = Self::fetch_nonce(&self.client,&self.directory.new_nonce).await?;
         let signed_request = Self::sign_request(
             &self.account_rsa_key_pair, 
@@ -325,7 +353,7 @@ impl CertManager {
             &nonce, 
             challenge_url,
             Some(&self.account_url)
-        ).unwrap();
+        ).context("signing payload")?;
 
         tracing::warn!("CALLING CHALLENGE URL: {}", challenge_url);
         let res = self.client
@@ -339,7 +367,17 @@ impl CertManager {
         if res.status().is_success() {
             let body: serde_json::Value = res.json().await?;
             tracing::info!("Trigger result: {}", body.to_string());
-            Ok(body["url"].as_str().unwrap().to_string())
+            
+            if let Some(x) = body.get("url") {
+                if let Some(url) = x.as_str() {
+                    return Ok(url.to_string());
+                } else {
+                    bail!("Challenge validation failed: {:?}",body);
+                }
+            } else {
+                bail!("Challenge validation failed: {}",body);
+            }
+
         } else {
             bail!("Challenge validation failed: {}",res.text().await?);
         }
@@ -354,7 +392,7 @@ impl CertManager {
             count += 1;
 
             let nonce = Self::fetch_nonce(&self.client,&self.directory.new_nonce).await?;
-            let signed_request = Self::sign_request(&self.account_rsa_key_pair, None, &nonce, order_url, Some(&self.account_url)).unwrap();
+            let signed_request = Self::sign_request(&self.account_rsa_key_pair, None, &nonce, order_url, Some(&self.account_url))?;
 
             tracing::warn!("CALLING ORDER URL: {}", order_url);
 
@@ -470,7 +508,8 @@ impl CertManager {
     
         if res.status().is_success() {
             let j : Value = res.json().await?;
-            let cert_url = j["certificate"].as_str().unwrap();
+            let cert_url = j["certificate"].as_str()
+                .ok_or_else(|| anyhow::anyhow!("Cert not found in response body"))?.to_string();
 
             let res = self.client.get(cert_url).send().await?.text().await?;
 
@@ -486,7 +525,7 @@ impl CertManager {
     fn compute_jwk_thumbprint(jwk:&Jwk) -> anyhow::Result<String> {
         
         use sha2::Digest;
-        let jwk = serde_json::to_value(jwk).unwrap();
+        let jwk = serde_json::to_value(jwk)?;
         let jwk_subset = json!({
             "e": jwk["e"],
             "kty": jwk["kty"],
@@ -513,7 +552,7 @@ impl CertManager {
 
     fn generate_key_authorization(&self, token: &str) -> anyhow::Result<String> {
         let jwk = self.account_rsa_key_pair.to_jwk_public_key();
-        let thumbprint_encoded = Self::compute_jwk_thumbprint(&jwk).unwrap();
+        let thumbprint_encoded = Self::compute_jwk_thumbprint(&jwk)?;
         Ok(format!("{}.{}", token, thumbprint_encoded))
     }
     
@@ -566,4 +605,51 @@ impl CertManager {
     }
 
 
+}
+
+
+
+// TODO - handle renewals
+pub async fn bg_worker_for_lets_encrypt_certs(state: Arc<GlobalState>) {
+    
+    // NOTE 1: We keep this loop going because the config can change at runtime to enable lets-encrypt for a site.   
+    // NOTE 2: We generate these certificates in a loop and not OTF. This is to avoid concurrent requests to lets-encrypt.
+    loop {
+
+        let mgr = &state.cert_resolver.lets_encrypt_manager;
+        let state_guard = state.config.read().await;
+
+        let mut all_sites_with_lets_encrypt_enabled = 
+            state_guard.remote_target
+                .iter()
+                .flatten()
+                .filter(|x|x.enable_lets_encrypt.unwrap_or(false)).map(|x|x.host_name.clone())
+            .chain(
+                state_guard.hosted_process
+                    .iter()
+                    .flatten()
+                    .filter(|x|x.enable_lets_encrypt.unwrap_or(false)).map(|x|x.host_name.clone())
+            ).collect::<Vec<String>>();
+        
+        drop(state_guard);
+
+        all_sites_with_lets_encrypt_enabled.sort();
+        all_sites_with_lets_encrypt_enabled.dedup();        
+
+        for domain_name in all_sites_with_lets_encrypt_enabled {
+            
+            if let Some(_) = state.cert_resolver.get_lets_encrypt_signed_cert_from_mem_cache(&domain_name) {
+                tracing::info!("LE CERT IS OK FOR: {}", domain_name);
+                continue;
+            }
+
+            let certificate_from_disk_or_newly_generated = 
+                mgr.get_or_create_cert(&domain_name).await.context(format!("generating lets-encrypt cert for site {}",domain_name)).unwrap();
+
+            state.cert_resolver.add_lets_encrypt_signed_cert_to_mem_cache(&domain_name, certificate_from_disk_or_newly_generated);            
+        }
+    
+
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    }
 }

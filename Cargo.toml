@@ -37,31 +37,26 @@ reqwest = { version = "0.12.4", features = ["json"] }
 serde_json = "1.0.111"
 self_update = "0.41.0"
 bytes = "1.7.1"
-http-body-util = "0.1.0"
-hyper-rustls = { version = "0.27.2", features = ["http2"] }
+http-body-util = "0.1.2"
+hyper-rustls = { version = "0.27.3", features = ["http2"] }
 http-body = "1.0.1"
-tokio-stream = "0.1.15"
-ctrlc = "3.2"
-hpack = { version = "0.3.0"  }
+tokio-stream = "0.1.16"
+ctrlc = "3.4.5"
+fluke-hpack = { version = "0.3.1"  }
 webpki = { version = "0.22.4"  }
-anyhow = "1.0.79"
-uuid = { version = "1.7.0", features = ["v4"] }
+anyhow = "1.0.88"
+uuid = { version = "1.10.0", features = ["v4"] }
 tungstenite = "0.24.0"
-dark-light = "1.0.0"
+dark-light = "1.1.1"
 memchr = "2.7.4"
 dashmap = "6.0.1"
 base64 = "0.22.1"
 josekit = "0.8.7"
 ring = "0.17.8"
-pem = "3.0.4"
-rsa = "0.9.6"
-jsonwebkey-convert = { version="0.3.0",features = ["pem_support"] }
-num-bigint = "0.4.6"
-simple_asn1 = { version = "=0.5.1", optional = true }
+#rsa = "0.9.6"
 sha256 = "1.5.0"
 sha2 = "0.10.8"
 which = "6.0.3"
-jsonwebtoken = "9.3.0"
 
 # === MANAGEMENT API ============================================
 axum = { version="0.7.5",features=["ws"] }
@@ -71,7 +66,6 @@ utoipa-rapidoc = { version = "4.0.0", features = ["axum"] }
 utoipa-redoc = { version = "4.0.0", features = ["axum"] }
 utoipauto = "0.1.10"
 tower-http = { version = "0.5.2" , features = ["fs","cors","trace"]}
-async-trait = "0.1.81"
 axum-extra = { version = "0.9.3", features = ["typed-header"] }
 # ===============================================================
 

@@ -6,9 +6,11 @@ mod tcp_proxy;
 mod http_proxy;
 mod proxy;
 use anyhow::bail;
+use anyhow::Context;
 use clap::Parser;
 use configuration::v2::FullyResolvedInProcessSiteConfig;
 use configuration::LogFormat;
+use configuration::OddBoxConfigVersion;
 use dashmap::DashMap;
 use global_state::GlobalState;
 use configuration::v2::InProcessSiteConfig;
@@ -101,14 +103,14 @@ fn generate_config(file_name:&str, fill_example:bool) -> anyhow::Result<()> {
     }
 
     let serialized = cfg.to_string()?;
-    std::fs::write(&file_path, serialized).unwrap();
+    std::fs::write(&file_path, serialized)?;
     tracing::info!("Configuration file written to {file_path:?}");
     return Ok(())
 
 }
 
-
-fn initialize_configuration(args:&Args) -> anyhow::Result<ConfigWrapper> {
+// (validated_cfg, original_version)
+fn initialize_configuration(args:&Args) -> anyhow::Result<(ConfigWrapper,OddBoxConfigVersion)> {
 
     let cfg_path = 
         if let Some(cfg) = &args.configuration {
@@ -128,11 +130,17 @@ fn initialize_configuration(args:&Args) -> anyhow::Result<ConfigWrapper> {
     let mut contents = String::new();
     file.read_to_string(&mut contents)?;    
     
-    let mut config: ConfigWrapper = 
-        ConfigWrapper::new(match configuration::OddBoxConfig::parse(&contents) {
-            Ok(configuration) => configuration.try_upgrade_to_latest_version().expect("configuration upgrade failed. this is a bug in odd-box"),
+    let (mut config,original_version) = 
+        match configuration::OddBoxConfig::parse(&contents) {
+            Ok(configuration) => {
+                let (a,b) = 
+                    configuration
+                        .try_upgrade_to_latest_version()
+                        .expect("configuration upgrade failed. this is a bug in odd-box");
+                (ConfigWrapper::new(a),b)
+            },
             Err(e) => anyhow::bail!(e),
-        });
+        };
     
     config.is_valid()?;
     config.init(&cfg_path)?;
@@ -154,7 +162,7 @@ fn initialize_configuration(args:&Args) -> anyhow::Result<ConfigWrapper> {
         }
     }
 
-    Ok(config)
+    Ok((config,original_version))
 }
 
 #[tokio::main(flavor="multi_thread")]
@@ -164,7 +172,7 @@ async fn main() -> anyhow::Result<()> {
     
     if args.config_schema {
         let schema = schemars::schema_for!(crate::configuration::v2::OddBoxV2Config);
-        println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+        println!("{}", serde_json::to_string_pretty(&schema).expect("schema should be serializable"));
         return Ok(());
     }
 
@@ -183,11 +191,26 @@ async fn main() -> anyhow::Result<()> {
         return Ok(())
     }
 
-    let config = initialize_configuration(&args)?;
+    let (config,original_version) = initialize_configuration(&args)?;
 
     if args.upgrade_config {
+        match original_version {
+            OddBoxConfigVersion::V2 => {
+                println!("Configuration file is already at the latest version.");
+                return Ok(())
+            },
+            _ => {}
+        }
         config.write_to_disk()?;
+        println!("Configuration file upgraded successfully!");
+        return Ok(());
+    } else if let OddBoxConfigVersion::V2 = original_version {
+        // do nothing
+    } else {
+        println!("Your configuration file is using an old schema ({:?}), consider upgrading it using the '--upgrade-config' command.",original_version);
     }
+
+
 
     let cloned_procs = config.hosted_process.clone();
     let cloned_remotes = config.remote_target.clone();
@@ -211,9 +234,11 @@ async fn main() -> anyhow::Result<()> {
     let arced_tx = std::sync::Arc::new(tx.clone());
     let shutdown_signal = Arc::new(tokio::sync::Notify::new());
     let api_broadcaster = tracing_broadcaster.clone();
+    let le_acc_mail = config.lets_encrypt_account_email.clone();
     let shared_config = std::sync::Arc::new(tokio::sync::RwLock::new(config));
+    
     let global_state = Arc::new(crate::global_state::GlobalState { 
-        cert_resolver: Arc::new(certs::DynamicCertResolver::new().await),
+        cert_resolver: Arc::new(certs::DynamicCertResolver::new(true,le_acc_mail).await.context("could not create cert resolver for the global state!")?),
         app_state: inner_state_arc.clone(), 
         config: shared_config.clone(), 
         broadcaster:tx.clone(),
@@ -221,6 +246,9 @@ async fn main() -> anyhow::Result<()> {
         request_count: std::sync::atomic::AtomicUsize::new(0)
     });
 
+
+    tokio::task::spawn(crate::letsencrypt::bg_worker_for_lets_encrypt_certs(global_state.clone()));
+    
     // Spawn task for the admin api if enabled
     if let Some(api_port) = api_port {
         let api_state = global_state.clone();

@@ -145,19 +145,20 @@ impl OddBoxConfig {
         }
     }
 
-    pub fn try_upgrade_to_latest_version(&self) -> Result<v2::OddBoxV2Config,String> {
+    // Result<(validated_config,original_version),error>
+    pub fn try_upgrade_to_latest_version(&self) -> Result<(v2::OddBoxV2Config,OddBoxConfigVersion),String> {
         match self {
             OddBoxConfig::Legacy(legacy_config) => {
                 let v1 : v1::OddBoxV1Config = legacy_config.to_owned().try_into()?;
                 let v2 : v2::OddBoxV2Config = v1.to_owned().try_into()?;
-                Ok(v2)
+                Ok((v2,OddBoxConfigVersion::Unmarked))
             },
             OddBoxConfig::V1(v1_config) => {
                 let v2 : v2::OddBoxV2Config = v1_config.to_owned().try_into()?;
-                Ok(v2)
+                Ok((v2,OddBoxConfigVersion::V1))
             },
             OddBoxConfig::V2(v2) => {
-                Ok(v2.clone())
+                Ok((v2.clone(),OddBoxConfigVersion::V2))
             },
         }
     }
@@ -182,11 +183,21 @@ impl ConfigWrapper {
         if self.env_vars.iter().any(|x| x.key.eq_ignore_ascii_case("port")) {
             anyhow::bail!("Invalid configuration. You cannot use 'port' as a global environment variable");
         }
+
     
         let mut host_names = std::collections::HashMap::new();
         let mut ports = std::collections::HashMap::new();
     
-        for process in self.hosted_process.clone().unwrap_or_default() {
+
+        for target in self.remote_target.iter().flatten() {
+            if target.enable_lets_encrypt.unwrap_or(false) {
+                if target.disable_tcp_tunnel_mode.unwrap_or(false) {
+                    anyhow::bail!(format!("Invalid configuration for '{}'. LetsEncrypt cannot be enabled when TCP tunnel mode is disabled.", target.host_name));
+                }
+            }
+        }
+
+        for process in self.hosted_process.iter().flatten() {
   
             host_names
                 .entry(process.host_name.clone())
@@ -199,9 +210,15 @@ impl ConfigWrapper {
                     .or_insert_with(Vec::new)
                     .push(process.host_name.clone());
             }
+
+            if process.enable_lets_encrypt.unwrap_or(false) {
+                if process.disable_tcp_tunnel_mode.unwrap_or(false) {
+                    anyhow::bail!(format!("Invalid configuration for '{}'. LetsEncrypt cannot be enabled when TCP tunnel mode is disabled.", process.host_name));
+                }
+            }
     
             if let Some(port) = process.port {
-                if let Some(env_vars) = process.env_vars {
+                if let Some(env_vars) = &process.env_vars {
                     for env_var in env_vars {
                         if env_var.key.eq_ignore_ascii_case("port") {
                             if let Ok(env_port) = env_var.value.parse::<u16>() {

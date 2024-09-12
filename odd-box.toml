@@ -34,6 +34,7 @@ env_vars = [
 [[hosted_process]] # hosted processes are those that odd-box is responsible for running
 host_name = "test3.cruma.io"  # incoming name for binding to (frontend)
 disable_tcp_tunnel_mode = true
+enable_lets_encrypt = true
 dir = "$cfg_dir" # path where we should be located when running the binary file
 bin = "python3" # name or path of the binary that should be executed
 args = [
