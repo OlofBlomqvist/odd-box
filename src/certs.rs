@@ -32,6 +32,7 @@ impl ResolvesServerCert for DynamicCertResolver {
             tracing::trace!("Returning a cached certificate for {:?}",server_name);
             return Some(certified_key.clone());
         } else {
+            // temp - remove this and fall back once we know that the letsencrypt manager works
             return None;            
         }
     

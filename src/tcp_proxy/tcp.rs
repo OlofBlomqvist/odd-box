@@ -183,7 +183,7 @@ impl ReverseTcpProxy {
     pub async fn eat_tcp_stream(
         tcp_stream: TcpStream,
         _client_address: SocketAddr,
-    ) -> (ManagedStream,Result<(PeekResult), PeekError>) {
+    ) -> (ManagedStream,Result<PeekResult, PeekError>) {
         
         let mut attempts = 0;
         

@@ -301,7 +301,7 @@ async fn handle_http_request(
             }
         }
 
-        let mut port = 0;
+        let port;
         let mut wait_count = 0;
         loop {
             if wait_count > 100 {

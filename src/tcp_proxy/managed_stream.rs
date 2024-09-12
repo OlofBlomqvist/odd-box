@@ -2,7 +2,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use bytes::{Buf, BytesMut};
+use bytes::BytesMut;
 use std::io::Error;
 
 #[derive(Debug)]

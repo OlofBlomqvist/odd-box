@@ -415,10 +415,10 @@ async fn handle_new_tcp_stream(
             }
         
             // Trigger certificate generation if we do not have a certificate for this host
-            match service.state.cert_resolver.lets_encrypt_manager.try_get_cert(&host_name).await {
+            match fresh_service_template_with_source_info.state.cert_resolver.lets_encrypt_manager.try_get_cert(&host_name).await {
                 Ok(c) => {
                     tracing::info!("Successfully got lets-encrypt certificate for {host_name}");
-                    service.state.cert_resolver.add_cert(&host_name, c);
+                    fresh_service_template_with_source_info.state.cert_resolver.add_cert(&host_name, c);
                 },
                 Err(e) => {
                     tracing::warn!("Failed to get lets-encrypt certificate for {host_name}: {e:?}");

@@ -2,8 +2,8 @@
     "packages": [
         "rustup@latest",
         "libiconv@latest",
-	"nodejs@18",
-	"python@latest"
+        "nodejs@18",
+        "python@latest"
     ],
     "shell": {
         "init_hook": [
@@ -19,6 +19,7 @@
         "scripts": {
             "test": "cargo test -- --show-output",
             "start" : "cargo run",
+            "start-release" : "cargo run --release",
             "build-docs": "cargo doc"
         }
     }
