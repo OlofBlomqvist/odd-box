@@ -118,10 +118,8 @@ impl CertManager {
 
         };
 
-        //let directory_url = "https://acme-v02.api.letsencrypt.org/directory"; // PROD
-        
-        let directory_url = "https://acme-staging-v02.api.letsencrypt.org/directory"; // STAGING
-        
+        let directory_url = "https://acme-v02.api.letsencrypt.org/directory"; // PROD        
+        //let directory_url = "https://acme-staging-v02.api.letsencrypt.org/directory"; // STAGING        
 
         let directory = Self::fetch_directory(&client, directory_url).await.context("calling fetch_directory")?;
         println!("Directory fetched: {:?}", directory);
@@ -172,9 +170,13 @@ impl CertManager {
 
         if std::path::Path::new(&cert_file_path).exists() && std::path::Path::new(&key_file_path).exists() {
             tracing::info!("Certificate and key already exist for domain: {}", domain_name);
+            let crt_string = std::fs::read_to_string(&cert_file_path)?;
+            let key_string = std::fs::read_to_string(&key_file_path)?;
 
-            let cert_chain = crate::certs::my_certs(&cert_file_path)?;
-            let private_key = crate::certs::my_rsa_private_keys(&key_file_path).unwrap();
+            let cert_chain = crate::certs::extract_cert_from_pem_str(crt_string)?;
+            let private_key = crate::certs::extract_priv_key_from_pem(key_string).unwrap();
+
+            
 
             let rsa_signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&private_key)
                 .map_err(|e| anyhow::anyhow!("Failed to create signing key: {:?}", e))?;
@@ -194,7 +196,7 @@ impl CertManager {
         self.poll_order_status_util_valid(&challenge_url).await?;
 
 
-        self.finalize_order(&finalize_url).await.context("finalizing the order of a new cert")?;
+        let priv_key = self.finalize_order(&finalize_url, domain_name).await.context("finalizing the order of a new cert")?;
         
         tokio::time::sleep(Duration::from_secs(5)).await;
         
@@ -202,12 +204,15 @@ impl CertManager {
 
         let the_new_cert = self.fetch_certificate(&order_url).await.context("fetching new certificate")?;
 
+    
         std::fs::write(&cert_file_path, &the_new_cert)?;
+        std::fs::write(&key_file_path, &priv_key.serialize_pem())?;
+        
 
         tracing::info!("Certificate and key saved to disk for domain: {}. Path: {}", domain_name, key_file_path);
 
-        let cert_chain = crate::certs::my_certs(&cert_file_path)?;
-        let private_key = crate::certs::my_rsa_private_keys(&key_file_path).unwrap();
+        let cert_chain = crate::certs::extract_cert_from_pem_str(the_new_cert.clone())?;
+        let private_key = crate::certs::extract_priv_key_from_pem(the_new_cert.clone()).unwrap();
 
         let rsa_signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&private_key)
             .map_err(|e| anyhow::anyhow!("Failed to create signing key: {:?}", e))?;
@@ -215,7 +220,6 @@ impl CertManager {
 
         Ok(certified_key)
     }
-    
     
 
     async fn fetch_directory(client:&Client, url: &str) -> anyhow::Result<Directory> {
@@ -294,7 +298,7 @@ impl CertManager {
             .map_err(anyhow::Error::msg)?;
 
         if challenge["status"] == "valid" {
-            anyhow::bail!("Challenge is already valid... we should not be here");            
+            return Ok(body["challenges"][0]["validationRecord"][0]["url"].as_str().unwrap().to_string())
         } else {
             tracing::info!("Got new http-01 challenge with status {:?}", challenge["status"]);
         }
@@ -380,7 +384,7 @@ impl CertManager {
     }
     
     
-    fn create_csr(domain:&str) -> anyhow::Result<String> {
+    fn create_csr(domain:&str) -> anyhow::Result<(String,KeyPair)> {
         let key_pair = KeyPair::generate()?;
 
         let mut params = CertificateParams::default();
@@ -399,14 +403,14 @@ impl CertManager {
                     .with_decode_padding_mode(base64::engine::DecodePaddingMode::RequireNone)
             );
 
-        Ok(CUSTOM_ENGINE.encode(der))
+        Ok((CUSTOM_ENGINE.encode(der),key_pair))
 
     }
         
-    async fn finalize_order(&self, finalize_url: &str) -> anyhow::Result<()> {
+    async fn finalize_order(&self, finalize_url: &str, domain_name:&str) -> anyhow::Result<KeyPair> {
 
         let nonce = Self::fetch_nonce(&self.client, &self.directory.new_nonce).await?;
-        let csr = Self::create_csr("test3.cruma.io")?;  // Implement CSR generation separately
+        let (csr,kvp) = Self::create_csr(domain_name)?; 
 
         let payload = json!({
             "csr": csr
@@ -434,7 +438,7 @@ impl CertManager {
             tracing::info!("Order finalized successfully: {}",body);
 
 
-            Ok(())
+            Ok(kvp)
         } else {
             let error_body = res.text().await?;
             anyhow::bail!("Failed to finalize order: {}", error_body);

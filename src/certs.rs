@@ -56,13 +56,13 @@ impl ResolvesServerCert for DynamicCertResolver {
         }
 
         
-        if let Ok(cert_chain) = my_certs(&cert_path) {
+        if let Ok(cert_chain) = get_certs_from_path(&cert_path) {
 
             if cert_chain.is_empty() {
                 tracing::warn!("EMPTY CERT CHAIN FOR {}",server_name);
                 return None
             }
-            if let Ok(private_key) = my_rsa_private_keys(&key_path) {
+            if let Ok(private_key) = get_priv_key_from_path(&key_path) {
                 if let Ok(rsa_signing_key) = tokio_rustls::rustls::crypto::aws_lc_rs::sign::any_supported_type(&private_key) {
                     let result = std::sync::Arc::new(tokio_rustls::rustls::sign::CertifiedKey::new(
                         cert_chain, 
@@ -121,7 +121,7 @@ fn generate_cert_if_not_exist(hostname: &str, cert_path: &str,key_path: &str) ->
 }
 
 
-pub fn my_certs(path: &str) -> Result<Vec<CertificateDer<'static>>, std::io::Error> {
+pub fn get_certs_from_path(path: &str) -> Result<Vec<CertificateDer<'static>>, std::io::Error> {
     let cert_file = File::open(path)?;
     let mut reader = BufReader::new(cert_file);
     let certs = rustls_pemfile::certs(&mut reader);
@@ -131,7 +131,30 @@ pub fn my_certs(path: &str) -> Result<Vec<CertificateDer<'static>>, std::io::Err
     }).collect())
 }
 
-pub fn my_rsa_private_keys(path: &str) -> Result<PrivateKeyDer, String> {
+pub fn extract_cert_from_pem_str(text: String) -> Result<Vec<CertificateDer<'static>>, std::io::Error> {
+    let mut reader = std::io::Cursor::new(text);
+    let certs = rustls_pemfile::certs(&mut reader);
+    Ok(certs.filter_map(|cert|match cert {
+        Ok(x) => Some(x),
+        Err(_) => None,
+    }).collect())
+}
+
+pub fn extract_priv_key_from_pem(text: String) -> Result<PrivateKeyDer<'static>, String> {
+    let mut key_reader =  std::io::Cursor::new(text);
+    let mut keys = rustls_pemfile::pkcs8_private_keys(&mut key_reader)
+        .collect::<Result<Vec<tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer>,_>>().map_err(|e|format!("{e:?}"))?;
+
+        match keys.len() {
+            0 => Err(format!("No PKCS8-encoded private key found!").into()),
+            1 => Ok(PrivateKeyDer::Pkcs8(keys.remove(0))),
+            _ => Err(format!("More than one PKCS8-encoded private key found!").into()),
+        }
+
+
+}
+
+pub fn get_priv_key_from_path(path: &str) -> Result<PrivateKeyDer, String> {
 
     let file = File::open(&path).map_err(|e|format!("{e:?}"))?;
     let mut reader = BufReader::new(file);
