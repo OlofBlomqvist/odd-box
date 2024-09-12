@@ -65,6 +65,10 @@ jobs:
         run: |
           $env:CMAKE_ASM_NASM_COMPILER = "nasm"
 
+      - name: Install OpenSSL
+        if: startsWith(matrix.os, 'windows')
+        run: choco install openssl
+
       - name: Build
         run: |
           if ("${{ matrix.no_default_features }}" -eq "true") {
