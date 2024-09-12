@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
+use axum::http::HeaderValue;
 use bytes::Bytes;
 use http_body::Frame;
 
@@ -11,11 +12,11 @@ use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
-use tokio::net::TcpStream;
 use tokio_stream::wrappers::ReceiverStream;
 use std::future::Future;
 use std::pin::Pin;
 use crate::global_state::GlobalState;
+use crate::tcp_proxy::{ManagedStream, ReverseTcpProxyTarget};
 use crate::types::app_state::ProcState;
 use crate::CustomError;
 use hyper::{Method, StatusCode};
@@ -26,8 +27,8 @@ use super::proxy;
 
 
 pub enum SomeIo {
-    Https(hyper_util::rt::TokioIo<tokio_rustls::server::TlsStream<TcpStream>>),
-    Http(hyper_util::rt::TokioIo<TcpStream>)
+    Https(hyper_util::rt::TokioIo<tokio_rustls::server::TlsStream<ManagedStream>>),
+    Http(hyper_util::rt::TokioIo<ManagedStream>)
 
 }
 
@@ -113,7 +114,7 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
 
     
     fn call(&self, req: hyper::Request<hyper::body::Incoming>) -> Self::Future {    
-
+        
         tracing::trace!("INCOMING REQ: {:?}",req);
         tracing::trace!("VERSION: {:?}",req.version());
 
@@ -173,12 +174,14 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
             self.state.clone(),
             self.is_https_only,
             self.client.clone(),
-            self.h2_client.clone()
+            self.h2_client.clone(),
+            self.resolved_target.clone()
         );
         
         return Box::pin(async move {
             match f.await {
-                Ok(x) => {
+                Ok(mut x) => {
+                    x.headers_mut().insert("odd-box", HeaderValue::from_static("YEAH BABY YEAH"));
                     Ok(x)
                 },
                 Err(e) => {
@@ -200,18 +203,20 @@ async fn handle_http_request(
     is_https:bool,
     client:  Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
     h2_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
+    peeked_target: Option<ReverseTcpProxyTarget>
 
 ) -> Result<EpicResponse, CustomError> {
     
-
-
     let req_host_name = 
-        if let Some(hh) = req.headers().get("host") { 
+        if let Some(t) = &peeked_target {
+            t.host_name.to_string()
+        } else if let Some(hh) = req.headers().get("host") { 
             let hostname_and_port = hh.to_str().map_err(|e|CustomError(format!("{e:?}")))?.to_string();
             hostname_and_port.split(":").collect::<Vec<&str>>()[0].to_owned()
         } else { 
             req.uri().authority().ok_or(CustomError(format!("No hostname and no Authority found")))?.host().to_string()
         };
+
 
     
     tracing::trace!("Handling request from {client_ip:?} on hostname {req_host_name:?}");
@@ -232,7 +237,10 @@ async fn handle_http_request(
         return Ok(r)
     }
     
-    let found_hosted_target = {
+    let found_hosted_target = 
+    if let Some(p) = peeked_target.as_ref().and_then(|x| x.hosted_target_config.clone()) {
+        Some(p)
+    } else {
         let cfg_guard = state.config.read().await;
         if let Some(processes) = &cfg_guard.hosted_process {
             if let Some(pp) = processes.iter().find(|p| {
@@ -273,24 +281,48 @@ async fn handle_http_request(
             if cts == crate::ProcState::Stopped || cts == crate::ProcState::Starting || cts == crate::ProcState::Faulty {
                 match req.method() {
                     &Method::GET => {
-                        // todo - opt in/out via cfg ?
-                        return Ok(EpicResponse::new(create_epic_string_full_body(&please_wait_response())))
+                        if let Some(ua) = req.headers().get("user-agent") {
+                            let hv = ua.to_str().unwrap_or_default().to_uppercase() ;
+                            // we only want to risk showing the please wait page to browsers..
+                            // not perfect but should be good enough for now..?
+                            // todo: opt in/out thru config ?
+                            if hv.contains("MOZILLA") || hv.contains("SAFARI") || hv.contains("CHROME") || hv.contains("EDGE") {
+                                return Ok(EpicResponse::new(create_epic_string_full_body(&please_wait_response())))
+                            }
+                        } else {
+                            tokio::time::sleep(Duration::from_secs(5)).await
+                        }
                     }  
                     _ => {
                         // we do this to give services some time to wake up instead of failing requests while cold-starting sites
-                        tokio::time::sleep(Duration::from_secs(3)).await
+                        tokio::time::sleep(Duration::from_secs(5)).await
                     }           
                 }                 
             }
         }
 
+        let mut port = 0;
+        let mut wait_count = 0;
+        loop {
+            if wait_count > 100 {
+                return Err(CustomError(format!("No active port found for {req_host_name}.")))
+            }
+            if let Some(info) = crate::PROC_THREAD_MAP.get(target_proc_cfg.get_id()) {
+                if info.pid.is_some() {
+                    if let Some(p) = info.config.active_port {
+                        port = p;
+                        break;
+                    }
+                };
+            } else {
+                return Err(CustomError("No site info found!".to_string()))
+            };
+            wait_count += 1;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
 
-        let port = if let Some(active_port) = target_proc_cfg.active_port {
-            active_port
-        } else {
-            return Err(CustomError(format!("No active port found for {req_host_name}.")))
-        };
-        
+    
+
         let enforce_https = target_proc_cfg.https.is_some_and(|x|x);
         let scheme = if enforce_https { "https" } else { "http" };
 
@@ -319,9 +351,9 @@ async fn handle_http_request(
         );
         
         // we add the host flag manually in proxy method, this is only to avoid dns lookup for local targets.
-        // todo: opt in/out via cfg
+        // todo: opt in/out via cfg (?)
         let skip_dns_for_local_target_url = format!("{scheme}://{}:{}{}",
-            "127.0.0.1",
+            "localhost",
             port,
             original_path_and_query
         );
@@ -356,13 +388,30 @@ async fn handle_http_request(
 
     else {
         
-        if let Some(remote_target_cfg) = &state.config.read().await.remote_target.clone().unwrap_or_default().iter().find(|p|{
+        if let Some(peeked_remote_config) = peeked_target.and_then(|x| x.remote_target_config.clone() ) {
+
+            return perform_remote_forwarding(
+                req_host_name,is_https,
+                state.clone(),
+                client_ip,
+                &peeked_remote_config,
+                req,client.clone(),
+                h2_client.clone()
+            ).await
+        }
+        else if let Some(remote_target_cfg) = &state.config.read().await.remote_target.clone().unwrap_or_default().iter().find(|p|{
             //tracing::info!("comparing incoming req: {} vs {} ",req_host_name,p.host_name);
             req_host_name == p.host_name
             || p.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",p.host_name))
         }) {
-
-            return perform_remote_forwarding(req_host_name,is_https,state.clone(),client_ip,remote_target_cfg,req,client.clone(),h2_client.clone()).await
+            return perform_remote_forwarding(
+                req_host_name,is_https,
+                state.clone(),
+                client_ip,
+                remote_target_cfg,
+                req,client.clone(),
+                h2_client.clone()
+            ).await
         }
 
         tracing::warn!("Received request that does not match any known target: {:?}", req_host_name);
@@ -590,35 +639,55 @@ fn please_wait_response() -> String {
         <!DOCTYPE html>
         <html lang="en">
         <head>
-            <meta charset="UTF-8" http-equiv="refresh" content="5;">
-            <title>Starting site, please wait..</title>
+            <meta charset="UTF-8">
+            <meta http-equiv="refresh" content="5;">
+            <title>please wait...</title>
             <style>
                 body {
                     margin: 0;
                     padding: 0;
                     display: flex;
+                    flex-direction: column;
                     justify-content: center;
                     align-items: center;
                     height: 100vh;
+                    background-color: #111;
+                    color: white;
+                    font-family: Arial, sans-serif;
+                    text-align: center;
                 }
-                .lottie-container {
-                    width: 300px;
-                    height: 300px;
+
+                .loading-text {
+                    font-size: 34px;
+                    margin-bottom: 20px;
+                }
+
+                .subtitle {
+                    font-size: 16px;
+                    margin-bottom: 40px;
+                    color: #cccccc;
+                }
+
+                .spinner {
+                    border: 4px solid rgba(255, 255, 255, 0.3);
+                    border-radius: 50%;
+                    border-top: 4px solid white;
+                    width: 40px;
+                    height: 40px;
+                    animation: spin 1s linear infinite;
+                }
+
+                @keyframes spin {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
                 }
             </style>
         </head>
         <body>
-            <div class="lottie-container">
-                <script src="https://unpkg.com/@dotlottie/player-component@latest/dist/dotlottie-player.mjs" type="module"></script> 
-                <dotlottie-player src="https://lottie.host/fb304345-633f-4b4a-a49f-541b7abbf165/rn9UiCEOBN.json" background="transparent" speed="0.5" loop autoplay></dotlottie-player>
-            </div>
+            <div class="loading-text">Initializing sub-systems, please wait..</div>
+            <div class="subtitle">The backend server responsible for handling this request is not awake, we are attempting to wake it up now!</div>
+            <div class="spinner"></div>
         </body>
         </html>
     "#.to_string()
 }
-
-
-
-
-
-

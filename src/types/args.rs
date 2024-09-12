@@ -34,6 +34,9 @@ pub struct Args {
 
     /// Upgrade configuration file to latest version.
     #[arg(long)]
-    pub upgrade_config: bool
+    pub upgrade_config: bool,
+
+    #[arg(long)]
+    pub config_schema: bool
 }
 

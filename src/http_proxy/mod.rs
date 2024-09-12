@@ -9,7 +9,7 @@ use hyper_util::client::legacy::{connect::HttpConnector, Client};
 pub use service::*;
 use tokio::sync::mpsc::Sender;
 pub use utils::*;
-use crate::global_state::GlobalState;
+use crate::{global_state::GlobalState, tcp_proxy::ReverseTcpProxyTarget};
 
 #[derive(Clone,Debug)]
 pub enum ProcMessage {
@@ -27,5 +27,6 @@ pub struct ReverseProxyService {
     pub tx: std::sync::Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
     pub is_https_only:bool,
     pub client: Client<HttpsConnector<HttpConnector>, Incoming>,
-    pub h2_client: Client<HttpsConnector<HttpConnector>, Incoming>
+    pub h2_client: Client<HttpsConnector<HttpConnector>, Incoming>,
+    pub resolved_target : Option<ReverseTcpProxyTarget>
 }

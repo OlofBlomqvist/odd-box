@@ -1,3 +1,5 @@
+#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.json
+
 version = "V2"  # this is the configuration format version, dont change it
 alpn = false # optional - allows alpn negotiation for http/1.0 and h2 on tls connections 
 http_port = 8080  # optional, 8080 by default
@@ -7,7 +9,7 @@ tls_port = 4343# optional, 4343 by default
 auto_start = false # optional, defaults to true - used as default value for configured sites. auto_start false means a site will not start automatically with odd-box,
                    # but it will still be automatically started on incoming requests to that site.
 root_dir = "~" # you can use $root_dir in env_var values and dir paths etc.
-log_level = "warn"  # trace,info,debug,info,warn,error
+log_level = "Warn"  # trace,info,debug,info,warn,error
 port_range_start = 4200  # port range for automatic port assignment (the env var PORT will be set if you did not specify one manually for a process)
 default_log_format = "standard"
 env_vars = [

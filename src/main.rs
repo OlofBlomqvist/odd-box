@@ -162,6 +162,12 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
     
+    if args.config_schema {
+        let schema = schemars::schema_for!(crate::configuration::v2::OddBoxV2Config);
+        println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+        return Ok(());
+    }
+
     if args.update {
         _ = self_update::update().await;
         return Ok(());
@@ -238,7 +244,9 @@ async fn main() -> anyhow::Result<()> {
                 .add_directive("h2=info".parse().expect("this directive will always work"))
                 .add_directive("tokio_util=info".parse().expect("this directive will always work"))     
                 .add_directive("rustls=info".parse().expect("this directive will always work"))
-                .add_directive("mio=info".parse().expect("this directive will always work"))                            
+                .add_directive("mio=info".parse().expect("this directive will always work"))              
+                .add_directive("zbus=warn".parse().expect("this directive will always work"))      
+                .add_directive("tokio=warn".parse().expect("this directive will always work")) 
                 .add_directive("hyper=info".parse().expect("this directive will always work")));
             // ^ todo: perhaps invert this logic
         tui::init();
@@ -266,8 +274,10 @@ async fn main() -> anyhow::Result<()> {
             .add_directive("tokio_util=info".parse().expect("this directive will always work"))     
             .add_directive("rustls=info".parse().expect("this directive will always work"))
             .add_directive("mio=info".parse().expect("this directive will always work"))                            
-            .add_directive("hyper=info".parse().expect("this directive will always work"));
-        // ^ todo: perhaps invert this logic
+            .add_directive("hyper=info".parse().expect("this directive will always work"))
+            .add_directive("hyper=info".parse().expect("this directive will always work"))
+            .add_directive("zbus=warn".parse().expect("this directive will always work"))    
+            .add_directive("tokio=warn".parse().expect("this directive will always work"))      ;
 
         let subscriber = tracing_subscriber::Registry::default()
             .with(fmt_layer)

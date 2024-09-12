@@ -4,7 +4,6 @@ use std::time::Duration;
 use hyper_rustls::ConfigBuilderExt;
 use lazy_static::lazy_static;
 use socket2::Socket;
-use tokio::net::TcpSocket;
 use tokio::net::TcpStream;
 use tokio::sync::Notify;
 use tokio_rustls::TlsAcceptor;
@@ -16,6 +15,7 @@ use crate::http_proxy::ReverseProxyService;
 use crate::tcp_proxy;
 use crate::http_proxy;
 use crate::tcp_proxy::DataType;
+use crate::tcp_proxy::ManagedStream;
 use crate::tcp_proxy::PeekResult;
 use crate::tcp_proxy::ReverseTcpProxyTargets;
 use crate::types::app_state;
@@ -74,6 +74,7 @@ pub async fn listen(
     
   
     let terminating_proxy_service = ReverseProxyService { 
+        resolved_target: None,
         state:state.clone(), 
         remote_addr: None, 
         tx:tx.clone(), 
@@ -110,7 +111,7 @@ pub async fn listen(
 } 
 
 lazy_static! {
-    static ref ACTIVE_TCP_CONNECTIONS_SEMAPHORE : tokio::sync::Semaphore = tokio::sync::Semaphore::new(666);
+    static ref ACTIVE_TCP_CONNECTIONS_SEMAPHORE : tokio::sync::Semaphore = tokio::sync::Semaphore::new(555);
 } 
 
 async fn listen_http(
@@ -122,12 +123,25 @@ async fn listen_http(
     _shutdown_signal: Arc<Notify> 
 ) {
     
-    let socket = TcpSocket::new_v4().expect("new v4 socket should always work");
-    socket.set_reuseaddr(true).expect("set reuseaddr fail?");
-    socket.bind(bind_addr).expect(&format!("must be able to bind http serveraddr {bind_addr:?}"));
-   
-    let listener = socket.listen(128).expect("must be able to bind http listener.");
+    use socket2::{Domain,Type};
 
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, None).expect("should always be possible to create a tcp socket for tls");
+    match socket.set_only_v6(false) {
+        Ok(_) => {},
+        Err(e) => tracing::trace!("Failed to set_only_vs: {e:?}")
+    };
+    match socket.set_reuse_address(true) { // annoying as hell otherwise for quick resets
+        Ok(_) => {},
+        Err(e) => tracing::warn!("Failed to set_reuse_address: {e:?}")
+    }
+    socket.bind(&bind_addr.into()).expect("we must be able to bind to https addr socket..");
+    socket.listen(1024).expect("must be able to bind http listener.");
+    let listener: std::net::TcpListener = socket.into();
+    listener.set_nonblocking(true).expect("must be able to set_nonblocking on http listener");
+    let tokio_listener = tokio::net::TcpListener::from_std(listener).expect("we must be able to listen to https port..");
+
+
+    
     loop {
 
         // should use semaphore here to limit the number of active connections
@@ -146,10 +160,10 @@ async fn listen_http(
 
 
 
-        match listener.accept().await {
+        match tokio_listener.accept().await {
             Ok((tcp_stream,source_addr)) => {
                
-                tracing::trace!("accepted connection! current active: {}/666", ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
+                tracing::trace!("accepted connection! current active: {}", 555-ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
                 let mut service: ReverseProxyService = terminating_service_template.clone();
                 service.remote_addr = Some(source_addr);
                 let arc_clone_targets = targets.clone();     
@@ -174,23 +188,19 @@ async fn listen_http(
 }
 
 async fn accept_tcp_stream_via_tls_terminating_proxy_service(
-    tcp_stream: TcpStream,
+    managed_stream: ManagedStream,
     source_addr: SocketAddr,
     tls_acceptor: TlsAcceptor,
-    service_template: ReverseProxyService
+    mut service: ReverseProxyService
 ) {
-    let mut service: ReverseProxyService = service_template.clone();
     service.remote_addr = Some(source_addr);
     service.is_https_only = true;
     let tls_acceptor = tls_acceptor.clone();
-    match tls_acceptor.accept(tcp_stream).await {
-        Ok(tls_tcp_stream) => { 
-            let io = hyper_util::rt::TokioIo::new(tls_tcp_stream);       
-            http_proxy::serve(service, SomeIo::Https(io)).await;
-        },
-        Err(e) => {
+    match tls_acceptor.accept(managed_stream).await {
+        Ok(tcp_stream) => 
+            http_proxy::serve(service, SomeIo::Https(hyper_util::rt::TokioIo::new(tcp_stream))).await,
+        Err(e) => 
             tracing::warn!("accept_tcp_stream_via_tls_terminating_proxy_service failed with error: {e:?}")
-        },
     }
 }
 
@@ -215,7 +225,7 @@ async fn listen_https(
         Err(e) => tracing::warn!("Failed to set_reuse_address: {e:?}")
     }
     socket.bind(&bind_addr.into()).expect("we must be able to bind to https addr socket..");
-    socket.listen(128).expect("we must be able to listen to https addr socket..");
+    socket.listen(1024).expect("we must be able to listen to https addr socket..");
     let listener: std::net::TcpListener = socket.into();
     listener.set_nonblocking(true).expect("must be able to set_nonblocking on https listener");
     let tokio_listener = tokio::net::TcpListener::from_std(listener).expect("we must be able to listen to https port..");
@@ -234,8 +244,6 @@ async fn listen_https(
 
     loop {
 
-        // should use semaphore here to limit the number of active connections
-
         if state.app_state.exit.load(std::sync::atomic::Ordering::SeqCst) {
             tracing::debug!("exiting http server loop due to receiving shutdown signal.");
             break;
@@ -252,7 +260,7 @@ async fn listen_https(
         match tokio_listener.accept().await {
             Ok((tcp_stream,source_addr)) => {
                
-                tracing::trace!("accepted connection! current active: {}/666", ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
+                tracing::trace!("accepted connection! current active: {}", 555-ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
                 let mut service: ReverseProxyService = terminating_service_template.clone();
                 service.remote_addr = Some(source_addr);
                 let arc_clone_targets = targets.clone();     
@@ -281,36 +289,36 @@ async fn listen_https(
 // or hand it off to the terminating http/https hyper services
 async fn handle_new_tcp_stream(
     rustls_config: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
-    service:ReverseProxyService,
-    tcp_stream:TcpStream,
+    mut fresh_service_template_with_source_info: ReverseProxyService,
+    tcp_stream: TcpStream,
     source_addr:SocketAddr,
     targets: Arc<ReverseTcpProxyTargets>,
     incoming_connection_is_on_tls_port: bool,
     tx: std::sync::Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
-    state: Arc<GlobalState>,
+    state: Arc<GlobalState>
 ) {
 
 
     let _n = state.request_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     //tracing::warn!("handle_new_tcp_stream ({})!",n+1);
     //tracing::info!("handle_new_tcp_stream called with expect tls: {expect_tls}");
-
-    let targets = targets.clone();
-    _ = tcp_stream.set_linger(None);
     
-    match tcp_proxy::ReverseTcpProxy::peek_tcp_stream(&tcp_stream, source_addr).await {
+    let (managed_stream,peek_result) = tcp_proxy::ReverseTcpProxy::eat_tcp_stream(tcp_stream, source_addr).await;
+
+    match peek_result {
         
         // we see that this is cleartext data, and we expect clear text data, and we also extracted a hostname by peeking.
         // at this point, we should check if the target is NOT configured for https (tls) before forwarding.
-        Ok(PeekResult {
+        Ok((PeekResult {
             typ: DataType::ClearText,
             http_version:_,
             target_host: Some(target)
-        }) if incoming_connection_is_on_tls_port == false => {
-
-            if let Some(target) = targets.try_find(move |p|tcp_proxy::ReverseTcpProxy::req_target_filter_map(p,&target )).await {
+        })) if incoming_connection_is_on_tls_port == false => {
+            
+            if let Some(target) = targets.try_find(&target.clone(),move |p|tcp_proxy::ReverseTcpProxy::req_target_filter_map(p,&target )).await {
+                fresh_service_template_with_source_info.resolved_target = Some(target.clone());
                 
-                if target.backends.iter().any(|x|x.https.unwrap_or_default()==false) {
+                if target.disable_tcp_tunnel_mode == false && target.backends.iter().any(|x|x.https.unwrap_or_default()==false) {
 
                         if target.is_hosted {
                             
@@ -331,41 +339,45 @@ async fn handle_new_tcp_stream(
                                     let mut has_started = false;
                                     // done here to allow non-browser clients to reach the target socket without receiving unexpected loading screen html blobs
                                     // as long as we are able to start the backing process within 10 seconds
-                                    for _ in 0..2 {
-                                        tokio::time::sleep(Duration::from_secs(5)).await;
-                                        tracing::debug!("handling an incoming request to a stopped target, waiting for up to 10 seconds for {thn} to spin up - after this we will release the request to the terminating proxy and show a 'please wait' page instaead.");
-                                        {
-                                            match state.app_state.site_status_map.get(&target.host_name) {
-                                                Some(my_ref) => {
-                                                    match my_ref.value() {
-                                                        app_state::ProcState::Running => {
-                                                            has_started = true;
-                                                            break
-                                                        },
-                                                        _ => { }
-                                                    }                                               },
-                                                _ => { }
-                                            }
+                                    tracing::debug!("handling an incoming request to a stopped target, waiting for {thn} to spin up - after this we will release the request to the terminating proxy and show a 'please wait' page instaead.");
+                                        
+                                    for _ in 1..100 {
+                                        match state.app_state.site_status_map.get(&target.host_name) {
+                                            Some(my_ref) => {
+                                                match my_ref.value() {
+                                                    app_state::ProcState::Running => {
+                                                        tracing::info!("{thn} is now running!");
+                                                        has_started = true;
+                                                        // give the hosted target some time to set up it's tcp listener
+                                                        tokio::time::sleep(Duration::from_millis(3000)).await;
+                                                        break
+                                                    },
+                                                    _ => { }
+                                                }
+                                            },
+                                            _ => { }
                                         }
+                                        tokio::time::sleep(Duration::from_millis(100)).await;
                                     }
                                     if has_started {
-                                        tracing::trace!("Using unencrypted tcp tunnel for remote target: {target:?}");
-                                        tcp_proxy::ReverseTcpProxy::tunnel(tcp_stream, target, false,state.clone(),source_addr).await;
+                                        tracing::trace!("Using unencrypted tcp tunnel for remote target: {:?}",target.host_name);
+                                        tcp_proxy::ReverseTcpProxy::tunnel(managed_stream, target, false,state.clone(),source_addr).await;
                                         return;
                                     } else {
-                                        tracing::trace!("{thn} is still not running... handing this request over to the terminating proxy.")
+                                        tracing::trace!("{thn} is still not running...giving up.");
+                                        return;
                                     }
                                 }
                                 , _  => {
-                                    tracing::trace!("Using unencrypted tcp tunnel for remote target: {target:?}");
-                                    tcp_proxy::ReverseTcpProxy::tunnel(tcp_stream, target, false,state.clone(),source_addr).await;
+                                    tracing::trace!("Using unencrypted tcp tunnel for remote target: {:?}",target.host_name);
+                                    tcp_proxy::ReverseTcpProxy::tunnel(managed_stream, target, false,state.clone(),source_addr).await;
                                     return;
                                 }
                             }
 
                         } else {
-                            tracing::trace!("Using unencrypted tcp tunnel for remote target: {target:?}");
-                            tcp_proxy::ReverseTcpProxy::tunnel(tcp_stream, target, false,state.clone(),source_addr).await;
+                            tracing::trace!("Using unencrypted tcp tunnel for remote target: {:?}",target.host_name);
+                            tcp_proxy::ReverseTcpProxy::tunnel(managed_stream, target, false,state.clone(),source_addr).await;
                             return;
                         }
                 }
@@ -374,11 +386,11 @@ async fn handle_new_tcp_stream(
         
         // we see that this is tls data, and we expect tls data, and we also extracted a hostname by peeking.
         // at this point, we should check if the target is configured for https (tls) before forwarding.
-        Ok(PeekResult {
+        Ok((PeekResult {
             typ: DataType::TLS,
             http_version:_,
             target_host: Some(target_host_name)
-        }) if incoming_connection_is_on_tls_port => {
+        })) if incoming_connection_is_on_tls_port => {
 
             // TODO - should not do cert stuff here but at startup and on config modification
 
@@ -413,15 +425,19 @@ async fn handle_new_tcp_stream(
                 }
             }
             
-            if let Some(target) = targets.try_find(move |p|tcp_proxy::ReverseTcpProxy::req_target_filter_map(&p, &target_host_name)).await {
+            
+            if let Some(target) = targets.try_find(&target_host_name.to_string(),move |p|tcp_proxy::ReverseTcpProxy::req_target_filter_map(p, &target_host_name)).await {
+               
                 
-                if target.backends.iter().any(|x|x.https.unwrap_or_default()) {
+
+                if target.disable_tcp_tunnel_mode == false && target.backends.iter().any(|x|x.https.unwrap_or_default()) {
                     // at least one backend has https enabled so we will use the tls tunnel mode to there
-                    tracing::trace!("USING TCP PROXY FOR TLS TUNNEL TO TARGET {target:?}");
-                    tcp_proxy::ReverseTcpProxy::tunnel(tcp_stream, target, true,state.clone(),source_addr).await;
+                    tracing::trace!("USING TCP PROXY FOR TLS TUNNEL TO TARGET {:?}",target.host_name);
+                    tcp_proxy::ReverseTcpProxy::tunnel(managed_stream, target, true,state.clone(),source_addr).await;
                     return;
                 } else {
-                    tracing::debug!("peeked some tls tcp data and found that the target exists but is not configured for https/tls. we will use terminating mode for this..")
+                    tracing::trace!("peeked some tls tcp data and found that the target exists but is not configured for https/tls. we will use terminating mode for this..");
+                    fresh_service_template_with_source_info.resolved_target = Some(target);
                 }
 
 
@@ -430,9 +446,8 @@ async fn handle_new_tcp_stream(
             }
         },
         e => {
-            tracing::trace!("tcp peek invalid result: {e:?}. this could be because of incoming and outgoing protocol mismatch or configuration - will use terminating proxy mode instead") 
-
-        },
+            tracing::warn!("tcp peek invalid result: {e:?}. this could be because of incoming and outgoing protocol mismatch or configuration - will use terminating proxy mode instead") 
+        }
     }
 
 
@@ -441,13 +456,12 @@ async fn handle_new_tcp_stream(
     // we will hand the stream off to the terminating proxy service instead.
     if let Some(tls_cfg) = rustls_config {
         let tls_acceptor = TlsAcceptor::from(tls_cfg.clone());
-        tracing::trace!("handing off tls-tcp stream to terminating proxy!");
-        accept_tcp_stream_via_tls_terminating_proxy_service(tcp_stream, source_addr, tls_acceptor, service).await
+        tracing::trace!("handing off tls-tcp stream to terminating proxy for target!");
+        accept_tcp_stream_via_tls_terminating_proxy_service(managed_stream, source_addr, tls_acceptor, fresh_service_template_with_source_info).await
     } else {
-        tracing::trace!("handing off clear text tcp stream to terminating proxy!");
-        let io = hyper_util::rt::TokioIo::new(tcp_stream);
-        
-        http_proxy::serve(service, SomeIo::Http(io)).await
+        tracing::trace!("handing off clear text tcp stream to terminating proxy for target!");
+        let io = hyper_util::rt::TokioIo::new(managed_stream);        
+        http_proxy::serve(fresh_service_template_with_source_info, SomeIo::Http(io)).await
     };
 }
 

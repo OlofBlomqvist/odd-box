@@ -1,3 +1,4 @@
+#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.json
 version = "V2"
 alpn = false
 http_port = 8080
@@ -6,7 +7,7 @@ ip = "127.0.0.1"
 tls_port = 4343
 auto_start = true
 root_dir = "~"
-log_level = "trace"
+log_level = "Trace"
 port_range_start = 4200
 default_log_format = "standard"
 env_vars = [
@@ -34,7 +35,7 @@ env_vars = [
 host_name = "test3.cruma.io"  # incoming name for binding to (frontend)
 disable_tcp_tunnel_mode = true
 dir = "$cfg_dir" # path where we should be located when running the binary file
-bin = "/usr/bin/python3.9" # name or path of the binary that should be executed
+bin = "python" # name or path of the binary that should be executed
 args = [
   # any arguments you wish to pass to the binary
   "-m", 
