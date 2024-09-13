@@ -1,6 +1,6 @@
 use crossterm::event::{KeyEvent, KeyModifiers};
 use ratatui::layout::{Alignment, Margin};
-use ratatui::style::{Color, Modifier, Style };
+use ratatui::style::{Color, Modifier, Style, Stylize };
 use ratatui::text::Line;
 use ratatui::widgets::{BorderType, List, ListItem };
 use tokio::task;
@@ -91,7 +91,7 @@ pub async fn run(
     let light_style = light_theme();
 
 
-    let disabled_items : Vec<String> =  global_state.config.read().await.hosted_process.clone().unwrap_or_default().iter_mut().filter_map( |x| 
+    let disabled_items : Vec<String> =  global_state.config.read().await.hosted_process.iter().flatten().filter_map( |x| 
       if x.auto_start.unwrap_or_default() { 
         Some(x.host_name.clone()) 
       } else {
@@ -170,6 +170,9 @@ pub async fn run(
                     
                     let evt = event::read()?;
                 
+                    // TODO:
+                    // - use 'L' to toggle log level? (via the reloadable filter)
+
                     match evt {
                         Event::Key(KeyEvent { 
                             code: crossterm::event::KeyCode::Char(' '),
@@ -562,29 +565,41 @@ fn draw_ui<B: ratatui::backend::Backend>(
     let vertical = Layout::vertical(constraints);
     let [top_area, mid_area, bot_area] = vertical.areas(size);
 
-    //et x = format!("Logs {:?}",app_state.vertical_scroll);
-    
     let main_area = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(0) 
+            Constraint::Percentage(100) 
         ])
         .split(top_area.clone()); 
 
-    // let totrows = app_state.traffic_tab_state.total_rows;
-    // let traheight = size.height;
     let is_dark_theme = matches!(&theme,Theme::Dark(_));
+    
+    let app_bg = {
+        Color::Reset
+        // this is used when testing theme changes
+        // if is_dark_theme {
+        //     Color::Black
+        // } else {
+        //     Color::White
+        // }
+    };
+    let tab_fg_color = if is_dark_theme {
+        Color::Blue
+    } else {
+        Color::DarkGray
+    };
+
     let tabs =  ratatui::widgets::Tabs::new(
         vec![
-            "[1] Logs", 
-            "[2] Connections",
-            "[3] Stats",
-            "[4] Threads"
+             ratatui::text::Span::styled("[1] Logs", Style::default().fg(tab_fg_color)),
+             ratatui::text::Span::styled("[2] Connections",Style::default().fg(tab_fg_color)),
+             ratatui::text::Span::styled("[3] Stats",Style::default().fg(tab_fg_color)),
+             ratatui::text::Span::styled("[4] Threads", Style::default().fg(tab_fg_color))
         ]).highlight_style(
             if is_dark_theme {
                 Style::new().fg(Color::Cyan)
             } else {
-                Style::new().fg(Color::LightRed)
+                Style::new().fg(Color::Black)
             }
         )
         .select(match tui_state.current_page {
@@ -596,8 +611,10 @@ fn draw_ui<B: ratatui::backend::Backend>(
         
         .divider(ratatui::text::Span::raw("|"));
 
-    let frame_margin = Margin { horizontal: 1, vertical: 1 };
+    
 
+    let frame_margin = Margin { horizontal: 1, vertical: 1 };
+        
     match tui_state.current_page {
         Page::Logs => logs_widget::draw(f,global_state.clone(),tui_state,log_buffer,main_area[0].inner(frame_margin),&theme),
         Page::Statistics => stats_widget::draw(f,global_state.clone(),tui_state,main_area[0].inner(frame_margin),&theme),
@@ -618,11 +635,11 @@ fn draw_ui<B: ratatui::backend::Backend>(
         .border_type(BorderType::Rounded)
         .borders(Borders::ALL);
 
-    f.render_widget(frame, main_area[0]);
+    f.render_widget(frame.bg(app_bg), main_area[0]);
     
 
     // render the tab bar on top of the tab content
-    f.render_widget(tabs, main_area[0].inner(Margin { horizontal: 2, vertical: 0 }));
+    f.render_widget(tabs.bg(app_bg), main_area[0].inner(Margin { horizontal: 2, vertical: 0 }));
 
     if tui_state.show_apps_window {
 
@@ -753,7 +770,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
                         )
                 );
             
-            f.render_widget(sites_list, *col);
+            f.render_widget(sites_list.bg(app_bg), *col);
             
         }
 
@@ -799,6 +816,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
         help_bar_text.push(ratatui::text::Span::raw("| space: un/pause logging"));
     }
 
+    
     // // DEBUG
     // help_bar_text.push(ratatui::text::Span::raw(format!("| DBG: {}", 
     //     app_state.dbg
@@ -818,7 +836,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
             }
         ));
 
-    f.render_widget(help_bar, help_bar_chunk[1]);
+    f.render_widget(help_bar.bg(app_bg), help_bar_chunk[1]);
 
 
 }

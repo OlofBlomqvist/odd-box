@@ -1,5 +1,4 @@
 use std::sync::atomic::AtomicBool;
-use std::sync::atomic::AtomicUsize;
 use utoipa::ToSchema;
 use std::sync::Arc;
 use crate::types::proxy_state::*;
@@ -30,10 +29,9 @@ impl AppState {
         let result = AppState {
             site_status_map: Arc::new(dashmap::DashMap::new()),
             statistics : Arc::new(ProxyStats { 
+                terminated_http_connections_per_hostname: dashmap::DashMap::new(),
                 active_connections: dashmap::DashMap::new(),
-                hosted_process_stats: dashmap::DashMap::new(),
-                remote_targets_stats: dashmap::DashMap::new(),
-                total_request_count: AtomicUsize::new(0),
+                tunnelled_tcp_connections_per_hostname: dashmap::DashMap::new()
                 
             }),
             exit: AtomicBool::new(false),

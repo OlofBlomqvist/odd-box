@@ -2,16 +2,30 @@ use anyhow::Context;
 use dashmap::DashMap;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::rustls::server::{ClientHello, ResolvesServerCert};
+use std::io::BufReader;
+use std::fs::File;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
 pub struct DynamicCertResolver {
-    enable_lets_encrypt: bool,
+    enable_lets_encrypt: Mutex<bool>,
     self_signed_cert_cache: DashMap<String, std::sync::Arc<tokio_rustls::rustls::sign::CertifiedKey>>,
     lets_encrypt_signed_certs: DashMap<String, std::sync::Arc<tokio_rustls::rustls::sign::CertifiedKey>>,
     pub lets_encrypt_manager: crate::letsencrypt::CertManager
 }
 
 impl DynamicCertResolver {
+    pub fn disable_lets_encrypt(&self) {
+        if let Ok(mut guard) = self.enable_lets_encrypt.lock() {
+            *guard = false;
+        }
+         
+    }
+    pub fn enable_lets_encrypt(&self) {
+        if let Ok(mut guard) = self.enable_lets_encrypt.lock() {
+            *guard = true;
+        }
+    }
     pub fn add_self_signed_cert_to_cache(&self, domain: &str, cert:tokio_rustls::rustls::sign::CertifiedKey) {        
         self.self_signed_cert_cache.insert(domain.to_string(), Arc::new(cert));
     }
@@ -26,7 +40,7 @@ impl DynamicCertResolver {
     }
     pub async fn new(enable_lets_encrypt:bool,lets_encrypt_account_email:Option<String>) -> anyhow::Result<Self> {
         Ok(DynamicCertResolver {
-            enable_lets_encrypt,
+            enable_lets_encrypt: Mutex::new(enable_lets_encrypt),
             self_signed_cert_cache: DashMap::new(),
             lets_encrypt_signed_certs: DashMap::new(),            
             lets_encrypt_manager: 
@@ -39,16 +53,16 @@ impl ResolvesServerCert for DynamicCertResolver {
     fn resolve(&self, client_hello: ClientHello) -> Option<std::sync::Arc<tokio_rustls::rustls::sign::CertifiedKey>> {
         
         let server_name = client_hello.server_name()?;
-     
-        if self.enable_lets_encrypt {
+        
+        if *self.enable_lets_encrypt.lock().expect("should always be able to lock..") {
             if let Some(certified_key) = self.lets_encrypt_signed_certs.get(server_name) {
-                tracing::trace!("Returning a cached LE certificate for {:?}",server_name);
+                tracing::trace!("Returning a cached lets-encrypt certificate for {:?}",server_name);
                 return Some(certified_key.clone());
             }
         }
 
         if let Some(certified_key) = self.self_signed_cert_cache.get(server_name) {
-            tracing::trace!("Returning a cached SS certificate for {:?}",server_name);
+            tracing::trace!("Returning a cached self-signed certificate for {:?}",server_name);
             return Some(certified_key.clone());
         }
 
@@ -100,10 +114,6 @@ impl ResolvesServerCert for DynamicCertResolver {
         }
     }
 }
-
-use std::io::BufReader;
-use std::fs::File;
-use std::sync::Arc;
 
 
 fn generate_cert_if_not_exist(hostname: &str, cert_path: &str,key_path: &str) -> Result<(),String> {

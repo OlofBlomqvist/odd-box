@@ -25,8 +25,16 @@ impl TuiState {
             currently_hovered_site: None,
             site_rects: Vec::new(),   
             show_apps_window : true,
-            connections_tab_state: default::Default::default(),
-            threads_tab_state: default::Default::default(),
+            connections_tab_state: {
+                let mut s = ConnectionsTabState::default();
+                s.scroll_state.vertical_scroll = Some(0);
+                s
+            },
+            threads_tab_state: {
+                let mut s = ThreadsTabState::default();
+                s.scroll_state.vertical_scroll = Some(0);
+                s
+            },
             log_tab_stage: default::Default::default(),
             
         }

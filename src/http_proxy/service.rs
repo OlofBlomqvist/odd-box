@@ -27,8 +27,8 @@ use super::proxy;
 
 
 pub enum SomeIo {
-    Https(hyper_util::rt::TokioIo<tokio_rustls::server::TlsStream<ManagedStream>>),
-    Http(hyper_util::rt::TokioIo<ManagedStream>)
+    Https(tokio_rustls::server::TlsStream<ManagedStream>),
+    Http(ManagedStream)
 
 }
 
@@ -40,16 +40,18 @@ pub async fn serve(service:ReverseProxyService,io:SomeIo) {
     
     let result = match io {
         SomeIo::Https(tls_stream) => {
-            SERVER_ONE.serve_connection_with_upgrades(tls_stream, service).await
+            SERVER_ONE.serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(tls_stream), service).await
         },
         SomeIo::Http(tcp_stream) => {
             SERVER_ONE
-               .serve_connection_with_upgrades(tcp_stream, service).await
+               .serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(tcp_stream), service).await
         },
         
     };
     match result {
-        Ok(_) => {},
+        Ok(x) => {
+            
+        },
         Err(e) => {
             tracing::warn!("{e:?}")
         }
@@ -217,7 +219,7 @@ async fn handle_http_request(
     is_https:bool,
     client:  Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
     h2_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
-    peeked_target: Option<ReverseTcpProxyTarget>
+    peeked_target: Option<Arc<ReverseTcpProxyTarget>>
 
 ) -> Result<EpicResponse, CustomError> {
     
@@ -235,6 +237,19 @@ async fn handle_http_request(
     
     tracing::trace!("Handling request from {client_ip:?} on hostname {req_host_name:?}");
     
+    // THIS SHOULD BE THE ONLY PLACE WE INCREMENT THE TERMINATION COUNTER
+    match state.app_state.statistics.terminated_http_connections_per_hostname.get_mut(&req_host_name) {
+        Some(mut guard) => {
+            let (_k,v) = guard.pair_mut();
+            1 + v.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        },
+        None => {
+            state.app_state.statistics.terminated_http_connections_per_hostname.insert(req_host_name.clone(), std::sync::atomic::AtomicUsize::new(1));
+            1
+        }
+    };
+    
+
     let req_path = req.uri().path();
     
     let params: std::collections::HashMap<String, String> = req
@@ -252,28 +267,30 @@ async fn handle_http_request(
     }
     
     let found_hosted_target = 
-    if let Some(p) = peeked_target.as_ref().and_then(|x| x.hosted_target_config.clone()) {
-        Some(p)
-    } else {
-        let cfg_guard = state.config.read().await;
-        if let Some(processes) = &cfg_guard.hosted_process {
-            if let Some(pp) = processes.iter().find(|p| {
-                req_host_name == p.host_name
-                || p.capture_subdomains.unwrap_or_default() 
-                && req_host_name.ends_with(&format!(".{}",p.host_name))
-            }) {
-                Some(pp.clone())
+        if let Some(p) = peeked_target.as_ref().and_then(|x| x.hosted_target_config.clone()) {
+            Some(p)
+        } else {
+            let cfg_guard = state.config.read().await;
+            if let Some(processes) = &cfg_guard.hosted_process {
+                if let Some(pp) = processes.iter().find(|p| {
+                    req_host_name == p.host_name
+                    || p.capture_subdomains.unwrap_or_default() 
+                    && req_host_name.ends_with(&format!(".{}",p.host_name))
+                }) {
+                    Some(pp.clone())
+                } else {
+                    None
+                }
             } else {
                 None
             }
-        } else {
-            None
-        }
-    };
+        };
+
 
 
     if let Some(target_proc_cfg) = found_hosted_target {
 
+      
         let current_target_status : Option<crate::ProcState> = {
             let info = state.app_state.site_status_map.get(&target_proc_cfg.host_name);
             match info {
@@ -413,7 +430,7 @@ async fn handle_http_request(
                 h2_client.clone()
             ).await
         }
-        else if let Some(remote_target_cfg) = &state.config.read().await.remote_target.clone().unwrap_or_default().iter().find(|p|{
+        else if let Some(remote_target_cfg) = &state.config.read().await.remote_target.iter().flatten().find(|p|{
             //tracing::info!("comparing incoming req: {} vs {} ",req_host_name,p.host_name);
             req_host_name == p.host_name
             || p.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",p.host_name))
@@ -466,7 +483,7 @@ async fn perform_remote_forwarding(
         .and_then(|x| Some(x.as_str())).unwrap_or_default();
     if original_path_and_query == "/" { original_path_and_query = ""}
    
-    let next_backend_target = if let Some(b) = remote_target_config.next_backend(&state, crate::configuration::v2::BackendFilter::Any).await {
+    let next_backend_target = if let Some(b) = remote_target_config.next_backend(&state, crate::configuration::v2::BackendFilter::Any,false).await {
         b
     } else {
         return Err(CustomError("No backend found".to_string()))

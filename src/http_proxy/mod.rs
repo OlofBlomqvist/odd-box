@@ -28,5 +28,5 @@ pub struct ReverseProxyService {
     pub is_https_only:bool,
     pub client: Client<HttpsConnector<HttpConnector>, Incoming>,
     pub h2_client: Client<HttpsConnector<HttpConnector>, Incoming>,
-    pub resolved_target : Option<ReverseTcpProxyTarget>
+    pub resolved_target : Option<Arc<ReverseTcpProxyTarget>>
 }

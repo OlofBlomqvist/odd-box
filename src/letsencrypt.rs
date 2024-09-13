@@ -16,6 +16,7 @@ use serde_json::Value;
 use tokio_rustls::rustls::sign::CertifiedKey;
 
 use crate::global_state::GlobalState;
+use crate::types::proc_info::BgTaskInfo;
 
 // TODO - move this to disk for persistance?
 lazy_static::lazy_static! {
@@ -43,6 +44,9 @@ pub struct CertManager {
     directory: Directory
 }
 
+// TODO 
+//  - drop josekit and use rcgen for csr creation ?
+//  - use hyper client instead of reqwest ?    
 
 impl CertManager { 
 
@@ -127,14 +131,14 @@ impl CertManager {
         //let directory_url = "https://acme-staging-v02.api.letsencrypt.org/directory"; // STAGING        
 
         let directory = Self::fetch_directory(&client, directory_url).await.context("calling fetch_directory")?;
-        println!("Directory fetched: {:?}", directory);
-        let acc_url_path = ".odd_box_cache/lets_encrypt_account_url";
+
+        let acc_url_path = "./.odd_box_cache/lets_encrypt_account_url";
         let account_url = if std::path::Path::exists(std::path::Path::new(acc_url_path)) {
             let account_url = std::fs::read_to_string(acc_url_path)?;
-            println!("Account already registered: {}", account_url);
+            println!("Lets-encrypt account already registered: {}", account_url);
             account_url
         } else {
-            println!("Registering a new ACME account...");
+            println!("Registering a new ACME account because we did not find path: {}", acc_url_path);
             let url = Self::register_acme_account(&account_email,&client, &directory, &account_key_pair).await.context("register acme account")?;
             std::fs::write(acc_url_path, &url)?;
             url
@@ -158,11 +162,11 @@ impl CertManager {
         let host_name_cert_path = base_path.join(domain_name);
 
         let mut i = 0;
-        while let Some(_pending_challenge) = DOMAIN_TO_CHALLENGE_TOKEN_MAP.remove(domain_name) {
+        while let Some(_pending_challenge) = DOMAIN_TO_CHALLENGE_TOKEN_MAP.get(domain_name) {
             tracing::info!("Found pending challenge for domain: {}.. waiting for it to be completed.. (time out in 10 seconds)", domain_name);
             tokio::time::sleep(Duration::from_secs(1)).await;        
             i += 1;
-            if i > 10 {
+            if i > 11 {
                 anyhow::bail!("Challenge timed out for domain: {}", domain_name);
             }    
         }
@@ -212,6 +216,11 @@ impl CertManager {
     
         std::fs::write(&cert_file_path, &the_new_cert)?;
         std::fs::write(&key_file_path, &priv_key.serialize_pem())?;
+        
+        // Clean up the challenge cache for this domain
+        if let Some((_k,v)) = DOMAIN_TO_CHALLENGE_TOKEN_MAP.remove(domain_name) {
+            CHALLENGE_MAP.remove(&v);
+        }
         
 
         tracing::info!("Certificate and key saved to disk for domain: {}. Path: {}", domain_name, key_file_path);
@@ -609,16 +618,39 @@ impl CertManager {
 
 
 
-// TODO - handle renewals
+// TODO - handle renewals?
 pub async fn bg_worker_for_lets_encrypt_certs(state: Arc<GlobalState>) {
+    
+    let liveness_token = Arc::new(true);
+    crate::BG_WORKER_THREAD_MAP.insert("Lets Encrypt".into(), BgTaskInfo {
+        liveness_ptr: Arc::downgrade(&liveness_token),
+        status: "Active".into()
+    }); // we dont need to clean this up if we exit, there is a cleanup task that will do it.
+
+    
+    let mut generated_count = 0;
     
     // NOTE 1: We keep this loop going because the config can change at runtime to enable lets-encrypt for a site.   
     // NOTE 2: We generate these certificates in a loop and not OTF. This is to avoid concurrent requests to lets-encrypt.
     loop {
 
-        let mgr = &state.cert_resolver.lets_encrypt_manager;
-        let state_guard = state.config.read().await;
 
+        let state_guard = state.config.read().await;
+        if state_guard.lets_encrypt_account_email.is_none() {
+            crate::BG_WORKER_THREAD_MAP.insert("Lets Encrypt".into(), BgTaskInfo {
+                liveness_ptr: Arc::downgrade(&liveness_token),
+                status: format!("Disabled. lets_encrypt_account_email not set.")
+            });
+            drop(state_guard);
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            continue;
+        }
+
+
+        let active_challenges_count = crate::letsencrypt::DOMAIN_TO_CHALLENGE_TOKEN_MAP.len();
+
+        let mgr = &state.cert_resolver.lets_encrypt_manager;
+        
         let mut all_sites_with_lets_encrypt_enabled = 
             state_guard.remote_target
                 .iter()
@@ -643,13 +675,24 @@ pub async fn bg_worker_for_lets_encrypt_certs(state: Arc<GlobalState>) {
                 continue;
             }
 
-            let certificate_from_disk_or_newly_generated = 
-                mgr.get_or_create_cert(&domain_name).await.context(format!("generating lets-encrypt cert for site {}",domain_name)).unwrap();
-
-            state.cert_resolver.add_lets_encrypt_signed_cert_to_mem_cache(&domain_name, certificate_from_disk_or_newly_generated);            
+            match mgr.get_or_create_cert(&domain_name).await.context(format!("generating lets-encrypt cert for site {}",domain_name)) {
+                Ok(v) => {
+                    state.cert_resolver.add_lets_encrypt_signed_cert_to_mem_cache(&domain_name, v);  
+                    generated_count += 1;         
+                }
+                Err(e) => {
+                    tracing::error!("Failed to generate certificate for domain: {}. {e:?}", domain_name);
+                } 
+            }
         }
+
+        crate::BG_WORKER_THREAD_MAP.insert("Lets Encrypt".into(), BgTaskInfo {
+            liveness_ptr: Arc::downgrade(&liveness_token),
+            status: format!("Generated: {generated_count} - Pending: {active_challenges_count}.")
+        }); // we dont need to clean this up if we exit, there is a cleanup task that will do it.
     
 
         tokio::time::sleep(Duration::from_secs(10)).await;
     }
+    
 }

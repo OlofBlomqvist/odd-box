@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::bail;
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use v1::H2Hint;
@@ -25,30 +26,6 @@ pub enum OddBoxConfig {
     #[allow(dead_code)]Legacy(legacy::OddBoxLegacyConfig),
     V1(v1::OddBoxV1Config),
     V2(v2::OddBoxV2Config)
-}
-
-#[derive(Debug,Clone)]
-pub struct ConfigWrapper(
-    pub v2::OddBoxV2Config
-);
-
-
-impl std::ops::Deref for ConfigWrapper {
-    type Target = v2::OddBoxV2Config;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-impl std::ops::DerefMut for ConfigWrapper {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl ConfigWrapper {
-    pub fn wrapv2(config:v2::OddBoxV2Config) -> Self {
-        ConfigWrapper(config)
-    }
 }
 
 
@@ -166,11 +143,111 @@ impl OddBoxConfig {
 
 
 
-impl ConfigWrapper {
-    pub fn new(cfg:v2::OddBoxV2Config) -> Self {
-        ConfigWrapper(cfg)
+#[derive(Debug,Clone)]
+pub struct ConfigWrapper {
+    internal_configuration : v2::OddBoxV2Config,
+    pub remote_sites: DashMap<String, v2::RemoteSiteConfig>,
+    pub hosted_processes: DashMap<String, v2::InProcessSiteConfig>,
+    pub wrapper_cache_map_is_dirty: bool
+}
+
+
+impl std::ops::Deref for ConfigWrapper {
+    type Target = v2::OddBoxV2Config;
+    fn deref(&self) -> &Self::Target {
+        &self.internal_configuration
     }
-    pub fn init(&mut self,cfg_path:&str) -> anyhow::Result<()>  {
+}
+impl std::ops::DerefMut for ConfigWrapper {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.internal_configuration
+    }
+}
+
+
+// This is meant to simplify the process of upgrading from one configuration version to another.
+// It is also used as a runtime-cache for the configuration such that one can change the config
+// during runtime without having to save it to disk, and so that it becomes easier to 
+// work with from code in general..
+impl ConfigWrapper {
+
+    /// Creates a new ConfigWrapper from an OddBoxV2Config,
+    /// initializing the DashMaps from the vectors in the config.
+    pub fn new(config: v2::OddBoxV2Config) -> Self {
+        let remote_sites = DashMap::new();
+        if let Some(remote_targets) = &config.remote_target {
+            for site in remote_targets {
+                remote_sites.insert(site.host_name.clone(), site.clone());
+            }
+        }
+
+        let hosted_processes = DashMap::new();
+        if let Some(hosted_procs) = &config.hosted_process {
+            for proc in hosted_procs {
+                hosted_processes.insert(proc.host_name.clone(), proc.clone());
+            }
+        }
+
+        ConfigWrapper {
+            internal_configuration: config,
+            remote_sites,
+            hosted_processes,
+            wrapper_cache_map_is_dirty: false
+        }
+    }
+
+    // re-populate the dashmaps from the internal configuration vectors
+    pub fn reload(&mut self) {
+        
+        self.hosted_processes.clear();
+        self.remote_sites.clear();
+
+        if let Some(remote_targets) = &self.remote_target {
+            for site in remote_targets {
+                self.remote_sites.insert(site.host_name.clone(), site.clone());
+            }
+        }
+
+        if let Some(hosted_procs) = &self.hosted_process {
+            for proc in hosted_procs {
+                self.hosted_processes.insert(proc.host_name.clone(), proc.clone());
+            }
+        }
+
+        self.wrapper_cache_map_is_dirty = false;
+        
+
+    } 
+
+    /// Persists the current state of the DashMaps back into the config vectors.
+    /// This method should be called before serialization.
+    pub fn persist(&mut self) {
+        let remote_targets: Vec<_> = self
+            .remote_sites
+            .iter()
+            .map(|kv| kv.value().clone())
+            .collect();
+        self.internal_configuration.remote_target = if remote_targets.is_empty() {
+            None
+        } else {
+            Some(remote_targets)
+        };
+
+        let hosted_processes: Vec<_> = self
+            .hosted_processes
+            .iter()
+            .map(|kv| kv.value().clone())
+            .collect();
+        self.internal_configuration.hosted_process = if hosted_processes.is_empty() {
+            None
+        } else {
+            Some(hosted_processes)
+        };
+
+        self.wrapper_cache_map_is_dirty = false;
+    }
+
+    pub fn set_disk_path(&mut self,cfg_path:&str) -> anyhow::Result<()>  {
         self.path = Some(std::path::Path::new(&cfg_path).canonicalize()?.to_str().unwrap_or_default().into());
         Ok(())
     }
@@ -269,7 +346,7 @@ impl ConfigWrapper {
     }
     
 
-    pub fn get_parent(&mut self) -> anyhow::Result<String> {
+    pub fn get_parent_path(&mut self) -> anyhow::Result<String> {
         // todo - use cache and clear on path change
         // if let Some(pre_resolved) = &self.1 {
         //     return Ok(pre_resolved.to_string())
@@ -281,12 +358,12 @@ impl ConfigWrapper {
             .map(|p| p.to_str().unwrap_or_default()) 
         {
             if directory_path_str.eq("") {
-                tracing::trace!("$cfg_dir resolved to '.'");
+                //tracing::trace!("$cfg_dir resolved to '.'");
                 let xx = ".".to_string();
                 //self.1 = Some(xx.clone());
                 Ok(xx)
             } else {
-                tracing::trace!("$cfg_dir resolved to {directory_path_str}");
+                //tracing::trace!("$cfg_dir resolved to {directory_path_str}");
                 let xx = directory_path_str.to_string();
                 //self.1 = Some(xx.clone());
                 Ok(xx)
@@ -299,6 +376,7 @@ impl ConfigWrapper {
 
     
     // ---> port-mapping...
+    // todo: work with the wrapper dashmap instead
     pub async fn add_or_replace_hosted_process(&mut self,hostname:&str,item:crate::InProcessSiteConfig,state:Arc<crate::GlobalState>) -> anyhow::Result<()> {
         
         if let Some(hosted_site_configs) = &mut self.hosted_process {
@@ -345,7 +423,7 @@ impl ConfigWrapper {
             guard.insert(hostname.to_owned(), crate::types::app_state::ProcState::Stopped);    
         }
     
-        
+        self.reload();
     
         self.write_to_disk()
        
@@ -405,6 +483,7 @@ impl ConfigWrapper {
         }
     }
     
+    // todo: work with the wrapper dashmap instead
     pub async fn add_or_replace_remote_site(&mut self,hostname:&str,item:crate::RemoteSiteConfig,state:Arc<crate::GlobalState>) -> anyhow::Result<()> {
         
 
@@ -421,12 +500,12 @@ impl ConfigWrapper {
             map_guard.insert(hostname.to_owned(), crate::types::app_state::ProcState::Remote);
         }
     
-    
+        self.reload();
         self.write_to_disk()
     
     }
 
-
+    // todo: work with the wrapper dashmap instead
     pub fn set_active_port(&mut self, resolved_proc:&mut FullyResolvedInProcessSiteConfig) -> anyhow::Result<u16> {
       
     
@@ -504,6 +583,7 @@ impl ConfigWrapper {
     // since that would then be saved to disk and we would lose the original configuration with dynamic variables
     // making configuration files less portable.
     // todo - cache resolved configurations by hash?
+    // todo: work with the wrapper dashmap instead
     pub fn resolve_process_configuration(&mut self,proc:&crate::InProcessSiteConfig) -> anyhow::Result<crate::FullyResolvedInProcessSiteConfig> {
 
         let mut resolved_proc = crate::FullyResolvedInProcessSiteConfig {
@@ -530,7 +610,7 @@ impl ConfigWrapper {
 
         // tracing::info!("Resolved home directory: {}",&resolved_home_dir_str);
 
-        let cfg_dir = self.get_parent()?;
+        let cfg_dir = self.get_parent_path()?;
 
 
         let root_dir = if let Some(rd) = &self.root_dir {
