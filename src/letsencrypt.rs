@@ -217,10 +217,10 @@ impl CertManager {
         self.poll_order_status_util_valid(&order_url).await?;
 
         let the_new_cert = self.fetch_certificate(&order_url).await.context("fetching new certificate")?;
-
-    
+        let the_new_key = priv_key.serialize_pem();
+        
         std::fs::write(&cert_file_path, &the_new_cert)?;
-        std::fs::write(&key_file_path, &priv_key.serialize_pem())?;
+        std::fs::write(&key_file_path, &the_new_key)?;
         
         // Clean up the challenge cache for this domain
         if let Some((_k,v)) = DOMAIN_TO_CHALLENGE_TOKEN_MAP.remove(domain_name) {
@@ -230,8 +230,8 @@ impl CertManager {
 
         tracing::info!("Certificate and key saved to disk for domain: {}. Path: {}", domain_name, key_file_path);
 
-        let cert_chain = crate::certs::extract_cert_from_pem_str(the_new_cert.clone())?;
-        let private_key = crate::certs::extract_priv_key_from_pem(the_new_cert.clone())?;
+        let cert_chain = crate::certs::extract_cert_from_pem_str(the_new_cert)?;
+        let private_key = crate::certs::extract_priv_key_from_pem(the_new_key)?;
 
         let rsa_signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&private_key)
             .map_err(|e| anyhow::anyhow!("Failed to create signing key: {:?}", e))?;
