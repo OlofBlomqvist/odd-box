@@ -10,8 +10,6 @@ use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair};
 use reqwest::Client;
 use serde_json::json;
 use serde::{Deserialize, Serialize};
-use josekit::jws::JwsHeaderSet;
-use josekit::jwk::Jwk;
 use serde_json::Value;
 use tokio_rustls::rustls::sign::CertifiedKey;
 
@@ -36,24 +34,29 @@ struct Directory {
 }
 
 
-#[derive(Debug)]
+
 pub struct CertManager {
     client: Client,
-    account_rsa_key_pair: josekit::jwk::alg::rsa::RsaKeyPair,
+    acc_certified_key: rcgen::KeyPair,
     account_url: String,
     directory: Directory
 }
+impl std::fmt::Debug for CertManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CertManager")
+            .field("account_url", &self.account_url)
+            .finish()
+    }
+}
 
-// TODO 
-//  - drop josekit and use rcgen for csr creation ?
-//  - use hyper client instead of reqwest ?    
-
+// TODO: use hyper client instead of reqwest ?    
 impl CertManager { 
 
     // Note: this method is called prior to the tracing being initialized and thus must use println! for logging.
-    async fn register_acme_account(account_email:&str,client: &Client, directory: &Directory, account_key_pair: &josekit::jwk::alg::rsa::RsaKeyPair) -> anyhow::Result<String> {
+    async fn register_acme_account(account_email:&str,client: &Client, directory: &Directory, account_key_pair: &rcgen::KeyPair) -> anyhow::Result<String> {
         
-        let email_regex = regex::Regex::new( r"(?i)^[a-z0-9!#$%&'+/=?^_{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_{|}~-]+)@(?:a-z0-9?.)+[a-z]{2,}$" ).unwrap();
+        // note: worst email check ever :<
+        let email_regex = regex::Regex::new( r".*@.*" ).unwrap();
         let email_is_valid = email_regex.is_match(account_email);
         if email_is_valid == false {
             bail!("Invalid email address: {}", account_email);
@@ -113,20 +116,22 @@ impl CertManager {
 
     // Note: this method is called prior to the tracing being initialized and thus must use println! for logging.
     pub async fn new(account_email:&str) -> anyhow::Result<Self> {
+        
         let client = Client::new();
-        let account_key_path = ".odd_box_cache/lets_encrypt_account_key.pem";
+        
+        let account_key_path = ".odd_box_cache/lets_encrypt_account.key";
         let account_key_pair = if !std::path::Path::exists(Path::new(account_key_path)) {
-            let key_pair = josekit::jwk::alg::rsa::RsaKeyPair::generate(2048)?;
+            let key_pair = rcgen::KeyPair::generate()?;
             let mut file = std::fs::File::create(account_key_path)?;
-            let bytes = key_pair.to_pem_private_key();
-            file.write_all(&bytes)?;
+            let bytes = key_pair.serialize_pem();
+            file.write_all(&bytes.as_bytes())?;
             key_pair
         } else {
-            let pem = std::fs::read_to_string(account_key_path).context(format!("reading acc key file: {account_key_path}"))?;
-            josekit::jwk::alg::rsa::RsaKeyPair::from_pem(pem)?
+            let key_pem = std::fs::read_to_string(account_key_path).context(format!("reading acc key file: {account_key_path}"))?;            
+            rcgen::KeyPair::from_pem(&key_pem)?
 
         };
-
+        
         let directory_url = "https://acme-v02.api.letsencrypt.org/directory"; // PROD        
         //let directory_url = "https://acme-staging-v02.api.letsencrypt.org/directory"; // STAGING        
 
@@ -146,7 +151,7 @@ impl CertManager {
 
         Ok(CertManager {
             client,
-            account_rsa_key_pair: account_key_pair,
+            acc_certified_key: account_key_pair,
             directory,
             account_url,
         })
@@ -255,7 +260,7 @@ impl CertManager {
             }]
         });
 
-        let signed_request = Self::sign_request(&self.account_rsa_key_pair, Some(&payload), &nonce, &directory.new_order, Some(&self.account_url))?;
+        let signed_request = Self::sign_request(&self.acc_certified_key, Some(&payload), &nonce, &directory.new_order, Some(&self.account_url))?;
 
         let res = self.client
             .post(&directory.new_order)
@@ -271,19 +276,21 @@ impl CertManager {
             .to_str()?
             .to_string();
 
-
+        //bail!("Order URL: {} RETURNED ORDER: {}", order_url, res.text().await?);
+            
         if res.status().is_success() {
             let body: serde_json::Value = res.json().await?;
-            tracing::info!("Order created: {:?}", body);
+            tracing::trace!("Order created: \n--------\n{}\n----------\n", serde_json::to_string_pretty(&body).unwrap());
+            
+            let finalize_url = body["finalize"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("Finalize URL not found"))?
+                .to_string();
+
             let auth_url = body["authorizations"]
                 .get(0)
                 .and_then(|url| url.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Authorization URL not found"))?
-                .to_string();
-            let finalize_url = body["finalize"]
-                .get(0)
-                .and_then(|url| url.as_str())
-                .ok_or_else(|| anyhow::anyhow!("Finalize URL not found"))?
                 .to_string();
 
             tracing::info!("LE Order URL: {}", order_url);
@@ -357,7 +364,7 @@ impl CertManager {
         let challenge_url = challenge["url"].as_str().ok_or_else(||anyhow::anyhow!("Challenge URL not found"))?;
         let nonce = Self::fetch_nonce(&self.client,&self.directory.new_nonce).await?;
         let signed_request = Self::sign_request(
-            &self.account_rsa_key_pair, 
+            &self.acc_certified_key, 
             Some(&json!({})),  // <-- this HAS to be an empty object, we MUST send it when doing the the trigger
             &nonce, 
             challenge_url,
@@ -401,7 +408,7 @@ impl CertManager {
             count += 1;
 
             let nonce = Self::fetch_nonce(&self.client,&self.directory.new_nonce).await?;
-            let signed_request = Self::sign_request(&self.account_rsa_key_pair, None, &nonce, order_url, Some(&self.account_url))?;
+            let signed_request = Self::sign_request(&self.acc_certified_key, None, &nonce, order_url, Some(&self.account_url))?;
 
             tracing::warn!("CALLING ORDER URL: {}", order_url);
 
@@ -421,6 +428,9 @@ impl CertManager {
             }
 
             tracing::info!("Waiting for order to be valid...");
+
+            // todo -> bail out if status is invalid, expired etc.
+
             if count < 30 {
                 tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
             } else {
@@ -464,7 +474,7 @@ impl CertManager {
         });
     
         let signed_request = Self::sign_request(
-            &self.account_rsa_key_pair,
+            &self.acc_certified_key,
             Some(&payload),
             &nonce,
             finalize_url,
@@ -496,7 +506,7 @@ impl CertManager {
         
         let nonce = Self::fetch_nonce(&self.client, &self.directory.new_nonce).await?;
         let signed_request = Self::sign_request(
-            &self.account_rsa_key_pair,
+            &self.acc_certified_key,
             None, 
             &nonce,
             cert_url,
@@ -530,87 +540,121 @@ impl CertManager {
         }
     }
 
-    // todo: clean this up a bit
-    fn compute_jwk_thumbprint(jwk:&Jwk) -> anyhow::Result<String> {
-        
+    fn sign_with_rcgen_keypair(key_pair: &rcgen::KeyPair, data: &[u8]) -> anyhow::Result<Vec<u8>> {
+        use p256::ecdsa::{SigningKey, Signature, signature::Signer};
+        use p256::pkcs8::DecodePrivateKey;
+        // Extract the private key in DER format
+        let der_private_key = key_pair.serialize_der();
+        // Create a p256::ecdsa::SigningKey from the DER-encoded key
+        let signing_key = SigningKey::from_pkcs8_der(&der_private_key)
+            .map_err(|e| anyhow::anyhow!("Failed to parse key: {:?}", e))?;
+        // Sign the data
+        let signature: Signature = signing_key.sign(data);
+        // The signature is an ASN.1 DER-encoded sequence of r and s values
+        // For JWS, we need to use the raw concatenated r and s values
+        // Convert the signature to raw bytes (concatenated r || s)
+        let signature_bytes = signature.to_bytes();
+        Ok(signature_bytes.to_vec())
+    }
+    
+    fn compute_jwk_thumbprint(jwk: &serde_json::Value) -> anyhow::Result<String> {
         use sha2::Digest;
-        let jwk = serde_json::to_value(jwk)?;
-        let jwk_subset = json!({
-            "e": jwk["e"],
-            "kty": jwk["kty"],
-            "n": jwk["n"],
-        });
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        // Create a canonical JSON representation
+        let mut jwk_subset = serde_json::Map::new();
+        jwk_subset.insert("crv".to_string(), jwk["crv"].clone());
+        jwk_subset.insert("kty".to_string(), jwk["kty"].clone());
+        jwk_subset.insert("x".to_string(), jwk["x"].clone());
+        jwk_subset.insert("y".to_string(), jwk["y"].clone());
     
-        let jwk_string = jwk_subset.to_string();
+        let jwk_value = serde_json::Value::Object(jwk_subset);
+        let jwk_string = serde_json::to_string(&jwk_value)?;
     
-        let mut hasher = sha2::Sha256::new();
-        hasher.update(jwk_string);
-        let result = hasher.finalize();
-
-        const CUSTOM_ENGINE: base64::engine::GeneralPurpose =
-            base64::engine::GeneralPurpose::new(
-                &base64::alphabet::URL_SAFE,
-                general_purpose::GeneralPurposeConfig::new()
-                    .with_encode_padding(false)
-                    .with_decode_padding_mode(base64::engine::DecodePaddingMode::RequireNone)
-            );
-
-        Ok(CUSTOM_ENGINE.encode(result))
+        // Compute SHA-256 hash
+        let hash = sha2::Sha256::digest(jwk_string.as_bytes());
+    
+        // Base64url-encode the hash
+        let thumbprint = URL_SAFE_NO_PAD.encode(hash);
+    
+        Ok(thumbprint)
     }
 
+    fn construct_jwk(account_key_pair: &rcgen::KeyPair) -> anyhow::Result<Value> {
+        use p256::{elliptic_curve::sec1::ToEncodedPoint, pkcs8::DecodePublicKey, PublicKey};
+        use anyhow::anyhow;
+        // Get the public key in DER format (Vec<u8>)
+        let pub_key_der = account_key_pair.public_key_der();
+
+        // Parse the public key to extract 'x' and 'y'
+        let public_key = PublicKey::from_public_key_der(&pub_key_der)
+            .map_err(|e| anyhow!("Failed to parse ECDSA public key: {:?}", e))?;
+
+        // Get the affine coordinates
+        let encoded_point = public_key.to_encoded_point(false); // false for uncompressed point
+
+        let x = encoded_point.x().ok_or_else(|| anyhow!("Failed to get x coordinate"))?;
+        let y = encoded_point.y().ok_or_else(|| anyhow!("Failed to get y coordinate"))?;
+
+        let x_b64 = general_purpose::URL_SAFE_NO_PAD.encode(x);
+        let y_b64 = general_purpose::URL_SAFE_NO_PAD.encode(y);
+
+        Ok(serde_json::json!({
+            "kty": "EC",
+            "crv": "P-256",
+            "x": x_b64,
+            "y": y_b64,
+        }))
+    }
 
     fn generate_key_authorization(&self, token: &str) -> anyhow::Result<String> {
-        let jwk = self.account_rsa_key_pair.to_jwk_public_key();
-        let thumbprint_encoded = Self::compute_jwk_thumbprint(&jwk)?;
-        Ok(format!("{}.{}", token, thumbprint_encoded))
+        let jwk = Self::construct_jwk(&self.acc_certified_key)?;
+        let thumbprint = Self::compute_jwk_thumbprint(&jwk)?;
+        Ok(format!("{}.{}", token, thumbprint))
     }
-    
-
 
     fn sign_request(
-        account_key_pair: &josekit::jwk::alg::rsa::RsaKeyPair,
+        account_key_pair: &rcgen::KeyPair,
         payload: Option<&serde_json::Value>,
         nonce: &str,
         url: &str,
-        account_url: Option<&str>, // when creating acc we wont have this
+        account_url: Option<&str>, // when creating account, this is None
     ) -> anyhow::Result<String> {
-        
-        let mut header = JwsHeaderSet::new();
-        header.set_base64url_encode_payload(true);
-        header.set_url(url, true);
-        header.set_algorithm("RS256",true);  // Use RS256 for signing
-
-        // nonce cant be set via set_nonce since it gets base64url encoded and 
-        // thus not accepted by the server..
-        header.set_claim("nonce", Some(Value::String(nonce.to_string())), true)?;
-
+        // Build the protected header
+        let mut protected = serde_json::Map::new();
+        protected.insert("alg".to_string(), serde_json::Value::String("ES256".to_string()));
+        protected.insert("nonce".to_string(), serde_json::Value::String(nonce.to_string()));
+        protected.insert("url".to_string(), serde_json::Value::String(url.to_string()));
+    
         if let Some(account_url) = account_url {
-            header.set_key_id(account_url,true);
+            protected.insert("kid".to_string(), serde_json::Value::String(account_url.to_string()));
         } else {
-            let jwk = Self::to_jwk_pub_json_value(&account_key_pair).context("create_jwk_from_rcgen_keypair failed")?;
-            header.set_claim("jwk", Some(jwk),true).context("Failed to set jwk claim.")?;
+            let jwk = Self::construct_jwk(account_key_pair)?;
+            protected.insert("jwk".to_string(), jwk);
         }
     
-        let payload_bytes = {
-            if let Some(p) = payload {
-                serde_json::to_string(p)?.as_bytes().to_vec()
-            } else {
-                vec![]
+        // Base64url-encode the protected header and payload
+        let protected_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_string(&protected)?);
+        let payload_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            match payload {
+                Some(p) => serde_json::to_string(p)?,
+                None => "".to_string(),
             }
-        };
-
-
-        let signer = josekit::jws::alg::rsassa::RsassaJwsAlgorithm::Rs256
-            .signer_from_jwk(&account_key_pair.to_jwk_private_key()).context(format!("creating signer from pem"))?;
+        );
     
-        let jws = josekit::jws::serialize_flattened_json(&payload_bytes, &header, &signer)?;
+        let signing_input = format!("{}.{}", protected_b64, payload_b64);
     
-        Ok(jws)
-    }
+        let signature = Self::sign_with_rcgen_keypair(account_key_pair, signing_input.as_bytes())?;
+        let signature_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&signature);
 
-    fn to_jwk_pub_json_value(account_key_pair: &josekit::jwk::alg::rsa::RsaKeyPair) -> anyhow::Result<Value> {
-        let xxx = account_key_pair.to_jwk_public_key();
-        serde_json::to_value(xxx).map_err(|e| anyhow::anyhow!("Failed to serialize RSA JWK: {:?}", e))
+        
+        // Build the final JWS object
+        let jws = serde_json::json!({
+            "protected": protected_b64,
+            "payload": payload_b64,
+            "signature": signature_b64,
+        });
+    
+        Ok(serde_json::to_string(&jws)?)
     }
 
 

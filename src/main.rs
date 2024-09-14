@@ -319,7 +319,14 @@ fn initialize_configuration(args:&Args) -> anyhow::Result<(ConfigWrapper,OddBoxC
 
 #[tokio::main(flavor="multi_thread")]
 async fn main() -> anyhow::Result<()> {
-
+    
+    match rustls::crypto::ring::default_provider().install_default() {
+        Ok(_) => {},
+        Err(e) => {
+            bail!("Failed to install default ring provider: {:?}",e)
+        }
+    }
+    
     let args = Args::parse();
     
     if args.config_schema {

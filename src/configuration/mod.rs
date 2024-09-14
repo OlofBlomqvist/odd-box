@@ -268,8 +268,8 @@ impl ConfigWrapper {
 
         for target in self.remote_target.iter().flatten() {
             if target.enable_lets_encrypt.unwrap_or(false) {
-                if target.disable_tcp_tunnel_mode.unwrap_or(false) {
-                    anyhow::bail!(format!("Invalid configuration for '{}'. LetsEncrypt cannot be enabled when TCP tunnel mode is disabled.", target.host_name));
+                if !target.disable_tcp_tunnel_mode.unwrap_or(false) {
+                    anyhow::bail!(format!("Invalid configuration for '{}'. LetsEncrypt cannot be enabled when TCP tunnel mode is enabled.", target.host_name));
                 }
             }
         }
@@ -289,8 +289,8 @@ impl ConfigWrapper {
             }
 
             if process.enable_lets_encrypt.unwrap_or(false) {
-                if process.disable_tcp_tunnel_mode.unwrap_or(false) {
-                    anyhow::bail!(format!("Invalid configuration for '{}'. LetsEncrypt cannot be enabled when TCP tunnel mode is disabled.", process.host_name));
+                if !process.disable_tcp_tunnel_mode.unwrap_or(false) {
+                    anyhow::bail!(format!("Invalid configuration for '{}'. LetsEncrypt cannot be enabled when TCP tunnel mode is enabled.", process.host_name));
                 }
             }
     

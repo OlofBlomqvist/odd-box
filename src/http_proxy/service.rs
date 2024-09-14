@@ -49,9 +49,7 @@ pub async fn serve(service:ReverseProxyService,io:SomeIo) {
         
     };
     match result {
-        Ok(x) => {
-            
-        },
+        Ok(_) => {},
         Err(e) => {
             tracing::warn!("{e:?}")
         }
