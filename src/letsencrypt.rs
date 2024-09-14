@@ -171,7 +171,7 @@ impl CertManager {
             tracing::info!("Found pending challenge for domain: {}.. waiting for it to be completed.. (time out in 10 seconds)", domain_name);
             tokio::time::sleep(Duration::from_secs(1)).await;        
             i += 1;
-            if i > 11 {
+            if i > 15 {
                 anyhow::bail!("Challenge timed out for domain: {}", domain_name);
             }    
         }
@@ -211,8 +211,6 @@ impl CertManager {
 
 
         let priv_key = self.finalize_order(&finalize_url, domain_name).await.context("finalizing the order of a new cert")?;
-        
-        tokio::time::sleep(Duration::from_secs(5)).await;
         
         self.poll_order_status_util_valid(&order_url).await?;
 
@@ -431,7 +429,7 @@ impl CertManager {
 
             // todo -> bail out if status is invalid, expired etc.
 
-            if count < 30 {
+            if count < 6 {
                 tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
             } else {
                 anyhow::bail!("Failed to get certificate after 10 attempts")
