@@ -438,20 +438,15 @@ async fn main() -> anyhow::Result<()> {
    
     let mut tui_task : Option<JoinHandle<()>> = None;
 
+
+    let intial_log_filter = EnvFilter::from_default_env()
+        .add_directive(format!("odd_box={}",log_level).parse().expect("this directive will always work"));
+
     // Before starting the proxy thread(s) we need to initialize the tracing system and the tui if enabled.
     if tui_flag {
         
         // note: we use reload-handle because we plan to implement support for switching log level at runtime at least in tui mode.
-        let (filter, _reload_handle) = tracing_subscriber::reload::Layer::new(
-            EnvFilter::from_default_env()
-                .add_directive(log_level.into())
-                .add_directive("h2=info".parse().expect("this directive will always work"))
-                .add_directive("tokio_util=info".parse().expect("this directive will always work"))     
-                .add_directive("rustls=info".parse().expect("this directive will always work"))
-                .add_directive("mio=info".parse().expect("this directive will always work"))              
-                .add_directive("zbus=warn".parse().expect("this directive will always work"))      
-                .add_directive("tokio=warn".parse().expect("this directive will always work")) 
-                .add_directive("hyper=info".parse().expect("this directive will always work")));
+        let (filter, _reload_handle) = tracing_subscriber::reload::Layer::new(intial_log_filter);
             // ^ todo: perhaps invert this logic
         tui::init();
         tui_task = Some(tokio::spawn(tui::run(
@@ -472,20 +467,10 @@ async fn main() -> anyhow::Result<()> {
                     time::macros::format_description!("[hour]:[minute]:[second]")
                 )
             );
-        let filter_layer = tracing_subscriber::EnvFilter::from_default_env()
-            .add_directive(log_level.into())
-            .add_directive("h2=info".parse().expect("this directive will always work"))
-            .add_directive("tokio_util=info".parse().expect("this directive will always work"))     
-            .add_directive("rustls=info".parse().expect("this directive will always work"))
-            .add_directive("mio=info".parse().expect("this directive will always work"))                            
-            .add_directive("hyper=info".parse().expect("this directive will always work"))
-            .add_directive("hyper=info".parse().expect("this directive will always work"))
-            .add_directive("zbus=warn".parse().expect("this directive will always work"))    
-            .add_directive("tokio=warn".parse().expect("this directive will always work"))      ;
-
+     
         let subscriber = tracing_subscriber::Registry::default()
             .with(fmt_layer)
-            .with(filter_layer)
+            .with(intial_log_filter)
             .with(logging::NonTuiLoggerLayer { broadcaster: tracing_broadcaster.clone() });
 
         subscriber.init();

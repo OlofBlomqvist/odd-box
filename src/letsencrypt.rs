@@ -12,6 +12,7 @@ use serde_json::json;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_rustls::rustls::sign::CertifiedKey;
+use x509_parser::prelude::{FromDer, X509Certificate};
 
 use crate::global_state::GlobalState;
 use crate::types::proc_info::BgTaskInfo;
@@ -49,15 +50,19 @@ impl std::fmt::Debug for CertManager {
     }
 }
 
+
+lazy_static::lazy_static! {
+    // note: worst email check ever? :-(
+    static ref EMAIL_REGEX : regex::Regex = regex::Regex::new( r".*@.*" ).unwrap();
+}
+
 // TODO: use hyper client instead of reqwest ?    
 impl CertManager { 
 
     // Note: this method is called prior to the tracing being initialized and thus must use println! for logging.
     async fn register_acme_account(account_email:&str,client: &Client, directory: &Directory, account_key_pair: &rcgen::KeyPair) -> anyhow::Result<String> {
         
-        // note: worst email check ever :<
-        let email_regex = regex::Regex::new( r".*@.*" ).unwrap();
-        let email_is_valid = email_regex.is_match(account_email);
+        let email_is_valid = EMAIL_REGEX.is_match(account_email);
         if email_is_valid == false {
             bail!("Invalid email address: {}", account_email);
         }
@@ -140,7 +145,7 @@ impl CertManager {
         let acc_url_path = "./.odd_box_cache/lets_encrypt_account_url";
         let account_url = if std::path::Path::exists(std::path::Path::new(acc_url_path)) {
             let account_url = std::fs::read_to_string(acc_url_path)?;
-            println!("Lets-encrypt account already registered: {}", account_url);
+            // println!("Lets-encrypt account already registered: {}", account_url);
             account_url
         } else {
             println!("Registering a new ACME account because we did not find path: {}", acc_url_path);
@@ -168,7 +173,7 @@ impl CertManager {
 
         let mut i = 0;
         while let Some(_pending_challenge) = DOMAIN_TO_CHALLENGE_TOKEN_MAP.get(domain_name) {
-            tracing::info!("Found pending challenge for domain: {}.. waiting for it to be completed.. (time out in 10 seconds)", domain_name);
+            tracing::trace!("Found pending challenge for domain: {}.. waiting for it to be completed.. (time out in 10 seconds)", domain_name);
             tokio::time::sleep(Duration::from_secs(1)).await;        
             i += 1;
             if i > 15 {
@@ -182,9 +187,12 @@ impl CertManager {
 
         let cert_file_path = format!("{odd_cache_base}/{domain_name}/{domain_name}.crt");
         let key_file_path = format!("{odd_cache_base}/{domain_name}/{domain_name}.key");
+        
+        let mut skip_validation = false;
 
         if std::path::Path::new(&cert_file_path).exists() && std::path::Path::new(&key_file_path).exists() {
-            tracing::info!("Certificate and key already exist for domain: {}", domain_name);
+
+            tracing::trace!("Certificate and key already exist for domain: {}", domain_name);
             let crt_string = std::fs::read_to_string(&cert_file_path)?;
             let key_string = std::fs::read_to_string(&key_file_path)?;
 
@@ -194,24 +202,43 @@ impl CertManager {
             
             let rsa_signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&private_key)
                 .map_err(|e| anyhow::anyhow!("Failed to create signing key: {:?}", e))?;
+
             let certified_key = CertifiedKey::new(cert_chain, rsa_signing_key);
 
-            return Ok(certified_key);
+            let ccc = X509Certificate::from_der(&*certified_key.end_entity_cert().unwrap()).unwrap();
+            match ccc.1.tbs_certificate.validity.time_to_expiration() {
+                Some(v)  => {
+                    let days = v.whole_days();
+                    if days < 89 {
+                        tracing::warn!("Generating a new cert for {domain_name} due to less than 30 days remaining: {days} days.");
+                        skip_validation = true;
+                    } else {
+                        tracing::warn!("The certificate for {domain_name} is valid for {days} days. Will keep using!");
+                        return Ok(certified_key);
+                    }
+                },
+                None => {
+                    tracing::warn!("The certificate for {domain_name} has expired. Will generate a new one.");
+                }
+            }
+
+            
         }
 
-        tracing::info!("Certificate not found, creating a new certificate for domain: {}", domain_name);
+        tracing::trace!("Certificate not found, creating a new certificate for domain: {}", domain_name);
 
         let (auth_url,finalize_url,order_url) = self.create_order(&self.directory,  domain_name).await.context("create order failed")?;
 
-        let challenge_url = self.handle_http_01_challenge(&auth_url,domain_name).await?;
-
-        tracing::info!("Challenge accepted, waiting for order to be valid - url: {}", challenge_url);
-        
-        self.poll_order_status_util_valid(&challenge_url).await?;
-
+        if skip_validation {
+            tracing::warn!("Skipping challenge validation for domain {} as we have already completed challenges once.", domain_name);
+        } else {
+            tracing::trace!("Calling handle_http_01_challenge method with URL: {}", auth_url);
+            let challenge_url = self.handle_http_01_challenge(&auth_url,domain_name).await?;
+            tracing::trace!("Challenge accepted, waiting for order to be valid - url: {}", challenge_url);
+            self.poll_order_status_util_valid(&challenge_url).await?;
+        }
 
         let priv_key = self.finalize_order(&finalize_url, domain_name).await.context("finalizing the order of a new cert")?;
-        
         self.poll_order_status_util_valid(&order_url).await?;
 
         let the_new_cert = self.fetch_certificate(&order_url).await.context("fetching new certificate")?;
@@ -225,8 +252,7 @@ impl CertManager {
             CHALLENGE_MAP.remove(&v);
         }
         
-
-        tracing::info!("Certificate and key saved to disk for domain: {}. Path: {}", domain_name, key_file_path);
+        tracing::trace!("Certificate and key saved to disk for domain: {}. Path: {}", domain_name, key_file_path);
 
         let cert_chain = crate::certs::extract_cert_from_pem_str(the_new_cert)?;
         let private_key = crate::certs::extract_priv_key_from_pem(the_new_key)?;
@@ -274,8 +300,6 @@ impl CertManager {
             .to_str()?
             .to_string();
 
-        //bail!("Order URL: {} RETURNED ORDER: {}", order_url, res.text().await?);
-            
         if res.status().is_success() {
             let body: serde_json::Value = res.json().await?;
             tracing::trace!("Order created: \n--------\n{}\n----------\n", serde_json::to_string_pretty(&body).unwrap());
@@ -291,7 +315,7 @@ impl CertManager {
                 .ok_or_else(|| anyhow::anyhow!("Authorization URL not found"))?
                 .to_string();
 
-            tracing::info!("LE Order URL: {}", order_url);
+            tracing::trace!("LE Order URL: {}", order_url);
             Ok((auth_url,finalize_url,order_url))
         } else {
             anyhow::bail!("Failed to create order")
@@ -300,7 +324,7 @@ impl CertManager {
 
     async fn handle_http_01_challenge(&self, auth_url: &str, domain_name:&str) -> anyhow::Result<String> {
         
-        tracing::warn!("CALLING AUTH URL: {}", auth_url);
+        tracing::trace!("Calling LE challenge url: {}", auth_url);
 
         let res = self.client
             .get(auth_url)
@@ -335,10 +359,10 @@ impl CertManager {
                     return Err(anyhow::anyhow!("URL not found in the expected JSON structure"));
                 }
             } else {
-                tracing::info!("Got new http-01 challenge with status {:?}", status);
+                tracing::trace!("Got new http-01 challenge with status {:?}", status);
             }
         } else {
-            tracing::info!("Challenge status not found in JSON");
+            tracing::trace!("Challenge status not found in JSON");
         }
 
 
@@ -348,15 +372,15 @@ impl CertManager {
 
         let key_authorization = self.generate_key_authorization(token)?;
 
-        tracing::info!("saving challenge token {:?} and key auth {:?}", token,key_authorization);
+        tracing::trace!("saving challenge token {:?} and key auth {:?}", token,key_authorization);
  
         CHALLENGE_MAP.insert(token.to_string(), key_authorization.clone());
         
-        tracing::info!("INSERTED CHALLENGE FOR HOST: {}", domain_name);
+        tracing::trace!("storing challenge for host: {}", domain_name);
         
         DOMAIN_TO_CHALLENGE_TOKEN_MAP.insert(domain_name.to_string(), token.to_string());
 
-        tracing::info!("GOT THIS CHALLENGE: {:?}",challenge);
+        tracing::trace!("sot challenge: {:?}",challenge);
 
         // Notify Let's Encrypt to validate the challenge :o
         let challenge_url = challenge["url"].as_str().ok_or_else(||anyhow::anyhow!("Challenge URL not found"))?;
@@ -369,7 +393,7 @@ impl CertManager {
             Some(&self.account_url)
         ).context("signing payload")?;
 
-        tracing::warn!("CALLING CHALLENGE URL: {}", challenge_url);
+        tracing::trace!("Calling LE challenge url: {}", challenge_url);
         let res = self.client
             .post(challenge_url)
             .header("Content-Type", "application/jose+json")
@@ -380,7 +404,7 @@ impl CertManager {
         
         if res.status().is_success() {
             let body: serde_json::Value = res.json().await?;
-            tracing::info!("Trigger result: {}", body.to_string());
+            tracing::trace!("Trigger result: {}", body.to_string());
             
             if let Some(x) = body.get("url") {
                 if let Some(url) = x.as_str() {
@@ -408,7 +432,7 @@ impl CertManager {
             let nonce = Self::fetch_nonce(&self.client,&self.directory.new_nonce).await?;
             let signed_request = Self::sign_request(&self.acc_certified_key, None, &nonce, order_url, Some(&self.account_url))?;
 
-            tracing::warn!("CALLING ORDER URL: {}", order_url);
+            tracing::trace!("calling LE order url: {}", order_url);
 
             let res = self.client
                 .post(order_url)
@@ -419,13 +443,13 @@ impl CertManager {
 
             let body: serde_json::Value = res.json().await?;
             if body["status"] == "valid" {
-                tracing::info!("Order is valid - we can now use the finialize url and download the certificate. body: {}",body);
+                tracing::trace!("Order is valid - we can now use the finialize url and download the certificate. body: {}",body);
                 return Ok(())
             } else {
-                tracing::info!("Order not valid: {:?}", body);
+                tracing::trace!("Order not valid: {:?}", body);
             }
 
-            tracing::info!("Waiting for order to be valid...");
+            tracing::trace!("Waiting for order to be valid...");
 
             // todo -> bail out if status is invalid, expired etc.
 
@@ -479,7 +503,7 @@ impl CertManager {
             Some(&self.account_url),
         )?;
     
-        tracing::warn!("CALLING FINALIZE URL: {}", finalize_url);
+        tracing::trace!("Calling LE finalize url: {}", finalize_url);
 
         let res = self.client
             .post(finalize_url)
@@ -490,7 +514,7 @@ impl CertManager {
     
         if res.status().is_success() {
             let body = res.text().await?;
-            tracing::info!("Order finalized successfully: {}",body);
+            tracing::trace!("Order finalized successfully: {}",body);
 
 
             Ok(kvp)
@@ -512,7 +536,7 @@ impl CertManager {
         )?;
     
 
-        tracing::warn!("CALLING GET CERT URL: {}", cert_url);
+        tracing::trace!("Calling LE cert url: {}", cert_url);
 
         let res = self.client
             .post(cert_url)
@@ -533,7 +557,6 @@ impl CertManager {
             Ok(res)
         } else {
             let error_body = res.text().await?;
-            tracing::error!("Failed to fetch certificate: {}", error_body);
             anyhow::bail!("Failed to fetch certificate: {}", error_body);
         }
     }
@@ -660,9 +683,7 @@ impl CertManager {
 
 
 
-// TODO - handle renewals?
 pub async fn bg_worker_for_lets_encrypt_certs(state: Arc<GlobalState>) {
-    
     let liveness_token = Arc::new(true);
     crate::BG_WORKER_THREAD_MAP.insert("Lets Encrypt".into(), BgTaskInfo {
         liveness_ptr: Arc::downgrade(&liveness_token),
@@ -734,7 +755,7 @@ pub async fn bg_worker_for_lets_encrypt_certs(state: Arc<GlobalState>) {
         }); // we dont need to clean this up if we exit, there is a cleanup task that will do it.
     
 
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        tokio::time::sleep(Duration::from_secs(320)).await;
     }
     
 }

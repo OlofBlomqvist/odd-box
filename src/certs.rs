@@ -2,6 +2,7 @@ use anyhow::Context;
 use dashmap::DashMap;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::rustls::server::{ClientHello, ResolvesServerCert};
+use x509_parser::prelude::{FromDer, X509Certificate};
 use std::io::BufReader;
 use std::fs::File;
 use std::sync::{Arc, Mutex};
@@ -32,11 +33,93 @@ impl DynamicCertResolver {
     pub fn add_lets_encrypt_signed_cert_to_mem_cache(&self, domain: &str, cert:tokio_rustls::rustls::sign::CertifiedKey) {        
         self.lets_encrypt_signed_certs.insert(domain.to_string(), Arc::new(cert));
     }
-    pub fn get_self_signed_cert_from_cache(&self, domain: &str) -> Option<Arc<tokio_rustls::rustls::sign::CertifiedKey>> {        
-        self.self_signed_cert_cache.get(domain).map(|x|x.clone())
+
+    #[tracing::instrument]
+    pub fn get_self_signed_cert_from_cache(&self, domain: &str) -> Option<Arc<tokio_rustls::rustls::sign::CertifiedKey>> {    
+       
+        if let Some( c) = self.self_signed_cert_cache.get(domain).map(|x|x.clone()) {
+            match c.end_entity_cert() {
+                Ok(v) => {
+                    if let Ok(ccc) = X509Certificate::from_der(&*v) {
+                        match ccc.1.tbs_certificate.validity.time_to_expiration() {
+                            Some(v)  => {
+                                let days = v.whole_days();
+                                if days < 89 {
+                                    tracing::warn!("Purging the self-signed  cert for {domain} due to less than 30 days remaining: {days} days.");
+                                    self.lets_encrypt_signed_certs.remove(domain);
+                                    None
+                                } else {
+                                    tracing::warn!("The self-signed  certificate for {domain} is valid for {days} days. will keep in cache.");
+                                    Some(c)
+                                }
+                            },
+                            None => {
+                                tracing::warn!("The self-signed certificate for {domain} has expired. Will generate a new one.");
+                                self.lets_encrypt_signed_certs.remove(domain);
+                                None
+                            }
+                        }
+                    } else {
+                        tracing::warn!("Failed to parse the self-signed cert for {} as X509Certificate! If this issue persists, try removing the domain from inside the .odd_box_cache dir.",domain);
+                        self.lets_encrypt_signed_certs.remove(domain);
+                        None
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("Failed to parse the self-signed end_entity_cert for {}: {:?}. If this issue persists, try removing the domain from inside the .odd_box_cache dir.",domain,e);
+                    self.lets_encrypt_signed_certs.remove(domain);
+                    None
+                },
+            } 
+        } else {
+            None
+        }
+        
+        
     }
-    pub fn get_lets_encrypt_signed_cert_from_mem_cache(&self, domain: &str) -> Option<Arc<tokio_rustls::rustls::sign::CertifiedKey>> {        
-        self.lets_encrypt_signed_certs.get(domain).map(|x|x.clone())
+
+    #[tracing::instrument]
+    pub fn get_lets_encrypt_signed_cert_from_mem_cache(&self, domain: &str) -> Option<Arc<tokio_rustls::rustls::sign::CertifiedKey>> {
+
+        if let Some( c) = self.lets_encrypt_signed_certs.get(domain).map(|x|x.clone()) {
+            match c.end_entity_cert() {
+                Ok(v) => {
+                    if let Ok(ccc) = X509Certificate::from_der(&*v) {
+                        match ccc.1.tbs_certificate.validity.time_to_expiration() {
+                            Some(v)  => {
+                                let days = v.whole_days();
+                                if days < 89 {
+                                    tracing::warn!("Generating a new LE cert for {domain} due to less than 30 days remaining: {days} days.");
+                                    self.lets_encrypt_signed_certs.remove(domain);
+                                    None
+                                } else {
+                                    tracing::warn!("The LE certificate for {domain} is valid for {days} days. will keep using.");
+                                    Some(c)
+                                }
+                            },
+                            None => {
+                                tracing::warn!("The LE certificate for {domain} has expired. Will generate a new one.");
+                                self.lets_encrypt_signed_certs.remove(domain);
+                                None
+                            }
+                        }
+                    } else {
+                        tracing::warn!("Failed to parse LE cert for {} as X509Certificate!. If this persists, try removing the domain from inside the .odd_box_cache/lets_encrypt dir.",domain);
+                        self.lets_encrypt_signed_certs.remove(domain);
+                        None
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("Failed to parse LE end_entity_cert for {}: {:?}. If this persists, try removing the domain from inside the .odd_box_cache/lets_encrypt dir.",domain,e);
+                    self.lets_encrypt_signed_certs.remove(domain);
+                    None
+                },
+            } 
+        } else {
+            None
+        }
+        
+        
     }
     pub async fn new(enable_lets_encrypt:bool,lets_encrypt_account_email:Option<String>) -> anyhow::Result<Self> {
         Ok(DynamicCertResolver {
@@ -54,14 +137,12 @@ impl ResolvesServerCert for DynamicCertResolver {
         
         let server_name = client_hello.server_name()?;
         
-        if *self.enable_lets_encrypt.lock().expect("should always be able to lock..") {
-            if let Some(certified_key) = self.lets_encrypt_signed_certs.get(server_name) {
-                tracing::trace!("Returning a cached lets-encrypt certificate for {:?}",server_name);
-                return Some(certified_key.clone());
-            }
+        if let Some(certified_key) = self.get_lets_encrypt_signed_cert_from_mem_cache(server_name) {
+            tracing::trace!("Returning a cached lets-encrypt certificate for {:?}",server_name);
+            return Some(certified_key.clone());
         }
 
-        if let Some(certified_key) = self.self_signed_cert_cache.get(server_name) {
+        if let Some(certified_key) = self.get_self_signed_cert_from_cache(server_name) {
             tracing::trace!("Returning a cached self-signed certificate for {:?}",server_name);
             return Some(certified_key.clone());
         }

@@ -16,12 +16,15 @@ pub fn draw(
     global_state: Arc<GlobalState>,
     _tui_state: &mut TuiState,
     area: Rect,
-    _theme: &Theme,
+    theme: &Theme,
 ) {
     let size = area.as_size();
     if size.height < 20 || size.width < 50 {
         return;
     }
+
+
+    let is_dark_theme = matches!(&theme,Theme::Dark(_));
 
     use std::collections::HashSet;
 
@@ -71,17 +74,22 @@ pub fn draw(
 
     let num_unique_hostnames = unique_hostnames.len();
 
+    let style = if is_dark_theme { Style::new().fg(Color::White) } else { Style::new().fg(Color::Black) };
+
+
     let p1 = Paragraph::new(format!(
         "Handled TCP tunnels: {}",
         tcp_total_connections
-    ));
+    )).style(style);
     
     let p2 = Paragraph::new(format!(
         "Terminated HTTP connections: {}",
         http_total_connections
-    ));
+    )).style(style);
 
-    let p3 = Paragraph::new(format!("Number of unique hostnames seen: {}", num_unique_hostnames));
+    
+
+    let p3 = Paragraph::new(format!("Number of unique hostnames seen: {}", num_unique_hostnames)).style(style);
 
     f.render_widget(p1, area.offset(Offset { x: 4, y: 1 }));
     f.render_widget(p2, area.offset(Offset { x: 4, y: 2 }));

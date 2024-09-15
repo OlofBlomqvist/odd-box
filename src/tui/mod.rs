@@ -4,10 +4,12 @@ use ratatui::style::{Color, Modifier, Style, Stylize };
 use ratatui::text::Line;
 use ratatui::widgets::{BorderType, List, ListItem };
 use tokio::task;
+use tracing::level_filters::LevelFilter;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use std::io::Stdout;
+use std::str::FromStr;
 use crate::global_state::GlobalState;
 use crate::logging::SharedLogBuffer;
 use crate::logging::LogMsg;
@@ -68,9 +70,10 @@ pub async fn run(
     reloadable_filter : tracing_subscriber::reload::Layer<EnvFilter, tracing_subscriber::layer::Layered<crate::logging::TuiLoggerLayer, tracing_subscriber::Registry>>,
 ) {
 
-    
     let log_buffer = Arc::new(Mutex::new(SharedLogBuffer::new()));
     let layer = crate::logging::TuiLoggerLayer { log_buffer: log_buffer.clone(), broadcaster: trace_msg_broadcaster };
+    
+    let reloadable_filter_handle = reloadable_filter.handle();
 
     let subscriber = tracing_subscriber::registry()
        .with(layer).with(reloadable_filter);
@@ -107,7 +110,6 @@ pub async fn run(
         let tx = tx.clone();
         task::spawn(async move {
 
-
             let mut theme = match dark_light::detect() {
                 dark_light::Mode::Dark => Theme::Dark(dark_style),
                 dark_light::Mode::Light => Theme::Light(light_style),
@@ -119,8 +121,10 @@ pub async fn run(
             let tx = tx.clone();
            
             let mut tui_state = crate::types::tui_state::TuiState::new();
-
+            
             loop {
+
+                tui_state.log_level = LevelFilter::current().to_string();
                 
                 if count > 100 {
                     theme = match dark_light::detect() {
@@ -159,20 +163,15 @@ pub async fn run(
                     }
                 }
             
-
-            
                 if let Ok(true) = event::poll(std::time::Duration::from_millis(100)) {
                     
-                
                     let (current_page,sites_open) = {
                         (tui_state.current_page.clone(),tui_state.show_apps_window)
                     };
                     
                     let evt = event::read()?;
                 
-                    // TODO:
-                    // - use 'L' to toggle log level? (via the reloadable filter)
-
+                   
                     match evt {
                         Event::Key(KeyEvent { 
                             code: crossterm::event::KeyCode::Char(' '),
@@ -279,6 +278,42 @@ pub async fn run(
                         Event::Key(key) => {
 
                                 match key.code {
+                                    KeyCode::Char('l') => {
+                                        
+                                        let handle = reloadable_filter_handle.clone();
+                                        
+                                        // rewrite to use the current log level and jump to the next in a cyclic way:
+
+                                        match LevelFilter::current() {
+                                            tracing::level_filters::LevelFilter::TRACE => {
+                                                _ = handle.reload(EnvFilter::from_str("odd_box=info").unwrap());
+                                                tracing::info!("Switched log level to INFO");
+                                            }
+                                            tracing::level_filters::LevelFilter::INFO => {
+                                                _ = handle.reload(EnvFilter::from_str("odd_box=warn").unwrap());
+                                                // use warn log as it is now the lowest visible log level
+                                                tracing::warn!("Switched log level to WARN"); 
+                                            }
+                                            tracing::level_filters::LevelFilter::WARN => {
+                                                _ = handle.reload(EnvFilter::from_str("odd_box=error").unwrap());
+                                                // use error log as it is now the lowest visible log level
+                                                tracing::error!("Switched log level to ERROR");
+                                            }
+                                            tracing::level_filters::LevelFilter::ERROR => {
+                                                _ = handle.reload(EnvFilter::from_str("odd_box=debug").unwrap());
+                                                tracing::info!("Switched log level to DEBUG");
+                                            }
+                                            tracing::level_filters::LevelFilter::DEBUG => {
+                                                _ = handle.reload(EnvFilter::from_str("odd_box=trace").unwrap());
+                                                tracing::info!("Switched log level to TRACE");
+                                            }
+                                            _ => {
+                                                _ = handle.reload(EnvFilter::from_str("odd_box=info").unwrap());
+                                                tracing::info!("Switched log level to INFO");
+                                            }
+                                        }
+                                        
+                                    }
                                     KeyCode::Esc | KeyCode::Char('q')  => {
                                         {
                                             tracing::warn!("User requested exit");
@@ -791,7 +826,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
     
     let mut help_bar_text = vec![
         ratatui::text::Span::raw("q: Quit | "),
-        ratatui::text::Span::raw("a: Toggle Sites | "),
+        ratatui::text::Span::raw("a: Tgl Sites | "),
     ];
 
 
@@ -799,24 +834,21 @@ fn draw_ui<B: ratatui::backend::Backend>(
     help_bar_text.push(ratatui::text::Span::raw("z: Stop all | "));
 
     help_bar_text.push(ratatui::text::Span::raw("↑/↓: Scroll | "));
-    help_bar_text.push(ratatui::text::Span::raw("PgUp/PgDn Scroll "));
-
 
     if Page::Logs == tui_state.current_page {
-        help_bar_text.push(ratatui::text::Span::raw("c: Clear | "));
-        help_bar_text.push(ratatui::text::Span::raw("tab: toggle page "));
+        help_bar_text.push(ratatui::text::Span::raw("c: CLS | "));
+        help_bar_text.push(ratatui::text::Span::raw("tab: Nxt tab "));
         if tui_state.log_tab_stage.scroll_state.vertical_scroll.is_some() {
-            help_bar_text.push(ratatui::text::Span::raw("| enter: Tail log "));
+            help_bar_text.push(ratatui::text::Span::raw("| rtrn: Tail "));
         }
+        help_bar_text.push(ratatui::text::Span::raw("| space: Un/Paus log "));
+        help_bar_text.push(ratatui::text::Span::raw("| l: LogLvl"));
     } else {
-        help_bar_text.push(ratatui::text::Span::raw("| tab: toggle page"));
+        help_bar_text.push(ratatui::text::Span::raw("| tab: Tgl page "));
     }
 
-    if tui_state.current_page == Page::Logs {
-        help_bar_text.push(ratatui::text::Span::raw("| space: un/pause logging"));
-    }
+    help_bar_text.push(ratatui::text::Span::raw("| t: theme"));
 
-    
     // // DEBUG
     // help_bar_text.push(ratatui::text::Span::raw(format!("| DBG: {}", 
     //     app_state.dbg
