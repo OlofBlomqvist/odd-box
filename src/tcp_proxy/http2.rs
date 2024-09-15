@@ -1,4 +1,4 @@
-use hpack::Decoder;
+use fluke_hpack::Decoder;
 
 #[allow(dead_code)]
 // https://datatracker.ietf.org/doc/html/rfc9113

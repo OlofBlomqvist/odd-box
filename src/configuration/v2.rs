@@ -50,7 +50,10 @@ pub struct InProcessSiteConfig {
     pub forward_subdomains : Option<bool>,
     /// If you wish to exclude this site from the start_all command.
     /// This setting was previously called "disable" but has been renamed for clarity
-    pub exclude_from_start_all: Option<bool>
+    pub exclude_from_start_all: Option<bool>,
+    /// If you want to use lets-encrypt for generating certificates automatically for this site.
+    /// Defaults to false. This feature will disable tcp tunnel mode.
+    pub enable_lets_encrypt: Option<bool>
 }
 
 
@@ -151,7 +154,10 @@ pub struct RemoteSiteConfig{
     /// test.example.com -> internal.site
     /// vs
     /// test.example.com -> test.internal.site 
-    pub forward_subdomains : Option<bool>
+    pub forward_subdomains : Option<bool>,
+    /// If you want to use lets-encrypt for generating certificates automatically for this site.
+    /// Defaults to false. This feature will disable tcp tunnel mode.
+    pub enable_lets_encrypt: Option<bool>
 }
 
 impl PartialEq for RemoteSiteConfig {
@@ -182,7 +188,7 @@ fn filter_backend(backend: &Backend, filter: &BackendFilter) -> bool {
 impl RemoteSiteConfig {
 
 
-    pub async fn next_backend(&self,state:&GlobalState, backend_filter: BackendFilter) -> Option<Backend> {
+    pub async fn next_backend(&self,state:&GlobalState, backend_filter: BackendFilter, tunnel_mode: bool) -> Option<Backend> {
             
         let filtered_backends = self.backends.iter().filter(|x|filter_backend(x,&backend_filter))
             .collect::<Vec<&crate::configuration::v2::Backend>>();
@@ -190,24 +196,24 @@ impl RemoteSiteConfig {
         if filtered_backends.len() == 1 { return Some(filtered_backends[0].clone()) };
         if filtered_backends.len() == 0 { return None };
         
-       
-        let count = match state.app_state.statistics.remote_targets_stats.get_mut(&self.host_name) {
-            Some(mut guard) => {
-                let (_k,v) = guard.pair_mut();
-                1 + v.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            },
-            None => {
-                state.app_state.statistics.remote_targets_stats.insert(self.host_name.clone(), std::sync::atomic::AtomicUsize::new(1));
-                1
-            }
-        } as usize;
+        let current_req_count_for_target_host_name = if tunnel_mode {
+            state.app_state.statistics.tunnelled_tcp_connections_per_hostname
+                .get(&self.host_name).and_then(|x|Some(x.load(std::sync::atomic::Ordering::SeqCst)))
+                .unwrap_or(0)
+        } else {
+            state.app_state.statistics.terminated_http_connections_per_hostname
+            .get(&self.host_name).and_then(|x|Some(x.load(std::sync::atomic::Ordering::SeqCst)))
+            .unwrap_or(0)
+        };
 
-        let selected_backend = *filtered_backends.get((count % (filtered_backends.len() as usize)) as usize )
-            .expect("we should always have at least one backend but found none. this is a bug in oddbox <service.rs>.");
+        let selected_backend = filtered_backends.get((current_req_count_for_target_host_name % (filtered_backends.len() as usize)) as usize );
 
-
-
-        Some(selected_backend.clone())
+        if let Some(b) = selected_backend{
+            Some((*b).clone())
+        } else {
+            tracing::error!("Could not find a backend for host: {:?}",self.host_name);
+            None
+        }
         
 
     }
@@ -238,7 +244,8 @@ pub struct OddBoxV2Config {
     pub remote_target : Option<Vec<RemoteSiteConfig>>,
     pub hosted_process : Option<Vec<InProcessSiteConfig>>,
     pub admin_api_port : Option<u16>,
-    pub path : Option<String>
+    pub path : Option<String>,
+    pub lets_encrypt_account_email: Option<String>
 }
 
 impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Config {
@@ -265,6 +272,9 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
     
     }
     
+    // note: this method exists because we want to keep a consistent format for the configuration file
+    //       which is not guaranteed by the serde toml serializer.
+    //       it unfortunately means that we have to maintain this method manually.
     fn to_string(&self) -> anyhow::Result<String>  {
 
         if self.version != crate::configuration::OddBoxConfigVersion::V2  {
@@ -273,8 +283,10 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
 
         let mut formatted_toml = Vec::new();
 
+        // this is to nudge editor plugins to use the correct schema for validation and intellisense
         formatted_toml.push(format!("#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.json"));
         
+        // this is for our own use to know which version of the configuration we are using
         formatted_toml.push(format!("version = \"{:?}\"", self.version));
         
         if let Some(alpn) = self.alpn {
@@ -311,11 +323,15 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
         if let Some(log_level) = &self.log_level {
             formatted_toml.push(format!("log_level = \"{:?}\"", log_level));
         }
+
         formatted_toml.push(format!("port_range_start = {}", self.port_range_start));
 
      
         formatted_toml.push(format!("default_log_format = \"{:?}\"", self.default_log_format ));
        
+        if let Some(email) = &self.lets_encrypt_account_email {
+            formatted_toml.push(format!("lets_encrypt_account_email = \"{email}\""));
+        }
 
         if &self.env_vars.len() > &0 {
             formatted_toml.push("env_vars = [".to_string());
@@ -346,6 +362,11 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
                 if let Some(true) = site.disable_tcp_tunnel_mode {
                     formatted_toml.push(format!("disable_tcp_tunnel_mode = {}", true));
                 }
+
+                if let Some(true) = site.enable_lets_encrypt {
+                    formatted_toml.push(format!("enable_lets_encrypt = {}", true));
+                }
+
 
                 formatted_toml.push("backends = [".to_string());
 
@@ -386,7 +407,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
                     formatted_toml.push("]".to_string());
                 }
                 
-                let args = process.args.clone().unwrap_or_default().iter()
+                let args = process.args.iter().flatten()
                     .map(|arg| format!("\n  {:?}", arg)).collect::<Vec<_>>().join(", ");
 
                 formatted_toml.push(format!("args = [{}\n]", args));
@@ -394,6 +415,10 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
              
                 if let Some(auto_start) = process.auto_start {
                     formatted_toml.push(format!("auto_start = {}", auto_start));
+                }
+
+                if let Some(true) = process.enable_lets_encrypt {
+                    formatted_toml.push(format!("enable_lets_encrypt = {}", true));
                 }
                 
                 
@@ -426,6 +451,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
     }
     fn example() -> OddBoxV2Config {
         OddBoxV2Config {
+            lets_encrypt_account_email: None,
             path: None,
             admin_api_port: None,
             version: super::OddBoxConfigVersion::V2,
@@ -442,6 +468,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
             port_range_start: 4200,
             hosted_process: Some(vec![
                 InProcessSiteConfig {
+                    enable_lets_encrypt: Some(false),
                     proc_id: ProcId::new(),
                     active_port: None,
                     forward_subdomains: None,
@@ -466,6 +493,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
             ]),
             remote_target: Some(vec![
                 RemoteSiteConfig { 
+                    enable_lets_encrypt: Some(false),
                     forward_subdomains: None,
                     host_name: "lobsters.local".into(), 
                     backends: vec![
@@ -480,6 +508,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
                     disable_tcp_tunnel_mode: Some(false)
                 },
                 RemoteSiteConfig { 
+                    enable_lets_encrypt: Some(false),
                     forward_subdomains: Some(true),                    
                     host_name: "google.local".into(), 
                     backends: vec![
@@ -553,6 +582,7 @@ impl TryFrom<super::v1::OddBoxV1Config> for super::v2::OddBoxV2Config{
 
     fn try_from(old_config: super::v1::OddBoxV1Config) -> Result<Self, Self::Error> {
         let new_config = super::v2::OddBoxV2Config {
+            lets_encrypt_account_email: None,
             path: None,
             version: super::OddBoxConfigVersion::V2,
             admin_api_port: None,
@@ -566,6 +596,7 @@ impl TryFrom<super::v1::OddBoxV1Config> for super::v2::OddBoxV2Config{
             port_range_start: old_config.port_range_start,
             hosted_process: Some(old_config.hosted_process.unwrap_or_default().into_iter().map(|x|{
                 super::v2::InProcessSiteConfig {
+                    enable_lets_encrypt: Some(false),
                     exclude_from_start_all: None,
                     proc_id: ProcId::new(),
                     active_port: None,
@@ -602,6 +633,7 @@ impl TryFrom<super::v1::OddBoxV1Config> for super::v2::OddBoxV2Config{
             }).collect()),
             remote_target: Some(old_config.remote_target.unwrap_or_default().iter().map(|x|{
                 super::v2::RemoteSiteConfig {
+                    enable_lets_encrypt: Some(false),
                     disable_tcp_tunnel_mode: x.disable_tcp_tunnel_mode,
                     capture_subdomains: x.capture_subdomains,
                     forward_subdomains: x.forward_subdomains,

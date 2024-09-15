@@ -32,74 +32,7 @@ pub struct ReverseTcpProxyTarget {
     pub disable_tcp_tunnel_mode : bool
 }
 
-pub struct ReverseTcpProxyTargets {
-    pub global_state : Arc<GlobalState>
-}
 
-impl ReverseTcpProxyTargets {
-
-
-    pub async fn try_find<F>(&self,pre_filter_hostname:&str,filter_fun: F) -> Option<ReverseTcpProxyTarget>
-        where F: Fn(ReverseTcpProxyTarget) -> Option<ReverseTcpProxyTarget>,
-    {
-        
-        let cfg = self.global_state.config.read().await;
-
-        for y in cfg.hosted_process.iter().flatten().filter(|x|pre_filter_hostname.to_uppercase().contains(&x.host_name.to_uppercase())) {
-            
-            let port = y.active_port.unwrap_or_default();
-            if port > 0 {
-                let t = ReverseTcpProxyTarget {
-                    disable_tcp_tunnel_mode: y.disable_tcp_tunnel_mode.unwrap_or_default(),
-                    remote_target_config: None, // we dont need this for hosted processes
-                    hosted_target_config: Some(y.clone()),
-                    capture_subdomains: y.capture_subdomains.unwrap_or_default(),
-                    forward_wildcard: y.forward_subdomains.unwrap_or_default(),
-                    backends: vec![crate::configuration::v2::Backend {
-                        hints: y.hints.clone(),
-                        address: "localhost".into(), // hosted processes should always listen on 127.0.0.1.
-                        https: y.https,
-                        port: y.active_port.unwrap_or_default()
-                    }],
-                    host_name: y.host_name.to_string(),
-                    is_hosted: true,
-                    sub_domain: None
-                };
-                let filtered = filter_fun(t);
-                if filtered.is_some() {
-                    return filtered
-                }
-            }
-
-            
-        }
-    
-
-        if let Some(x) = &cfg.remote_target {
-            for y in x.iter().filter(|x|pre_filter_hostname.to_uppercase().contains(&x.host_name.to_uppercase()))  {
-
-                let t = ReverseTcpProxyTarget { 
-                    disable_tcp_tunnel_mode: y.disable_tcp_tunnel_mode.unwrap_or_default(),
-                    hosted_target_config: None,
-                    remote_target_config: Some(y.clone()),
-                    capture_subdomains: y.capture_subdomains.unwrap_or_default(),
-                    forward_wildcard: y.forward_subdomains.unwrap_or_default(),
-                    backends: y.backends.clone(),
-                    host_name: y.host_name.to_owned(),
-                    is_hosted: false,
-                    sub_domain: None
-                };
-                let filtered = filter_fun(t);
-                if filtered.is_some() {
-                    return filtered
-                }
-            }
-        }
-
-        None
-        
-    }
-}
 
 #[derive(Debug)]
 pub enum DataType {
@@ -132,12 +65,11 @@ impl ReverseTcpProxyTarget {
 }
 
 pub struct ReverseTcpProxy {
-    pub targets: Arc<ReverseTcpProxyTargets>,
     pub socket_addr: SocketAddr,
 }
 
 impl ReverseTcpProxy {
-    fn get_subdomain(requested_hostname: &str, backend_hostname: &str) -> Option<String> {
+    pub fn get_subdomain(requested_hostname: &str, backend_hostname: &str) -> Option<String> {
         if requested_hostname == backend_hostname { return None };
         if requested_hostname.to_uppercase().ends_with(&backend_hostname.to_uppercase()) {
             let part_to_remove_len = backend_hostname.len();
@@ -149,37 +81,11 @@ impl ReverseTcpProxy {
         None
     }
 
-    pub fn req_target_filter_map(
-        mut target: ReverseTcpProxyTarget,
-        req_host_name: &str,
-    ) -> Option<ReverseTcpProxyTarget> {
-
-        let parsed_name = if req_host_name.contains(":") {
-            req_host_name.split(":").next().expect("if something contains a colon and we split the thing there must be at least one part")
-        } else {
-            req_host_name
-        };
-
-        
-        if target.host_name.eq_ignore_ascii_case(parsed_name) {
-           Some(target)
-        } else {
-            match Self::get_subdomain(parsed_name, &target.host_name) {
-                Some(subdomain) => 
-                {
-                    target.sub_domain = Some(subdomain);
-                    Some(target)
-                },
-                None => None,
-            }
-        }
-    }
-
     #[instrument(skip_all)]
     pub async fn eat_tcp_stream(
         tcp_stream: TcpStream,
         _client_address: SocketAddr,
-    ) -> (ManagedStream,Result<(PeekResult), PeekError>) {
+    ) -> (ManagedStream,Result<PeekResult, PeekError>) {
         
         let mut attempts = 0;
         
@@ -187,7 +93,7 @@ impl ReverseTcpProxy {
         
         loop {
 
-            if attempts > 1000 {
+            if attempts > 100 {
                 break;
             }
 
@@ -268,16 +174,29 @@ impl ReverseTcpProxy {
 
     pub async fn tunnel(
         mut client_tcp_stream:ManagedStream,
-        target:ReverseTcpProxyTarget,
+        target:Arc<ReverseTcpProxyTarget>,
         incoming_traffic_is_tls:bool,
         state: Arc<GlobalState>,
         client_address: SocketAddr
     ) {
 
+        // THIS SHOULD BE THE ONLY PLACE WE INCREMENT THE TUNNEL COUNTER
+        match state.app_state.statistics.tunnelled_tcp_connections_per_hostname.get_mut(&target.host_name) {
+            Some(mut guard) => {
+                let (_k,v) = guard.pair_mut();
+                v.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            },
+            None => {
+                state.app_state.statistics.tunnelled_tcp_connections_per_hostname
+                .insert(target.host_name.clone(), std::sync::atomic::AtomicUsize::new(1));
+            }
+        };
+
         // only remotes have more than one backend. hosted processes always have a single backend.
         let primary_backend =  {
+
             let b = if let Some(remconf) = &target.remote_target_config {
-                remconf.next_backend(&state, if incoming_traffic_is_tls { BackendFilter::Https } else { BackendFilter::Http }).await
+                remconf.next_backend(&state, if incoming_traffic_is_tls { BackendFilter::Https } else { BackendFilter::Http },true).await
             } else {
                 target.backends.first().cloned()
             };
@@ -294,12 +213,11 @@ impl ReverseTcpProxy {
             return
         };
 
-
         let resolved_target_address = {
             let subdomain = target.sub_domain.as_ref();
             if target.forward_wildcard && subdomain.is_some() {
                 tracing::debug!("tcp tunnel rewrote for subdomain: {:?}", subdomain);
-                format!("{}.{}:{}", subdomain.unwrap(), primary_backend.address, primary_backend.port )
+                format!("{}.{}:{}", subdomain.expect("we just validated subdomain so it must exist"), primary_backend.address, primary_backend.port )
             } else {
                 format!("{}:{}", primary_backend.address, primary_backend.port )
             }
@@ -315,7 +233,7 @@ impl ReverseTcpProxy {
                 if let Ok(target_addr_socket) = rem_stream.peer_addr() {
                     
                     let item = ProxyActiveConnection {
-                        target_name: target.host_name,
+                        target_name: target.host_name.clone(),
                         target_addr: format!("{resolved_target_address} ({})",target_addr_socket.ip()),
                         source_addr: client_address,
                         creation_time: Local::now(),

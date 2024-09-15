@@ -66,6 +66,7 @@ pub struct KvP {
 
 #[derive(Debug, Clone, Serialize, Deserialize,ToSchema)]
 pub struct OddBoxConfigGlobalPart {
+    pub lets_encrypt_account_email: String,
     pub root_dir : String, 
     pub log_level : BasicLogLevel,
     pub alpn : bool,
@@ -82,6 +83,7 @@ pub struct OddBoxConfigGlobalPart {
 
 #[derive(Debug, Clone, Serialize, Deserialize,ToSchema)]
 pub struct SaveGlobalConfig{
+    pub lets_encrypt_account_email: String,
     pub root_dir : String, 
     pub log_level : BasicLogLevel,
     pub alpn : bool,
@@ -112,6 +114,7 @@ pub async fn get_settings_handler(
     let guard = global_state.config.read().await;
     
     let cfg = OddBoxConfigGlobalPart {
+        lets_encrypt_account_email : guard.lets_encrypt_account_email.clone().unwrap_or_default(),
         admin_api_port : guard.admin_api_port.unwrap_or(6789),
         http_port : guard.http_port.unwrap_or(8080),
         tls_port : guard.tls_port.unwrap_or(4343),
@@ -160,6 +163,10 @@ pub async fn set_settings_handler(
         return Err((StatusCode::BAD_REQUEST,format!("this wont ever happen, its just to poke the compiler so it knows the error type")));
     }
 
+    let nlea = Some(new_settings.lets_encrypt_account_email.clone());
+    let has_changed_le_mail = guard.lets_encrypt_account_email != nlea;
+
+    guard.lets_encrypt_account_email = nlea;
     guard.admin_api_port = Some(new_settings.admin_api_port);
     guard.http_port = Some(new_settings.http_port);
     guard.tls_port = Some(new_settings.tls_port);
@@ -186,6 +193,14 @@ pub async fn set_settings_handler(
 
     
     guard.write_to_disk().map_err(|e|(StatusCode::BAD_REQUEST,format!("{}",e.to_string())))?;
+
+    if has_changed_le_mail {
+        if guard.lets_encrypt_account_email.is_some() {
+            global_state.cert_resolver.enable_lets_encrypt();
+        } else {
+            global_state.cert_resolver.disable_lets_encrypt();
+        }
+    }
 
     tracing::debug!("Global settings updated thru api");
 

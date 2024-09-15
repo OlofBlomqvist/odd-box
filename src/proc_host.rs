@@ -172,12 +172,12 @@ pub async fn host(
 
         }
         else {
-            tracing::info!("[{}] Using the previously selected port '{}'",&resolved_proc.host_name,selected_port.unwrap());    
+            tracing::info!("[{}] Using the previously selected port '{:?}'",&resolved_proc.host_name,selected_port);    
         }
 
         let current_work_dir = std::env::current_dir().expect("could not get current directory").to_str().expect("could not convert current directory to string").to_string();
         
-        let workdir = &resolved_proc.dir.clone().unwrap_or(current_work_dir);
+        let workdir = &resolved_proc.dir.as_ref().map_or(current_work_dir, |x|x.to_string());
 
         tracing::warn!("[{}] Executing command '{}' in directory '{}'",resolved_proc.host_name,resolved_proc.bin,workdir);
 
@@ -204,7 +204,7 @@ pub async fn host(
         }
 
         // more specific env vars should override globals
-        for kvp in &resolved_proc.env_vars.clone().unwrap_or_default() {
+        for kvp in resolved_proc.env_vars.iter().flatten() {
             tracing::debug!("[{}] ADDING ENV VAR '{}': {}", &resolved_proc.host_name,&kvp.key,&kvp.value);
             process_specific_environment_variables.insert(kvp.key.clone(), kvp.value.clone());
         }  

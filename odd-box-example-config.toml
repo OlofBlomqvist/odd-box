@@ -2,6 +2,7 @@
 
 version = "V2"  # this is the configuration format version, dont change it
 alpn = false # optional - allows alpn negotiation for http/1.0 and h2 on tls connections 
+lets_encrypt_account_email = "example@example.com" # optional, must be configured if you wish to use lets encrypt for tls certificates
 http_port = 8080  # optional, 8080 by default
 admin_api_port = 1234  # optional - leave out to disable the admin api
 ip = "127.0.0.1"  # ip for proxy to listen to , can be ipv4/6
@@ -25,18 +26,24 @@ capture_subdomains = false # optional, false by default: allows capturing wildca
 forward_subdomains = false # optional, false by default: if the request is for subdomain.configureddomain.local with target example.com, 
                            # this option would cause the proxied request go to subdomain.example.com instead of example.com.
 disable_tcp_tunnel_mode = false # optional, false by default
- # optional, false by default: must be true if the target uses tls
-# optional - 80 by default if https is false, 443 by default if https is true 
-#hints = ["H2","H2C","H2CPK"] # - optional: used to decide which protocol to use for the target
+enable_lets_encrypt = false # optional, false by default
+
 backends = [
-	{ https = true, address="lobste.rs", port=443 },
-	{ https = true, address="lobsters.dev", port=443 }
+	{ https = true, address="lobste.rs", port=443  },
+	{ 
+    https = true, 
+    address="lobsters.dev", 
+    port=443, 
+    hints = ["H2","H2C","H2CPK"] # - optional: used to decide which protocol to use for the target
+  }
 ]
 
 [[hosted_process]] # hosted processes are those that odd-box is responsible for running
+enable_lets_encrypt = false # optional, false by default
 host_name = "python.localtest.me"  # incoming name for binding to (frontend)
 dir = "$cfg_dir" # path where we should be located when running the binary file
 bin = "/usr/bin/python3" # name or path of the binary that should be executed
+hints = ["H2","H2C","H2CPK"] # - optional: used to decide which protocol to use for the target
 args = [
   # any arguments you wish to pass to the binary
   "-m", 

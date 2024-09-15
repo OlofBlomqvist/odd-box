@@ -33,18 +33,16 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
     tracing::trace!("Handling websocket request: {req_host_name:?} --> {req_path}");
     
     let read_guard = service.state.config.read().await;
-
-    let processes = read_guard.hosted_process.clone().unwrap_or_default();
-    let remote_targets = read_guard.0.clone().remote_target.unwrap_or_default();
+    
     
     let target = {
 
-        if let Some(proc) = processes.iter().find(|p| { 
+        if let Some(proc) = read_guard.hosted_process.iter().flatten().find(|p| { 
             req_host_name == p.host_name 
             || p.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",p.host_name)) 
         }) {
             crate::http_proxy::utils::Target::Proc(proc.clone())
-        } else if let Some(remsite) = remote_targets.iter().find(|x| { 
+        } else if let Some(remsite) = read_guard.remote_target.iter().flatten().find(|x| { 
             req_host_name == x.host_name 
             || x.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",x.host_name)) 
         }) {
@@ -57,7 +55,7 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
     let (target_host,port,enforce_https) = match &target {
         
         crate::http_proxy::Target::Remote(x) => {
-             let next_backend = x.next_backend(&service.state, crate::configuration::v2::BackendFilter::Any).await
+             let next_backend = x.next_backend(&service.state, crate::configuration::v2::BackendFilter::Any,false).await
                 .ok_or(CustomError(format!("no backend found")))?;
              (
                 next_backend.address.clone(),

@@ -1,6 +1,7 @@
 use std::{default, sync::Arc};
 
 use ratatui::layout::Rect;
+use tracing::level_filters::LevelFilter;
 
 use crate::{http_proxy::ProcMessage, tui::scroll_state_wrapper::ScrollStateWrapper};
 
@@ -17,16 +18,26 @@ pub struct TuiState {
     pub connections_tab_state: ConnectionsTabState,
     pub threads_tab_state: ThreadsTabState,    
     pub log_tab_stage : LogPageState,
+    pub log_level : String
 }
 impl TuiState {
     pub fn new() -> TuiState {
         TuiState {
+            log_level: LevelFilter::current().to_string(),
             current_page: Page::Logs,
             currently_hovered_site: None,
             site_rects: Vec::new(),   
             show_apps_window : true,
-            connections_tab_state: default::Default::default(),
-            threads_tab_state: default::Default::default(),
+            connections_tab_state: {
+                let mut s = ConnectionsTabState::default();
+                s.scroll_state.vertical_scroll = Some(0);
+                s
+            },
+            threads_tab_state: {
+                let mut s = ThreadsTabState::default();
+                s.scroll_state.vertical_scroll = Some(0);
+                s
+            },
             log_tab_stage: default::Default::default(),
             
         }

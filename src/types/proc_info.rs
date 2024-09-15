@@ -19,3 +19,9 @@ pub struct ProcInfo {
     pub config : FullyResolvedInProcessSiteConfig,
     pub pid : Option<String>
 }
+
+#[derive(Debug)]
+pub struct BgTaskInfo {
+    pub liveness_ptr : Weak<bool>,
+    pub status: String
+}

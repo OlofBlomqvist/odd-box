@@ -171,6 +171,7 @@ pub async fn update_handler(State(state): axum::extract::State<Arc<GlobalState>>
                 state.clone()         
             ).await {
                 Ok(_) => {
+                    state.invalidate_cache();
                     Ok(())
                 },
                 Err(e) => Err(SitesError::UnknownError(format!("{e:?}")))
@@ -181,7 +182,10 @@ pub async fn update_handler(State(state): axum::extract::State<Arc<GlobalState>>
             
             let hostname = query.hostname.clone().unwrap_or(new_cfg.host_name.clone());
             match conf_guard.add_or_replace_hosted_process(&hostname,new_cfg.to_owned(),state.clone()).await {
-                Ok(_) => Ok(()),
+                Ok(_) => {
+                    state.invalidate_cache();
+                    Ok(())
+                },
                 Err(e) => Err(SitesError::UnknownError(format!("{e:?}")))
             }
 
@@ -275,6 +279,7 @@ pub async fn delete_handler(
         tracing::info!("Attempt to drop non-existant site: {}", query.hostname);
     }
 
+    global_state.invalidate_cache();
     
 
     Ok(())

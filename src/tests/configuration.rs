@@ -150,21 +150,3 @@ use crate::configuration::OddBoxConfiguration;
 
 }
 
-
-// #[test] pub fn proc_should_use_first_available_port_from_start_range() {
-//     // let mut v1_config = crate::configuration::v1::OddBoxV1Config::example();
-//     // let test_site = crate::configuration::v1::InProcessSiteConfig {
-//     //     port: None,
-//     //     https: Some(true),
-//     //     ..Default::default()
-//     // };
-//     // if let Some(ref mut v) = v1_config.hosted_process {
-//     //     *v = vec![test_site];
-//     // }
-//     // let mut wrapped = ConfigWrapper(v1_config.to_owned().try_into().unwrap());
-//     // wrapped.path = Some("/tmp".into());
-//     // if let Some(procs) = wrapped.hosted_process.as_ref() {
-//     //     let resolved = wrapped.resolve_process_configuration(&procs[0]).expect("should be able to resolve process configuration");
-//     //     let busy = wrapped.busy_ports();
-//     // }
-// }

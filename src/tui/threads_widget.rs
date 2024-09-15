@@ -1,5 +1,4 @@
 use std::sync::Arc;
-
 use ratatui::layout::{ Constraint, Flex, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::widgets::{ Cell, Row, Scrollbar, ScrollbarOrientation, Table};
@@ -21,47 +20,47 @@ pub fn draw(
         return
     }
 
-
-
-    let headers = [ "TaskId", "Pid", "HostName", "Port"];
+    let headers = [ "Task", "Child PID", "Current Status"];
     
-    let rows : Vec<Vec<String>> =  crate::PROC_THREAD_MAP.iter().map(|guard| {
-        let (thread_id, thread_info) = guard.pair();
+    let mut rows : Vec<Vec<String>> =  crate::PROC_THREAD_MAP.iter().map(|guard| {
+        let (_thread_id, thread_info) = guard.pair();
         vec![
-            format!("{}",thread_id.id),
-            format!("{:?}",thread_info.pid),
-            format!("{}",thread_info.config.host_name), 
-            format!("{:?}",thread_info.config.active_port)
+            format!("[PROC_HOST] {}",thread_info.config.host_name),
+            format!("{}",thread_info.pid.as_ref().map_or(String::new(),|x|x.to_string())),
+            format!("selected port: {:?}", thread_info.config.active_port)
         ]
-    }).collect();
+    }).chain(crate::BG_WORKER_THREAD_MAP.iter().map(|guard|{
+        let (thread_id, thread_info) = guard.pair();
+        let is_dead = thread_info.liveness_ptr.upgrade().is_none();
+        vec![
+            format!("[BG_WORKER] {}",thread_id),
+            format!("-"),
+            if is_dead {"This task has exited.".into()} else { format!("Status: {}", thread_info.status) }
+        ]
+    })).collect();
+    rows.sort_by_key(|x|x[0].to_string());
 
-    let wrapped_line_count = rows.len();
-    
+    // =======================================================================================
+    let wrapped_line_count = rows.len();    
     tui_state.threads_tab_state.scroll_state.total_rows = wrapped_line_count;
-    
     let height_of_threads_area = area.height.saturating_sub(0); // header and footer
     tui_state.threads_tab_state.scroll_state.area_height = height_of_threads_area as usize;
     tui_state.threads_tab_state.scroll_state.area_width = area.width as usize;
-
-    let header_height = 1;
-    let visible_rows = area.height as usize - header_height;
-
-    let start = tui_state.threads_tab_state.scroll_state.vertical_scroll.unwrap_or_default();
+    let scroll_pos = { tui_state.threads_tab_state.scroll_state.vertical_scroll };
+    let max_scroll_pos = rows.len().saturating_sub(height_of_threads_area as usize - 1);
+    let visible_rows = area.height as usize;
+    let start = scroll_pos.unwrap_or(max_scroll_pos);
     let end = std::cmp::min(start + visible_rows, rows.len());
+    let display_rows = &rows[start..end];
+    // =======================================================================================
 
     let is_dark_theme = matches!(&theme,Theme::Dark(_));
-    
-    let display_rows = &rows[start..end];
-
     let odd_row_bg = if is_dark_theme { Color::from_hsl(15.0, 10.0, 10.0) } else {
         Color::Rgb(250,250,250)
     };
     let row_bg =  if is_dark_theme { Color::from_hsl(10.0, 10.0, 5.0) } else {
         Color::Rgb(235,235,255)
     };
-
-    
-
     let table_rows : Vec<_> = display_rows.iter().enumerate().map(|(i,row)| {
         
         let is_odd = i % 2 == 0;
@@ -85,10 +84,9 @@ pub fn draw(
     tui_state.threads_tab_state.scroll_state.total_rows = rows.len();
 
     let widths = [
-        Constraint::Fill(1), 
-        Constraint::Fill(1), 
-        Constraint::Fill(2), 
-        Constraint::Fill(4),        
+        Constraint::Min(50), 
+        Constraint::Min(20), 
+        Constraint::Percentage(100)       
     ];
     
     
@@ -102,11 +100,12 @@ pub fn draw(
         .header(headers)
         .highlight_style(Style::default().add_modifier(Modifier::BOLD))
         .widths(&widths)
-        .flex(Flex::Legacy)
+        .flex(Flex::SpaceBetween)
         .column_spacing(1);
 
     f.render_widget(table, area);
 
+    // ======================== SCROLL SECTION ======================================================== 
 
     let mut scrollbar = Scrollbar::default()
         .style(Style::default())
@@ -115,16 +114,22 @@ pub fn draw(
         .end_symbol(Some("↓")).thumb_style(Style::new().fg(Color::LightBlue))
         .orientation(ScrollbarOrientation::VerticalRight);
 
-    let height_of_traf_area = area.height.saturating_sub(2); 
-    tui_state.threads_tab_state.scroll_state.area_height = height_of_traf_area as usize;
-    
-    tui_state.threads_tab_state.scroll_state.vertical_scroll_state = tui_state.threads_tab_state.scroll_state.vertical_scroll_state.content_length(rows.len().saturating_sub(height_of_traf_area as usize));
+    tui_state.threads_tab_state.scroll_state.area_height = height_of_threads_area as usize;
     
     if tui_state.threads_tab_state.scroll_state.scroll_bar_hovered {
         scrollbar = scrollbar.thumb_style(Style::default().fg(Color::Yellow).bg(Color::Red));
     }
 
     let scrollbar_area = Rect::new(area.right() - 1, area.top(), 1, area.height);
+    tui_state.threads_tab_state.scroll_state.vertical_scroll_state = 
+        tui_state.threads_tab_state.scroll_state.vertical_scroll_state
+            .content_length(rows.len().saturating_sub(height_of_threads_area as usize));
+    if scroll_pos.is_none() {
+        tui_state.threads_tab_state.scroll_state.vertical_scroll_state = 
+            tui_state.threads_tab_state.scroll_state.vertical_scroll_state.position(rows.len().saturating_sub(height_of_threads_area as usize));
+    }
+
+    // ======================== RENDER ================================================================
 
     f.render_stateful_widget(scrollbar,scrollbar_area, &mut tui_state.threads_tab_state.scroll_state.vertical_scroll_state);
 

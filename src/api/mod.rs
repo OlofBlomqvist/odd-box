@@ -80,8 +80,8 @@ pub async fn run(globally_shared_state: Arc<crate::global_state::GlobalState>,po
         global_state: globally_shared_state.clone()
     };
     
-    let socket_address: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
-    let listener = tokio::net::TcpListener::bind(socket_address).await.unwrap();
+    let socket_address: SocketAddr = format!("127.0.0.1:{port}").parse().expect("failed to parse socket address");
+    let listener = tokio::net::TcpListener::bind(socket_address).await.expect("failed to bind to socket address");
 
 
     let cors_env_var = std::env::vars().find(|(key,_)| key=="ODDBOX_CORS_ALLOWED_ORIGIN").map(|x|x.1.to_lowercase());
@@ -121,7 +121,7 @@ pub async fn run(globally_shared_state: Arc<crate::global_state::GlobalState>,po
 
     axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
         .await
-        .unwrap()
+        .expect("must be able to serve")
     
 }
 
@@ -137,7 +137,7 @@ async fn script() -> impl IntoResponse {
     axum::response::Response::builder()
         .header(hyper::header::CONTENT_TYPE, "application/javascript")
         .body::<String>(JS_CONTENT.into())
-        .unwrap()
+        .expect("must be able to create response")
 }
 
 /// Simple websocket interface for log messages.
@@ -177,7 +177,7 @@ async fn ws_log_messages_handler(
                     .status(StatusCode::FORBIDDEN)
                     .header("reason", "bad origin")
                     .body(Body::from("origin not allowed."))
-                    .unwrap()
+                    .expect("must be able to create response")
                 } else {
                     tracing::debug!("Client origin matches cors env var, allowing connection");
                 }
@@ -193,7 +193,7 @@ async fn ws_log_messages_handler(
                             .status(StatusCode::FORBIDDEN)
                             .header("reason", "bad origin")
                             .body(Body::from("origin not allowed."))
-                            .unwrap()
+                            .expect("must be able to create response")
                     } else {
                         tracing::debug!("Client origin matches '{expected_origin}', allowing connection");
                     }
@@ -205,7 +205,7 @@ async fn ws_log_messages_handler(
                         .status(StatusCode::FORBIDDEN)
                         .header("reason", "bad origin or server misconfguration")
                         .body(Body::from("something went wrong."))
-                        .unwrap()
+                        .expect("must be able to create response")
                 }
 
             

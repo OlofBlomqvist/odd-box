@@ -70,6 +70,12 @@
       ],
       "format": "ip"
     },
+    "lets_encrypt_account_email": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "log_level": {
       "default": "Info",
       "anyOf": [
@@ -247,6 +253,13 @@
             "null"
           ]
         },
+        "enable_lets_encrypt": {
+          "description": "If you want to use lets-encrypt for generating certificates automatically for this site. Defaults to false. This feature will disable tcp tunnel mode.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "env_vars": {
           "type": [
             "array",
@@ -357,6 +370,13 @@
         },
         "disable_tcp_tunnel_mode": {
           "description": "This is mostly useful in case the target uses SNI sniffing/routing",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "enable_lets_encrypt": {
+          "description": "If you want to use lets-encrypt for generating certificates automatically for this site. Defaults to false. This feature will disable tcp tunnel mode.",
           "type": [
             "boolean",
             "null"

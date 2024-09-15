@@ -12,7 +12,7 @@ Pre-built binaries are available in the [release section](https://github.com/Olo
 
 You can also build it yourself, or install it using brew, cargo, nix or devbox; see the installation section for guidance.
 
-### Main Features & Goals
+### Features
 
 - Cross platform (win/lin/osx)
 - Easy to configure (toml files)
@@ -27,6 +27,7 @@ You can also build it yourself, or install it using brew, cargo, nix or devbox; 
 - H2C via terminating proxy 
 - Automatic self-signed certs for all hosted processes
 - Basic round-robin loadbalancing for remote targets
+- Terminating proxy supports automaticly generating lets-encrypt certificates
 
  
 ### Performance
@@ -174,6 +175,7 @@ There are more options than the ones shown here; these are the most commonly use
    log_level = "Trace"
    port_range_start = 4242
    env_vars = []
+   lets_encrypt_account_email = "example@example.com"
    ``` 
    - ``version``: Must be "V2"
    - ``http_port``: TCP Port for the server to use. Defaults to 8080 if not specified.
@@ -182,14 +184,15 @@ There are more options than the ones shown here; these are the most commonly use
    - ``log_level``: info/warn/err/debug/trace - defaults to info of not specified.
    - ``port_range_start``: Must be specified - used for automatically assign the PORT env var to hosted sites (if not set explicity for a site).
    - ``env_vars``: List of environment variables that all hosted processes should have.
-   
+   - ``lets_encrypt_account_email``: (Optional) Set email to use if you wish to use lets-encrypt.
 
 2. Adding Remote Targets: Define remote targets to forward traffic to external servers. Each remote_target requires a host_name (the incoming domain) and a list of backends (the target servers). To add a new remote site:
     ```toml
     [[remote_target]]
     host_name = "example.com"
     backends = [
-        { https = true, address="example.com", port=443 }
+        # hints are optional and used for specifying if server requires for example H2C.
+        { https = true, address="example.com", port=443, hints = [] }
     ]
     ```
     - ``host_name``: The incoming domain that odd-box will listen for.
@@ -203,6 +206,7 @@ There are more options than the ones shown here; these are the most commonly use
     bin = "/usr/bin/python3" # variables like $root_dir or $config_dir are allowed here
     args = ["-m", "http.server", "$port"] # variables like $port, $root_dir & $config_dir are allowed here
     auto_start = true 
+    hints = ["NOH2","H2C","H2"] 
     https = false 
     env_vars = [
         { key = "some-environment-variable", value = "example-value" }, 
@@ -213,7 +217,9 @@ There are more options than the ones shown here; these are the most commonly use
     - ``bin``: Executable path to a binary file (absolute, relative to dir, or in pwd)
     - ``args``: Arguments to pass to the binary.
     - ``auto_start``: (Optional) Set to true to automatically start the process with odd-box.
+    - ``hints``: (Optional) Not normally needed but can be set to specify that a server requires for example H2C.
     - ``https``: (Optional) Set to true if the process uses HTTP (TLS)
+    - ``enable_lets_encrypt``: (Optional) Set to true to enable lets-encrypt to be used for this site.
 
 
 
