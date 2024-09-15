@@ -12,7 +12,7 @@ Pre-built binaries are available in the [release section](https://github.com/Olo
 
 You can also build it yourself, or install it using brew, cargo, nix or devbox; see the installation section for guidance.
 
-### Main Features & Goals
+### Features
 
 - Cross platform (win/lin/osx)
 - Easy to configure (toml files)
@@ -27,6 +27,7 @@ You can also build it yourself, or install it using brew, cargo, nix or devbox; 
 - H2C via terminating proxy 
 - Automatic self-signed certs for all hosted processes
 - Basic round-robin loadbalancing for remote targets
+- Terminating proxy supports automaticly generating lets-encrypt certificates
 
  
 ### Performance
