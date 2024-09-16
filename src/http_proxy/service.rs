@@ -176,8 +176,6 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
             return Box::pin(async move {
                 f.await
             })
-        } else {
-            tracing::warn!("Got incoming req that is not for acme challenge: {:?}",req.uri());
         }
         
         // handle normal proxy path
