@@ -190,6 +190,7 @@ There are more options than the ones shown here; these are the most commonly use
     ```toml
     [[remote_target]]
     host_name = "example.com"
+    enable_lets_encrypt = false
     backends = [
         # hints are optional and used for specifying if server requires for example H2C.
         { https = true, address="example.com", port=443, hints = [] }
@@ -197,6 +198,8 @@ There are more options than the ones shown here; these are the most commonly use
     ```
     - ``host_name``: The incoming domain that odd-box will listen for.
     - ``backends``: A list of backend servers to forward traffic to. The https property specifies if TLS is used.
+      TLS)
+   - ``enable_lets_encrypt``: (Optional) Set to true to enable lets-encrypt to be used for this site.
 
 3. Adding Hosted Processes: Define hosted processes that odd-box will manage. These are services that odd-box can start, stop, and restart. Each hosted_process requires a ``host_name``, ``dir``, ``bin``, and ``args``:
     ```toml
@@ -207,7 +210,8 @@ There are more options than the ones shown here; these are the most commonly use
     args = ["-m", "http.server", "$port"] # variables like $port, $root_dir & $config_dir are allowed here
     auto_start = true 
     hints = ["NOH2","H2C","H2"] 
-    https = false 
+    https = false
+    enable_lets_encrypt = false
     env_vars = [
         { key = "some-environment-variable", value = "example-value" }, 
     ]
