@@ -44,7 +44,7 @@ impl DynamicCertResolver {
                         match ccc.1.tbs_certificate.validity.time_to_expiration() {
                             Some(v)  => {
                                 let days = v.whole_days();
-                                if days < 89 {
+                                if days < 30 {
                                     tracing::warn!("Purging the self-signed  cert for {domain} due to less than 30 days remaining: {days} days.");
                                     self.lets_encrypt_signed_certs.remove(domain);
                                     None
@@ -88,7 +88,7 @@ impl DynamicCertResolver {
                         match ccc.1.tbs_certificate.validity.time_to_expiration() {
                             Some(v)  => {
                                 let days = v.whole_days();
-                                if days < 89 {
+                                if days < 30 {
                                     tracing::warn!("Generating a new LE cert for {domain} due to less than 30 days remaining: {days} days.");
                                     self.lets_encrypt_signed_certs.remove(domain);
                                     None
