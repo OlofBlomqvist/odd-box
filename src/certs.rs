@@ -45,11 +45,11 @@ impl DynamicCertResolver {
                             Some(v)  => {
                                 let days = v.whole_days();
                                 if days < 30 {
-                                    tracing::warn!("Purging the self-signed  cert for {domain} due to less than 30 days remaining: {days} days.");
+                                    tracing::info!("Purging the self-signed  cert for {domain} due to less than 30 days remaining: {days} days.");
                                     self.lets_encrypt_signed_certs.remove(domain);
                                     None
                                 } else {
-                                    tracing::warn!("The self-signed  certificate for {domain} is valid for {days} days. will keep in cache.");
+                                    tracing::trace!("The self-signed  certificate for {domain} is valid for {days} days. will keep in cache.");
                                     Some(c)
                                 }
                             },
@@ -89,11 +89,11 @@ impl DynamicCertResolver {
                             Some(v)  => {
                                 let days = v.whole_days();
                                 if days < 30 {
-                                    tracing::warn!("Generating a new LE cert for {domain} due to less than 30 days remaining: {days} days.");
+                                    tracing::info!("Generating a new LE cert for {domain} due to less than 30 days remaining: {days} days.");
                                     self.lets_encrypt_signed_certs.remove(domain);
                                     None
                                 } else {
-                                    tracing::warn!("The LE certificate for {domain} is valid for {days} days. will keep using.");
+                                    tracing::trace!("The LE certificate for {domain} is valid for {days} days. will keep using.");
                                     Some(c)
                                 }
                             },
