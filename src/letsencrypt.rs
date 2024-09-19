@@ -39,8 +39,9 @@ struct Directory {
 pub struct CertManager {
     client: Client,
     acc_certified_key: rcgen::KeyPair,
-    account_url: String,
-    directory: Directory
+    account_url: Option<String>,
+    directory: Directory,
+    pub needs_to_register: bool
 }
 impl std::fmt::Debug for CertManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -55,8 +56,7 @@ lazy_static::lazy_static! {
     // note: worst email check ever? :-(
     static ref EMAIL_REGEX : regex::Regex = regex::Regex::new( r".*@.*" ).unwrap();
 }
-
-// TODO: use hyper client instead of reqwest ?    
+ 
 impl CertManager { 
 
     // Note: this method is called prior to the tracing being initialized and thus must use println! for logging.
@@ -125,6 +125,12 @@ impl CertManager {
         let client = Client::new();
         
         let account_key_path = ".odd_box_cache/lets_encrypt_account.key";
+        
+        // create the odd box cache dir if it does not exist
+        if !std::path::Path::exists(Path::new(".odd_box_cache")) {
+            std::fs::create_dir(".odd_box_cache")?;
+        }
+
         let account_key_pair = if !std::path::Path::exists(Path::new(account_key_path)) {
             let key_pair = rcgen::KeyPair::generate()?;
             let mut file = std::fs::File::create(account_key_path)?;
@@ -146,26 +152,30 @@ impl CertManager {
         let account_url = if std::path::Path::exists(std::path::Path::new(acc_url_path)) {
             let account_url = std::fs::read_to_string(acc_url_path)?;
             // println!("Lets-encrypt account already registered: {}", account_url);
-            account_url
-        } else {
+            Some(account_url)
+        } else if !account_email.is_empty() {
             println!("Registering a new ACME account because we did not find path: {}", acc_url_path);
             let url = Self::register_acme_account(&account_email,&client, &directory, &account_key_pair).await.context("register acme account")?;
             std::fs::write(acc_url_path, &url)?;
-            url
+            Some(url)
+        } else {
+            None
         };
 
         Ok(CertManager {
             client,
             acc_certified_key: account_key_pair,
             directory,
-            account_url,
+            // todo: either document that LE acc change in config requires a restart or add a way to reload this.
+            needs_to_register: account_url.is_none(),
+            account_url
         })
     }
-    
+
     /// This method will try to find a certificate for the given name in the .odd_box_cache/lets_encrypt directory
     /// before attempting to create a new certificate via lets-encrypt.
     pub async fn get_or_create_cert(&self, domain_name: &str) -> anyhow::Result<CertifiedKey> {
-        
+
         let odd_cache_base = ".odd_box_cache/lets_encrypt";
 
         let base_path = std::path::Path::new(odd_cache_base);
@@ -284,7 +294,7 @@ impl CertManager {
             }]
         });
 
-        let signed_request = Self::sign_request(&self.acc_certified_key, Some(&payload), &nonce, &directory.new_order, Some(&self.account_url))?;
+        let signed_request = Self::sign_request(&self.acc_certified_key, Some(&payload), &nonce, &directory.new_order, self.account_url.as_ref())?;
 
         let res = self.client
             .post(&directory.new_order)
@@ -390,7 +400,7 @@ impl CertManager {
             Some(&json!({})),  // <-- this HAS to be an empty object, we MUST send it when doing the the trigger
             &nonce, 
             challenge_url,
-            Some(&self.account_url)
+            self.account_url.as_ref()
         ).context("signing payload")?;
 
         tracing::trace!("Calling LE challenge url: {}", challenge_url);
@@ -430,7 +440,7 @@ impl CertManager {
             count += 1;
 
             let nonce = Self::fetch_nonce(&self.client,&self.directory.new_nonce).await?;
-            let signed_request = Self::sign_request(&self.acc_certified_key, None, &nonce, order_url, Some(&self.account_url))?;
+            let signed_request = Self::sign_request(&self.acc_certified_key, None, &nonce, order_url, self.account_url.as_ref())?;
 
             tracing::trace!("calling LE order url: {}", order_url);
 
@@ -500,7 +510,7 @@ impl CertManager {
             Some(&payload),
             &nonce,
             finalize_url,
-            Some(&self.account_url),
+            self.account_url.as_ref(),
         )?;
     
         tracing::trace!("Calling LE finalize url: {}", finalize_url);
@@ -532,7 +542,7 @@ impl CertManager {
             None, 
             &nonce,
             cert_url,
-            Some(&self.account_url),
+            self.account_url.as_ref(),
         )?;
     
 
@@ -638,7 +648,7 @@ impl CertManager {
         payload: Option<&serde_json::Value>,
         nonce: &str,
         url: &str,
-        account_url: Option<&str>, // when creating account, this is None
+        account_url: Option<&String>, // when creating account, this is None
     ) -> anyhow::Result<String> {
         // Build the protected header
         let mut protected = serde_json::Map::new();

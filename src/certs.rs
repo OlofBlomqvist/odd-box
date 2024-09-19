@@ -127,7 +127,8 @@ impl DynamicCertResolver {
             self_signed_cert_cache: DashMap::new(),
             lets_encrypt_signed_certs: DashMap::new(),            
             lets_encrypt_manager: 
-                crate::letsencrypt::CertManager::new(&lets_encrypt_account_email.unwrap_or_default()).await.context("Could not create letsencrypt manager")?
+                crate::letsencrypt::CertManager::new(&lets_encrypt_account_email.unwrap_or_default()).await
+                    .context("Could not create letsencrypt manager")?
         })
     }
 }
@@ -137,9 +138,11 @@ impl ResolvesServerCert for DynamicCertResolver {
         
         let server_name = client_hello.server_name()?;
         
-        if let Some(certified_key) = self.get_lets_encrypt_signed_cert_from_mem_cache(server_name) {
-            tracing::trace!("Returning a cached lets-encrypt certificate for {:?}",server_name);
-            return Some(certified_key.clone());
+        if self.enable_lets_encrypt.lock().unwrap().clone() {
+            if let Some(certified_key) = self.get_lets_encrypt_signed_cert_from_mem_cache(server_name) {
+                tracing::trace!("Returning a cached lets-encrypt certificate for {:?}",server_name);
+                return Some(certified_key.clone());
+            }
         }
 
         if let Some(certified_key) = self.get_self_signed_cert_from_cache(server_name) {
