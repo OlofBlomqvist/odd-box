@@ -16,7 +16,8 @@ use tokio_stream::wrappers::ReceiverStream;
 use std::future::Future;
 use std::pin::Pin;
 use crate::global_state::GlobalState;
-use crate::tcp_proxy::{ManagedStream, ReverseTcpProxyTarget};
+use crate::proxy::SomeSortOfManagedStream;
+use crate::tcp_proxy::ReverseTcpProxyTarget;
 use crate::types::app_state::ProcState;
 use crate::CustomError;
 use hyper::{Method, StatusCode};
@@ -26,28 +27,17 @@ use super::proxy;
 
 
 
-pub enum SomeIo {
-    Https(tokio_rustls::server::TlsStream<ManagedStream>),
-    Http(ManagedStream)
-
-}
-
 lazy_static! {
     static ref SERVER_ONE: hyper_util::server::conn::auto::Builder<TokioExecutor> = 
         hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
 }
-pub async fn serve(service:ReverseProxyService,io:SomeIo) {
+pub async fn serve(service:ReverseProxyService,io:SomeSortOfManagedStream) {
     
     let result = match io {
-        SomeIo::Https(tls_stream) => {
-            SERVER_ONE.serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(tls_stream), service).await
-        },
-        SomeIo::Http(tcp_stream) => {
-            SERVER_ONE
-               .serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(tcp_stream), service).await
-        },
-        
+        SomeSortOfManagedStream::ClearText(io) =>  SERVER_ONE.serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(io), service).await,
+        SomeSortOfManagedStream::TLS(io) =>  SERVER_ONE.serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(io), service).await
     };
+       
     match result {
         Ok(_) => {},
         Err(e) => {

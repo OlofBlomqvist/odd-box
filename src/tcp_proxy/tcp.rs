@@ -1,5 +1,10 @@
 use chrono::Local;
 use hyper::Version;
+use hyper_rustls::ConfigBuilderExt;
+use rustls::ClientConnection;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_rustls::client::TlsStream;
+use tokio_stream::StreamExt;
 use std::net::IpAddr;
 use std::time::Duration;
 use std::{
@@ -8,12 +13,14 @@ use std::{
 };
 use crate::configuration::v2::BackendFilter;
 use crate::global_state::GlobalState;
+use crate::proxy::SomeSortOfManagedStream;
 use crate::tcp_proxy::tls::client_hello::TlsClientHello;
 use crate::types::proxy_state::{ProxyActiveConnection, ProxyActiveConnectionType};
 use tokio::net::TcpStream;
 use tracing::*;
 
-use super::managed_stream::{self, ManagedStream};
+use super::h2_parser;
+use super::managed_stream::{self, ManagedStream, Peekable};
 
 
 /// Non-terminating reverse proxy service for HTTP and HTTPS.
@@ -83,49 +90,52 @@ impl ReverseTcpProxy {
 
     #[instrument(skip_all)]
     pub async fn eat_tcp_stream(
-        tcp_stream: TcpStream,
+         managed_stream: &mut SomeSortOfManagedStream,
         _client_address: SocketAddr,
-    ) -> (ManagedStream,Result<PeekResult, PeekError>) {
+    ) -> Result<PeekResult, PeekError> 
+    where
+    {
         
         let mut attempts = 0;
         
-        let mut managed_stream = managed_stream::ManagedStream::new(tcp_stream);
-        
         loop {
 
-            if attempts > 100 {
+            if attempts > 2 {
                 break;
             }
 
             let (tcp_stream_closed,buf) = if let Ok(b) = managed_stream.peek_async().await {
                 b
             } else {
-                return (managed_stream,Err(PeekError::Unknown("Failed to read from TCP stream".into())));
+                return Err(PeekError::Unknown("Failed to read from TCP stream".into()));
             };
 
             if tcp_stream_closed {
-                return (managed_stream,Err(PeekError::Unknown("TCP stream has already closed".into())));
+                return Err(PeekError::Unknown("TCP stream has already closed".into()));
             }
             
             if buf.len() == 0 {
-                tracing::info!("0 bytes found...");
-                tokio::time::sleep(Duration::from_millis(10)).await;
-                attempts += 1;
+                _ = tokio::time::sleep(Duration::from_millis(20)).await;
+                attempts+=1;
                 continue;
+
             }
 
             // Check for TLS handshake (0x16 is the ContentType for Handshake in TLS)
             if buf[0] == 0x16 {
-                tracing::trace!("Detected TLS client handshake request!");
+
+                // note that we do not expect this to happen when processing a SomeSortOfManagedStream::ClearText stream
+                // but it will still technically work so... lets just allow clients to connect to the wrong port if they want..?
+               
                 match TlsClientHello::try_from(&buf[..]) {
                     Ok(v) => {
                         if let Ok(v) = v.read_sni_hostname() {
                             trace!("Got TLS client hello with SNI: {v}");
-                            return (managed_stream,Ok(PeekResult { 
+                            return Ok(PeekResult { 
                                 typ: DataType::TLS, 
                                 http_version: None, 
                                 target_host: Some(v),
-                            }));
+                            });
                         }
                     }
                     Err(crate::tcp_proxy::tls::client_hello::TlsClientHelloError::MessageIncomplete(_)) => {
@@ -133,7 +143,7 @@ impl ReverseTcpProxy {
                         continue;
                     }
                     _ => {
-                        return (managed_stream,Err(PeekError::Unknown("Invalid TLS client handshake".to_string())));
+                        return Err(PeekError::Unknown("Invalid TLS client handshake".to_string()));
                     }
                 }
                 // Continue loop to check for more data if TLS isn't fully validated
@@ -147,11 +157,11 @@ impl ReverseTcpProxy {
                 if let Ok(str_data) = std::str::from_utf8(&buf) {
                     if let Some(valid_host_name) = super::http1::try_decode_http_host(str_data) {
                         trace!("Found valid HTTP/1 host header while peeking into TCP stream: {valid_host_name}");
-                        return (managed_stream,Ok(PeekResult { 
+                        return Ok(PeekResult { 
                             typ: DataType::ClearText, 
                             http_version: Some(http_version), 
                             target_host: Some(valid_host_name),
-                        }));
+                        });
                     } else {
                         tracing::trace!("HTTP/1.x request detected but missing host header; waiting for more data...");
                     }
@@ -159,21 +169,48 @@ impl ReverseTcpProxy {
                     tracing::trace!("Incomplete UTF-8 data detected; waiting for more data...");
                 }
             } else if super::http2::is_valid_http2_request(&buf) {
+                tracing::info!("is valid h2... creating new h2o for buf with len: {}",buf.len());
+                let mut hmm = h2_parser::H2Observer::new();
+                hmm.write_incoming(&buf);
+                tracing::info!("created peek observer");
+                let items = hmm.get_all_events() ;
+                if items.len() < 2 {
+                    tracing::info!("not enough http2 frames found (yet)...");
+                } else {
+
+                    for frame in items {
+                        match frame {
+                            h2_parser::H2Event::IncomingRequest(rq) => {
+                                if let Some(host) = rq.headers.get(":authority") {
+                                    return Ok(PeekResult { 
+                                        typ: DataType::ClearText, 
+                                        http_version: Some(Version::HTTP_2), 
+                                        target_host: Some(host.to_string()),
+                                    });
+                                }
+                            },
+                            _ => {}
+                        }
+                    }
+                    
+
+                    
+                }
                 // HTTP/2 (h2c) check only after HTTP/1.x check fails
-                return (managed_stream,Err(PeekError::Unknown("odd-box does not currently support h2c for TCP tunnel mode".into())));
+                //return (managed_stream,Err(PeekError::Unknown("odd-box does not currently support h2c for TCP tunnel mode".into())));
+            } else {
+                tracing::warn!("NOT VALID H1 OR H2");
             }
 
-        
-    
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::time::sleep(Duration::from_millis(20)).await;
             attempts += 1;
         }
     
-        (managed_stream,Err(PeekError::Unknown("TCP peek failed to find any useful information".into())))
+        Err(PeekError::Unknown("TCP peek failed to find any useful information".into()))
     }
 
     pub async fn tunnel(
-        mut client_tcp_stream:ManagedStream,
+        client_tcp_stream: crate::proxy::SomeSortOfManagedStream,
         target:Arc<ReverseTcpProxyTarget>,
         incoming_traffic_is_tls:bool,
         state: Arc<GlobalState>,
@@ -196,7 +233,7 @@ impl ReverseTcpProxy {
         let primary_backend =  {
 
             let b = if let Some(remconf) = &target.remote_target_config {
-                remconf.next_backend(&state, if incoming_traffic_is_tls { BackendFilter::Https } else { BackendFilter::Http },true).await
+                remconf.next_backend(&state, BackendFilter::Any,true).await
             } else {
                 target.backends.first().cloned()
             };
@@ -225,11 +262,10 @@ impl ReverseTcpProxy {
             
 
         tracing::trace!("tcp tunneling to target: {resolved_target_address} (tls: {incoming_traffic_is_tls})");
-
+        
         match TcpStream::connect(resolved_target_address.clone()).await {
             Ok(mut rem_stream) => {
 
-                
                 if let Ok(target_addr_socket) = rem_stream.peer_addr() {
                     
                     let item = ProxyActiveConnection {
@@ -250,15 +286,7 @@ impl ReverseTcpProxy {
                     // ADD TO STATE BEFORE STARTING THE STREAM
                     state.app_state.statistics.active_connections.insert(item_key, item);
 
-                    match tokio::io::copy_bidirectional(&mut client_tcp_stream, &mut rem_stream).await {
-                        Ok(_a) => {
-                            // could add this to target stats at some point
-                            //debug!("stream completed ok! -- {} <--> {}", a.0, a.1)
-                        }
-                        Err(e) => {
-                            trace!("Stream failed with err: {e:?}")
-                        }
-                    }
+                    _ = run_managed_bidirectional_tunnel(client_tcp_stream, rem_stream, primary_backend.https.unwrap_or_default()).await; 
                    
                     // DROP FROM ACTIVE STATE ONCE DONE
                     state.app_state.statistics.active_connections.remove(&item_key);
@@ -275,3 +303,58 @@ impl ReverseTcpProxy {
 }
 
 
+
+// proxy between original client and remote backend
+use tokio_rustls::{rustls, TlsConnector};
+use rustls::pki_types::ServerName;
+async fn run_managed_bidirectional_tunnel(
+    mut original_client_stream: SomeSortOfManagedStream,
+    mut stream_connected_to_some_backend: TcpStream,
+    use_tls: bool
+) -> Result<(), Box<dyn std::error::Error>> {
+    
+    if use_tls {
+
+        let config = tokio_rustls::rustls::ClientConfig::builder_with_protocol_versions(tokio_rustls::rustls::ALL_VERSIONS)
+            .with_native_roots()
+            .expect("must be able to create tls configuration")
+            .with_no_client_auth();
+
+        let arc_config = Arc::new(config);
+        let connector = TlsConnector::from(arc_config);
+
+        // Specify the server name for SNI // TODO!!!!! must pass the target info to here
+        let server_name = ServerName::try_from("echo.websocket.org").unwrap();
+
+        // Establish a TLS connection to the backend
+        let mut backend_tls_stream = connector
+            .connect(server_name, stream_connected_to_some_backend)
+            .await?;
+
+        tracing::warn!("tls connection established towards the backend");
+        
+        // Proxy data between the original client and the backend
+        match tokio::io::copy_bidirectional(&mut original_client_stream, &mut backend_tls_stream).await {
+            Ok((_bytes_from_client, _bytes_from_backend)) => {
+                // Optionally handle the number of bytes transferred
+            }
+            Err(e) => {
+                tracing::warn!("Stream failed with error: {:?}", e);
+            }
+        }
+    } else {
+     
+        // Proxy data between the original client and the backend
+        match tokio::io::copy_bidirectional(&mut original_client_stream, &mut stream_connected_to_some_backend).await {
+            Ok((_bytes_from_client, _bytes_from_backend)) => {
+                // Optionally handle the number of bytes transferred
+            }
+            Err(e) => {
+                tracing::warn!("Stream failed with error: {:?}", e);
+            }
+        }
+    }
+    
+    original_client_stream.do_inspection_stuff().await;
+    Ok(())
+}
