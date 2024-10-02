@@ -167,8 +167,8 @@ async fn ws_log_messages_handler(
 
             let lower_cased_orgin_from_client = origin_header.to_string().to_lowercase();
 
-            if lower_cased_orgin_from_client == "*" {
-                tracing::trace!("Client origin is '*', allowing connection");
+            if cors_env_var == Some("*".to_string()) {
+                tracing::trace!("CORS variable is '*', allowing connection from host: {lower_cased_orgin_from_client}");
             } else if let Some(lower_cased_cors_var) = cors_env_var {
                 
                 if &lower_cased_orgin_from_client != &lower_cased_cors_var {
