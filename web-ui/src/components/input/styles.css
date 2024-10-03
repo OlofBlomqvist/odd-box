@@ -1,0 +1,21 @@
+.input-save-button {
+    border:0;
+    background:white;
+    outline:none;
+    border-left: 0px solid #00000033;
+    width: 30px;
+    display:grid;
+    place-content:center;
+    transition:all .1s;
+    padding:0;
+    cursor:pointer;
+    color:#309030;
+}
+
+.input-save-button.show {
+    border-left: 1px solid #00000033;
+}
+
+.input-save-button:hover {
+    background:#ffffffcc;
+}
