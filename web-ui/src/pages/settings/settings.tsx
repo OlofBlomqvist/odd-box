@@ -2,7 +2,6 @@ import { Suspense, useState } from "react";
 import Input from "../../components/input/input";
 import SettingsItem from "./settings-item";
 import SettingsSection from "./settings-section";
-import "react-responsive-modal/styles.css";
 import useSettings from "../../hooks/use-settings";
 import toast from "react-hot-toast";
 import useSettingsMutations from "../../hooks/use-settings-mutations";

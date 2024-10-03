@@ -4,8 +4,6 @@ import {
   TableBody,
   TableCell,
   TableFooter,
-  TableHead,
-  TableHeader,
   TableRow,
 } from "@/components/table/table";
 import { DiamondPlus } from "lucide-react";
@@ -46,15 +44,6 @@ export const ArgumentsTable = ({
   return (
     <>
       <Table>
-        {defaultKeys?.length !== 0 && (
-          <TableHeader>
-            <TableRow className="pointer-events-none">
-              <TableHead className="w-[100px] text-[var(--color2)]">
-                Value
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-        )}
         <TableBody>
           {defaultKeys?.map((key) => (
             <TableRow

@@ -124,7 +124,7 @@ const useSiteMutations = () => {
       if (vars.hostname !== vars.siteSettings.host_name) {
         router.navigate({
           to: `/site/${vars.siteSettings.host_name.replace("http://", "").replace("https://", "")}`,
-          search: { tab: 1 },
+          // search: { tab: 1 },
         });
       }
     },

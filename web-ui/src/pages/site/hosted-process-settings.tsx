@@ -8,11 +8,11 @@ import toast from "react-hot-toast";
 import { useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { Hint, InProcessSiteConfig, LogFormat } from "../../generated-api";
-import OddModal from "../../components/modal/modal";
 import Checkbox from "@/components/checkbox/checkbox";
 import SettingDescriptions from "@/lib/setting_descriptions";
 import { EnvVariablesTable } from "@/components/table/env_variables/env_variables";
 import { ArgumentsTable } from "@/components/table/arguments/arguments";
+import { ConfirmationDialog } from "@/components/dialog/confirm/confirm";
 
 const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
   const { updateSite, deleteSite } = useSiteMutations();
@@ -354,44 +354,18 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
         </Button>
       </div>
 
-      <OddModal
-        show={showConfirmDeleteModal}
-        onClose={() => setShowConfirmDeleteModal(false)}
-        title="Delete"
-        subtitle={`Are you sure you want to delete the site '${site.host_name}'?`}
-      >
-        <div style={{ display: "flex", gap: "20px", marginTop: "10px" }}>
-          <Button secondary onClick={() => setShowConfirmDeleteModal(false)}>
-            Cancel
-          </Button>
-          <Button
-            onClick={() => {
-              toast.promise(
-                deleteSite.mutateAsync(
-                  { hostname: site.host_name },
-                  {
-                    onSuccess: () => {
-                      setShowConfirmDeleteModal(false);
-                      router.navigate({ to: "/" });
-                    },
-                  }
-                ),
-                {
-                  loading: `Deleting site.. [${site.host_name}]`,
-                  success: () => {
-                    router.navigate({ to: "/" });
-                    return `Site deleted! [${site.host_name}]`;
-                  },
-                  error: (e) => `${e}`,
-                }
-              );
-            }}
-            dangerButton
-          >
-            Yes, delete
-          </Button>
-        </div>
-      </OddModal>
+      <ConfirmationDialog onClose={() => setShowConfirmDeleteModal(false)} onConfirm={() => {
+        setShowConfirmDeleteModal(false)
+        deleteSite.mutateAsync(
+          { hostname: site.host_name },
+          {
+            onSuccess: () => {
+              setShowConfirmDeleteModal(false);
+              router.navigate({ to: "/" });
+            },
+          }
+        );
+      }} show={showConfirmDeleteModal} title="Delete" yesBtnText="Yes, delete it" subtitle={`Are you sure you want to delete the site '${site.host_name}'?`}/>
     </div>
   );
 };

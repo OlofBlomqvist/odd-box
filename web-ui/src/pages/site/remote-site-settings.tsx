@@ -8,10 +8,10 @@ import toast from "react-hot-toast";
 import { useEffect, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { Backend, RemoteSiteConfig } from "../../generated-api";
-import Plus2 from "../../components/icons/plus2";
 import SettingDescriptions from "@/lib/setting_descriptions";
 import { BackendSheet } from "@/components/sheet/backend_sheet/backend_sheet";
-import OddModal from "@/components/modal/modal";
+import { BackendsTable } from "@/components/table/backends/backends";
+import { ConfirmationDialog } from "@/components/dialog/confirm/confirm";
 
 type BackendModalState = {
   show: boolean;
@@ -143,78 +143,12 @@ const RemoteSiteSettings = ({ site }: { site: RemoteSiteConfig }) => {
           />
         </SettingsItem>
       </SettingsSection>
-      <SettingsSection noTopSeparator>
-        <SettingsItem title="Backends" subTitle={SettingDescriptions["backends"]} />
-        <div
-          style={{
-            background: "var(--color3)",
-            color: "black",
-            marginTop: "10px",
-            borderRadius: "5px",
-            overflow: "hidden",
-          }}
-        >
-          {site.backends?.map((key, listIndex) => (
-            <div
-              key={JSON.stringify({ backend: key, index: listIndex })}
-              onClick={() => {
-                setBackendModalState({
-                  backend: key,
-                  show: true,
-                  listIndex,
-                });
-              }}
-              className="env-var-item"
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                padding: "5px",
-              }}
-            >
-              <p style={{ zIndex: 1, fontSize: ".8rem" }}>{key.address}</p>
-            </div>
-          ))}
-          <div
-            onClick={() => {
-              updateRemoteSite.mutateAsync({
-                hostname: site.host_name,
-                siteSettings: {
-                  ...site,
-                  backends: [
-                    ...site.backends,
-                    {
-                      address: "NEW_BACKEND",
-                      port: 8080,
-                      hints: [],
-                      https: false,
-                    },
-                  ],
-                },
-              });
-            }}
-            className="env-var-item"
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              padding: "5px",
-            }}
-          >
-            <div
-              style={{
-                zIndex: 1,
-                fontSize: ".8rem",
-                display: "flex",
-                alignItems: "center",
-                gap: "5px",
-              }}
-            >
-              <Plus2 />
-              New backend
-            </div>
-          </div>
-        </div>
+      <SettingsSection noTopSeparator noBottomSeparator>
+        <SettingsItem
+          title="Backends"
+          subTitle={SettingDescriptions["backends"]}
+        />
+        <BackendsTable site={site} />
       </SettingsSection>
 
       <div
@@ -235,35 +169,19 @@ const RemoteSiteSettings = ({ site }: { site: RemoteSiteConfig }) => {
           Delete site
         </Button>
       </div>
-      <OddModal
-        key={site.host_name}
-        show={showConfirmDeleteModal}
-        onClose={() => setShowConfirmDeleteModal(false)}
-        title="Delete"
-        subtitle={`Are you sure you want to delete the site '${site.host_name}'?`}
-      >
-        <div style={{ display: "flex", gap: "20px", marginTop: "10px" }}>
-          <Button secondary onClick={() => setShowConfirmDeleteModal(false)}>
-            Cancel
-          </Button>
-          <Button
-            onClick={() => {
-              deleteSite.mutateAsync(
-                { hostname: site.host_name },
-                {
-                  onSuccess: () => {
-                    setShowConfirmDeleteModal(false);
-                    router.navigate({ to: "/" });
-                  },
-                }
-              );
-            }}
-            dangerButton
-          >
-            Yes, delete
-          </Button>
-        </div>
-      </OddModal>
+      <ConfirmationDialog onClose={() => setShowConfirmDeleteModal(false)} onConfirm={() => {
+        setShowConfirmDeleteModal(false)
+        deleteSite.mutateAsync(
+          { hostname: site.host_name },
+          {
+            onSuccess: () => {
+              setShowConfirmDeleteModal(false);
+              router.navigate({ to: "/" });
+            },
+          }
+        );
+      }} show={showConfirmDeleteModal} title="Delete" yesBtnText="Yes, delete it" subtitle={`Are you sure you want to delete the site '${site.host_name}'?`}/>
+     
       <BackendSheet
         listIndex={backendModalState.listIndex}
         key={JSON.stringify(backendModalState.backend)}
