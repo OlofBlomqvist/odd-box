@@ -107,7 +107,7 @@ pub async fn run(globally_shared_state: Arc<crate::global_state::GlobalState>,po
 
         // STATIC FILES FOR WEB-UI
         .route("/", get(|| async { serve_static_file(axum::extract::Path("index.html".to_string())).await }))
-        .route("/webui/*file", get(serve_static_file));
+        .route("/*file", get(serve_static_file));
 
     // in some cases one might want to allow CORS from a specific origin. this is not currently allowed to do from the config file
     // so we use an environment variable to set this. might change in the future if it becomes a common use case

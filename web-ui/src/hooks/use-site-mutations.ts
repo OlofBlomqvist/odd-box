@@ -23,14 +23,14 @@ const useSiteMutations = () => {
   const startSite = useMutation({
     mutationKey: ["start-site"],
     mutationFn: async ({ hostname }: { hostname: string }) => {
-      await apiClient.sites.start({ hostname });
+      await apiClient.api.start({ hostname });
 
       const isAllSitesRequest = hostname === "*";
 
       await Sleep(isAllSitesRequest ? 3000 : 1000);
 
       if (!isAllSitesRequest) {
-        let newStates = (await apiClient.sites.status()).data;
+        let newStates = (await apiClient.api.status()).data;
         let thisSiteState = newStates.items.find(
           (x: any) => x.hostname === hostname
         )?.state;
@@ -42,7 +42,7 @@ const useSiteMutations = () => {
         ) {
           retryAttempt++;
           await Sleep(1000);
-          newStates = (await apiClient.sites.status()).data;
+          newStates = (await apiClient.api.status()).data;
 
           thisSiteState = newStates.items.find(
             (x: any) => x.hostname === hostname
@@ -62,14 +62,14 @@ const useSiteMutations = () => {
   const stopSite = useMutation({
     mutationKey: ["stop-site"],
     mutationFn: async ({ hostname }: { hostname: string }) => {
-      await apiClient.sites.stop({ hostname });
+      await apiClient.api.stop({ hostname });
 
       const isAllSitesRequest = hostname === "*";
 
       await Sleep(isAllSitesRequest ? 3000 : 1000);
 
       if (!isAllSitesRequest) {
-        let newStates = (await apiClient.sites.status()).data;
+        let newStates = (await apiClient.api.status()).data;
         let thisSiteState = newStates.items.find(
           (x: any) => x.hostname === hostname
         )?.state;
@@ -82,7 +82,7 @@ const useSiteMutations = () => {
         ) {
           retryAttempt++;
           await Sleep(1000);
-          newStates = (await apiClient.sites.status()).data;
+          newStates = (await apiClient.api.status()).data;
 
           thisSiteState = newStates.items.find(
             (x: any) => x.hostname === hostname
@@ -108,7 +108,7 @@ const useSiteMutations = () => {
       siteSettings: RemoteSiteConfig;
       hostname?: string;
     }) => {
-      return apiClient.sites.set(
+      return apiClient.api.set(
         {
           new_configuration: {
             RemoteSite: siteSettings,
@@ -139,7 +139,7 @@ const useSiteMutations = () => {
       siteSettings: InProcessSiteConfig;
       hostname?: string;
     }) => {
-      return apiClient.sites.set(
+      return apiClient.api.set(
         {
           new_configuration: {
             HostedProcess: siteSettings,
@@ -164,7 +164,7 @@ const useSiteMutations = () => {
   const deleteSite = useMutation({
     mutationKey: ["delete-site"],
     mutationFn: async ({ hostname }: { hostname: string }) => {
-      await apiClient.sites.delete({ hostname });
+      await apiClient.api.delete({ hostname });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["sites"] });

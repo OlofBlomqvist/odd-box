@@ -117,6 +117,11 @@ export interface InProcessSiteConfig {
   dir?: string | null;
   /** This is mostly useful in case the target uses SNI sniffing/routing */
   disable_tcp_tunnel_mode?: boolean | null;
+  /**
+   * If you want to use lets-encrypt for generating certificates automatically for this site.
+   * Defaults to false. This feature will disable tcp tunnel mode.
+   */
+  enable_lets_encrypt?: boolean | null;
   env_vars?: EnvVar[] | null;
   /**
    * If you wish to exclude this site from the start_all command.
@@ -181,6 +186,7 @@ export interface OddBoxConfigGlobalPart {
    */
   http_port: number;
   ip: string;
+  lets_encrypt_account_email: string;
   log_level: BasicLogLevel;
   path: string;
   /**
@@ -255,6 +261,7 @@ export interface OddBoxV2Config {
    */
   http_port?: number | null;
   ip: string;
+  lets_encrypt_account_email?: string | null;
   log_level?: LogLevel | null;
   path?: string | null;
   /**
@@ -288,6 +295,11 @@ export interface RemoteSiteConfig {
   /** This is mostly useful in case the target uses SNI sniffing/routing */
   disable_tcp_tunnel_mode?: boolean | null;
   /**
+   * If you want to use lets-encrypt for generating certificates automatically for this site.
+   * Defaults to false. This feature will disable tcp tunnel mode.
+   */
+  enable_lets_encrypt?: boolean | null;
+  /**
    * If you wish to use the subdomain from the request in forwarded requests:
    * test.example.com -> internal.site
    * vs
@@ -313,6 +325,7 @@ export interface SaveGlobalConfig {
    */
   http_port: number;
   ip: string;
+  lets_encrypt_account_email: string;
   log_level: BasicLogLevel;
   /**
    * @format int32
@@ -573,7 +586,7 @@ export class HttpClient<SecurityDataType = unknown> {
 
 /**
  * @title ODD-BOX ADMIN-API 🤯
- * @version 0.1.1
+ * @version 0.1.7-preview2
  * @license
  * @externalDocs https://github.com/OlofBlomqvist/odd-box
  * @contact Olof Blomqvist <olof@twnet.se>
@@ -581,18 +594,18 @@ export class HttpClient<SecurityDataType = unknown> {
  * A basic management api for odd-box reverse proxy.
  */
 export class Api<SecurityDataType extends unknown> extends HttpClient<SecurityDataType> {
-  settings = {
+  api = {
     /**
      * No description
      *
      * @tags Settings
      * @name Settings
      * @summary Get global settings
-     * @request GET:/settings
+     * @request GET:/api/settings
      */
     settings: (params: RequestParams = {}) =>
       this.request<SettingsData, string>({
-        path: `/settings`,
+        path: `/api/settings`,
         method: "GET",
         format: "json",
         ...params,
@@ -604,29 +617,28 @@ export class Api<SecurityDataType extends unknown> extends HttpClient<SecurityDa
      * @tags Settings
      * @name SaveSettings
      * @summary Update the global settings.
-     * @request POST:/settings
+     * @request POST:/api/settings
      */
     saveSettings: (data: SaveGlobalConfig, params: RequestParams = {}) =>
       this.request<SaveSettingsData, string>({
-        path: `/settings`,
+        path: `/api/settings`,
         method: "POST",
         body: data,
         type: ContentType.Json,
         ...params,
       }),
-  };
-  sites = {
+
     /**
      * No description
      *
      * @tags Site management
      * @name List
      * @summary List all configured sites.
-     * @request GET:/sites
+     * @request GET:/api/sites
      */
     list: (params: RequestParams = {}) =>
       this.request<ListData, string>({
-        path: `/sites`,
+        path: `/api/sites`,
         method: "GET",
         format: "json",
         ...params,
@@ -638,7 +650,7 @@ export class Api<SecurityDataType extends unknown> extends HttpClient<SecurityDa
      * @tags Site management
      * @name Set
      * @summary Update a specific item by hostname
-     * @request POST:/sites
+     * @request POST:/api/sites
      */
     set: (
       data: UpdateRequest,
@@ -652,7 +664,7 @@ export class Api<SecurityDataType extends unknown> extends HttpClient<SecurityDa
       params: RequestParams = {},
     ) =>
       this.request<SetData, string>({
-        path: `/sites`,
+        path: `/api/sites`,
         method: "POST",
         query: query,
         body: data,
@@ -667,7 +679,7 @@ export class Api<SecurityDataType extends unknown> extends HttpClient<SecurityDa
      * @tags Site management
      * @name Delete
      * @summary Delete an item
-     * @request DELETE:/sites
+     * @request DELETE:/api/sites
      */
     delete: (
       query: {
@@ -677,7 +689,7 @@ export class Api<SecurityDataType extends unknown> extends HttpClient<SecurityDa
       params: RequestParams = {},
     ) =>
       this.request<DeleteData, string>({
-        path: `/sites`,
+        path: `/api/sites`,
         method: "DELETE",
         query: query,
         ...params,
@@ -689,7 +701,7 @@ export class Api<SecurityDataType extends unknown> extends HttpClient<SecurityDa
      * @tags Site management
      * @name Start
      * @summary Start a site
-     * @request PUT:/sites/start
+     * @request PUT:/api/sites/start
      */
     start: (
       query: {
@@ -699,7 +711,7 @@ export class Api<SecurityDataType extends unknown> extends HttpClient<SecurityDa
       params: RequestParams = {},
     ) =>
       this.request<StartData, string>({
-        path: `/sites/start`,
+        path: `/api/sites/start`,
         method: "PUT",
         query: query,
         ...params,
@@ -711,11 +723,11 @@ export class Api<SecurityDataType extends unknown> extends HttpClient<SecurityDa
      * @tags Site management
      * @name Status
      * @summary List all configured sites.
-     * @request GET:/sites/status
+     * @request GET:/api/sites/status
      */
     status: (params: RequestParams = {}) =>
       this.request<StatusData, string>({
-        path: `/sites/status`,
+        path: `/api/sites/status`,
         method: "GET",
         format: "json",
         ...params,
@@ -727,7 +739,7 @@ export class Api<SecurityDataType extends unknown> extends HttpClient<SecurityDa
      * @tags Site management
      * @name Stop
      * @summary Stop a site
-     * @request PUT:/sites/stop
+     * @request PUT:/api/sites/stop
      */
     stop: (
       query: {
@@ -737,7 +749,7 @@ export class Api<SecurityDataType extends unknown> extends HttpClient<SecurityDa
       params: RequestParams = {},
     ) =>
       this.request<StopData, string>({
-        path: `/sites/stop`,
+        path: `/api/sites/stop`,
         method: "PUT",
         query: query,
         ...params,

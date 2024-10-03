@@ -14,7 +14,7 @@ const useSettings = () => {
   return useSuspenseQuery({
     queryKey: ["settings"],
     select: (response) => response.data,
-    queryFn: apiClient.settings.settings,
+    queryFn: apiClient.api.settings,
   });
 };
 

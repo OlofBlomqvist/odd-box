@@ -14,7 +14,7 @@ export const useHostedSites = () => {
 
   return useSuspenseQuery({
     queryKey: ["sites"],
-    queryFn: apiClient.sites.list,
+    queryFn: apiClient.api.list,
     select: (res) =>
       res.data.items.filter(checkIsHostedProcess).map((x) => x.HostedProcess),
   });

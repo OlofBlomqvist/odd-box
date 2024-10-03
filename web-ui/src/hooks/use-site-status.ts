@@ -12,7 +12,7 @@ const useSiteStatus = () => {
   const apiClient = new Api({ baseUrl });
   return useSuspenseQuery({
     queryKey: ["site-status"],
-    queryFn: apiClient.sites.status,
+    queryFn: apiClient.api.status,
     select: (response) => {
         return response.data.items
     }

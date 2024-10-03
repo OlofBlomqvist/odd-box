@@ -14,7 +14,7 @@ export const useRemoteSites = () => {
 
   return useSuspenseQuery({
     queryKey: ["sites"],
-    queryFn: apiClient.sites.list,
+    queryFn: apiClient.api.list,
     select: (res) =>
       res.data.items.filter(checkIsRemoteSite).map((x) => x.RemoteSite),
   });

@@ -13,7 +13,7 @@ const useSettingsMutations = () => {
   const queryClient = useQueryClient();
   const updateSettings = useMutation({
     mutationKey: ["update-settings"],
-    mutationFn: apiClient.settings.saveSettings,
+    mutationFn: apiClient.api.saveSettings,
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
     },
