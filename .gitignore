@@ -3,3 +3,5 @@
 TODO.MD
 result
 odd-box.toml
+**/node_modules
+**/.DS_Store
