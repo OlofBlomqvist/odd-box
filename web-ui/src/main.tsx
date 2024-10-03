@@ -17,7 +17,7 @@ declare module "@tanstack/react-router" {
     router: typeof router;
   }
 }
-
+router.basepath = "/webui";
 // Render the app
 const rootElement = document.getElementById("root")!;
 if (!rootElement.innerHTML) {

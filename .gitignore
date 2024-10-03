@@ -5,3 +5,5 @@ result
 odd-box.toml
 **/node_modules
 **/.DS_Store
+web-ui/.env.development
+web-ui/.env.production

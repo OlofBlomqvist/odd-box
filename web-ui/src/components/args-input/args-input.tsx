@@ -1,10 +1,8 @@
-import Button from "../button/button";
 import { useState } from "react";
 import Plus2 from "../icons/plus2";
-import Input from "../input/input";
 import "../key-value-input/styles.css";
 import "react-responsive-modal/styles.css";
-import OddModal from "../modal/modal";
+import { ArgsSheet } from "../sheet/args_sheet/args_sheet";
 
 export type TKey = {
   value: string;
@@ -32,7 +30,7 @@ const ArgsInput = ({
     setModalState({
       show: true,
       value: "",
-      originalValue: undefined,
+      originalValue: "",
     });
   };
 
@@ -93,59 +91,15 @@ const ArgsInput = ({
         </div>
       </div>
 
-      <OddModal
-        show={modalState.show}
+      <ArgsSheet
+        onAddArg={onAddArg}
+        onRemoveArg={onRemoveArg}
         onClose={() => setModalState((old) => ({ ...old, show: false }))}
-        title={modalState.originalValue ? "Edit argument" : "New argument"}
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-          <div>
-            <p style={{ fontSize: ".8rem" }}>VALUE</p>
-            <Input
-              type="text"
-              value={modalState.value}
-              onChange={(e) =>
-                setModalState((old) => ({ ...old, value: e.target.value }))
-              }
-            />
-          </div>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: "10px",
-              marginTop: "5px",
-            }}
-          >
-            {modalState.originalValue !== undefined && (
-              <Button
-                dangerButton
-                onClick={() => {
-                  onRemoveArg(modalState.originalValue!);
-                  setModalState((old) => ({ ...old, show: false }));
-                }}
-              >
-                Delete
-              </Button>
-            )}
-            <Button
-              secondary
-              onClick={() => setModalState((old) => ({ ...old, show: false }))}
-            >
-              Cancel
-            </Button>
-            <Button
-              disabled={modalState.value === ""}
-              onClick={() => {
-                onAddArg(modalState.value, modalState.originalValue);
-                setModalState((old) => ({ ...old, show: false }));
-              }}
-            >
-              Save
-            </Button>
-          </div>
-        </div>
-      </OddModal>
+        originalValue={modalState.originalValue}
+        show={modalState.show}
+        value={modalState.value}
+        valueChanged={(e) => setModalState((old) => ({ ...old, value: e }))}
+      />
     </>
   );
 };
