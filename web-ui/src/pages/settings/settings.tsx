@@ -6,9 +6,9 @@ import "react-responsive-modal/styles.css";
 import useSettings from "../../hooks/use-settings";
 import toast from "react-hot-toast";
 import useSettingsMutations from "../../hooks/use-settings-mutations";
-import KeyValueInput from "../../components/key-value-input/key-value-input";
 import { LogFormat } from "../../generated-api";
 import SettingDescriptions from "@/lib/setting_descriptions";
+import { EnvVariablesTable } from "@/components/table/env_variables/env_variables";
 
 const SettingsPage = () => {
   return (
@@ -224,13 +224,10 @@ const SettingsPageInner = () => {
         </SettingsItem>
       </SettingsSection>
 
-      <SettingsItem
+      <SettingsItem vertical
         title="Environment variables"
-        subTitle={SettingDescriptions["global_env_vars"]}
-      />
-
-      <KeyValueInput
-        onRemoveKey={(keyName) => {
+        subTitle={SettingDescriptions["global_env_vars"]}>
+      <EnvVariablesTable keys={settings.env_vars ?? []}         onRemoveKey={(keyName) => {
           updateSetting(
             "env_vars",
             settings.env_vars?.filter((key: any) => key.key !== keyName)
@@ -243,9 +240,9 @@ const SettingsPageInner = () => {
             ),
             { key: key.key, value: key.value },
           ]);
-        }}
-        keys={settings.env_vars ?? []}
-      />
+        }}/>
+</SettingsItem>
+
     </div>
   );
 };

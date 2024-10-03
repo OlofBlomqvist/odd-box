@@ -1,5 +1,4 @@
 import { createRootRoute, Outlet } from "@tanstack/react-router";
-import { TanStackRouterDevtools } from "@tanstack/router-devtools";
 import "../global_tw.css";
 import SideDrawer from "../components/drawer/drawer";
 import MenuItem from "../components/drawer/menu_item";
@@ -41,7 +40,7 @@ export const Route = createRootRoute({
               href="/logs"
               icon={<LogsIcon />}
             />
-            <hr style={{ margin: "15px 5px", opacity: 0.2 }} />
+            <hr style={{ margin: "15px 5px" }} />
             <SitesListHeader />
             <SitesList />
           </SideDrawer>
@@ -52,7 +51,6 @@ export const Route = createRootRoute({
           <Footer />
         </DrawerProvider>
         <ReactQueryDevtools initialIsOpen={false} />
-        <TanStackRouterDevtools position="bottom-right" />
       </QueryClientProvider>
     </>
   ),

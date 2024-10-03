@@ -41,7 +41,7 @@ const Input = ({
         display: "grid",
         transition: "all .2s",
         width: "100%",
-        gridTemplateColumns: showSaveButton ? "1fr 30px" : "1fr 0px",
+        gridTemplateColumns: showSaveButton ? "1fr 50px" : "1fr 0px",
         height: "32px",
         borderRadius: withSaveButton ? "3px" : 0,
         overflow: "hidden",
@@ -58,15 +58,7 @@ const Input = ({
           onClick={() => onSave?.(rest.value)}
           className={inputSaveButtonClassNames.join(" ")}
         >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            fill="#309030"
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-          >
-            <path d="M20.285 2l-11.285 11.567-5.286-5.011-3.714 3.716 9 8.728 15-15.285z" />
-          </svg>
+          <span className="text-[12px] font-bold">SAVE</span>
         </button>
       )}
     </div>

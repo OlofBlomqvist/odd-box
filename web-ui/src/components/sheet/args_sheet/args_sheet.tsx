@@ -48,7 +48,7 @@ export const ArgsSheet = ({
           >
             <div>
               <Input
-                withSaveButton placeholder="Argument here.."
+                withSaveButton placeholder="Example: use-kestrel"
                 originalValue={originalValue}
                 onSave={() => {
                   onAddArg(value, originalValue);

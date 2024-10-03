@@ -1,15 +1,15 @@
 .input-save-button {
     border:0;
-    background:white;
+    background:#a4dd90;
     outline:none;
     border-left: 0px solid #00000033;
-    width: 30px;
+    width: 50px;
     display:grid;
     place-content:center;
     transition:all .1s;
     padding:0;
     cursor:pointer;
-    color:#309030;
+    color:#00000099;
 }
 
 .input-save-button.show {
@@ -17,5 +17,5 @@
 }
 
 .input-save-button:hover {
-    background:#ffffffcc;
+    background:#86af77;
 }

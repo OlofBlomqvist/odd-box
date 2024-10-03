@@ -22,9 +22,9 @@ const SettingsSection = ({
         marginBottom: "20px",
       }}
     >
-      {!noTopSeparator && <hr style={{ opacity: 0.2 }} />}
+      {!noTopSeparator && <hr  />}
       {children}
-      {!noBottomSeparator && <hr style={{ opacity: 0.2 }} />}
+      {!noBottomSeparator && <hr  />}
     </div>
   );
 };

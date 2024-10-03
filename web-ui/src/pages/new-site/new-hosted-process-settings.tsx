@@ -1,14 +1,14 @@
 import SettingsItem from "../settings/settings-item";
 import SettingsSection from "../settings/settings-section";
 import Input from "../../components/input/input";
-import KeyValueInput from "../../components/key-value-input/key-value-input";
-import ArgsInput from "../../components/args-input/args-input";
 import Button from "../../components/button/button";
 import useSiteMutations from "../../hooks/use-site-mutations";
 import { useState } from "react";
 import { Hint, KvP, LogFormat } from "../../generated-api";
 import Checkbox from "../../components/checkbox/checkbox";
 import SettingDescriptions from "@/lib/setting_descriptions";
+import { EnvVariablesTable } from "@/components/table/env_variables/env_variables";
+import { ArgumentsTable } from "@/components/table/arguments/arguments";
 
 const NewHostedProcessSettings = () => {
   const [newName, setNewName] = useState("hostname");
@@ -52,7 +52,10 @@ const NewHostedProcessSettings = () => {
   return (
     <>
       <SettingsSection noTopSeparator>
-        <SettingsItem title="Hostname" subTitle={SettingDescriptions["hostname"]}>
+        <SettingsItem
+          title="Hostname"
+          subTitle={SettingDescriptions["hostname"]}
+        >
           <Input
             placeholder="my-site.com"
             value={newName}
@@ -188,7 +191,10 @@ const NewHostedProcessSettings = () => {
       </SettingsSection>
 
       <SettingsSection noTopSeparator>
-        <SettingsItem title="Log format" subTitle={SettingDescriptions["log_format"]}>
+        <SettingsItem
+          title="Log format"
+          subTitle={SettingDescriptions["log_format"]}
+        >
           <select
             className="text-black rounded pl-3 pr-3"
             value={logFormat}
@@ -205,7 +211,7 @@ const NewHostedProcessSettings = () => {
       </SettingsSection>
 
       <div style={{ marginTop: "20px" }} />
-      <SettingsItem title="Hints" subTitle={SettingDescriptions["h2_hint"]}/>
+      <SettingsItem title="Hints" subTitle={SettingDescriptions["h2_hint"]} />
       <div
         style={{
           display: "flex",
@@ -261,33 +267,48 @@ const NewHostedProcessSettings = () => {
           title="NOH2"
         />
       </div>
-      <SettingsItem
-        title="Environment variables"
-        subTitle={SettingDescriptions["env_vars"]}
-      />
-      <KeyValueInput
-        onRemoveKey={(keyName) => {
-          setEnvVars(envVars?.filter((key) => key.key !== keyName));
-        }}
-        onNewKey={(key, originalName) => {
-          setEnvVars((old) => [
-            ...old.filter((x) => x.key !== originalName),
-            key,
-          ]);
-        }}
-        keys={envVars}
-      />
-      <div style={{ marginBottom: "20px" }} />
-      <SettingsItem title="Arguments" subTitle={SettingDescriptions["args"]} />
-      <ArgsInput
-        onAddArg={(arg, originalValue) => {
-          setArgs((old) => [...old.filter((x) => x !== originalValue), arg]);
-        }}
-        onRemoveArg={(arg: string) => {
-          setArgs(args.filter((x) => x !== arg));
-        }}
-        defaultKeys={args}
-      />
+
+      <SettingsSection noBottomSeparator>
+        <SettingsItem
+          vertical
+          title="Environment variables"
+          subTitle={SettingDescriptions["env_vars"]}
+        >
+          <EnvVariablesTable
+            keys={envVars}
+            onRemoveKey={(keyName) => {
+              setEnvVars(envVars?.filter((key) => key.key !== keyName));
+            }}
+            onNewKey={(key, originalName) => {
+              setEnvVars((old) => [
+                ...old.filter((x) => x.key !== originalName),
+                key,
+              ]);
+            }}
+          />
+        </SettingsItem>
+      </SettingsSection>
+
+      <SettingsSection noBottomSeparator noTopSeparator>
+        <SettingsItem
+          vertical
+          title="Arguments"
+          subTitle={SettingDescriptions["args"]}
+        >
+          <ArgumentsTable
+            onAddArg={(arg, originalValue) => {
+              setArgs((old) => [
+                ...old.filter((x) => x !== originalValue),
+                arg,
+              ]);
+            }}
+            onRemoveArg={(arg: string) => {
+              setArgs(args.filter((x) => x !== arg));
+            }}
+            defaultKeys={args}
+          />
+        </SettingsItem>
+      </SettingsSection>
       <div
         style={{
           display: "flex",

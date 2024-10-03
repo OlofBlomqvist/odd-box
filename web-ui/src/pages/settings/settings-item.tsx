@@ -27,7 +27,7 @@ const SettingsItem = ({
   return (
     <div>
       <div className={classNames.join(" ")}>
-        <div style={{ maxWidth: "400px" }}>
+        <div style={{ maxWidth: vertical ? "100%" : "400px" }}>
           <label
             htmlFor={labelFor}
             style={{ fontWeight: "bold", fontSize: ".8rem", display: "block" }}

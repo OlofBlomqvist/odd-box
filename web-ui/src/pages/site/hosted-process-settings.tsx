@@ -1,8 +1,6 @@
 import SettingsItem from "../settings/settings-item";
 import SettingsSection from "../settings/settings-section";
 import Input from "../../components/input/input";
-import KeyValueInput from "../../components/key-value-input/key-value-input";
-import ArgsInput from "../../components/args-input/args-input";
 import "./style.css";
 import Button from "../../components/button/button";
 import useSiteMutations from "../../hooks/use-site-mutations";
@@ -13,6 +11,8 @@ import { Hint, InProcessSiteConfig, LogFormat } from "../../generated-api";
 import OddModal from "../../components/modal/modal";
 import Checkbox from "@/components/checkbox/checkbox";
 import SettingDescriptions from "@/lib/setting_descriptions";
+import { EnvVariablesTable } from "@/components/table/env_variables/env_variables";
+import { ArgumentsTable } from "@/components/table/arguments/arguments";
 
 const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
   const { updateSite, deleteSite } = useSiteMutations();
@@ -213,7 +213,7 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
         </SettingsItem>
       </SettingsSection>
 
-      <SettingsSection noTopSeparator>
+      <SettingsSection noTopSeparator noBottomSeparator>
         <SettingsItem
           title="H2 Hints"
           subTitle={SettingDescriptions["h2_hint"]}
@@ -292,12 +292,15 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
           />
         </SettingsItem>
       </div>
-      <SettingsItem
+
+
+
+
+<SettingsSection noBottomSeparator>
+      <SettingsItem vertical
         title="Environment variables"
-        subTitle={SettingDescriptions["env_vars"]}
-      />
-      <KeyValueInput
-        onRemoveKey={(keyName) => {
+        subTitle={SettingDescriptions["env_vars"]}>
+      <EnvVariablesTable keys={site.env_vars ?? []}                 onRemoveKey={(keyName) => {
           updateSetting(
             "env_vars",
             site.env_vars?.filter((key) => key.key !== keyName)
@@ -310,16 +313,15 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
             ) ?? []),
             { key: key.key, value: key.value },
           ]);
-        }}
-        keys={site.env_vars ?? []}
-      />
-      <div style={{ marginBottom: "20px" }} />
-      <SettingsItem
+        }}/>
+</SettingsItem>
+</SettingsSection>
+
+<SettingsSection noBottomSeparator noTopSeparator>
+      <SettingsItem vertical
         title="Arguments"
-        subTitle={SettingDescriptions["args"]}
-      />
-      <ArgsInput
-        onAddArg={(arg, originalValue) => {
+        subTitle={SettingDescriptions["args"]}>
+      <ArgumentsTable onAddArg={(arg, originalValue) => {
           updateSetting("args", [
             ...(site.args?.filter((x) => x !== originalValue) ?? []),
             arg,
@@ -330,8 +332,9 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
             ...(site.args?.filter((x) => x !== arg) ?? []),
           ]);
         }}
-        defaultKeys={site.args ?? []}
-      />
+        defaultKeys={site.args ?? []}/>
+</SettingsItem>
+</SettingsSection>
       <div
         style={{
           display: "flex",
