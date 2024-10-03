@@ -11,7 +11,7 @@ const Header = () => {
     <div className="odd-header">
       <div>
         {isBigScreen && (
-          <img src="/ob3.png" height={50} style={{ height: "50px" }} />
+          <img src="/webui/ob3.png" height={50} style={{ height: "50px" }} />
         )}
 
         {!isBigScreen && (
@@ -30,7 +30,7 @@ const Header = () => {
           target="_blank"
           href="https://github.com/OlofBlomqvist/odd-box"
         >
-          <img src="/github2.png" style={{ height: "20px" }} />
+          <img src="/webui/github2.png" style={{ height: "20px" }} />
         </a>
       </div>
     </div>

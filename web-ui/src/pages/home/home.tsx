@@ -16,7 +16,7 @@ const HomePage = () => {
       <div style={{ marginTop: "20px" }}>
         <h3>ODD-BOX</h3>
         <hr />
-        <p>stuff: {import.meta.env.VITE_MY_STUFF}</p>
+        <p>{import.meta.env.VITE_MY_STUFF}</p>
         <div
           style={{ fontSize: ".9rem", marginTop: "10px", maxWidth: "750px" }}
         >
