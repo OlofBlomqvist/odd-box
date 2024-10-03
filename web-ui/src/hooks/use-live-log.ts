@@ -10,7 +10,15 @@ export type TLogMessage = {
 
 const useLiveLog = () => {
   const [messageHistory, setMessageHistory] = useState<Array<TLogMessage>>([]);
-  const socketUrl = "ws://localhost:1234/ws/live_logs";
+
+  let hostName = window.location.hostname
+  if (window.location.port) {
+    hostName = `${hostName}:${window.location.port}`
+  }
+
+  const baseUrl = import.meta.env.MODE === "development" ? `localhost:${import.meta.env.VITE_ODDBOX_API_URL}` : hostName;
+  
+  const socketUrl = `ws://${baseUrl}/ws/live_logs`;
   const { lastMessage, readyState } = useWebSocket(socketUrl);
 
   useEffect(() => {

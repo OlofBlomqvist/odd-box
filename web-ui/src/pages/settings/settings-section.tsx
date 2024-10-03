@@ -4,7 +4,9 @@ const SettingsSection = ({
   children,
   noTopSeparator,
   noBottomSeparator,
+  marginTop
 }: {
+  marginTop?: string;
   noBottomSeparator?: boolean;
   noTopSeparator?: boolean;
   children?: ReactNode;
@@ -16,7 +18,7 @@ const SettingsSection = ({
         display: "flex",
         flexDirection: "column",
         gap: "20px",
-        marginTop: "20px",
+        marginTop: marginTop ?? "20px",
         marginBottom: "20px",
       }}
     >

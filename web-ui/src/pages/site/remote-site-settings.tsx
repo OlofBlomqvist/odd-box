@@ -8,10 +8,10 @@ import toast from "react-hot-toast";
 import { useEffect, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { Backend, RemoteSiteConfig } from "../../generated-api";
-import OddModal from "../../components/modal/modal";
 import Plus2 from "../../components/icons/plus2";
-import BackendModal from "../../components/backend_modal/backend_modal";
 import SettingDescriptions from "@/lib/setting_descriptions";
+import { BackendSheet } from "@/components/sheet/backend_sheet/backend_sheet";
+import OddModal from "@/components/modal/modal";
 
 type BackendModalState = {
   show: boolean;
@@ -236,7 +236,7 @@ const RemoteSiteSettings = ({ site }: { site: RemoteSiteConfig }) => {
         </Button>
       </div>
       <OddModal
-        key={JSON.stringify(backendModalState?.backend)}
+        key={site.host_name}
         show={showConfirmDeleteModal}
         onClose={() => setShowConfirmDeleteModal(false)}
         title="Delete"
@@ -264,7 +264,7 @@ const RemoteSiteSettings = ({ site }: { site: RemoteSiteConfig }) => {
           </Button>
         </div>
       </OddModal>
-      <BackendModal
+      <BackendSheet
         listIndex={backendModalState.listIndex}
         key={JSON.stringify(backendModalState.backend)}
         site={site}

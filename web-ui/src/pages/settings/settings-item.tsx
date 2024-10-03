@@ -7,7 +7,9 @@ const SettingsItem = ({
   children,
   rowOnly,
   labelFor,
+  vertical
 }: {
+  vertical?: boolean;
   rowOnly?: boolean;
   children?: ReactNode;
   title: string;
@@ -15,9 +17,12 @@ const SettingsItem = ({
   defaultValue?: string;
   labelFor?: string;
 }) => {
-  const classNames = ["settings-item"];
+  let classNames = ["settings-item"];
   if (rowOnly) {
     classNames.push("row-only");
+  }
+  if (vertical) {
+    classNames = ["flex align-items-stretch flex-col gap-1"];
   }
   return (
     <div>
