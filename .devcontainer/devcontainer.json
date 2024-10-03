@@ -2,7 +2,10 @@
 	"name": "RustOddBoxContainer",
 	"image": "mcr.microsoft.com/devcontainers/rust:1-1-bullseye",
 	"features": {
-	  "ghcr.io/lee-orr/rusty-dev-containers/cargo-watch:0": {}
+	  "ghcr.io/lee-orr/rusty-dev-containers/cargo-watch:0": {},
+	  "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts" 
+    }
 	},
 	"mounts": [
 	  {
