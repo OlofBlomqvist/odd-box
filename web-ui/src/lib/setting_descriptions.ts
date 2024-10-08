@@ -25,7 +25,8 @@ const SettingDescriptions = {
     "use_alpn": "Allows alpn negotiation for http/1.0 and h2 on tls connections.",
     "site_type": "Choose the type of site you are adding.",
     "exclude_from_start_all": "Will exempt the site from the start/stop all sites feature.",
-    "backends": "All backends for this site."
+    "backends": "All backends for this site.",
+    "remote_site_address": "Address of the remote server.",
 }
 
 export default SettingDescriptions;

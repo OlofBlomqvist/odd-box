@@ -84,8 +84,8 @@ body {
 .inner-content {
   background-color: var(--bg-color);
   margin-bottom:180px;
-  padding-left: 20px;
-  padding-right: 20px;
+  padding-left: 0px;
+  padding-right: 0px;
   padding-top:60px;
   min-height: 100dvh;
   @media screen and (min-width: 800px) {
@@ -160,7 +160,7 @@ p, h1, h2, h3, h4, h5, h6 {
   .settings-item:not(.row-only) {
       align-items: stretch;
       flex-direction: column;
-
+      gap:10px;
   }
 }
 

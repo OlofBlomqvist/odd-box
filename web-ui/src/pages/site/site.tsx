@@ -1,10 +1,12 @@
 import { useParams } from "@tanstack/react-router";
 import SiteOverview from "./site-overview";
-import SiteSettings from "./site-settings";
 import SiteLogs from "./site-logs";
 import Tabs from "../../components/tabs/tabs";
 import useHostedSites from "../../hooks/use-hosted-sites";
 import { useRemoteSites } from "../../hooks/use-remote-sites";
+import { Card, CardContent } from "@/components/ui/card";
+import RemoteSiteSettings from "./remote-site-settings";
+import HostedProcessSettings from "./hosted-process-settings";
 
 const SitePage = () => {
   const { data: sites } = useHostedSites();
@@ -31,33 +33,36 @@ const SitePage = () => {
   if (thisHostedProcess) {
     tabSections.push({
       name: "Overview",
-      content: (
-        <SiteOverview
-          hostedProcess={thisHostedProcess}
-          remoteSite={thisRemoteSite}
-        />
-      ),
+      content: <SiteOverview hostedProcess={thisHostedProcess} />,
     });
   }
 
-  tabSections.push({
-    name: "Settings",
-    content: (
-      <SiteSettings
-        hostedProcess={thisHostedProcess}
-        remoteSite={thisRemoteSite}
-      />
-    ),
-  });
+  if (thisRemoteSite) {
+    tabSections.push({
+      name: "Settings",
+      content: <RemoteSiteSettings site={thisRemoteSite} />,
+    });
+  } else if (thisHostedProcess) {
+    tabSections.push({
+      name: "Settings",
+      content: <HostedProcessSettings site={thisHostedProcess} />,
+    });
+  }
 
   if (thisHostedProcess) {
     tabSections.push({
       name: "Log",
       content: (
-        <SiteLogs
-          hostedProcess={thisHostedProcess}
-          remoteSite={thisRemoteSite}
-        />
+        <main className="grid flex-1 items-start gap-4 sm:py-0 md:gap-8 max-w-[900px]">
+          <Card>
+            <CardContent>
+              <SiteLogs
+                hostedProcess={thisHostedProcess}
+                remoteSite={thisRemoteSite}
+              />
+            </CardContent>
+          </Card>
+        </main>
       ),
     });
   }
@@ -71,6 +76,7 @@ const SitePage = () => {
           fontWeight: "bold",
           color: "var(--color2)",
         }}
+        className="pl-[20px] md:pl-0"
       >
         {params.siteName}
       </p>

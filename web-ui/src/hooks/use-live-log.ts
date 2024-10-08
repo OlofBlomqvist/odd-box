@@ -16,9 +16,12 @@ const useLiveLog = () => {
     hostName = `${hostName}:${window.location.port}`
   }
 
-  const baseUrl = import.meta.env.MODE === "development" ? `localhost:${import.meta.env.VITE_ODDBOX_API_URL}` : hostName;
-  
-  const socketUrl = `ws://${baseUrl}/ws/live_logs`;
+  const baseUrl =
+    import.meta.env.MODE === "development"
+      ? `${import.meta.env.VITE_ODDBOX_LOGS_URL}:${import.meta.env.VITE_ODDBOX_LOGS_PORT}`
+      : `ws://${hostName}`;
+
+  const socketUrl = `${baseUrl}/ws/live_logs`;
   const { lastMessage, readyState } = useWebSocket(socketUrl);
 
   useEffect(() => {

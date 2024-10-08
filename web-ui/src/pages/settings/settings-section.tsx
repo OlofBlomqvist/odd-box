@@ -4,7 +4,7 @@ const SettingsSection = ({
   children,
   noTopSeparator,
   noBottomSeparator,
-  marginTop
+  marginTop,
 }: {
   marginTop?: string;
   noBottomSeparator?: boolean;
@@ -22,9 +22,9 @@ const SettingsSection = ({
         marginBottom: "20px",
       }}
     >
-      {!noTopSeparator && <hr  />}
+      {!noTopSeparator && <hr className="bg-[#ffffff24]" />}
       {children}
-      {!noBottomSeparator && <hr  />}
+      {!noBottomSeparator && <hr className="bg-[#ffffff24]" />}
     </div>
   );
 };

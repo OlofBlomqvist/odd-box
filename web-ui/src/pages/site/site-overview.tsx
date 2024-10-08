@@ -1,59 +1,53 @@
 import "./style.css";
-// import Button from "../../components/button/button";
 import toast from "react-hot-toast";
 import useSiteStatus from "../../hooks/use-site-status";
 import useSiteMutations from "../../hooks/use-site-mutations";
 import {
   BasicProcState,
   InProcessSiteConfig,
-  RemoteSiteConfig,
 } from "../../generated-api";
-import { Card } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-
-const stateToButtonText = {
-  [BasicProcState.Running]: "Stop",
-  [BasicProcState.Stopped]: "Start",
-  [BasicProcState.Faulty]: "Start",
-  [BasicProcState.Stopping]: "Start",
-  [BasicProcState.Starting]: "Stop",
-  [BasicProcState.Remote]: "Remote",
-};
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/cn";
 
 const SiteOverview = ({
   hostedProcess,
-  remoteSite,
 }: {
-  hostedProcess?: InProcessSiteConfig;
-  remoteSite?: RemoteSiteConfig;
+  hostedProcess: InProcessSiteConfig;
 }) => {
   const { startSite, stopSite } = useSiteMutations();
   const siteStatus = useSiteStatus();
-  const thisSiteStatus = hostedProcess
-    ? siteStatus.data?.find((x) => x.hostname === hostedProcess.host_name)
-        ?.state
-    : remoteSite
-      ? siteStatus.data?.find((x) => x.hostname === remoteSite.host_name)?.state
-      : BasicProcState.Remote;
+  const thisSiteStatus =
+    siteStatus.data?.find((x) => x.hostname === hostedProcess.host_name)
+      ?.state ?? BasicProcState.Stopped;
 
   return (
-      <div
-        style={{ display: "flex", width: "100%" }}
-        className="sm:gap-6 gap-4 flex max-w-[750px] flex-col sm:flex-row"
-      >
-        <div className="flex-grow flex flex-col gap-4 sm:gap-6">
-          <Card className="p-4 border2">
-            <h1 className="text-base font-bold mb-3 uppercase">Site details</h1>
-            {/* <p className="text-base">View and manage this site</p> */}
-
+    <main
+      style={{ display: "flex", width: "100%" }}
+      className="sm:gap-6 gap-4 flex max-w-[900px] flex-col sm:flex-row"
+    >
+      <div className="flex-grow flex flex-col gap-4 sm:gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Site details</CardTitle>
+            <CardDescription>
+              General information for{" "}
+              <span className="font-bold">{hostedProcess.host_name}</span>
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
             <div className="flex flex-col gap-4">
               <div>
                 <p className="text-sm mb-1">Hostname</p>
-                <Input
-                  disabled
-                  value={hostedProcess?.host_name ?? remoteSite?.host_name}
-                />
+                <Input disabled value={hostedProcess.host_name} />
               </div>
               {hostedProcess && (
                 <div>
@@ -62,11 +56,11 @@ const SiteOverview = ({
                 </div>
               )}
             </div>
-          </Card>
+          </CardContent>
+        </Card>
 
-
-          {/* TODO: THIS IS SOME DESIGN FOR METRICS, BUT WE DONT HAVE THIS THROUGH THE API YET. */}
-          {/* <Card className="p-5">
+        {/* TODO: THIS IS SOME DESIGN FOR METRICS, BUT WE DONT HAVE THIS THROUGH THE API YET. */}
+        {/* <Card className="p-5">
             <h1 className="text-base font-bold mb-3 uppercase">Metrics</h1>
 
             <div className="grid gap-4">
@@ -101,63 +95,91 @@ const SiteOverview = ({
               </div>
             </div>
           </Card> */}
-        </div> 
+      </div>
 
+      <div className="flex flex-col gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Current status</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Badge
+              className={cn(
+                thisSiteStatus === BasicProcState.Running &&
+                  "bg-green-800 text-white"
+              )}
+            >
+              {thisSiteStatus}
+            </Badge>
+          </CardContent>
+        </Card>
 
-        <Card className="p-4 flex-grow-[.25] h-[max-content]">
-          <h1 className="text-base font-bold uppercase">Actions</h1>
-          <div className="mt-2 flex flex-col gap-2">
-            <Button
-              disabled={
-                startSite.isPending ||
-                stopSite.isPending ||
-                thisSiteStatus === BasicProcState.Running
-              }
-              onClick={() => {
-                if (!hostedProcess) {
-                  return;
+        <Card className="flex-grow-[.25] h-[max-content]">
+          <CardHeader>
+            <CardTitle>Actions</CardTitle>
+            <CardDescription>
+              Available actions for{" "}
+              <span className="font-bold">{hostedProcess?.host_name}</span>
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {/* <h1 className="text-base font-bold uppercase">Actions</h1> */}
+            <div className="flex flex-col gap-2">
+              <Button
+                disabled={
+                  startSite.isPending ||
+                  stopSite.isPending ||
+                  thisSiteStatus === BasicProcState.Running
                 }
-                toast.promise(
-                  startSite.mutateAsync({ hostname: hostedProcess.host_name }),
-                  {
-                    loading: "Starting site..",
-                    success: "Site started!",
-                    error: (e) => `Failed to start site: ${e}`,
+                onClick={() => {
+                  if (!hostedProcess) {
+                    return;
                   }
-                );
-              }}
-              size={"sm"}
-              className="w-full uppercase font-bold"
-            >
-              start
-            </Button>
-            <Button
-              disabled={
-                startSite.isPending ||
-                stopSite.isPending ||
-                thisSiteStatus === BasicProcState.Stopped
-              }
-              onClick={() => {
-                if (!hostedProcess) {
-                  return;
+                  toast.promise(
+                    startSite.mutateAsync({
+                      hostname: hostedProcess.host_name,
+                    }),
+                    {
+                      loading: "Starting site..",
+                      success: "Site started!",
+                      error: (e) => `Failed to start site: ${e}`,
+                    }
+                  );
+                }}
+                size={"sm"}
+                className="w-full uppercase font-bold"
+              >
+                start
+              </Button>
+              <Button
+                disabled={
+                  startSite.isPending ||
+                  stopSite.isPending ||
+                  thisSiteStatus === BasicProcState.Stopped
                 }
-                toast.promise(
-                  stopSite.mutateAsync({ hostname: hostedProcess.host_name }),
-                  {
-                    loading: "Stopping site..",
-                    success: "Site stopped!",
-                    error: (e) => `Failed to stop site: ${e}`,
+                onClick={() => {
+                  if (!hostedProcess) {
+                    return;
                   }
-                );
-              }}
-              size={"sm"}
-              className="w-full uppercase font-bold"
-            >
-              stop
-            </Button>
-          </div>
+                  toast.promise(
+                    stopSite.mutateAsync({ hostname: hostedProcess.host_name }),
+                    {
+                      loading: "Stopping site..",
+                      success: "Site stopped!",
+                      error: (e) => `Failed to stop site: ${e}`,
+                    }
+                  );
+                }}
+                size={"sm"}
+                className="w-full uppercase font-bold"
+              >
+                stop
+              </Button>
+            </div>
+          </CardContent>
         </Card>
       </div>
+    </main>
   );
 };
 

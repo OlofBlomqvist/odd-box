@@ -3,13 +3,16 @@ import { Api } from "../generated-api";
 import checkIsRemoteSite from "../lib/is_remote_site";
 
 export const useRemoteSites = () => {
-  let hostName = window.location.protocol + "//" + window.location.hostname
+  let hostName = window.location.protocol + "//" + window.location.hostname;
   if (window.location.port) {
-    hostName = `${hostName}:${window.location.port}`
+    hostName = `${hostName}:${window.location.port}`;
   }
 
-  const baseUrl = import.meta.env.MODE === "development" ? import.meta.env.VITE_ODDBOX_API_URL : hostName;
-  
+  const baseUrl =
+    import.meta.env.MODE === "development"
+      ? `${import.meta.env.VITE_ODDBOX_API_URL}:${import.meta.env.VITE_ODDBOX_API_PORT}`
+      : hostName;
+
   const apiClient = new Api({ baseUrl });
 
   return useSuspenseQuery({

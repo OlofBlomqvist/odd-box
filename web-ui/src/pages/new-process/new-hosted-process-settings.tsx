@@ -51,7 +51,7 @@ const NewHostedProcessSettings = () => {
 
   return (
     <>
-      <SettingsSection noTopSeparator>
+      <SettingsSection marginTop="0px" noTopSeparator>
         <SettingsItem
           title="Hostname"
           subTitle={SettingDescriptions["hostname"]}

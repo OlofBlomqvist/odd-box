@@ -12,7 +12,7 @@ const Tabs = ({ sections }: { sections?: TTab[] }) => {
 
   return (
     <>
-      <div style={{ display: "flex", gap: "20px", marginTop: "20px" }}>
+      <div style={{ display: "flex", gap: "20px", marginTop: "20px" }} className="pl-[20px] md:pl-0">
         {sections?.map((section, index) => (
           <TabItem
             key={index}
