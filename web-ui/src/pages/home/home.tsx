@@ -88,7 +88,7 @@ const HomePage = () => {
           </CardContent>
         </Card>
 
-        <Tabs defaultValue="processes" className="pb-8">
+        <Tabs defaultValue="processes" className="pb-8 hidden sm:block">
           <div className="flex items-center">
             <TabsList>
               <TabsTrigger value="processes">Processes</TabsTrigger>
