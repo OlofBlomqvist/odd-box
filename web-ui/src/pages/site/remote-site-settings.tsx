@@ -12,6 +12,7 @@ import SettingDescriptions from "@/lib/setting_descriptions";
 import { BackendSheet } from "@/components/sheet/backend_sheet/backend_sheet";
 import { BackendsTable } from "@/components/table/backends/backends";
 import { ConfirmationDialog } from "@/components/dialog/confirm/confirm";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 type BackendModalState = {
   show: boolean;
@@ -61,14 +62,26 @@ const RemoteSiteSettings = ({ site }: { site: RemoteSiteConfig }) => {
   };
 
   return (
-    <div
+
+<main
+      className="grid flex-1 items-start gap-4 sm:py-0 md:gap-8 max-w-[900px]"
       key={site.host_name}
-      style={{ paddingBottom: "50px", maxWidth: "750px" }}
+      style={{}}
       onSubmit={(e) => {
         e.preventDefault();
       }}
     >
-      <SettingsSection noTopSeparator>
+      <Card className="mb-8">
+        
+      <CardHeader>
+            <CardTitle>Site details</CardTitle>
+            <CardDescription>
+              General configuration for{" "}
+              <span className="font-bold text-[var(--color2)]">{site.host_name}</span>
+            </CardDescription>
+          </CardHeader>
+        <CardContent>
+        <SettingsSection marginTop="0px" noTopSeparator>
         <SettingsItem
           title="Hostname"
           subTitle={SettingDescriptions["hostname_frontend"]}
@@ -169,19 +182,26 @@ const RemoteSiteSettings = ({ site }: { site: RemoteSiteConfig }) => {
           Delete site
         </Button>
       </div>
-      <ConfirmationDialog onClose={() => setShowConfirmDeleteModal(false)} onConfirm={() => {
-        setShowConfirmDeleteModal(false)
-        deleteSite.mutateAsync(
-          { hostname: site.host_name },
-          {
-            onSuccess: () => {
-              setShowConfirmDeleteModal(false);
-              router.navigate({ to: "/" });
-            },
-          }
-        );
-      }} show={showConfirmDeleteModal} title="Delete" yesBtnText="Yes, delete it" subtitle={`Are you sure you want to delete the site '${site.host_name}'?`}/>
-     
+      <ConfirmationDialog
+        onClose={() => setShowConfirmDeleteModal(false)}
+        onConfirm={() => {
+          setShowConfirmDeleteModal(false);
+          deleteSite.mutateAsync(
+            { hostname: site.host_name },
+            {
+              onSuccess: () => {
+                setShowConfirmDeleteModal(false);
+                router.navigate({ to: "/" });
+              },
+            }
+          );
+        }}
+        show={showConfirmDeleteModal}
+        title="Delete"
+        yesBtnText="Yes, delete it"
+        subtitle={`Are you sure you want to delete the site '${site.host_name}'?`}
+      />
+
       <BackendSheet
         listIndex={backendModalState.listIndex}
         key={JSON.stringify(backendModalState.backend)}
@@ -194,7 +214,11 @@ const RemoteSiteSettings = ({ site }: { site: RemoteSiteConfig }) => {
           }))
         }
       />
-    </div>
+        </CardContent>
+        </Card>
+        </main>
+
+
   );
 };
 

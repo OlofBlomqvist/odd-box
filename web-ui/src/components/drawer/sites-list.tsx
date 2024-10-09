@@ -1,10 +1,10 @@
 import { Suspense } from "react";
-import { PlusIcon } from "../icons/plus";
 import MenuItem from "./menu_item";
 import StatusIcon from "./status-icon";
 import useSiteStatus from "../../hooks/use-site-status";
 import useHostedSites from "../../hooks/use-hosted-sites";
 import { useRemoteSites } from "../../hooks/use-remote-sites";
+import { PlusIcon } from "lucide-react";
 
 const SitesList = () => {
   return (

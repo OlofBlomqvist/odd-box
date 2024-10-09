@@ -1,6 +1,7 @@
 import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { TTab } from "./types";
+import { cn } from "@/lib/cn";
 
 const Tabs = ({ sections }: { sections?: TTab[] }) => {
   const router = useRouter();
@@ -11,7 +12,7 @@ const Tabs = ({ sections }: { sections?: TTab[] }) => {
 
   return (
     <>
-      <div style={{ display: "flex", gap: "20px", marginTop: "20px" }}>
+      <div style={{ display: "flex", gap: "20px" }} className="pl-[20px] md:pl-0">
         {sections?.map((section, index) => (
           <TabItem
             key={index}
@@ -49,11 +50,19 @@ const TabItem = ({
   title?: string;
 }) => {
   return (
-    <div
+    <div className={
+      cn(
+        "p-2",
+        active && "border border-[#ffffff44]",
+        !active && "border border-transparent",
+        "rounded-tl-lg",
+        "rounded-tr-lg",
+      )
+    }
       style={{
         color: active ? "var(--color2)" : "#fff",
         cursor: "pointer",
-        borderBottom: active ? "1px solid var(--color2)" : 0,
+        borderBottom: active ? "1px solid var(--bg-color)" : 0
       }}
       onClick={onClick}
     >

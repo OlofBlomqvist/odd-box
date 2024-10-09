@@ -9,7 +9,8 @@ import { Hint } from "../../generated-api";
 import SettingDescriptions from "@/lib/setting_descriptions";
 
 const NewRemoteSiteSettings = () => {
-  const [newName, setNewName] = useState("hostname");
+  const [newRemoteHost, setNewRemoteHost] = useState("");
+  const [newName, setNewName] = useState("");
   const [newPort, setNewPort] = useState<number>(80);
   const [https, setHttps] = useState(true);
   const [captureSubdomains, setCaptureSubdomains] = useState(false);
@@ -25,7 +26,7 @@ const NewRemoteSiteSettings = () => {
     }
     updateRemoteSite.mutateAsync({
       siteSettings: {
-        host_name: newName,
+        host_name: newRemoteHost,
         backends: [
           {
             address: newName,
@@ -43,11 +44,24 @@ const NewRemoteSiteSettings = () => {
 
   return (
     <>
-      <SettingsSection noTopSeparator>
-        <SettingsItem title="Hostname" subTitle={SettingDescriptions["hostname"]}>
+      <SettingsSection marginTop="0px" noTopSeparator>
+      <SettingsItem
+          title="Remote hostname"
+          subTitle={SettingDescriptions["remote_site_address"]}
+        >
+          <Input
+            value={newRemoteHost}
+            placeholder="my-site.com"
+            onChange={(e) => setNewRemoteHost(e.target.value)}
+          />
+        </SettingsItem>
+        <SettingsItem
+          title="Hostname"
+          subTitle={SettingDescriptions["hostname_frontend"]}
+        >
           <Input
             value={newName}
-            placeholder="my-site.com"
+            placeholder="my-site-redirected.com"
             onChange={(e) => setNewName(e.target.value)}
           />
         </SettingsItem>
@@ -140,7 +154,7 @@ const NewRemoteSiteSettings = () => {
         </SettingsItem>
       </SettingsSection>
 
-      <SettingsItem title="Hints" subTitle={SettingDescriptions["h2_hint"]}/>
+      <SettingsItem title="Hints" subTitle={SettingDescriptions["h2_hint"]} />
       <div
         style={{
           display: "flex",

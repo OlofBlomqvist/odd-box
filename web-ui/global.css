@@ -3,6 +3,29 @@
 @tailwind utilities;
 
 :root {
+  --background: 240 5% 6%;
+  --foreground: 60 5% 90%;
+  --primary: 240 0% 90%;
+  --primary-foreground: 60 0% 0%;
+  --secondary: 240 4% 15%;
+  --secondary-foreground: 60 5% 85%;
+  --accent: 240 0% 13%;
+  --accent-foreground: 60 0% 100%;
+  --destructive: 0 60% 50%;
+  --destructive-foreground: 0 0% 98%;
+  --muted: 240 5% 25%;
+  --muted-foreground: 60 5% 85%;
+  --card: 0 0% 12.2%;
+  --card-foreground: 60 5% 90%;
+  --popover: 240 5% 15%;
+  --popover-foreground: 60 5% 85%;
+  --border: 0, 0%, 100%, 0.04;
+  --input: 240 6% 20%;
+  --ring: 240 5% 90%;
+  --radius: 0.5rem;
+
+
+
   --bg-color: #242424;
   --color: var(--color4);
   --color1: #ed6a5a;
@@ -21,7 +44,7 @@
   --color7-5: #5da55e55;
   --color8: #bb6cde;
   --color8-5: #bb6cde55;
-  --border: 0,0%,100%,0.10;
+  --separator: 0,0%,100%,0.10;
 }
 
 /*
@@ -61,8 +84,8 @@ body {
 .inner-content {
   background-color: var(--bg-color);
   margin-bottom:180px;
-  padding-left: 20px;
-  padding-right: 20px;
+  padding-left: 0px;
+  padding-right: 0px;
   padding-top:60px;
   min-height: 100dvh;
   @media screen and (min-width: 800px) {
@@ -137,7 +160,7 @@ p, h1, h2, h3, h4, h5, h6 {
   .settings-item:not(.row-only) {
       align-items: stretch;
       flex-direction: column;
-
+      gap:10px;
   }
 }
 

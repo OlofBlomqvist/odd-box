@@ -54,7 +54,16 @@ const SitesListHeader = () => {
               className="button-dropdown-option"
               style={{ width: "100%", height: "36px" }}
             >
-              New site
+              New remote site
+            </button>
+            <button
+              onClick={() => {
+                router.navigate({ to: "/new-process" });
+              }}
+              className="button-dropdown-option"
+              style={{ width: "100%", height: "36px" }}
+            >
+              New hosted process
             </button>
 
             <button

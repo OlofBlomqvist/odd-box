@@ -1,5 +1,5 @@
 import "./style.css";
-import useLiveLog, { TLogMessage } from "../../hooks/use-live-log";
+import useLiveLog from "../../hooks/use-live-log";
 import { useState } from "react";
 import SettingsSection from "../settings/settings-section";
 import SettingsItem from "../settings/settings-item";
@@ -7,6 +7,8 @@ import useHostedSites from "../../hooks/use-hosted-sites";
 import { useRemoteSites } from "../../hooks/use-remote-sites";
 import { InProcessSiteConfig, RemoteSiteConfig } from "../../generated-api";
 import Checkbox from "@/components/checkbox/checkbox";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 const SiteLogs = ({
   hostedProcess,
@@ -21,16 +23,14 @@ const SiteLogs = ({
   const [selectedSite, setSelectedSite] = useState(
     hostedProcess?.host_name ?? remoteSite?.host_name ?? "all"
   );
-  const { messageHistory } = useLiveLog();
+  let { messageHistory } = useLiveLog();
   const [lvlFilter, setLvlFilter] = useState<Array<string>>([
     "info",
     "warn",
     "error",
   ]);
 
-  let filteredMessages: TLogMessage[] = [];
-
-  filteredMessages = messageHistory.filter(
+  const filteredMessages = messageHistory.filter(
     (x) =>
       x.msg !== "" &&
       (selectedSite === "all" || x.thread === selectedSite) &&
@@ -38,8 +38,24 @@ const SiteLogs = ({
   );
 
   return (
-    <div style={{ paddingBottom: "40px", maxWidth: "1000px" }}>
-      <SettingsSection noTopSeparator noBottomSeparator>
+
+    <Card>
+    <CardHeader>
+      <CardTitle>Logs</CardTitle>
+      <CardDescription>
+              Monitoring logs for{" "}
+              <span className="font-bold text-[var(--color2)]">{
+              selectedSite === "all" ? "all sites" : selectedSite === "system" ? "system messages" : selectedSite
+              }</span>
+            </CardDescription>
+    </CardHeader>
+    <CardContent>
+    <div>
+      <SettingsSection
+        marginTop={"0px"}
+        noTopSeparator
+        noBottomSeparator
+      >
         <SettingsItem
           title="Site"
           subTitle="Which site do you want to see messages from"
@@ -108,7 +124,7 @@ const SiteLogs = ({
         <p
           style={{
             fontSize: ".9rem",
-            color: "var(--color3)",
+            color: "var(--color4)",
             height: "40px",
             alignContent: "center",
             justifySelf: "center",
@@ -122,7 +138,7 @@ const SiteLogs = ({
         <p
           style={{
             fontSize: ".9rem",
-            color: "var(--color3)",
+            color: "var(--color4)",
             height: "40px",
             alignContent: "center",
             width: "70px",
@@ -134,7 +150,7 @@ const SiteLogs = ({
         <p
           style={{
             fontSize: ".9rem",
-            color: "var(--color3)",
+            color: "var(--color4)",
             height: "40px",
             alignContent: "center",
           }}
@@ -142,14 +158,7 @@ const SiteLogs = ({
           MESSAGE
         </p>
       </div>
-      <div
-        style={{
-          background: "#00000033",
-          border: "1px solid #ffffff44",
-          borderRadius: "5px",
-          minHeight: "50px",
-        }}
-      >
+      <Card className="min-h-[50px] bg-[#ffffff08]">
         {filteredMessages.map((x, i) => (
           <div className="log-row" key={`${x.timestamp}_${x.msg}`}>
             <div
@@ -165,24 +174,17 @@ const SiteLogs = ({
                 minWidth: "70px",
               }}
             >
-              <p
-                style={{
-                  background:
-                    x.lvl === "ERROR"
-                      ? "var(--color1)"
-                      : x.lvl === "WARN"
-                        ? "var(--color6)"
-                        : "#889fae",
-                  userSelect: "none",
-                  color: "white",
-                  padding: "4px 8px",
-                  borderRadius: "8px",
-                  textTransform: "uppercase",
-                  textAlign: "center",
-                }}
+              <Badge
+                variant={
+                  x.lvl === "ERROR"
+                    ? "destructive"
+                    : x.lvl === "WARN"
+                      ? "warning"
+                      : "default"
+                }
               >
                 {x.lvl}
-              </p>
+              </Badge>
             </div>
 
             <div
@@ -201,7 +203,6 @@ const SiteLogs = ({
             >
               <p
                 style={{
-                  padding: "4px 0px",
                   fontSize: ".9rem",
                   alignSelf: "start",
                   alignContent: "center",
@@ -226,7 +227,6 @@ const SiteLogs = ({
             >
               <p
                 style={{
-                  padding: "4px 0px",
                   fontSize: ".9rem",
                   alignSelf: "start",
                   overflow: "auto",
@@ -242,8 +242,13 @@ const SiteLogs = ({
             </div>
           </div>
         ))}
-      </div>
+      </Card>
     </div>
+    </CardContent>
+  </Card>
+
+
+    
   );
 };
 

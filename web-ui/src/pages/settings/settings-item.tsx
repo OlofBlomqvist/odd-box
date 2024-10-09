@@ -7,7 +7,7 @@ const SettingsItem = ({
   children,
   rowOnly,
   labelFor,
-  vertical
+  vertical,
 }: {
   vertical?: boolean;
   rowOnly?: boolean;
@@ -24,27 +24,26 @@ const SettingsItem = ({
   if (vertical) {
     classNames = ["flex align-items-stretch flex-col gap-1"];
   }
+
   return (
-    <div>
-      <div className={classNames.join(" ")}>
-        <div style={{ maxWidth: vertical ? "100%" : "400px" }}>
-          <label
-            htmlFor={labelFor}
-            style={{ fontWeight: "bold", fontSize: ".8rem", display: "block" }}
-          >
-            {title}
-          </label>
-          <label
-            htmlFor={labelFor}
-            style={{ fontSize: ".8rem", opacity: 0.6, display: "block" }}
-          >
-            {subTitle}
-            <br />
-            {defaultValue && `Default: ${defaultValue}`}
-          </label>
-        </div>
-        <div style={{ flexShrink: 0 }}>{children}</div>
+    <div className={classNames.join(" ")}>
+      <div style={{ maxWidth: vertical ? "100%" : "400px" }}>
+        <label
+          htmlFor={labelFor}
+          style={{ fontWeight: "bold", fontSize: ".8rem", display: "block" }}
+        >
+          {title}
+        </label>
+        <label
+          htmlFor={labelFor}
+          style={{ fontSize: ".8rem", opacity: 0.6, display: "block" }}
+        >
+          {subTitle}
+          <br />
+          {defaultValue && `Default: ${defaultValue}`}
+        </label>
       </div>
+      <div style={{ flexShrink: 0 }}>{children}</div>
     </div>
   );
 };
