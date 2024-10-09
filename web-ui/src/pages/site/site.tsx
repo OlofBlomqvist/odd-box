@@ -4,7 +4,6 @@ import SiteLogs from "./site-logs";
 import Tabs from "../../components/tabs/tabs";
 import useHostedSites from "../../hooks/use-hosted-sites";
 import { useRemoteSites } from "../../hooks/use-remote-sites";
-import { Card, CardContent } from "@/components/ui/card";
 import RemoteSiteSettings from "./remote-site-settings";
 import HostedProcessSettings from "./hosted-process-settings";
 
@@ -24,66 +23,41 @@ const SitePage = () => {
       params.siteName
   );
 
-  if (!thisHostedProcess && !thisRemoteSite) {
-    return <p>site not found</p>;
+  if (thisRemoteSite) {
+    return (
+      <RemoteSiteSettings
+        key={thisRemoteSite.host_name}
+        site={thisRemoteSite}
+      />
+    );
   }
 
-  const tabSections = [];
+  if (!thisHostedProcess) {
+    return <p>hosted process not found..</p>;
+  }
 
-  if (thisHostedProcess) {
-    tabSections.push({
+  const tabSections = [
+    {
       name: "Overview",
       content: <SiteOverview hostedProcess={thisHostedProcess} />,
-    });
-  }
-
-  if (thisRemoteSite) {
-    tabSections.push({
-      name: "Settings",
-      content: <RemoteSiteSettings site={thisRemoteSite} />,
-    });
-  } else if (thisHostedProcess) {
-    tabSections.push({
+    },
+    {
       name: "Settings",
       content: <HostedProcessSettings site={thisHostedProcess} />,
-    });
-  }
-
-  if (thisHostedProcess) {
-    tabSections.push({
-      name: "Log",
+    },
+    {
+      name: "Logs",
       content: (
         <main className="grid flex-1 items-start gap-4 sm:py-0 md:gap-8 max-w-[900px]">
-          <Card>
-            <CardContent>
-              <SiteLogs
-                hostedProcess={thisHostedProcess}
-                remoteSite={thisRemoteSite}
-              />
-            </CardContent>
-          </Card>
+          <SiteLogs hostedProcess={thisHostedProcess} />
         </main>
       ),
-    });
-  }
+    },
+  ];
 
   return (
     <div>
-      <p
-        style={{
-          textTransform: "uppercase",
-          fontSize: ".9rem",
-          fontWeight: "bold",
-          color: "var(--color2)",
-        }}
-        className="pl-[20px] md:pl-0"
-      >
-        {params.siteName}
-      </p>
-      <Tabs
-        key={thisHostedProcess?.host_name ?? thisRemoteSite?.host_name}
-        sections={tabSections}
-      />
+      <Tabs key={thisHostedProcess?.host_name} sections={tabSections} />
     </div>
   );
 };

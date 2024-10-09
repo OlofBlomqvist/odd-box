@@ -814,6 +814,10 @@ body {
   height: 1px;
 }
 
+.h-14 {
+  height: 3.5rem;
+}
+
 .max-h-\[300px\] {
   max-height: 300px;
 }
@@ -891,6 +895,22 @@ body {
   max-width: 32rem;
 }
 
+.max-w-2 {
+  max-width: 0.5rem;
+}
+
+.max-w-20 {
+  max-width: 5rem;
+}
+
+.max-w-40 {
+  max-width: 10rem;
+}
+
+.max-w-\[300px\] {
+  max-width: 300px;
+}
+
 .flex-1 {
   flex: 1 1 0%;
 }
@@ -923,6 +943,10 @@ body {
 
 .cursor-default {
   cursor: default;
+}
+
+.cursor-pointer {
+  cursor: pointer;
 }
 
 .select-none {
@@ -1370,6 +1394,11 @@ body {
   line-height: 1rem;
 }
 
+.text-xl {
+  font-size: 1.25rem;
+  line-height: 1.75rem;
+}
+
 .font-bold {
   font-weight: 700;
 }
@@ -1475,6 +1504,22 @@ body {
 
 .opacity-70 {
   opacity: 0.7;
+}
+
+.opacity-80 {
+  opacity: 0.8;
+}
+
+.opacity-20 {
+  opacity: 0.2;
+}
+
+.opacity-75 {
+  opacity: 0.75;
+}
+
+.opacity-90 {
+  opacity: 0.9;
 }
 
 .shadow-lg {
@@ -1944,6 +1989,11 @@ p, h1, h2, h3, h4, h5, h6 {
 
 .hover\:bg-secondary\/80:hover {
   background-color: hsl(var(--secondary) / 0.8);
+}
+
+.hover\:bg-white:hover {
+  --tw-bg-opacity: 1;
+  background-color: rgb(255 255 255 / var(--tw-bg-opacity));
 }
 
 .hover\:text-accent-foreground:hover {

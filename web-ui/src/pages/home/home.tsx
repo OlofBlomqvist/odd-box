@@ -150,7 +150,12 @@ const HomePage = () => {
                         (x) => x.hostname === hostedProcess.host_name
                       )?.state;
                       return (
-                        <TableRow key={hostedProcess.host_name}>
+                        <TableRow key={hostedProcess.host_name} className="hover:cursor-pointer" onClick={() => {
+                          router.navigate({
+                            to: `/site/${hostedProcess.host_name.replaceAll("http://", "").replaceAll("https://", "")}`,
+                            search: { tab: 1 },
+                          });
+                        }}>
                           <TableCell>
                             <div className="font-bold text-base">
                               {hostedProcess.host_name}

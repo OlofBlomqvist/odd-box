@@ -12,7 +12,7 @@ import SettingDescriptions from "@/lib/setting_descriptions";
 import { BackendSheet } from "@/components/sheet/backend_sheet/backend_sheet";
 import { BackendsTable } from "@/components/table/backends/backends";
 import { ConfirmationDialog } from "@/components/dialog/confirm/confirm";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 type BackendModalState = {
   show: boolean;
@@ -72,8 +72,16 @@ const RemoteSiteSettings = ({ site }: { site: RemoteSiteConfig }) => {
       }}
     >
       <Card className="mb-8">
+        
+      <CardHeader>
+            <CardTitle>Site details</CardTitle>
+            <CardDescription>
+              General configuration for{" "}
+              <span className="font-bold text-[var(--color2)]">{site.host_name}</span>
+            </CardDescription>
+          </CardHeader>
         <CardContent>
-        <SettingsSection noTopSeparator>
+        <SettingsSection marginTop="0px" noTopSeparator>
         <SettingsItem
           title="Hostname"
           subTitle={SettingDescriptions["hostname_frontend"]}

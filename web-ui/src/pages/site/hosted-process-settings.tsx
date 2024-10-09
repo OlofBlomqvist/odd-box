@@ -13,7 +13,7 @@ import SettingDescriptions from "@/lib/setting_descriptions";
 import { EnvVariablesTable } from "@/components/table/env_variables/env_variables";
 import { ArgumentsTable } from "@/components/table/arguments/arguments";
 import { ConfirmationDialog } from "@/components/dialog/confirm/confirm";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
   const { updateSite, deleteSite } = useSiteMutations();
@@ -54,8 +54,15 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
       }}
     >
       <Card className="mb-8">
+      <CardHeader>
+            <CardTitle>Settings</CardTitle>
+            <CardDescription>
+              Current configuration for{" "}
+              <span className="font-bold text-[var(--color2)]">{site.host_name}</span>
+            </CardDescription>
+          </CardHeader>
         <CardContent>
-          <SettingsSection noTopSeparator>
+          <SettingsSection marginTop="0px" noTopSeparator>
             <SettingsItem
               title="Hostname"
               subTitle={SettingDescriptions["hostname_frontend"]}

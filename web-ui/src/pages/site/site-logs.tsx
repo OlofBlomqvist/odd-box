@@ -7,15 +7,13 @@ import useHostedSites from "../../hooks/use-hosted-sites";
 import { useRemoteSites } from "../../hooks/use-remote-sites";
 import { InProcessSiteConfig, RemoteSiteConfig } from "../../generated-api";
 import Checkbox from "@/components/checkbox/checkbox";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 const SiteLogs = ({
   hostedProcess,
   remoteSite,
-  noTopMargin,
 }: {
-  noTopMargin?: boolean;
   hostedProcess?: InProcessSiteConfig;
   remoteSite?: RemoteSiteConfig;
 }) => {
@@ -40,9 +38,21 @@ const SiteLogs = ({
   );
 
   return (
+
+    <Card>
+    <CardHeader>
+      <CardTitle>Logs</CardTitle>
+      <CardDescription>
+              Monitoring logs for{" "}
+              <span className="font-bold text-[var(--color2)]">{
+              selectedSite === "all" ? "all sites" : selectedSite === "system" ? "system messages" : selectedSite
+              }</span>
+            </CardDescription>
+    </CardHeader>
+    <CardContent>
     <div>
       <SettingsSection
-        marginTop={noTopMargin ? "0px" : "20px"}
+        marginTop={"0px"}
         noTopSeparator
         noBottomSeparator
       >
@@ -234,6 +244,11 @@ const SiteLogs = ({
         ))}
       </Card>
     </div>
+    </CardContent>
+  </Card>
+
+
+    
   );
 };
 

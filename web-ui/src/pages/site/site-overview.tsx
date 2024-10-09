@@ -2,10 +2,7 @@ import "./style.css";
 import toast from "react-hot-toast";
 import useSiteStatus from "../../hooks/use-site-status";
 import useSiteMutations from "../../hooks/use-site-mutations";
-import {
-  BasicProcState,
-  InProcessSiteConfig,
-} from "../../generated-api";
+import { BasicProcState, InProcessSiteConfig } from "../../generated-api";
 import {
   Card,
   CardContent,
@@ -40,7 +37,9 @@ const SiteOverview = ({
             <CardTitle>Site details</CardTitle>
             <CardDescription>
               General information for{" "}
-              <span className="font-bold">{hostedProcess.host_name}</span>
+              <span className="font-bold text-[var(--color2)]">
+                {hostedProcess.host_name}
+              </span>
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -60,22 +59,32 @@ const SiteOverview = ({
         </Card>
 
         {/* TODO: THIS IS SOME DESIGN FOR METRICS, BUT WE DONT HAVE THIS THROUGH THE API YET. */}
-        {/* <Card className="p-5">
-            <h1 className="text-base font-bold mb-3 uppercase">Metrics</h1>
+        <Card>
+          <CardHeader>
+            <CardTitle>Metrics</CardTitle>
+            <CardDescription>
+              Metrics is not yet available for{" "}
+              <span className="font-bold text-[var(--color2)]">
+                {hostedProcess.host_name}
+              </span>
+            </CardDescription>
+          </CardHeader>
 
-            <div className="grid gap-4">
+          {/* <h1 className="text-base font-bold mb-3 uppercase">Metrics</h1>
+              <p>Metrics is not yet available for this site.</p> */}
+          {/* <div className="grid gap-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <div className="text-sm font-medium text-muted-foreground">
                     Requests
                   </div>
-                  <div className="text-4xl font-bold">12,345</div>
+                  <div className="text-4xl font-bold">n/a</div>
                 </div>
                 <div>
                   <div className="text-sm font-medium text-muted-foreground">
                     Errors
                   </div>
-                  <div className="text-4xl font-bold">23</div>
+                  <div className="text-4xl font-bold">n/a</div>
                 </div>
               </div>
 
@@ -84,23 +93,29 @@ const SiteOverview = ({
                   <div className="text-sm font-medium text-muted-foreground">
                     Bandwidth
                   </div>
-                  <div className="text-4xl font-bold">2,3 GB</div>
+                  <div className="text-4xl font-bold">n/a</div>
                 </div>
                 <div>
                   <div className="text-sm font-medium text-muted-foreground">
                     Response Time
                   </div>
-                  <div className="text-4xl font-bold">125 ms</div>
+                  <div className="text-4xl font-bold">n/a</div>
                 </div>
               </div>
-            </div>
-          </Card> */}
+            </div> */}
+        </Card>
       </div>
 
       <div className="flex flex-col gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>Current status</CardTitle>
+            <CardTitle>Status</CardTitle>
+            <CardDescription>
+              Current status for{" "}
+              <span className="font-bold text-[var(--color2)]">
+                {hostedProcess?.host_name}
+              </span>
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <Badge
@@ -119,11 +134,12 @@ const SiteOverview = ({
             <CardTitle>Actions</CardTitle>
             <CardDescription>
               Available actions for{" "}
-              <span className="font-bold">{hostedProcess?.host_name}</span>
+              <span className="font-bold text-[var(--color2)]">
+                {hostedProcess?.host_name}
+              </span>
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {/* <h1 className="text-base font-bold uppercase">Actions</h1> */}
             <div className="flex flex-col gap-2">
               <Button
                 disabled={
