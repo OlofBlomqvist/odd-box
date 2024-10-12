@@ -1,12 +1,10 @@
-use futures::{stream, AsyncBufReadExt};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 use std::io::{Error, ErrorKind};
-use futures::stream::StreamExt;
 use super::{h2_parser, h1_parser};
 
 
@@ -96,7 +94,7 @@ impl Peekable for ManagedStream<TlsStream<TcpStream>>  {
         let result = poll_fn(|cx| {
             let pin_stream = Pin::new(&mut self.stream);
             let result = match pin_stream.poll_read(cx, &mut temp_buf) {
-                Poll::Ready(Ok(n)) => Poll::Ready(Ok(1)),
+                Poll::Ready(Ok(_n)) => Poll::Ready(Ok(1)),
                 Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
                 // we dont want to keep waiting here if the underlying stream has no more bytes for us right now.
                 Poll::Pending => Poll::Ready(Ok(-1))

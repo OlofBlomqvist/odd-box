@@ -1,10 +1,6 @@
 use chrono::Local;
 use hyper::Version;
 use hyper_rustls::ConfigBuilderExt;
-use rustls::ClientConnection;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_rustls::client::TlsStream;
-use tokio_stream::StreamExt;
 use std::net::IpAddr;
 use std::time::Duration;
 use std::{
@@ -20,7 +16,7 @@ use tokio::net::TcpStream;
 use tracing::*;
 
 use super::h2_parser;
-use super::managed_stream::{self, ManagedStream, Peekable};
+use super::managed_stream::Peekable;
 
 
 /// Non-terminating reverse proxy service for HTTP and HTTPS.
@@ -264,7 +260,7 @@ impl ReverseTcpProxy {
         tracing::trace!("tcp tunneling to target: {resolved_target_address} (tls: {incoming_traffic_is_tls})");
         
         match TcpStream::connect(resolved_target_address.clone()).await {
-            Ok(mut rem_stream) => {
+            Ok(rem_stream) => {
 
                 if let Ok(target_addr_socket) = rem_stream.peer_addr() {
                     
