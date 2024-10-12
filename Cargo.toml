@@ -1,7 +1,7 @@
 [package]
 name = "odd-box"
 description = "dead simple reverse proxy server"
-version = "0.1.5"
+version = "0.1.7-preview3"
 edition = "2021"
 authors = ["Olof Blomqvist <olof@twnet.se>"]
 repository = "https://github.com/OlofBlomqvist/odd-box"
@@ -16,6 +16,7 @@ utoipa-swagger-ui = { version = "7.1.0", features = ["axum","vendored"] }
 utoipa-rapidoc = { version = "4.0.0", features = ["axum"] }
 utoipa-redoc = { version = "4.0.0", features = ["axum"] }
 utoipauto = "0.1.10"
+tower = "0.4.4"
 tower-http = { version = "0.5.2" , features = ["fs","cors","trace"]}
 axum-extra = { version = "0.9.3", features = ["typed-header"] }
 # ===============================================================
@@ -73,6 +74,8 @@ httparse = "1.9.4"
 pin-project = "1.1.5"
 futures = "0.3.30"
 hpack = "0.3.0"
+include_dir = "0.7.4"
+mime_guess = "2.0.5"
 #rsa = "0.9.6"
 # ===============================================================
 

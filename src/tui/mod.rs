@@ -14,7 +14,7 @@ use crate::global_state::GlobalState;
 use crate::logging::SharedLogBuffer;
 use crate::logging::LogMsg;
 use crate::types::app_state::*;
-use crate::types::tui_state::{Page, TuiState};
+use crate::types::tui_state::{Page, TuiSiteWindowState, TuiState};
 use std::sync::{Arc, Mutex};
 use crate::http_proxy::ProcMessage;
 
@@ -165,8 +165,8 @@ pub async fn run(
             
                 if let Ok(true) = event::poll(std::time::Duration::from_millis(100)) {
                     
-                    let (current_page,sites_open) = {
-                        (tui_state.current_page.clone(),tui_state.show_apps_window)
+                    let (current_page,site_list_state) = {
+                        (tui_state.current_page.clone(),tui_state.app_window_state.clone())
                     };
                     
                     let evt = event::read()?;
@@ -205,7 +205,7 @@ pub async fn run(
                         },
                         Event::Mouse(mouse) => {
                                 
-                                if sites_open {
+                                if TuiSiteWindowState::Hide != site_list_state  {
                                     match mouse.kind {
                                         event::MouseEventKind::Moved => {
                                             tui_state.sites_handle_mouse_hover(mouse.column,mouse.row);
@@ -496,7 +496,7 @@ pub async fn run(
                                         tx.clone().send(ProcMessage::StartAll).expect("must always be able to send internal messages");
                                     }    
                                     KeyCode::Char('a') => {
-                                        tui_state.show_apps_window = !tui_state.show_apps_window;
+                                        tui_state.app_window_state = tui_state.app_window_state.next()
                                     }                                  
                                     
                                     _ => {
@@ -583,19 +583,36 @@ fn draw_ui<B: ratatui::backend::Backend>(
 
     let help_bar_height = 3 as u16;
 
-    let constraints = if tui_state.show_apps_window {
+    let constraints = if size.height < 15 {
         vec![
-            Constraint::Percentage(70), // MAIN SECTION
-            Constraint::Min(0),  // SITES SECTION
+            Constraint::Min(1), // MAIN SECTION
+            Constraint::Max(0),  
             Constraint::Length(help_bar_height), // QUICK BAR
         ]
     } else {
-        vec![
-            Constraint::Min(1),  // MAIN SECTION
-            Constraint::Max(0),
-            Constraint::Length(help_bar_height),  // QUICK BAR
-        ]
-    };
+        match tui_state.app_window_state{
+            TuiSiteWindowState::Hide => vec![
+                Constraint::Percentage(100),
+                Constraint::Max(0),  
+                Constraint::Length(help_bar_height),
+            ],
+            TuiSiteWindowState::Small => vec![
+                Constraint::Percentage(70),
+                Constraint::Min(5),  
+                Constraint::Length(help_bar_height), 
+            ],
+            TuiSiteWindowState::Medium => vec![
+                Constraint::Percentage(60),
+                Constraint::Min(5),  
+                Constraint::Length(help_bar_height),
+            ],
+            TuiSiteWindowState::Large => vec![
+                Constraint::Percentage(50),
+                Constraint::Min(5),  
+                Constraint::Length(help_bar_height),
+            ]
+        }
+};
 
     let vertical = Layout::vertical(constraints);
     let [top_area, mid_area, bot_area] = vertical.areas(size);
@@ -676,7 +693,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
     // render the tab bar on top of the tab content
     f.render_widget(tabs.bg(app_bg), main_area[0].inner(Margin { horizontal: 2, vertical: 0 }));
 
-    if tui_state.show_apps_window {
+    if size.height >= 15 && TuiSiteWindowState::Hide != tui_state.app_window_state {
 
         let sites_area_height = mid_area.height.saturating_sub(2);
         if sites_area_height == 0 {

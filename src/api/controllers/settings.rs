@@ -102,7 +102,7 @@ pub struct SaveGlobalConfig{
     operation_id="settings",
     get,
     tag = "Settings",
-    path = "/settings",
+    path = "/api/settings",
     responses(
         (status = 200, description = "Successful Response", body = OddBoxConfigGlobalPart),
         (status = 500, description = "When something goes wrong", body = String),
@@ -145,7 +145,7 @@ pub async fn get_settings_handler(
     operation_id="save-settings",
     post,
     tag = "Settings",
-    path = "/settings",
+    path = "/api/settings",
     request_body = SaveGlobalConfig,
     responses(
         (status = 200, description = "Successful Response"),

@@ -8,11 +8,29 @@ use crate::{http_proxy::ProcMessage, tui::scroll_state_wrapper::ScrollStateWrapp
 use super::app_state::ProcState;
 
 
+#[derive(Debug,Eq,PartialEq,Clone)]
+pub enum TuiSiteWindowState {
+    Hide,
+    Small,
+    Medium,
+    Large
+}
+impl TuiSiteWindowState {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Hide => Self::Small,
+            Self::Small => Self::Medium,
+            Self::Medium => Self::Large,
+            Self::Large => Self::Hide
+        }
+    }
+}
+
 
 #[derive(Debug)]
 pub struct TuiState {
     pub site_rects: Vec<(Rect,String)>,
-    pub show_apps_window : bool,
+    pub app_window_state : TuiSiteWindowState,
     pub currently_hovered_site: Option<String>,    
     pub current_page : Page,
     pub connections_tab_state: ConnectionsTabState,
@@ -27,7 +45,7 @@ impl TuiState {
             current_page: Page::Logs,
             currently_hovered_site: None,
             site_rects: Vec::new(),   
-            show_apps_window : true,
+            app_window_state : TuiSiteWindowState::Small,
             connections_tab_state: {
                 let mut s = ConnectionsTabState::default();
                 s.scroll_state.vertical_scroll = Some(0);

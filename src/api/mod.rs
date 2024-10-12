@@ -1,8 +1,8 @@
 use std::{net::SocketAddr, sync::Arc};
-use axum::{body::Body, extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::{Html, IntoResponse, Response}, Router};
+use axum::{body::Body, extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::{IntoResponse, Response}, routing::get, Router};
 use futures_util::{SinkExt, StreamExt};
-
 use hyper::StatusCode;
+use include_dir::Dir;
 use tower_http::cors::{Any, CorsLayer};
 use utoipa::{openapi::ExternalDocs, Modify, OpenApi};
 use utoipa_rapidoc::RapiDoc;
@@ -94,17 +94,20 @@ pub async fn run(globally_shared_state: Arc<crate::global_state::GlobalState>,po
         .merge(Redoc::with_url("/redoc", ApiDoc::openapi()))
         .merge(RapiDoc::new("/api-docs/openapi.json").path("/rapidoc"))
         
-            // API ROUTES
+        // API ROUTES
         .merge(crate::api::controllers::routes(globally_shared_state.clone()).await)
 
-        .route("/", axum::routing::get(root))
-        .route("/script.js", axum::routing::get(script))
+        // STATIC FILES
+        //.route("/", axum::routing::get(root))
+        //.route("/script.js", axum::routing::get(script))
 
-        
         // WEBSOCKET ROUTE FOR LOGS
         .route("/ws/live_logs", axum::routing::get( move|ws,user_agent,origin,addr,state|
-            ws_log_messages_handler(ws,user_agent,origin,addr,state, cors_env_var_cloned_for_ws)).with_state(websocket_state.clone()));
+            ws_log_messages_handler(ws,user_agent,origin,addr,state, cors_env_var_cloned_for_ws)).with_state(websocket_state.clone()))
 
+        // STATIC FILES FOR WEB-UI
+        .route("/", get(|| async { serve_static_file(axum::extract::Path("index.html".to_string())).await }))
+        .route("/*file", get(serve_static_file));
 
     // in some cases one might want to allow CORS from a specific origin. this is not currently allowed to do from the config file
     // so we use an environment variable to set this. might change in the future if it becomes a common use case
@@ -126,18 +129,33 @@ pub async fn run(globally_shared_state: Arc<crate::global_state::GlobalState>,po
 }
 
 // Define the handler function for the root path
-async fn root() -> impl IntoResponse {
-    Html(include_str!("../../static/index.html"))
-}
+// async fn root() -> impl IntoResponse {
+//     Html(include_str!("../../static/index.html"))
+// }
 
-// Define the handler function for the JavaScript file
-async fn script() -> impl IntoResponse {
-    const JS_CONTENT: &str = include_str!("../../static/script.js");
-
-    axum::response::Response::builder()
-        .header(hyper::header::CONTENT_TYPE, "application/javascript")
-        .body::<String>(JS_CONTENT.into())
-        .expect("must be able to create response")
+static WEBUI_DIR: Dir = include_dir::include_dir!("web-ui/dist");
+async fn serve_static_file(axum::extract::Path(file): axum::extract::Path<String>) -> impl IntoResponse {
+    let file = if file.contains(".") {
+        file
+    } else {
+        "index.html".to_string()
+    };
+    match WEBUI_DIR.get_file(&file) {
+        Some(file) => {
+            let mime = mime_guess::from_path(&file.path()).first_or_octet_stream();
+            let body = file.contents();
+            axum::response::Response::builder()
+                .header(hyper::header::CONTENT_TYPE, mime.as_ref())
+                .body(body.into())
+                .expect("must be able to create response")
+        }
+        None =>  
+            Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::from(format!("404 - File not found; these exist: {}.. you looked for : {file}", WEBUI_DIR.files()
+                    .map(|f| f.path().to_str().unwrap()).collect::<Vec<_>>().join(", "))))
+                .expect("must be able to create response")
+    }
 }
 
 /// Simple websocket interface for log messages.
@@ -167,8 +185,8 @@ async fn ws_log_messages_handler(
 
             let lower_cased_orgin_from_client = origin_header.to_string().to_lowercase();
 
-            if lower_cased_orgin_from_client == "*" {
-                tracing::trace!("Client origin is '*', allowing connection");
+            if cors_env_var == Some("*".to_string()) {
+                tracing::trace!("CORS variable is '*', allowing connection from host: {lower_cased_orgin_from_client}");
             } else if let Some(lower_cased_cors_var) = cors_env_var {
                 
                 if &lower_cased_orgin_from_client != &lower_cased_cors_var {

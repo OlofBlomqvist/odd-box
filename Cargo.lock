@@ -1606,6 +1606,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "include_dir"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "923d117408f1e49d914f1a379a309cffe4f18c05cf4e3d12e613a15fc81bd0dd"
+dependencies = [
+ "include_dir_macros",
+]
+
+[[package]]
+name = "include_dir_macros"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cab85a7ed0bd5f0e76d93846e0147172bed2e2d3f859bcc33a8d9699cad1a75"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2000,7 +2019,7 @@ dependencies = [
 
 [[package]]
 name = "odd-box"
-version = "0.1.5"
+version = "0.1.7-preview3"
 dependencies = [
  "anyhow",
  "axum",
@@ -2025,8 +2044,10 @@ dependencies = [
  "hyper-rustls",
  "hyper-tungstenite",
  "hyper-util",
+ "include_dir",
  "lazy_static",
  "memchr",
+ "mime_guess",
  "p256",
  "pin-project",
  "ratatui",
@@ -2049,6 +2070,7 @@ dependencies = [
  "tokio-stream",
  "tokio-tungstenite 0.23.1",
  "toml",
+ "tower",
  "tower-http",
  "tracing",
  "tracing-subscriber",

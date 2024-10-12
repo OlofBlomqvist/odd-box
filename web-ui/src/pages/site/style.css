@@ -1,0 +1,33 @@
+.info-grid {
+    display:grid;
+    grid-auto-flow:row;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 14px;
+    margin-top:14px;
+}
+
+.info-item {
+    background: #ffffff10;
+    /* color: black; */
+    padding:10px;
+    border-radius: 10px;
+    position: relative;
+    border: 1px solid #ffffff33;
+}
+
+.button-dropdown-option {
+    border:0;
+    outline:0;
+    background:transparent;
+}
+
+.log-row {
+    display:flex;
+    padding: 10px;
+    cursor: pointer;
+    column-gap: 10px;
+}
+
+.log-row:hover {
+    background: #ffffff10;
+}

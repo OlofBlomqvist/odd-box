@@ -72,7 +72,7 @@ pub struct StatusItem {
     operation_id="list",
     get,
     tag = "Site management",
-    path = "/sites",
+    path = "/api/sites",
     responses(
         (status = 200, description = "Successful Response", body = ListResponse),
         (status = 500, description = "When something goes wrong", body = String),
@@ -97,7 +97,7 @@ pub async fn list_handler(state: axum::extract::State<Arc<GlobalState>>) -> axum
     operation_id="status",
     get,
     tag = "Site management",
-    path = "/sites/status",
+    path = "/api/sites/status",
     responses(
         (status = 200, description = "Successful Response", body = StatusResponse),
         (status = 500, description = "When something goes wrong", body = String),
@@ -152,7 +152,7 @@ pub struct UpdateQuery {
     params(
         UpdateQuery
     ),
-    path = "/sites",
+    path = "/api/sites",
     responses(
         (status = 200, description = "Successful Response", body = ()),
         (status = 500, description = "When something goes wrong", body = String),
@@ -214,7 +214,7 @@ pub struct DeleteQueryParams {
     delete,
     tag = "Site management",
     params(DeleteQueryParams),
-    path = "/sites",
+    path = "/api/sites",
     responses(
         (status = 200, description = "Successful Response"),
         (status = 500, description = "When something goes wrong", body = String),
@@ -303,7 +303,7 @@ pub struct StopQueryParams {
     put,
     tag = "Site management",
     params(StopQueryParams),
-    path = "/sites/stop",
+    path = "/api/sites/stop",
     responses(
         (status = 200, description = "Successful Response"),
         (status = 500, description = "When something goes wrong", body = String),
@@ -344,7 +344,7 @@ pub struct StartQueryParams {
     put,
     tag = "Site management",
     params(StartQueryParams),
-    path = "/sites/start",
+    path = "/api/sites/start",
     responses(
         (status = 200, description = "Successful Response"),
         (status = 500, description = "When something goes wrong", body = String),
