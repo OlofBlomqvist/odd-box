@@ -1,5 +1,5 @@
 use std::{net::SocketAddr, sync::Arc};
-use axum::{body::Body, extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::{Html, IntoResponse, Response}, routing::{get, MethodRouter}, Router, ServiceExt};
+use axum::{body::Body, extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::{IntoResponse, Response}, routing::get, Router};
 use futures_util::{SinkExt, StreamExt};
 use hyper::StatusCode;
 use include_dir::Dir;
@@ -157,17 +157,6 @@ async fn serve_static_file(axum::extract::Path(file): axum::extract::Path<String
                 .expect("must be able to create response")
     }
 }
-
-// Define the handler function for the JavaScript file
-async fn script() -> impl IntoResponse {
-    const JS_CONTENT: &str = include_str!("../../static/script.js");
-
-    axum::response::Response::builder()
-        .header(hyper::header::CONTENT_TYPE, "application/javascript")
-        .body::<String>(JS_CONTENT.into())
-        .expect("must be able to create response")
-}
-
 
 /// Simple websocket interface for log messages.
 /// Warning: The format of messages emitted is not guaranteed to be stable.
