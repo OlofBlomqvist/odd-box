@@ -2069,6 +2069,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-stream",
  "tokio-tungstenite 0.23.1",
+ "tokio-util",
  "toml",
  "tower",
  "tower-http",

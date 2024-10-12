@@ -7,3 +7,4 @@ odd-box.toml
 **/.DS_Store
 web-ui/.env.development
 web-ui/.env.production
+odd-box.toml.backup

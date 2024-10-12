@@ -10,6 +10,7 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 use tokio::net::TcpStream;
 use tokio::sync::Notify;
+use tokio::sync::RwLock;
 use tokio_rustls::TlsAcceptor;
 use crate::configuration::ConfigWrapper;
 use crate::global_state::GlobalState;
@@ -23,82 +24,162 @@ use crate::tcp_proxy::Peekable;
 use crate::types::app_state;
 
 
+use tokio_util::sync::CancellationToken;
+use tokio::task::JoinHandle;
+
 pub async fn listen(
-    _cfg: std::sync::Arc<tokio::sync::RwLock<ConfigWrapper>>, 
-    bind_addr: SocketAddr,
-    bind_addr_tls: SocketAddr, 
-    tx: std::sync::Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
+    cfg: Arc<RwLock<ConfigWrapper>>, 
+    initial_bind_addr: SocketAddr,
+    initial_bind_addr_tls: SocketAddr, 
+    tx: Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
     state: Arc<GlobalState>,
-    shutdown_signal: Arc<Notify>
-)  {
-
+    shutdown_signal: Arc<Notify>,
+) {
     
-    let client_tls_config = tokio_rustls::rustls::ClientConfig::builder_with_protocol_versions(tokio_rustls::rustls::ALL_VERSIONS)
-        // todo - add support for accepting self-signed certificates etc
-        // .dangerous()
-        // .with_custom_certificate_verifier(verifier)
+    let mut previous_bind_addr = initial_bind_addr;
+    let mut previous_bind_addr_tls = initial_bind_addr_tls;
+
+    let mut http_cancel_token: Option<CancellationToken> = None;
+    let mut https_cancel_token: Option<CancellationToken> = None;
+
+    let mut http_task : Option<JoinHandle<()>> = None;
+    let mut https_task : Option<JoinHandle<()>> = None;
+
+    loop {
         
-        .with_native_roots()
-        .expect("must be able to create tls configuration")
-        .with_no_client_auth();
+        // Read the current configuration
+        let (current_bind_addr, current_bind_addr_tls) = {
 
-        
-        
+            let config_read = cfg.read().await;
 
-    let https_builder =
-        hyper_rustls::HttpsConnectorBuilder::default().with_tls_config(client_tls_config);
-    
-    let connector: hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector> = 
-        https_builder.https_or_http().enable_all_versions().build();
-    
-    let executor = hyper_util::rt::TokioExecutor::new();
-    
-    
-    let client : hyper_util::client::legacy::Client<hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>, hyper::body::Incoming>  = 
-        hyper_util::client::legacy::Builder::new(executor.clone())
-        .http2_only(false)
-        .build(connector.clone());
+            let srv_ip = config_read.ip.clone().unwrap_or(initial_bind_addr.ip());
 
-    let h2_client : hyper_util::client::legacy::Client<hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>, hyper::body::Incoming>  = 
-        hyper_util::client::legacy::Builder::new(executor)
-        .http2_only(true)
-        .build(connector);
+            let srv_port: u16 = config_read.http_port.unwrap_or(previous_bind_addr.port());
+            let srv_tls_port: u16 = config_read.tls_port.unwrap_or(previous_bind_addr_tls.port());
 
+            let http_bind_addr = SocketAddr::new(srv_ip, srv_port);
+            let https_bind_addr = SocketAddr::new(srv_ip, srv_tls_port);
 
-    let terminating_proxy_service = ReverseProxyService { 
-        resolved_target: None,
-        state:state.clone(), 
-        remote_addr: None, 
-        tx:tx.clone(), 
-        is_https_only:false,
-        client,
-        h2_client
-    };
+            (http_bind_addr, https_bind_addr)
+        };
 
-     tokio::join!(
+        // Check if the bind addresses have changed or if this is the first iteration
+        if http_task.is_none() || https_task.is_none() || previous_bind_addr != current_bind_addr || previous_bind_addr_tls != current_bind_addr_tls {
 
+            // Addresses have changed; need to restart the listeners
+            if let Some(token) = http_cancel_token.take() {
+                tracing::info!("http port has changed from {} to {}, shutting down http listener..",previous_bind_addr.port(),current_bind_addr.port());
+                token.cancel(); 
+                if let Some(http_task) = http_task.take() {
+                    tracing::info!("waiting for http task to finish..");
+                    http_task.await.expect("http task failed");
+                    
+                    tracing::info!("http task finished.");
+                }
+                
+            }         
 
-        listen_http(
-            bind_addr.clone(),
-            tx.clone(),
-            state.clone(),
-            terminating_proxy_service.clone(),    
-            shutdown_signal.clone()
-        ),
+            if let Some(token) = https_cancel_token.take() {
+                tracing::info!("https port has changed from {} to {}, shutting down http listener..",previous_bind_addr_tls.port(),current_bind_addr_tls.port());
+                token.cancel();
+                if let Some(https_task) = https_task.take() {
+                    tracing::info!("waiting for https task to finish..");
+                    https_task.await.expect("http task failed");
+                    tracing::info!("https task finished.");
+                }
+            }
 
-        listen_https(
-            bind_addr_tls.clone(),
-            tx.clone(),
-            state.clone(),
-            terminating_proxy_service.clone(),  
-            shutdown_signal.clone()
-        ),
-        
-    );
+            
 
+            let client_tls_config = tokio_rustls::rustls::ClientConfig::builder_with_protocol_versions(tokio_rustls::rustls::ALL_VERSIONS)
+            // todo - add support for accepting self-signed certificates etc
+            // .dangerous()
+            // .with_custom_certificate_verifier(verifier)
+            
+            .with_native_roots()
+            .expect("must be able to create tls configuration")
+            .with_no_client_auth();
 
-    
-} 
+            let https_builder = hyper_rustls::HttpsConnectorBuilder::new()
+                .with_tls_config(client_tls_config);
+            
+            let connector: hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector> = 
+                https_builder.https_or_http().enable_all_versions().build();
+
+            let executor = hyper_util::rt::TokioExecutor::new();
+
+            let client = hyper_util::client::legacy::Client::builder(executor.clone())
+                .http2_only(false)
+                .build(connector.clone());
+
+            let h2_client = hyper_util::client::legacy::Client::builder(executor)
+                .http2_only(true)
+                .build(connector);
+
+            let terminating_proxy_service = ReverseProxyService { 
+                resolved_target: None,
+                state: state.clone(), 
+                remote_addr: None, 
+                tx: tx.clone(), 
+                is_https_only: false,
+                client,
+                h2_client,
+            };
+
+            let new_http_cancel_token = CancellationToken::new();
+            let new_https_cancel_token = CancellationToken::new();
+
+            // Start new listeners with the new bind addresses
+            let http_future = listen_http(
+                current_bind_addr,
+                tx.clone(),
+                state.clone(),
+                terminating_proxy_service.clone(),
+                shutdown_signal.clone(),
+                new_http_cancel_token.clone(),
+            );
+
+            let https_future = listen_https(
+                current_bind_addr_tls,
+                tx.clone(),
+                state.clone(),
+                terminating_proxy_service.clone(),
+                shutdown_signal.clone(),
+                new_https_cancel_token.clone(),
+            );
+
+            let cloned_ct = new_http_cancel_token.clone();
+            http_task = Some(tokio::spawn(async move {
+                tokio::select! {
+                    _ = http_future => {},
+                    _ = cloned_ct.cancelled() => {
+                        tracing::warn!("http listener cancelled");
+                    },
+                }
+            }));
+
+            let cloned_ct2 = new_https_cancel_token.clone();
+            https_task = Some(tokio::spawn(async move {
+                tokio::select! {
+                    _ = https_future => {},
+                    _ = cloned_ct2.cancelled() => {
+                        tracing::warn!("https listener cancelled");
+                    },
+                }
+            }));
+
+            http_cancel_token = Some(new_http_cancel_token.clone());
+            https_cancel_token = Some(new_https_cancel_token);
+
+            previous_bind_addr = current_bind_addr;
+            previous_bind_addr_tls = current_bind_addr_tls;
+            
+        }
+
+        // Sleep for a while before checking again
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+}
 
 lazy_static! {
     static ref ACTIVE_TCP_CONNECTIONS_SEMAPHORE : tokio::sync::Semaphore = tokio::sync::Semaphore::new(200);
@@ -109,7 +190,8 @@ async fn listen_http(
     tx: std::sync::Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
     state: Arc<GlobalState>,
     terminating_service_template: ReverseProxyService,
-    _shutdown_signal: Arc<Notify> 
+    _shutdown_signal: Arc<Notify> ,
+    cancel_token: CancellationToken,
 ) {
     
     use socket2::{Domain,Type};
@@ -134,6 +216,11 @@ async fn listen_http(
     
     loop {
 
+        if cancel_token.is_cancelled() {
+            tracing::warn!("exiting http server loop due to receiving cancel signal.");
+            break;
+        }
+
         if state.app_state.exit.load(std::sync::atomic::Ordering::SeqCst) {
             tracing::debug!("exiting http server loop due to receiving shutdown signal.");
             break;
@@ -146,31 +233,38 @@ async fn listen_http(
             break
         };
 
-
-
-        match tokio_listener.accept().await {
-            Ok((tcp_stream,source_addr)) => {
-               
-                tracing::trace!("accepted connection! current active: {}", 200-ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
-                let mut service: ReverseProxyService = terminating_service_template.clone();
-                service.remote_addr = Some(source_addr);   
-                let tx = tx.clone();
-                let state = state.clone();
-                tokio::spawn(async move {                   
-                    let _moved_permit = permit;          
-                    handle_new_tcp_stream(None,service, tcp_stream, source_addr, false,tx.clone(),state.clone())
-                        .await;
-                });
-                
-
+        //tracing::info!("accepting http connection..");
+        tokio::select! {
+            _ = cancel_token.cancelled() => {
+                tracing::info!("Cancellation token triggered, shutting down HTTP listener.");
+                break;
             }
-            Err(e) => {
-                tracing::warn!("error accepting tcp connection: {:?}", e);
-                //break;
+            x = tokio_listener.accept() => {
+                match x {
+                    Ok((tcp_stream,source_addr)) => {
+                    
+                        tracing::trace!("Accepted connection! current active: {}", 200-ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
+                        let mut service: ReverseProxyService = terminating_service_template.clone();
+                        service.remote_addr = Some(source_addr);   
+                        let tx = tx.clone();
+                        let state = state.clone();
+                        tokio::spawn(async move {                   
+                            let _moved_permit = permit;          
+                            handle_new_tcp_stream(None,service, tcp_stream, source_addr, false,tx.clone(),state.clone())
+                                .await;
+                        });
+                        
+
+                    }
+                    Err(e) => {
+                        tracing::warn!("error accepting tcp connection: {:?}", e);
+                        //break;
+                    }
+                }
             }
-        }
-       
+        }       
     }
+    tracing::warn!("listen_http went bye bye.")
 
 }
 
@@ -180,7 +274,8 @@ async fn listen_https(
     tx: std::sync::Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
     state: Arc<GlobalState>,
     terminating_service_template: ReverseProxyService,
-    _shutdown_signal: Arc<Notify>
+    _shutdown_signal: Arc<Notify>,
+    cancel_token: CancellationToken,
 ) {
 
     use socket2::{Domain,Type};
@@ -214,6 +309,11 @@ async fn listen_https(
 
     loop {
 
+        if cancel_token.is_cancelled() {
+            tracing::warn!("exiting https server loop due to receiving cancel signal.");
+            break;
+        }
+
         if state.app_state.exit.load(std::sync::atomic::Ordering::SeqCst) {
             tracing::debug!("exiting http server loop due to receiving shutdown signal.");
             break;
@@ -226,31 +326,40 @@ async fn listen_https(
             break
         };
 
+        //tracing::info!("accepting https connection..");
 
-        match tokio_listener.accept().await {
-            Ok((tcp_stream,source_addr)) => {
-               
-                tracing::trace!("accepted connection! current active: {}", 200-ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
-                let mut service: ReverseProxyService = terminating_service_template.clone();
-                service.remote_addr = Some(source_addr);  
-                let tx = tx.clone();
-                let arced_tls_config = Some(arced_tls_config.clone());
-                let state = state.clone();
-                tokio::spawn(async move {      
-                    let _moved_permit = permit;             
-                    handle_new_tcp_stream(arced_tls_config,service, tcp_stream, source_addr, true,tx.clone(),state.clone())
-                        .await;
-                });
-                
-
+        tokio::select! {
+            _ = cancel_token.cancelled() => {
+                tracing::info!("Cancellation token triggered, shutting down HTTPS listener.");
+                break;
             }
-            Err(e) => {
-                tracing::warn!("error accepting tcp connection: {:?}", e);
-                //break;
+            x = tokio_listener.accept() => {
+                match x {
+                    Ok((tcp_stream,source_addr)) => {
+                    
+                        tracing::trace!("accepted connection! current active: {}", 200-ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
+                        let mut service: ReverseProxyService = terminating_service_template.clone();
+                        service.remote_addr = Some(source_addr);  
+                        let tx = tx.clone();
+                        let arced_tls_config = Some(arced_tls_config.clone());
+                        let state = state.clone();
+                        tokio::spawn(async move {      
+                            let _moved_permit = permit;             
+                            handle_new_tcp_stream(arced_tls_config,service, tcp_stream, source_addr, true,tx.clone(),state.clone())
+                                .await;
+                        });
+                        
+
+                    }
+                    Err(e) => {
+                        tracing::warn!("error accepting tcp connection: {:?}", e);
+                        //break;
+                    }
+                }
             }
         }
-       
     }
+    
     tracing::warn!("listen_https went bye bye.")
 }
 
