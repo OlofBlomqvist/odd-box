@@ -1,6 +1,6 @@
 {
 	"name": "RustOddBoxContainer",
-	"image": "mcr.microsoft.com/devcontainers/rust:1-1-bullseye",
+	"image": "mcr.microsoft.com/devcontainers/rust:dev-bookworm",
 	"features": {
 	  "ghcr.io/lee-orr/rusty-dev-containers/cargo-watch:0": {},
 	  "ghcr.io/devcontainers/features/node:1": {
