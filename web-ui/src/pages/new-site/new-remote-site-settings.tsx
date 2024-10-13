@@ -26,10 +26,10 @@ const NewRemoteSiteSettings = () => {
     }
     updateRemoteSite.mutateAsync({
       siteSettings: {
-        host_name: newRemoteHost,
+        host_name: newName,
         backends: [
           {
-            address: newName,
+            address: newRemoteHost,
             https,
             port: newPort,
             hints: H2hints,
