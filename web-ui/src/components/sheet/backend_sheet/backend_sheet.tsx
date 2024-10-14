@@ -66,7 +66,7 @@ export const BackendSheet = ({
     return null;
   }
 
-  console.log("not null, show:", show);
+
   return (
     <Sheet open={show} onOpenChange={onClose}>
       <SheetContent className="bg-[#242424] border-l-[#ffffff10] w-full">

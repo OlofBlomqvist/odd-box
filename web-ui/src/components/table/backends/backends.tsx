@@ -61,7 +61,7 @@ export const BackendsTable = ({
         <TableBody>
           {site.backends?.map((backend,listIndex) => (
             <TableRow
-              key={JSON.stringify(backend)}
+              key={JSON.stringify({backend,listIndex})}
               className="hover:cursor-pointer"
               onClick={() => {
                 setBackendModalState({
@@ -71,7 +71,7 @@ export const BackendsTable = ({
                   });
               }}
             >
-              <TableCell className="font-medium">{backend.address}</TableCell>
+              <TableCell className="font-medium">{backend.address}:{backend.port}</TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -88,7 +88,7 @@ export const BackendsTable = ({
       </Table>
       <BackendSheet
         listIndex={backendModalState.listIndex}
-        key={JSON.stringify(backendModalState.backend)}
+        key={JSON.stringify(backendModalState)}
         site={site}
         show={backendModalState.show}
         onClose={() =>
