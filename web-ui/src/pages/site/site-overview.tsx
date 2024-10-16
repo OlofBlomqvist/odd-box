@@ -1,4 +1,3 @@
-import "./style.css";
 import toast from "react-hot-toast";
 import useSiteStatus from "../../hooks/use-site-status";
 import useSiteMutations from "../../hooks/use-site-mutations";

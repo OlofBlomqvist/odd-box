@@ -1,4 +1,3 @@
-import "./styles.css";
 
 interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   withSaveButton?: boolean;
@@ -29,10 +28,10 @@ const Input = ({
 
   const showSaveButton = withSaveButton && originalValue !== rest.value;
 
-  const inputSaveButtonClassNames = ["input-save-button"];
+  const inputSaveButtonClassNames = ["border-0 bg-[#a4dd90] outline-none w-[50px] grid place-content-center transition-all duration-100 p-0 cursor-pointer text-[#00000099] hover:bg-[#86af77]"];
 
   if (showSaveButton) {
-    inputSaveButtonClassNames.push("show");
+    inputSaveButtonClassNames.push("border-l border-[#00000033]");
   }
 
   return (

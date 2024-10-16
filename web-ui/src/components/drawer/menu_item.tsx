@@ -23,8 +23,20 @@ const MenuItem = ({
   fontSize?: string;
   fontWeight?:string
 }) => {
+
+ /*  display: flex;
+  color: #fff;
+  text-decoration: none;
+  align-items: center;
+  height: 40px;
+  gap: 12px;
+  padding: 0px 10px;
+  transition: all 0.2s;
+  border-radius: 5px;
+  padding-right: 0px; */
+
   const { setDrawerOpen } = useDrawerContext();
-const classNames = ["styled-link"];
+const classNames = ["flex items-center h-10 gap-3 px-[10px] pr-0 text-white no-underline transition-all duration-200 rounded-[5px] styled-link"];
   if (disabled) {
     classNames.push("disabled");
   }

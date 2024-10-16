@@ -1,4 +1,3 @@
-import "./style.css";
 import useLiveLog from "../../hooks/use-live-log";
 import { useState } from "react";
 import SettingsSection from "../settings/settings-section";
@@ -158,9 +157,9 @@ const SiteLogs = ({
           MESSAGE
         </p>
       </div>
-      <Card className="min-h-[50px] bg-[#ffffff08]">
+      <Card className="min-h-[40px] bg-[#ffffff08]">
         {filteredMessages.map((x, i) => (
-          <div className="log-row" key={`${x.timestamp}_${x.msg}`}>
+          <div className="flex p-[10px] cursor-pointer gap-[10px] hover:bg-[#ffffff10]" key={`${x.timestamp}_${x.msg}`}>
             <div
               className="hide-when-small"
               style={{

@@ -1,7 +1,6 @@
 import SettingsItem from "../settings/settings-item";
 import SettingsSection from "../settings/settings-section";
 import Input from "../../components/input/input";
-import "./style.css";
 import Button from "../../components/button/button";
 import useSiteMutations from "../../hooks/use-site-mutations";
 import toast from "react-hot-toast";

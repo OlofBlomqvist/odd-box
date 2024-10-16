@@ -1,14 +1,13 @@
 import { useMediaQuery } from "react-responsive";
 import { useDrawerContext } from "../drawer/context";
 import Hamburger from "hamburger-react";
-import "./header-style.css";
 import { SiteSearchBox } from "../combobox/site_search_box";
 const Header = () => {
   const { setDrawerOpen, drawerOpen } = useDrawerContext();
   const isBigScreen = useMediaQuery({ query: "(min-width: 800px)" });
 
   return (
-    <div className="odd-header">
+    <div className="fixed flex items-center top-0 left-0 right-0 bg-[#242424] z-[1000] h-[60px] justify-between px-2 md:px-5 lg:px-10">
       <div>
         {isBigScreen && (
           <img src="/ob3.png" height={50} style={{ height: "50px" }} />

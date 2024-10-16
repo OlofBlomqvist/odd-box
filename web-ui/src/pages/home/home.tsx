@@ -1,4 +1,3 @@
-import "./home-styles.css";
 import {
   Card,
   CardContent,

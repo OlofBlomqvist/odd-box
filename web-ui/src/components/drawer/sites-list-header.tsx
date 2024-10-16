@@ -31,7 +31,7 @@ const SitesListHeader = () => {
       </p>
       <Popover open={isPopoverOpen}>
         <PopoverTrigger asChild>
-          <div className="three-dots" onClick={() => setIsPopoverOpen(true)}>
+          <div className="w-7 h-7 p-0 opacity-50 rounded-[5px] grid place-content-center cursor-pointer transition-all duration-100 border border-transparent hover:border-white/50" onClick={() => setIsPopoverOpen(true)}>
             •••
           </div>
         </PopoverTrigger>

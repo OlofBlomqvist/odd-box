@@ -1,4 +1,3 @@
-import { Suspense } from "react";
 import MenuItem from "./menu_item";
 import StatusIcon from "./status-icon";
 import useSiteStatus from "../../hooks/use-site-status";
@@ -7,14 +6,6 @@ import { useRemoteSites } from "../../hooks/use-remote-sites";
 import { PlusIcon } from "lucide-react";
 
 const SitesList = () => {
-  return (
-    <Suspense fallback={<p>loading sites</p>}>
-      <SitesListInner />
-    </Suspense>
-  );
-};
-
-const SitesListInner = () => {
   const { data: hostedSites } = useHostedSites();
   const { data: remoteSites } = useRemoteSites();
   const { data: siteStatus } = useSiteStatus();

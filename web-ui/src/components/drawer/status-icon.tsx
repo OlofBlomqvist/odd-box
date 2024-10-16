@@ -31,7 +31,7 @@ const StatusIcon = ({
     <Popover open={isPopoverOpen}>
       <PopoverTrigger asChild>
         <span
-          className="status-icon"
+          className="w-7 h-7 p-0 rounded-[5px] grid place-content-center cursor-pointer transition-all duration-100 border border-transparent hover:border-white/50"
           title={state}
           onClick={(e) => {
             e.preventDefault();
