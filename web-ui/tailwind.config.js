@@ -4,11 +4,19 @@ export default {
     content: ["./src/**/*.{html,js,ts,tsx}"],
     theme: {
     	extend: {
+			screens: {
+				ml: "900px",
+			},
     		borderRadius: {
     			lg: 'var(--radius)',
     			md: 'calc(var(--radius) - 2px)',
     			sm: 'calc(var(--radius) - 4px)'
     		},
+			fontFamily: {
+				ubuntu: ['Ubuntu', 'sans-serif'],
+				roboto: ['Roboto', 'sans-serif'],
+				robotomono: ['Roboto Mono', 'monospace'],
+			},
     		colors: {
     			background: 'hsl(var(--background))',
     			foreground: 'hsl(var(--foreground))',

@@ -7,7 +7,7 @@ import { useMediaQuery } from "react-responsive";
 
 const SideDrawer = ({ children,bottomItem }: { bottomItem?:ReactNode,children?: ReactNode }) => {
   const { setDrawerOpen, drawerOpen } = useDrawerContext();
-  const isBigScreen = useMediaQuery({ query: "(min-width: 800px)" });
+  const isBigScreen = useMediaQuery({ query: "(min-width: 900px)" });
 
   const wasBigScreen = useDeferredValue(isBigScreen);
 

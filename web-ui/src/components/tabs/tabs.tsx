@@ -18,7 +18,7 @@ const Tabs = ({ sections }: { sections?: TTab[] }) => {
             key={index}
             active={tabIndex === index}
             onClick={() => {
-              router.navigate({ search: { tab: index } });
+              router.navigate({ search: { tab: index }, replace: true });
               setTabIndex(index);
             }}
             title={section.name}

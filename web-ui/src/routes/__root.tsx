@@ -18,23 +18,25 @@ export const Route = createRootRoute({
     <>
       <QueryClientProvider client={queryClient}>
         <DrawerProvider>
-          <Toaster />
+          <Toaster toastOptions={{
+            style: {
+              background: "#333",
+              color: "#fff",
+            }
+          }} />
           <SideDrawer>
             <MenuItem
               title="Dashboard"
-              fontWeight="lighter"
               href="/"
               icon={<LayoutDashboardIcon className="h-5 w-5" />}
             />
             <MenuItem
               title="Logs"
-              fontWeight="lighter"
               href="/logs"
               icon={<Logs className="h-5 w-5" />}
             />
             <MenuItem
               title="Settings"
-              fontWeight="lighter"
               href="/settings"
               icon={<Settings className="h-5 w-5" />}
             />
