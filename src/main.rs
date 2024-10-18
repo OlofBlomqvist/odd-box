@@ -1,5 +1,12 @@
 #![warn(unused_extern_crates)]
 
+// #[cfg(not(target_env = "msvc"))]
+// use tikv_jemallocator::Jemalloc;
+
+// #[cfg(not(target_env = "msvc"))]
+// #[global_allocator]
+// static GLOBAL: Jemalloc = Jemalloc;
+
 mod configuration;
 mod types;
 mod tcp_proxy;

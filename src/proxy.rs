@@ -92,13 +92,12 @@ pub async fn listen(
             
 
             let client_tls_config = tokio_rustls::rustls::ClientConfig::builder_with_protocol_versions(tokio_rustls::rustls::ALL_VERSIONS)
-            // todo - add support for accepting self-signed certificates etc
-            // .dangerous()
-            // .with_custom_certificate_verifier(verifier)
-            
-            .with_native_roots()
-            .expect("must be able to create tls configuration")
-            .with_no_client_auth();
+                // todo - add support for accepting self-signed certificates etc
+                // .dangerous()
+                // .with_custom_certificate_verifier(verifier)
+                .with_native_roots()
+                .expect("must be able to create tls configuration")
+                .with_no_client_auth();
 
             let https_builder = hyper_rustls::HttpsConnectorBuilder::new()
                 .with_tls_config(client_tls_config);
@@ -216,22 +215,24 @@ async fn listen_http(
     
     loop {
 
-        if cancel_token.is_cancelled() {
-            tracing::warn!("exiting http server loop due to receiving cancel signal.");
-            break;
+        {
+            if cancel_token.is_cancelled() {
+                tracing::warn!("exiting http server loop due to receiving cancel signal.");
+                break;
+            }
+
+            if state.app_state.exit.load(std::sync::atomic::Ordering::SeqCst) {
+                tracing::debug!("exiting http server loop due to receiving shutdown signal.");
+                break;
+            }
         }
 
-        if state.app_state.exit.load(std::sync::atomic::Ordering::SeqCst) {
-            tracing::debug!("exiting http server loop due to receiving shutdown signal.");
-            break;
-        }
-
-        let permit = if let Ok(p) = ACTIVE_TCP_CONNECTIONS_SEMAPHORE.acquire().await {
-            p
-        } else {
-            tracing::warn!("Error acquiring semaphore permit.. This is a bug in odd-box :<");
-            break
-        };
+        // let permit = if let Ok(p) = ACTIVE_TCP_CONNECTIONS_SEMAPHORE.acquire().await {
+        //     p
+        // } else {
+        //     tracing::warn!("Error acquiring semaphore permit.. This is a bug in odd-box :<");
+        //     break
+        // };
 
         //tracing::info!("accepting http connection..");
         tokio::select! {
@@ -243,14 +244,14 @@ async fn listen_http(
                 match x {
                     Ok((tcp_stream,source_addr)) => {
                     
-                        tracing::trace!("Accepted connection! current active: {}", 200-ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
-                        let mut service: ReverseProxyService = terminating_service_template.clone();
-                        service.remote_addr = Some(source_addr);   
+                        //tracing::trace!("Accepted connection! current active: {}", 200-ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
+                        //let mut service: ReverseProxyService = terminating_service_template.clone();
+                        //service.remote_addr = Some(source_addr);   
                         let tx = tx.clone();
                         let state = state.clone();
                         tokio::spawn(async move {                   
-                            let _moved_permit = permit;          
-                            handle_new_tcp_stream(None,service, tcp_stream, source_addr, false,tx.clone(),state.clone())
+                            //let _moved_permit = permit;          
+                            handle_new_tcp_stream(None, tcp_stream, source_addr, false,tx.clone(),state.clone())
                                 .await;
                         });
                         
@@ -345,7 +346,7 @@ async fn listen_https(
                         let state = state.clone();
                         tokio::spawn(async move {      
                             let _moved_permit = permit;             
-                            handle_new_tcp_stream(arced_tls_config,service, tcp_stream, source_addr, true,tx.clone(),state.clone())
+                            handle_new_tcp_stream(arced_tls_config,tcp_stream, source_addr, true,tx.clone(),state.clone())
                                 .await;
                         });
                         
@@ -448,7 +449,7 @@ impl AsyncWrite for SomeSortOfManagedStream {
 // or hand it off to the terminating http/https hyper services
 async fn handle_new_tcp_stream(
     rustls_config: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
-    mut fresh_service_template_with_source_info: ReverseProxyService,
+    //mut fresh_service_template_with_source_info: ReverseProxyService,
     tcp_stream: TcpStream,
     source_addr:SocketAddr,
     _incoming_connection_is_on_tls_port: bool,
@@ -456,13 +457,13 @@ async fn handle_new_tcp_stream(
     state: Arc<GlobalState>
 ) {
 
-    fresh_service_template_with_source_info.remote_addr = Some(source_addr);
+   // fresh_service_template_with_source_info.remote_addr = Some(source_addr);
     
     let mut managed_stream : SomeSortOfManagedStream;
     let mut sni_server_name = None;
 
     let peek_result = if let Some(tls_cfg) = rustls_config {
-        fresh_service_template_with_source_info.is_https_only = true;
+        //fresh_service_template_with_source_info.is_https_only = true;
         let tls_acceptor = TlsAcceptor::from(tls_cfg.clone());
         match tls_acceptor.accept(tcp_stream).await {
             Ok(tls_stream) => {
@@ -500,7 +501,7 @@ async fn handle_new_tcp_stream(
                 n
             } else {
                 tracing::warn!("No target host found in peeked data.. will use terminating proxy mode instead.");
-                http_proxy::serve(fresh_service_template_with_source_info, managed_stream).await;
+               // http_proxy::serve(fresh_service_template_with_source_info, managed_stream).await;
                 return;
             };
             
@@ -509,7 +510,7 @@ async fn handle_new_tcp_stream(
 
                 let cloned_target = target.clone();
 
-                fresh_service_template_with_source_info.resolved_target = Some(cloned_target.clone());
+               // fresh_service_template_with_source_info.resolved_target = Some(cloned_target.clone());
                 
                 if target.disable_tcp_tunnel_mode == false {
 
@@ -584,9 +585,9 @@ async fn handle_new_tcp_stream(
 
 
 
-    // // at this point we have failed to use direct tunnel mode (or the target was not configured for it)
-    tracing::trace!("handing off clear text tcp stream to terminating proxy for target!");     
-    http_proxy::serve(fresh_service_template_with_source_info, managed_stream).await;
+    // // // at this point we have failed to use direct tunnel mode (or the target was not configured for it)
+    // tracing::trace!("handing off clear text tcp stream to terminating proxy for target!");     
+    // http_proxy::serve(fresh_service_template_with_source_info, managed_stream).await;
     
 
     

@@ -19,8 +19,8 @@ pub struct ManagedStream<T> where T: AsyncRead + AsyncWrite + Unpin {
     buffer: BytesMut,
     sealed: bool,
     h2_observer: h2_parser::H2Observer,
-    h1_in: BytesMut,
-    h1_out: BytesMut,
+    // h1_in: BytesMut,
+    // h1_out: BytesMut,
     
 
 }
@@ -39,13 +39,22 @@ impl<T> ManagedStream<T> where T: AsyncRead + AsyncWrite + Unpin {
     #[cfg(not(debug_assertions))]
     pub async fn inspect(&mut self) {}
 }
-
+impl<T> Drop for ManagedStream<T> where  T: AsyncWrite + AsyncRead + Unpin  {
+    fn drop(&mut self) {
+        tracing::info!("ManagedStream dropped");
+        // self.h1_in.clear();
+        // self.h1_out.clear();
+        // self.h1_in.resize(0, 0);
+        // self.h1_out.resize(0, 0);
+        
+    }
+}
 impl ManagedStream<TcpStream> {
     pub fn from_tcp_stream(stream: tokio::net::TcpStream) -> Self {
         tracing::info!("Creating ManagedStream from TcpStream");
         ManagedStream::<tokio::net::TcpStream> {
-            h1_in: BytesMut::new(),
-            h1_out: BytesMut::new(),
+            // h1_in: BytesMut::new(),
+            // h1_out: BytesMut::new(),
             h2_observer: h2_parser::H2Observer::new(),
             stream,
             buffer: BytesMut::new(),
@@ -58,8 +67,8 @@ impl ManagedStream<tokio_rustls::server::TlsStream<TcpStream>> {
     pub fn from_tls_stream(stream: tokio_rustls::server::TlsStream<TcpStream>) -> Self {
         tracing::info!("Creating ManagedStream from TlsStream");
         ManagedStream {
-            h1_in: BytesMut::new(),
-            h1_out: BytesMut::new(),
+            // h1_in: BytesMut::new(),
+            // h1_out: BytesMut::new(),
             h2_observer: h2_parser::H2Observer::new(),
             stream,
             buffer: BytesMut::new(),
@@ -120,9 +129,9 @@ impl Peekable for ManagedStream<TlsStream<TcpStream>>  {
         
         let byte_vec = self.buffer.to_vec();
         
-        for x in h1_parser::parse_http_requests(&byte_vec).iter().flatten() {
-            tracing::info!("INCOMING HTTPs REQUEST: {:?}", x);
-        }
+        // for x in h1_parser::parse_http_requests(&byte_vec).iter().flatten() {
+        //     tracing::info!("INCOMING HTTPs REQUEST: {:?}", x);
+        // }
         
 
         // Return a copy of the buffered data without consuming it
@@ -168,9 +177,9 @@ impl Peekable for ManagedStream<TcpStream>  {
         
         let byte_vec = self.buffer.to_vec();
         
-        for x in h1_parser::parse_http_requests(&byte_vec).iter().flatten() {
-            tracing::info!("INCOMING HTTP REQUEST: {:?}", x);
-        }
+        // for x in h1_parser::parse_http_requests(&byte_vec).iter().flatten() {
+        //     tracing::info!("INCOMING HTTP REQUEST: {:?}", x);
+        // }
 
         // Return a copy of the buffered data without consuming it
         Ok((false,byte_vec))
@@ -199,8 +208,8 @@ impl<T> AsyncRead for ManagedStream<T> where T: AsyncWrite + AsyncRead + Unpin {
 
             if buf.remaining() == 0 {
                 // Buffer is full after draining self.buffer
-                self.h1_in.extend_from_slice(buf.filled());
-                self.h2_observer.write_incoming(buf.filled());
+                //self.h1_in.extend_from_slice(buf.filled());
+                //self.h2_observer.write_incoming(buf.filled());
                 return Poll::Ready(Ok(()));
             }
             // Else, buf still has space, so we can try to read from stream
@@ -214,15 +223,15 @@ impl<T> AsyncRead for ManagedStream<T> where T: AsyncWrite + AsyncRead + Unpin {
                     Poll::Pending
                 } else {
                     // Data has been read from self.buffer, return Ready
-                    self.h1_in.extend_from_slice(buf.filled());
-                    self.h2_observer.write_incoming(buf.filled());
+                    //self.h1_in.extend_from_slice(buf.filled());
+                    // self.h2_observer.write_incoming(buf.filled());
                     Poll::Ready(Ok(()))
                 }
             }
             Poll::Ready(Ok(())) => {
                 // Successfully read from stream into buf
-                self.h1_in.extend_from_slice(buf.filled());
-                self.h2_observer.write_incoming(buf.filled());
+                //self.h1_in.extend_from_slice(buf.filled());
+                // self.h2_observer.write_incoming(buf.filled());
                 
                 Poll::Ready(Ok(()))
             }
@@ -231,8 +240,8 @@ impl<T> AsyncRead for ManagedStream<T> where T: AsyncWrite + AsyncRead + Unpin {
                     // No data was read at all, return the error
                     Poll::Ready(Err(e))
                 } else {
-                    self.h1_in.extend_from_slice(buf.filled());
-                    self.h2_observer.write_incoming(buf.filled());
+                    //self.h1_in.extend_from_slice(buf.filled());
+                    // self.h2_observer.write_incoming(buf.filled());
                     // Data was read from self.buffer, return Ok
                     // The error can be returned on the next poll_read
                     Poll::Ready(Ok(()))
@@ -248,8 +257,8 @@ impl<T> AsyncWrite for ManagedStream<T> where T: AsyncWrite + AsyncRead + Unpin 
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, Error>> {
-        self.h1_out.extend_from_slice(buf);
-        self.h2_observer.write_outgoing(buf);
+        //self.h1_out.extend_from_slice(buf);
+        //self.h2_observer.write_outgoing(buf);
         Pin::new(&mut self.stream).poll_write(cx, buf)
     }
 

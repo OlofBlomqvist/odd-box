@@ -149,51 +149,51 @@ pub struct TuiLoggerLayer {
 impl<S: Subscriber> Layer<S> for TuiLoggerLayer {
     fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
     
-        let metadata = event.metadata();
+        // let metadata = event.metadata();
 
 
-        let target = metadata.target();
+        // let target = metadata.target();
         
-        // Create a visitor to format the fields of the event.
-        let mut visitor = LogVisitor::new();
-        event.record(&mut visitor);
+        // // Create a visitor to format the fields of the event.
+        // let mut visitor = LogVisitor::new();
+        // event.record(&mut visitor);
         
-        let mut msg =  visitor.result();
-        let mut src = String::new();
+        // let mut msg =  visitor.result();
+        // let mut src = String::new();
         
-        if msg.starts_with("[") && msg.contains("]") {
-            let end = msg.find("]").unwrap_or_default();
-            src = msg[1..end].to_string().trim().to_string();
-            msg = msg[end+1..].to_string().trim().to_string();
-        }
+        // if msg.starts_with("[") && msg.contains("]") {
+        //     let end = msg.find("]").unwrap_or_default();
+        //     src = msg[1..end].to_string().trim().to_string();
+        //     msg = msg[end+1..].to_string().trim().to_string();
+        // }
 
-        if src.is_empty() {
-            if !target.ends_with("proc_host") {
-                src = target.into();
-            }
+        // if src.is_empty() {
+        //     if !target.ends_with("proc_host") {
+        //         src = target.into();
+        //     }
             
-        }
+        // }
 
-        let current_thread = std::thread::current();
-        let current_thread_name = current_thread.name().and_then(|x|Some(x.to_string())).unwrap_or(format!("HAH!"));
-        let mut skip_src = false;
-        let thread_name = if current_thread_name == "tokio-runtime-worker" { 
-            skip_src = true;
-            Some(src.to_string()) 
-        } else { 
-            Some(current_thread_name) 
-        };
+        // let current_thread = std::thread::current();
+        // let current_thread_name = current_thread.name().and_then(|x|Some(x.to_string())).unwrap_or(format!("HAH!"));
+        // let mut skip_src = false;
+        // let thread_name = if current_thread_name == "tokio-runtime-worker" { 
+        //     skip_src = true;
+        //     Some(src.to_string()) 
+        // } else { 
+        //     Some(current_thread_name) 
+        // };
 
-        let log_message = LogMsg {
-            thread: thread_name.clone(),
-            lvl: metadata.level().clone(),
-            src: if skip_src { "".into() } else {src},
-            msg,
-        };
+        // let log_message = LogMsg {
+        //     thread: thread_name.clone(),
+        //     lvl: metadata.level().clone(),
+        //     src: if skip_src { "".into() } else {src},
+        //     msg,
+        // };
         
-        _ = self.broadcaster.send(serde_json::to_string_pretty(&log_message).expect("should always be possible to serialize log messages"));
-        let mut buffer = self.log_buffer.lock().expect("must always be able to lock log buffer");
-        buffer.push(log_message.clone());
+        // _ = self.broadcaster.send(serde_json::to_string_pretty(&log_message).expect("should always be possible to serialize log messages"));
+        // let mut buffer = self.log_buffer.lock().expect("must always be able to lock log buffer");
+        // buffer.push(log_message.clone());
         
     
     }
