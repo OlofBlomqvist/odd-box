@@ -7,6 +7,7 @@ import {
   DialogTitle,
 } from "@/components/dialog/dialog";
 import {Button} from "../../ui/button";
+import { ReactNode } from "react";
 export function ConfirmationDialog({
   title,
   subtitle,
@@ -20,15 +21,15 @@ export function ConfirmationDialog({
   isDangerAction?:boolean
   noBtnText?: string;
   yesBtnText?: string;
-  title: string;
-  subtitle: string;
+  title: ReactNode;
+  subtitle: ReactNode;
   onConfirm: () => void;
   onClose: () => void;
   show: boolean;
 }) {
   return (
     <Dialog open={show} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[425px] bg-[#09090b]">
+      <DialogContent className="sm:max-w-[425px] bg-[#09090b] border border-[#242424]">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{subtitle}</DialogDescription>

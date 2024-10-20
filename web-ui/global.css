@@ -89,8 +89,8 @@ body {
   padding-top:60px;
   min-height: 100dvh;
   @media screen and (min-width: 900px) {
-    padding-left:340px;
-    padding-right:40px;
+    padding-left:320px;
+    padding-right:20px;
   }
 }
 

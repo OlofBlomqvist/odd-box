@@ -408,7 +408,7 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
             show={showConfirmDeleteModal}
             title="Delete"
             yesBtnText="Yes, delete it"
-            subtitle={`Are you sure you want to delete the site '${site.host_name}'?`}
+            subtitle={<span>Are you sure you want to delete <span className="font-bold text-[var(--color2)]">{site.host_name}</span>?</span>}
           />
         </CardContent>
       </Card>

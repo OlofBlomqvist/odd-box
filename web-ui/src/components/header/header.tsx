@@ -7,7 +7,7 @@ const Header = () => {
   const isBigScreen = useMediaQuery({ query: "(min-width: 900px)" });
 
   return (
-    <div className="fixed flex items-center top-0 left-0 right-0 bg-[#242424] z-[1000] h-[60px] justify-between pl-[10px] pr-[20px] ml:pr-[40px]">
+    <div className="fixed flex items-center top-0 left-0 right-0 bg-[#242424] z-[1000] h-[60px] justify-between pl-[10px] pr-[20px] ml:pr-[20px]">
       <div>
         {isBigScreen && (
           <img src="/ob3.png" height={50} style={{ height: "50px" }} />
