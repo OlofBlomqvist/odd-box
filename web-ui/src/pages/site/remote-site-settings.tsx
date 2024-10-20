@@ -182,6 +182,7 @@ const RemoteSiteSettings = ({ site }: { site: RemoteSiteConfig }) => {
         </Button>
       </div>
       <ConfirmationDialog
+      isDangerAction
         onClose={() => setShowConfirmDeleteModal(false)}
         onConfirm={() => {
           setShowConfirmDeleteModal(false);
@@ -190,7 +191,7 @@ const RemoteSiteSettings = ({ site }: { site: RemoteSiteConfig }) => {
             {
               onSuccess: () => {
                 setShowConfirmDeleteModal(false);
-                router.navigate({ to: "/" });
+                router.navigate({ to: "/", search: { type: "processes" } });
               },
             }
           );

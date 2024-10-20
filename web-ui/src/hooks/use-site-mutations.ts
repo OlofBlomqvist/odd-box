@@ -126,8 +126,8 @@ const useSiteMutations = () => {
       queryClient.invalidateQueries({ queryKey: ["sites"] });
       if (vars.hostname !== vars.siteSettings.host_name) {
         router.navigate({
-          to: `/site/${vars.siteSettings.host_name.replace("http://", "").replace("https://", "")}`,
-          // search: { tab: 1 },
+          to: `/site`,
+          search: { hostname: vars.siteSettings.host_name.replace("http://", "").replace("https://", ""), tab: 0 },
         });
       }
     },
@@ -157,8 +157,8 @@ const useSiteMutations = () => {
       queryClient.invalidateQueries({ queryKey: ["sites"] });
       if (vars.hostname !== vars.siteSettings.host_name) {
         router.navigate({
-          to: `/site/${vars.siteSettings.host_name.replace("http://", "").replace("https://", "")}`,
-          search: { tab: 1 },
+          to: `/site`,
+          search: { tab: 1, hostname: vars.siteSettings.host_name.replace("http://", "").replace("https://", "") },
         });
       }
     },

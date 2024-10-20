@@ -36,13 +36,14 @@ import useSiteStatus from "@/hooks/use-site-status";
 import { cn } from "@/lib/cn";
 import { BasicProcState } from "@/generated-api";
 import { SlidingTabBar } from "@/components/ui/sliding_tabs/sliding_tabs";
+import { getUrlFriendlyUrl } from "@/lib/get_url_friendly_url";
 const HomePage = () => {
   const { data: hostedProcesses } = useHostedSites();
   const { data: remoteSites } = useRemoteSites();
   const { data: siteStatus } = useSiteStatus();
   const router = useRouter();
   const searchParams = new URLSearchParams(window.location.search);
-  const tab = searchParams.get("tab");
+  const type = searchParams.get("type");
 
   return (
     <main className="grid flex-1 items-start gap-4 sm:py-0 md:gap-8 max-w-[900px]">
@@ -104,7 +105,7 @@ const HomePage = () => {
         </Card>
 
         <Tabs
-          defaultValue={tab === "sites" ? "sites" : "processes"}
+          defaultValue={type === "sites" ? "sites" : "processes"}
           className="pb-8"
         >
           <div className="flex items-center">
@@ -170,8 +171,8 @@ const HomePage = () => {
                           className="hover:cursor-pointer"
                           onClick={() => {
                             router.navigate({
-                              to: `/site/${hostedProcess.host_name.replaceAll("http://", "").replaceAll("https://", "")}`,
-                              search: { tab: 1 },
+                              to: `/site`,
+                              search: { tab: 1, hostname: getUrlFriendlyUrl(hostedProcess.host_name) },
                             });
                           }}
                         >
@@ -211,7 +212,8 @@ const HomePage = () => {
                                 <DropdownMenuItem
                                   onClick={() => {
                                     router.navigate({
-                                      to: `/site/${hostedProcess.host_name.replaceAll("http://", "").replaceAll("https://", "")}`,
+                                      to: `/site`,
+                                      search: { tab: 0, hostname: getUrlFriendlyUrl(hostedProcess.host_name) },
                                     });
                                   }}
                                 >
@@ -220,8 +222,8 @@ const HomePage = () => {
                                 <DropdownMenuItem
                                   onClick={() => {
                                     router.navigate({
-                                      to: `/site/${hostedProcess.host_name.replaceAll("http://", "").replaceAll("https://", "")}`,
-                                      search: { tab: 1 },
+                                      to: `/site`,
+                                      search: { tab: 1, hostname: getUrlFriendlyUrl(hostedProcess.host_name) },
                                     });
                                   }}
                                 >
@@ -230,8 +232,8 @@ const HomePage = () => {
                                 <DropdownMenuItem
                                   onClick={() => {
                                     router.navigate({
-                                      to: `/site/${hostedProcess.host_name.replaceAll("http://", "").replaceAll("https://", "")}`,
-                                      search: { tab: 2 },
+                                      to: `/site`,
+                                      search: { tab: 2, hostname: getUrlFriendlyUrl(hostedProcess.host_name) },
                                     });
                                   }}
                                 >
@@ -274,8 +276,8 @@ const HomePage = () => {
                           className="hover:cursor-pointer"
                           onClick={() => {
                             router.navigate({
-                              to: `/site/${remoteSite.host_name.replaceAll("http://", "").replaceAll("https://", "")}`,
-                              search: { tab: 1 },
+                              to: `/site`,
+                              search: { tab: 1, hostname: getUrlFriendlyUrl(remoteSite.host_name) },
                             });
                           }}
                         >
@@ -320,7 +322,8 @@ const HomePage = () => {
                                 <DropdownMenuItem
                                   onClick={() => {
                                     router.navigate({
-                                      to: `/site/${remoteSite.host_name.replaceAll("http://", "").replaceAll("https://", "")}`,
+                                      to: `/site`,
+                                      search: { tab: 0, hostname: getUrlFriendlyUrl(remoteSite.host_name) },
                                     });
                                   }}
                                 >

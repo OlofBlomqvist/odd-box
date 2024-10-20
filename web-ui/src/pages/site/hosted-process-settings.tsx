@@ -391,6 +391,7 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
           </div>
 
           <ConfirmationDialog
+            isDangerAction
             onClose={() => setShowConfirmDeleteModal(false)}
             onConfirm={() => {
               setShowConfirmDeleteModal(false);
@@ -399,7 +400,7 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
                 {
                   onSuccess: () => {
                     setShowConfirmDeleteModal(false);
-                    router.navigate({ to: "/" });
+                    router.navigate({ to: "/", search: { type: "processes" } });
                   },
                 }
               );

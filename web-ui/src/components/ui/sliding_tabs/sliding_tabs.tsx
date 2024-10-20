@@ -6,8 +6,8 @@ export const SlidingTabBar = ({ tabs }: { tabs: Array<{value:string,label:string
   const tabsRef = useRef<(HTMLElement | null)[]>([]);
   const router = useRouter();
   const searchParams = new URLSearchParams(window.location.search);
-  const tab = searchParams.get("tab");
-  const [activeTabIndex, setActiveTabIndex] = useState<number>(tab === "sites" ? 1 : 0);
+  const type = searchParams.get("type");
+  const [activeTabIndex, setActiveTabIndex] = useState<number>(type === "sites" ? 1 : 0);
   const [tabUnderlineWidth, setTabUnderlineWidth] = useState(0);
   const [tabUnderlineLeft, setTabUnderlineLeft] = useState(0);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -22,7 +22,7 @@ export const SlidingTabBar = ({ tabs }: { tabs: Array<{value:string,label:string
     setTabPosition();
     router.navigate({
         search: {
-            tab: tabs[activeTabIndex].value
+            type: tabs[activeTabIndex].value
         },
         replace: true
     })

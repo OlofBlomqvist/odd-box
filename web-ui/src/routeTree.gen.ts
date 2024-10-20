@@ -13,15 +13,15 @@ import { createFileRoute } from '@tanstack/react-router'
 // Import Routes
 
 import { Route as rootRoute } from './routes/__root'
+import { Route as SiteImport } from './routes/site'
 import { Route as LogsImport } from './routes/logs'
+import { Route as IndexImport } from './routes/index'
 
 // Create Virtual Routes
 
 const SettingsLazyImport = createFileRoute('/settings')()
 const NewSiteLazyImport = createFileRoute('/new-site')()
 const NewProcessLazyImport = createFileRoute('/new-process')()
-const IndexLazyImport = createFileRoute('/')()
-const SiteSiteNameLazyImport = createFileRoute('/site/$siteName')()
 
 // Create/Update Routes
 
@@ -40,22 +40,20 @@ const NewProcessLazyRoute = NewProcessLazyImport.update({
   getParentRoute: () => rootRoute,
 } as any).lazy(() => import('./routes/new-process.lazy').then((d) => d.Route))
 
+const SiteRoute = SiteImport.update({
+  path: '/site',
+  getParentRoute: () => rootRoute,
+} as any)
+
 const LogsRoute = LogsImport.update({
   path: '/logs',
   getParentRoute: () => rootRoute,
 } as any)
 
-const IndexLazyRoute = IndexLazyImport.update({
+const IndexRoute = IndexImport.update({
   path: '/',
   getParentRoute: () => rootRoute,
-} as any).lazy(() => import('./routes/index.lazy').then((d) => d.Route))
-
-const SiteSiteNameLazyRoute = SiteSiteNameLazyImport.update({
-  path: '/site/$siteName',
-  getParentRoute: () => rootRoute,
-} as any).lazy(() =>
-  import('./routes/site.$siteName.lazy').then((d) => d.Route),
-)
+} as any)
 
 // Populate the FileRoutesByPath interface
 
@@ -65,7 +63,7 @@ declare module '@tanstack/react-router' {
       id: '/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof IndexLazyImport
+      preLoaderRoute: typeof IndexImport
       parentRoute: typeof rootRoute
     }
     '/logs': {
@@ -73,6 +71,13 @@ declare module '@tanstack/react-router' {
       path: '/logs'
       fullPath: '/logs'
       preLoaderRoute: typeof LogsImport
+      parentRoute: typeof rootRoute
+    }
+    '/site': {
+      id: '/site'
+      path: '/site'
+      fullPath: '/site'
+      preLoaderRoute: typeof SiteImport
       parentRoute: typeof rootRoute
     }
     '/new-process': {
@@ -96,25 +101,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsLazyImport
       parentRoute: typeof rootRoute
     }
-    '/site/$siteName': {
-      id: '/site/$siteName'
-      path: '/site/$siteName'
-      fullPath: '/site/$siteName'
-      preLoaderRoute: typeof SiteSiteNameLazyImport
-      parentRoute: typeof rootRoute
-    }
   }
 }
 
 // Create and export the route tree
 
 export const routeTree = rootRoute.addChildren({
-  IndexLazyRoute,
+  IndexRoute,
   LogsRoute,
+  SiteRoute,
   NewProcessLazyRoute,
   NewSiteLazyRoute,
   SettingsLazyRoute,
-  SiteSiteNameLazyRoute,
 })
 
 /* prettier-ignore-end */
@@ -127,17 +125,20 @@ export const routeTree = rootRoute.addChildren({
       "children": [
         "/",
         "/logs",
+        "/site",
         "/new-process",
         "/new-site",
-        "/settings",
-        "/site/$siteName"
+        "/settings"
       ]
     },
     "/": {
-      "filePath": "index.lazy.tsx"
+      "filePath": "index.tsx"
     },
     "/logs": {
       "filePath": "logs.tsx"
+    },
+    "/site": {
+      "filePath": "site.tsx"
     },
     "/new-process": {
       "filePath": "new-process.lazy.tsx"
@@ -147,9 +148,6 @@ export const routeTree = rootRoute.addChildren({
     },
     "/settings": {
       "filePath": "settings.lazy.tsx"
-    },
-    "/site/$siteName": {
-      "filePath": "site.$siteName.lazy.tsx"
     }
   }
 }

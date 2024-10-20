@@ -17,6 +17,7 @@ import useHostedSites from "@/hooks/use-hosted-sites";
 import { useRemoteSites } from "@/hooks/use-remote-sites";
 import useSiteStatus from "@/hooks/use-site-status";
 import { useRouter } from "@tanstack/react-router";
+import { getUrlFriendlyUrl } from "@/lib/get_url_friendly_url";
 
 export function SiteSearchBox() {
   const { data: hostedSites } = useHostedSites();
@@ -57,7 +58,11 @@ export function SiteSearchBox() {
                   value={framework.value}
                   onSelect={(currentValue: any) => {
                     router.navigate({
-                      to: `/site/${currentValue.replaceAll("http://", "").replaceAll("https://", "")}`,
+                      to: `/site`,
+                      search: {
+                        hostname: getUrlFriendlyUrl(currentValue),
+                        tab: 0
+                      }
                     });
                     setOpen(false);
                   }}

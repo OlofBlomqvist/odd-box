@@ -6,7 +6,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/dialog/dialog";
-import Button from "../../button/button";
+import {Button} from "../../ui/button";
 export function ConfirmationDialog({
   title,
   subtitle,
@@ -15,7 +15,9 @@ export function ConfirmationDialog({
   show,
   noBtnText,
   yesBtnText,
+  isDangerAction,
 }: {
+  isDangerAction?:boolean
   noBtnText?: string;
   yesBtnText?: string;
   title: string;
@@ -32,10 +34,10 @@ export function ConfirmationDialog({
           <DialogDescription>{subtitle}</DialogDescription>
         </DialogHeader>
         <DialogFooter className="gap-2">
-          <Button onClick={onClose} secondary type="submit">
+          <Button onClick={onClose} variant="secondary" type="button">
             {noBtnText ?? "No, cancel"}
           </Button>
-          <Button onClick={onConfirm} type="submit">
+          <Button onClick={onConfirm} variant={isDangerAction ? "destructive" : "default"}>
             {yesBtnText ?? "Yes, confirm"}
           </Button>
         </DialogFooter>
