@@ -69,8 +69,8 @@ const SiteLogs = ({
                     search: {
                       hostname: e.target.value,
                     },
+                    replace: true
                   });
-                  // setSelectedSite(e.target.value)
                 }}
                 style={{ height: "30px", width: "100%", minWidth: "200px" }}
                 defaultValue={hostname ?? "all"}

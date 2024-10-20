@@ -920,6 +920,10 @@ body {
   max-width: 32rem;
 }
 
+.max-w-\[800px\] {
+  max-width: 800px;
+}
+
 .flex-1 {
   flex: 1 1 0%;
 }
@@ -1429,6 +1433,14 @@ body {
 
 .pt-0 {
   padding-top: 0px;
+}
+
+.pl-\[40px\] {
+  padding-left: 40px;
+}
+
+.pr-\[40px\] {
+  padding-right: 40px;
 }
 
 .text-left {
@@ -2470,6 +2482,10 @@ p, h1, h2, h3, h4, h5, h6 {
 
   .md\:pl-\[340px\] {
     padding-left: 340px;
+  }
+
+  .md\:pl-\[360px\] {
+    padding-left: 360px;
   }
 }
 
