@@ -246,15 +246,14 @@ async fn listen_http(
                     Ok((tcp_stream,source_addr)) => {
                     
                         //tracing::trace!("Accepted connection! current active: {}", 200-ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
-                        //let mut service: ReverseProxyService = terminating_service_template.clone();
-                        //service.configuration = Arc::new(state.config.read().await.clone());
-
-                        //service.remote_addr = Some(source_addr);   
+                        let mut service: ReverseProxyService = terminating_service_template.clone();
+                        service.configuration = Arc::new(state.config.read().await.clone());
+                        service.remote_addr = Some(source_addr);   
                         let tx = tx.clone();
                         let state = state.clone();
                         tokio::spawn(async move {                   
                             //let _moved_permit = permit;          
-                            handle_new_tcp_stream(None, tcp_stream, source_addr, false,tx.clone(),state.clone())
+                            handle_new_tcp_stream(None, service,tcp_stream, source_addr, false,tx.clone(),state.clone())
                                 .await;
                         });
                         
@@ -351,7 +350,7 @@ async fn listen_https(
                         let state = state.clone();
                         tokio::spawn(async move {      
                             let _moved_permit = permit;             
-                            handle_new_tcp_stream(arced_tls_config,tcp_stream, source_addr, true,tx.clone(),state.clone())
+                            handle_new_tcp_stream(arced_tls_config,service,tcp_stream, source_addr, true,tx.clone(),state.clone())
                                 .await;
                         });
                         
@@ -454,7 +453,7 @@ impl AsyncWrite for SomeSortOfManagedStream {
 // or hand it off to the terminating http/https hyper services
 async fn handle_new_tcp_stream(
     rustls_config: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
-    //mut fresh_service_template_with_source_info: ReverseProxyService,
+    mut fresh_service_template_with_source_info: ReverseProxyService,
     tcp_stream: TcpStream,
     source_addr:SocketAddr,
     _incoming_connection_is_on_tls_port: bool,
@@ -590,9 +589,9 @@ async fn handle_new_tcp_stream(
 
 
 
-    // // // at this point we have failed to use direct tunnel mode (or the target was not configured for it)
-    // tracing::trace!("handing off clear text tcp stream to terminating proxy for target!");     
-    // http_proxy::serve(fresh_service_template_with_source_info, managed_stream).await;
+    // // at this point we have failed to use direct tunnel mode (or the target was not configured for it)
+    tracing::trace!("handing off clear text tcp stream to terminating proxy for target!");     
+    http_proxy::serve(fresh_service_template_with_source_info, managed_stream).await;
     
 
     
