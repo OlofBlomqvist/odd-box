@@ -27,6 +27,7 @@ static RESPONSE_CACHE: Lazy<DashMap<String, CacheValue>> = Lazy::new(|| {
 // - actual cache support using etag and such
 // - markdown rendering (configurable)
 // - directory listing opt in via config
+// - compression
 // - make sure we keep perf ok'ish. current impl sits around ~200k requests per second on an 8 core machine
 //   serving some basic example site from "https://github.com/cloudacademy/static-website-example"
 pub async fn handle(
@@ -44,12 +45,14 @@ pub async fn handle(
         tracing::trace!("checking cache for {}", cache_key);
         let mut expired_in_cache = false;
         if let Some(guard) = RESPONSE_CACHE.get(&cache_key) {
-            tracing::trace!("cache hit for {}", cache_key);
+            
             let (_content_type, cache_time,res) = guard.value();
             // todo - configurable cache time
             if cache_time.elapsed() < Duration::from_secs(10) {
+                tracing::trace!("cache hit for {}", cache_key);
                 return create_simple_response_from_bytes(res.clone());
             } else {
+                tracing::trace!("cache expired for {}", cache_key);
                 expired_in_cache = true;
             }
         } else {
