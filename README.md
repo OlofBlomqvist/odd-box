@@ -17,6 +17,7 @@ You can also build it yourself, or install it using brew, cargo, nix or devbox; 
 - Cross platform (win/lin/osx)
 - Easy to configure (toml files)
 - Keep a list of specified binaries running
+- Serve local directories (for static sites)
 - Uses PORT environment variable for routing
 - Allows for setting proc specific and global env vars
 - Remote target proxying
