@@ -28,5 +28,8 @@ pub struct ReverseProxyService {
     pub is_https_only:bool,
     pub client: Client<HttpsConnector<HttpConnector>, Incoming>,
     pub h2_client: Client<HttpsConnector<HttpConnector>, Incoming>,
-    pub resolved_target : Option<Arc<ReverseTcpProxyTarget>>
+    pub resolved_target : Option<Arc<ReverseTcpProxyTarget>>,
+    /// This is used for performance since we create the RPS on each request and we might need to read from
+    /// the configuration multiple times during the request. We do not want to lock the config each time.
+    pub configuration : Arc<crate::configuration::ConfigWrapper>
 }

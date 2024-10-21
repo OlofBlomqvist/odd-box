@@ -23,3 +23,9 @@ impl From<hyper::Error> for CustomError {
     }
 }
 
+// lets make it possible to convert any error in to customerror
+impl From<Box<dyn std::error::Error + Send + Sync>> for CustomError {
+    fn from(e: Box<dyn std::error::Error + Send + Sync>) -> Self {
+        CustomError(format!("Error: {}", e))
+    }
+}

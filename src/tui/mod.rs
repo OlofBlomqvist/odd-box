@@ -776,6 +776,13 @@ fn draw_ui<B: ratatui::backend::Backend>(
                                 Color::Blue
                             }
                     ),
+                    &ProcState::Dynamic => Style::default().fg(
+                        if is_dark_theme {
+                                Color::Cyan
+                            } else {
+                                Color::Cyan
+                            }
+                    ),
                 };
 
                 let mut id_style = theme.inner_cloned();
@@ -796,7 +803,9 @@ fn draw_ui<B: ratatui::backend::Backend>(
                     &ProcState::Starting => ratatui::text::Span::styled(format!("{:?}",state),s),
                     &ProcState::Stopped => ratatui::text::Span::styled(format!("{:?}",state),s),
                     &ProcState::Stopping => ratatui::text::Span::styled(format!("{:?}..",state),s),
-                    &ProcState::Remote => ratatui::text::Span::styled(format!("{:?}",state),s)
+                    &ProcState::Remote => ratatui::text::Span::styled(format!("{:?}",state),s),
+                    &ProcState::Dynamic => ratatui::text::Span::styled(format!("{:?}",state),s)
+                    
                 };
 
                 ListItem::new(Line::from(vec![

@@ -21,7 +21,7 @@ use crate::types::app_state;
 
 
 pub async fn listen(
-    _cfg: std::sync::Arc<tokio::sync::RwLock<ConfigWrapper>>, 
+    cfg: std::sync::Arc<tokio::sync::RwLock<ConfigWrapper>>, 
     bind_addr: SocketAddr,
     bind_addr_tls: SocketAddr, 
     tx: std::sync::Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
@@ -63,6 +63,7 @@ pub async fn listen(
 
 
     let terminating_proxy_service = ReverseProxyService { 
+        configuration: Arc::new(cfg.read().await.clone()),
         resolved_target: None,
         state:state.clone(), 
         remote_addr: None, 
@@ -152,6 +153,7 @@ async fn listen_http(
                
                 tracing::trace!("accepted connection! current active: {}", 555-ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
                 let mut service: ReverseProxyService = terminating_service_template.clone();
+                service.configuration = Arc::new(state.config.read().await.clone());
                 service.remote_addr = Some(source_addr);   
                 let tx = tx.clone();
                 let state = state.clone();
@@ -247,6 +249,7 @@ async fn listen_https(
                
                 tracing::trace!("accepted connection! current active: {}", 555-ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
                 let mut service: ReverseProxyService = terminating_service_template.clone();
+                service.configuration = Arc::new(state.config.read().await.clone());
                 service.remote_addr = Some(source_addr);  
                 let tx = tx.clone();
                 let arced_tls_config = Some(arced_tls_config.clone());
@@ -399,7 +402,7 @@ async fn handle_new_tcp_stream(
 
 
             } else {
-                tracing::warn!("We do not have any site configured for '{host_name}' that allows tcp tunnelling.. will use terminating proxy instead.");
+                tracing::trace!("We do not have any site configured for '{host_name}' that allows tcp tunnelling.. will use terminating proxy instead.");
             }
         },
         e => {

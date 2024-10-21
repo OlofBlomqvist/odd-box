@@ -5,7 +5,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use v1::H2Hint;
-use v2::FullyResolvedInProcessSiteConfig;
+use v2::{DirServer, FullyResolvedInProcessSiteConfig};
 
 pub mod legacy;
 pub mod v1;
@@ -265,8 +265,20 @@ impl ConfigWrapper {
         let mut host_names = std::collections::HashMap::new();
         let mut ports = std::collections::HashMap::new();
     
-
+        for target in self.dir_server.iter().flatten() {
+            host_names
+                .entry(target.host_name.clone())
+                .and_modify(|count| *count += 1)
+                .or_insert(1);
+        }
+        
         for target in self.remote_target.iter().flatten() {
+            
+            host_names
+                .entry(target.host_name.clone())
+                .and_modify(|count| *count += 1)
+                .or_insert(1);
+
             if target.enable_lets_encrypt.unwrap_or(false) {
                 if !target.disable_tcp_tunnel_mode.unwrap_or(false) {
                     anyhow::bail!(format!("Invalid configuration for remote target '{}'. LetsEncrypt cannot be enabled when TCP tunnel mode is enabled.", target.host_name));
@@ -381,7 +393,60 @@ impl ConfigWrapper {
     }
 
     
-    // ---> port-mapping...
+   
+
+    pub fn busy_ports(&self) -> Vec<(String,u16)> {
+        self.hosted_process.iter().flatten().flat_map(|x| {
+            
+            let mut items = Vec::new();
+            
+            // manually set ports needs to be marked as busy even if the process is not running
+            if let Some(p) = x.port { 
+                items.push((x.host_name.clone(),p))
+            }
+
+
+            // active ports means that there is a loop active for this process using that port
+            if let Some(p) = x.active_port { 
+                items.push((x.host_name.clone(),p))
+            }
+
+            if items.len() > 0 {
+                Some(items)
+            } else {
+                None
+            }
+
+        }).flatten().collect::<Vec<(String,u16)>>()
+    }
+    
+    pub async fn find_and_set_unused_port(selfy : &mut Self, proc:&mut crate::InProcessSiteConfig) -> anyhow::Result<u16> {
+        
+        if let Some(procs) = &selfy.hosted_process {
+            
+            let used_ports = procs.iter().filter_map(|x|x.port).collect::<Vec<u16>>();
+
+            if let Some(manually_chosen_port) = proc.port {
+                if used_ports.contains(&manually_chosen_port) {
+                    // this port is already in use
+                    bail!("The port configured for this site is already in use..")
+                } else {
+                    return Ok(manually_chosen_port)
+                }
+            }
+
+        };
+
+        if let Some(manually_chosen_port) = proc.port {
+            // clearly this port is not in use yet
+            Ok(manually_chosen_port)
+        } else {
+            // if nothing is running and user has not selected any specific one lets just use the first port from the start range
+            Ok(selfy.port_range_start)
+        }
+    }
+    
+     // ---> port-mapping...
     // todo: work with the wrapper dashmap instead
     pub async fn add_or_replace_hosted_process(&mut self,hostname:&str,item:crate::InProcessSiteConfig,state:Arc<crate::GlobalState>) -> anyhow::Result<()> {
         
@@ -438,59 +503,30 @@ impl ConfigWrapper {
     
     }
 
-    pub fn busy_ports(&self) -> Vec<(String,u16)> {
-        self.hosted_process.iter().flatten().flat_map(|x| {
-            
-            let mut items = Vec::new();
-            
-            // manually set ports needs to be marked as busy even if the process is not running
-            if let Some(p) = x.port { 
-                items.push((x.host_name.clone(),p))
-            }
-
-
-            // active ports means that there is a loop active for this process using that port
-            if let Some(p) = x.active_port { 
-                items.push((x.host_name.clone(),p))
-            }
-
-            if items.len() > 0 {
-                Some(items)
-            } else {
-                None
-            }
-
-        }).flatten().collect::<Vec<(String,u16)>>()
-    }
-    
-    pub async fn find_and_set_unused_port(selfy : &mut Self, proc:&mut crate::InProcessSiteConfig) -> anyhow::Result<u16> {
-        
-        if let Some(procs) = &selfy.hosted_process {
-            
-            let used_ports = procs.iter().filter_map(|x|x.port).collect::<Vec<u16>>();
-
-            if let Some(manually_chosen_port) = proc.port {
-                if used_ports.contains(&manually_chosen_port) {
-                    // this port is already in use
-                    bail!("The port configured for this site is already in use..")
-                } else {
-                    return Ok(manually_chosen_port)
-                }
-            }
-
-        };
-
-        if let Some(manually_chosen_port) = proc.port {
-            // clearly this port is not in use yet
-            Ok(manually_chosen_port)
-        } else {
-            // if nothing is running and user has not selected any specific one lets just use the first port from the start range
-            Ok(selfy.port_range_start)
-        }
-    }
-    
     // todo: work with the wrapper dashmap instead
-    pub async fn add_or_replace_remote_site(&mut self,hostname:&str,item:crate::RemoteSiteConfig,state:Arc<crate::GlobalState>) -> anyhow::Result<()> {
+    pub async fn add_or_replace_dir_site(&mut self,hostname:&str,item:DirServer,state:Arc<crate::GlobalState>) -> anyhow::Result<()> {
+        
+
+        if let Some(sites) = self.dir_server.as_mut() {
+            // out with the old, in with the new
+            sites.retain(|x| x.host_name != hostname);
+            sites.retain(|x| x.host_name != item.host_name);
+            sites.push(item.clone());
+
+            // same as above but for the TUI state
+            let map_guard = &state.app_state.site_status_map;
+            map_guard.retain(|k,_v| *k != item.host_name);
+            map_guard.retain(|k,_v| k != hostname);
+            map_guard.insert(hostname.to_owned(), crate::types::app_state::ProcState::Dynamic);
+        }
+    
+        self.reload();
+        self.write_to_disk()
+    
+    }
+    
+     // todo: work with the wrapper dashmap instead
+     pub async fn add_or_replace_remote_site(&mut self,hostname:&str,item:crate::RemoteSiteConfig,state:Arc<crate::GlobalState>) -> anyhow::Result<()> {
         
 
         if let Some(sites) = self.remote_target.as_mut() {
