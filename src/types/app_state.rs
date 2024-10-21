@@ -11,7 +11,8 @@ pub enum ProcState {
     Starting,
     Stopping,
     Running,
-    Remote
+    Remote,
+    Dynamic
 }
 
 #[derive(Debug)]

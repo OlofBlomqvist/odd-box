@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::configuration::v2::{InProcessSiteConfig, RemoteSiteConfig};
+use crate::configuration::v2::{DirServer, InProcessSiteConfig, RemoteSiteConfig};
 use crate::configuration::OddBoxConfiguration;
 use super::*;
 use axum::extract::{Query, State};
@@ -26,7 +26,8 @@ impl IntoResponse for SitesError {
 #[derive(ToSchema,Serialize)]
 pub enum ConfigurationItem {
    HostedProcess(InProcessSiteConfig),
-   RemoteSite(RemoteSiteConfig)
+   RemoteSite(RemoteSiteConfig),
+   DirServer(DirServer)
 }
 
 #[derive(ToSchema,Serialize)]
@@ -47,7 +48,8 @@ pub enum BasicProcState {
     Starting,
     Stopping,
     Running,
-    Remote
+    Remote,
+    Dynamic
 }
 impl From<crate::ProcState> for BasicProcState {
     fn from(l: crate::ProcState) -> Self {
@@ -58,6 +60,8 @@ impl From<crate::ProcState> for BasicProcState {
             crate::types::app_state::ProcState::Stopping => BasicProcState::Stopping,
             crate::types::app_state::ProcState::Running => BasicProcState::Running,
             crate::types::app_state::ProcState::Remote => BasicProcState::Remote,
+            crate::types::app_state::ProcState::Dynamic => BasicProcState::Dynamic,
+            
         }
     }
 }
@@ -84,9 +88,14 @@ pub async fn list_handler(state: axum::extract::State<Arc<GlobalState>>) -> axum
     
     let procs = cfg_guard.hosted_process.clone().unwrap_or_default();
     let rems = cfg_guard.remote_target.clone().unwrap_or_default();
+    let dirs = cfg_guard.dir_server.clone().unwrap_or_default();
 
     Ok(Json(ListResponse {
-        items: procs.into_iter().map(ConfigurationItem::HostedProcess).chain(rems.into_iter().map(ConfigurationItem::RemoteSite)).collect()
+        items: procs.into_iter()
+            .map(ConfigurationItem::HostedProcess)
+            .chain(rems.into_iter().map(ConfigurationItem::RemoteSite))
+            .chain(dirs.into_iter().map(ConfigurationItem::DirServer))
+            .collect()
     }))
     
 }
@@ -121,7 +130,8 @@ pub async fn status_handler(state: axum::extract::State<Arc<GlobalState>>) -> ax
 #[derive(Deserialize, Serialize, ToSchema)]
 pub enum ConfigItem {
     RemoteSite(RemoteSiteConfig),
-    HostedProcess(InProcessSiteConfig)
+    HostedProcess(InProcessSiteConfig),
+    DirServer(DirServer)
 }
 
 
@@ -163,6 +173,16 @@ pub async fn update_handler(State(state): axum::extract::State<Arc<GlobalState>>
     let mut conf_guard = state.config.write().await;
 
     match &body.new_configuration {
+        ConfigItem::DirServer(new_cfg) => {
+            let hostname = query.hostname.clone().unwrap_or(new_cfg.host_name.clone());
+            match conf_guard.add_or_replace_dir_site(&hostname,new_cfg.to_owned(),state.clone()).await {
+                Ok(_) => {
+                    state.invalidate_cache();
+                    Ok(())
+                },
+                Err(e) => Err(SitesError::UnknownError(format!("{e:?}")))
+            }
+        },
         ConfigItem::RemoteSite(new_cfg) => {
             let hostname = query.hostname.clone().unwrap_or(new_cfg.host_name.clone());
 
@@ -177,7 +197,7 @@ pub async fn update_handler(State(state): axum::extract::State<Arc<GlobalState>>
                 Err(e) => Err(SitesError::UnknownError(format!("{e:?}")))
             }
 
-        }
+        },
         ConfigItem::HostedProcess(new_cfg) => {
             
             let hostname = query.hostname.clone().unwrap_or(new_cfg.host_name.clone());

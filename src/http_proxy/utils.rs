@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use chrono::Local;
 use futures_util::FutureExt;
 use http_body::Frame;
@@ -39,6 +40,7 @@ lazy_static! {
 pub enum ProxyCallResult {
     NormalResponse(WrappedNormalResponse),
     EpicResponse(crate::http_proxy::service::EpicResponse),
+    Bytes(Response<Bytes>)
 }
 
 #[derive(Debug)]
