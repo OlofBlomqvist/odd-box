@@ -47,6 +47,9 @@ There is a basic administration API that can be enabled by adding "admin_api_por
 **odd-box v0.1.2:**
 ![Screenshot of oddbox v0.1.2](/screenshot.jpg)
 
+**odd-box web-ui v0.1.8:**
+![Screenshot of oddbox v0.1.8](/webui-screenshot.jpg)
+
 
 ## Installation
 
