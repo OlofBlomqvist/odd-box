@@ -1,6 +1,54 @@
 {
   "lockfile_version": "1",
   "packages": {
+    "caddy@latest": {
+      "last_modified": "2024-09-10T15:01:03Z",
+      "resolved": "github:NixOS/nixpkgs/5ed627539ac84809c78b2dd6d26a5cebeb5ae269#caddy",
+      "source": "devbox-search",
+      "version": "2.8.4",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/74v8xnm6jls4n40wqfsk0f60468k1fz9-caddy-2.8.4",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/74v8xnm6jls4n40wqfsk0f60468k1fz9-caddy-2.8.4"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/slaf8sbgs814sgj71gr0w5ad6w07yrjz-caddy-2.8.4",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/slaf8sbgs814sgj71gr0w5ad6w07yrjz-caddy-2.8.4"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/854ps2a0p2300fhzr7pz0izkvdl1rk8g-caddy-2.8.4",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/854ps2a0p2300fhzr7pz0izkvdl1rk8g-caddy-2.8.4"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/d59pz9n8kzwd66zlh8s7hq042lpfh0nv-caddy-2.8.4",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/d59pz9n8kzwd66zlh8s7hq042lpfh0nv-caddy-2.8.4"
+        }
+      }
+    },
     "libiconv@latest": {
       "last_modified": "2024-08-31T10:12:23Z",
       "resolved": "github:NixOS/nixpkgs/5629520edecb69630a3f4d17d3d33fc96c13f6fe#libiconv",

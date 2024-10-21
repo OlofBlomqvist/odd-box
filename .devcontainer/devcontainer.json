@@ -22,6 +22,6 @@
 		]
 	  }
 	},
-	"postCreateCommand": "rustup install nightly && rustup default nightly"
+	"postCreateCommand": "/bin/bash ./.devcontainer/postcreate.sh"
   }
   

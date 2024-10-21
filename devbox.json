@@ -1,26 +1,27 @@
 {
-    "packages": [
-        "rustup@latest",
-        "libiconv@latest",
-        "nodejs@18",
-        "python@latest"
+  "packages": [
+    "rustup@latest",
+    "libiconv@latest",
+    "nodejs@18",
+    "python@latest",
+    "caddy@latest"
+  ],
+  "shell": {
+    "init_hook": [
+      "projectDir=$(dirname $(readlink -f \"$0\"))",
+      "rustupHomeDir=\"$projectDir\"/.rustup",
+      "mkdir -p $rustupHomeDir",
+      "export RUSTUP_HOME=$rustupHomeDir",
+      "export LIBRARY_PATH=$LIBRARY_PATH:\"$projectDir/nix/profile/default/lib\"",
+      "rustup default stable",
+      "cargo fetch",
+      "echo 'heeeeey yooo!' > /dev/null"
     ],
-    "shell": {
-        "init_hook": [
-            "projectDir=$(dirname $(readlink -f \"$0\"))",
-            "rustupHomeDir=\"$projectDir\"/.rustup",
-            "mkdir -p $rustupHomeDir",
-            "export RUSTUP_HOME=$rustupHomeDir",
-            "export LIBRARY_PATH=$LIBRARY_PATH:\"$projectDir/nix/profile/default/lib\"",
-            "rustup default stable",
-            "cargo fetch",
-	    "echo 'heeeeey yooo!' > /dev/null"
-        ],
-        "scripts": {
-            "test": "cargo test -- --show-output",
-            "start" : "cargo run",
-            "start-release" : "cargo run --release",
-            "build-docs": "cargo doc"
-        }
+    "scripts": {
+      "test":          "cargo test -- --show-output",
+      "start":         "cargo run",
+      "start-release": "cargo run --release",
+      "build-docs":    "cargo doc"
     }
-} 
+  }
+}
