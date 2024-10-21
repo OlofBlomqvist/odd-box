@@ -1,4 +1,4 @@
-import { Suspense, useState } from "react";
+import { useState } from "react";
 import Input from "../../components/input/input";
 import SettingsItem from "./settings-item";
 import SettingsSection from "./settings-section";
@@ -16,15 +16,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-const SettingsPage = () => {
-  return (
-    <Suspense fallback={<p>loading settings..</p>}>
-      <SettingsPageInner />
-    </Suspense>
-  );
-};
 
-const SettingsPageInner = () => {
+const SettingsPage = () => {
   const { updateSettings } = useSettingsMutations();
   const { data: settings } = useSettings();
   const [newIp, setNewIp] = useState(settings.ip);

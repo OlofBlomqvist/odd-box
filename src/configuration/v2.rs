@@ -13,6 +13,38 @@ use super::EnvVar;
 use super::LogFormat;
 use super::LogLevel;
 
+/// A directory server configuration allows you to serve files from a directory on the local filesystem.
+/// Both unencrypted (http) and encrypted (https) connections are supported, either self-signed or thru lets-encrypt.
+/// You can specify rules for how the cache should behave, and you can also specify rules for how the files should be served.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash, JsonSchema, PartialEq, Eq)]
+pub struct DirServer {
+    pub dir : String,
+    /// This is the hostname that the site will respond to.
+    pub host_name : String,
+    /// Instead of only listening to yourdomain.com, you can capture subdomains which means this site will also respond to requests for *.yourdomain.com
+    pub capture_subdomains : Option<bool>,
+    pub enable_lets_encrypt: Option<bool>,
+    pub enable_directory_browsing: Option<bool>,
+    //pub rules: Option<Vec<ReqRule>>,
+    // --- todo --------------------------------------
+    // pub render_markdown: Option<bool>,
+    // pub allow_directory_browsing: Option<bool>,
+}
+
+// note: there is no implementation using these yet..
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash, JsonSchema, PartialEq, Eq)]
+pub struct ReqRule {
+    
+    /// The max age in seconds for the cache. If this is set to None, the cache will be disabled.
+    /// This setting causes odd-box to add a Cache-Control header to the response.
+    pub max_age_in_seconds: Option<u64>,
+    /// Full url path of the file this rule should apply to, or a regex pattern for the url.
+    /// For example: /index.html or /.*\.html
+    pub path_pattern: Option<String>,
+    /// If no index.html is found, you can set this to true to allow directory browsing.
+    pub allow_directory_browsing: Option<bool>,
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash, JsonSchema)]
 pub struct InProcessSiteConfig {
@@ -243,6 +275,7 @@ pub struct OddBoxV2Config {
     pub env_vars : Vec<EnvVar>,
     pub remote_target : Option<Vec<RemoteSiteConfig>>,
     pub hosted_process : Option<Vec<InProcessSiteConfig>>,
+    pub dir_server : Option<Vec<DirServer>>,
     pub admin_api_port : Option<u16>,
     pub path : Option<String>,
     pub lets_encrypt_account_email: Option<String>
@@ -284,7 +317,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
         let mut formatted_toml = Vec::new();
 
         // this is to nudge editor plugins to use the correct schema for validation and intellisense
-        formatted_toml.push(format!("#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.json"));
+        formatted_toml.push(format!("#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.1.json"));
         
         // this is for our own use to know which version of the configuration we are using
         formatted_toml.push(format!("version = \"{:?}\"", self.version));
@@ -344,6 +377,23 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
             formatted_toml.push("]".to_string());
         } else {
             formatted_toml.push("env_vars = []".to_string());
+        }
+
+        if let Some(dir_sites) = &self.dir_server {
+            for s in dir_sites {
+                formatted_toml.push("\n[[dir_server]]".to_string());
+                formatted_toml.push(format!("host_name = {:?}", s.host_name));
+                formatted_toml.push(format!("dir = {:?}", s.dir));
+                if let Some(true) = s.capture_subdomains {
+                    formatted_toml.push(format!("capture_subdomains = true"));
+                }
+                if let Some(true) = s.enable_directory_browsing {
+                    formatted_toml.push(format!("enable_directory_browsing = true"));
+                }
+                if let Some(true) = s.enable_lets_encrypt {
+                    formatted_toml.push(format!("enable_lets_encrypt = true"));
+                }
+            }
         }
         
         if let Some(remote_sites) = &self.remote_target {
@@ -451,6 +501,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
     }
     fn example() -> OddBoxV2Config {
         OddBoxV2Config {
+            dir_server: None,
             lets_encrypt_account_email: None,
             path: None,
             admin_api_port: None,
@@ -582,6 +633,7 @@ impl TryFrom<super::v1::OddBoxV1Config> for super::v2::OddBoxV2Config{
 
     fn try_from(old_config: super::v1::OddBoxV1Config) -> Result<Self, Self::Error> {
         let new_config = super::v2::OddBoxV2Config {
+            dir_server: None,
             lets_encrypt_account_email: None,
             path: None,
             version: super::OddBoxConfigVersion::V2,

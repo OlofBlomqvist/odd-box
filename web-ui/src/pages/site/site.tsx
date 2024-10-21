@@ -1,4 +1,3 @@
-import { useParams } from "@tanstack/react-router";
 import SiteOverview from "./site-overview";
 import SiteLogs from "./site-logs";
 import Tabs from "../../components/tabs/tabs";
@@ -6,21 +5,24 @@ import useHostedSites from "../../hooks/use-hosted-sites";
 import { useRemoteSites } from "../../hooks/use-remote-sites";
 import RemoteSiteSettings from "./remote-site-settings";
 import HostedProcessSettings from "./hosted-process-settings";
+import { Route } from "@/routes/site";
+import { getUrlFriendlyUrl } from "@/lib/get_url_friendly_url";
 
 const SitePage = () => {
+  const { hostname } = Route.useSearch();
+  
   const { data: sites } = useHostedSites();
   const { data: remoteSites } = useRemoteSites();
-  const params = useParams({ from: "/site/$siteName" });
 
   const thisHostedProcess = sites.find(
     (x) =>
-      x.host_name.replaceAll("http://", "").replaceAll("https://", "") ===
-      params.siteName
+      getUrlFriendlyUrl(x.host_name) ===
+      hostname
   );
   const thisRemoteSite = remoteSites.find(
     (x) =>
-      x.host_name.replaceAll("http://", "").replaceAll("https://", "") ===
-      params.siteName
+      getUrlFriendlyUrl(x.host_name) ===
+      hostname
   );
 
   if (thisRemoteSite) {
@@ -49,7 +51,7 @@ const SitePage = () => {
       name: "Logs",
       content: (
         <main className="grid flex-1 items-start gap-4 sm:py-0 md:gap-8 max-w-[900px]">
-          <SiteLogs hostedProcess={thisHostedProcess} />
+          <SiteLogs host={hostname} />
         </main>
       ),
     },

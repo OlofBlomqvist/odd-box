@@ -116,6 +116,7 @@ pub async fn listen(
                 .build(connector);
 
             let terminating_proxy_service = ReverseProxyService { 
+                configuration: Arc::new(cfg.read().await.clone()),
                 resolved_target: None,
                 state: state.clone(), 
                 remote_addr: None, 
@@ -246,6 +247,8 @@ async fn listen_http(
                     
                         //tracing::trace!("Accepted connection! current active: {}", 200-ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
                         //let mut service: ReverseProxyService = terminating_service_template.clone();
+                        //service.configuration = Arc::new(state.config.read().await.clone());
+
                         //service.remote_addr = Some(source_addr);   
                         let tx = tx.clone();
                         let state = state.clone();
@@ -340,6 +343,8 @@ async fn listen_https(
                     
                         tracing::trace!("accepted connection! current active: {}", 200-ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
                         let mut service: ReverseProxyService = terminating_service_template.clone();
+                        service.configuration = Arc::new(state.config.read().await.clone());
+
                         service.remote_addr = Some(source_addr);  
                         let tx = tx.clone();
                         let arced_tls_config = Some(arced_tls_config.clone());

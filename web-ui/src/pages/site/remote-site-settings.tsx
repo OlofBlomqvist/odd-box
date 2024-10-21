@@ -1,7 +1,6 @@
 import SettingsItem from "../settings/settings-item";
 import SettingsSection from "../settings/settings-section";
 import Input from "../../components/input/input";
-import "./style.css";
 import Button from "../../components/button/button";
 import useSiteMutations from "../../hooks/use-site-mutations";
 import toast from "react-hot-toast";
@@ -183,6 +182,7 @@ const RemoteSiteSettings = ({ site }: { site: RemoteSiteConfig }) => {
         </Button>
       </div>
       <ConfirmationDialog
+      isDangerAction
         onClose={() => setShowConfirmDeleteModal(false)}
         onConfirm={() => {
           setShowConfirmDeleteModal(false);
@@ -191,7 +191,7 @@ const RemoteSiteSettings = ({ site }: { site: RemoteSiteConfig }) => {
             {
               onSuccess: () => {
                 setShowConfirmDeleteModal(false);
-                router.navigate({ to: "/" });
+                router.navigate({ to: "/", search: { type: "processes" } });
               },
             }
           );
@@ -199,8 +199,8 @@ const RemoteSiteSettings = ({ site }: { site: RemoteSiteConfig }) => {
         show={showConfirmDeleteModal}
         title="Delete"
         yesBtnText="Yes, delete it"
-        subtitle={`Are you sure you want to delete the site '${site.host_name}'?`}
-      />
+        subtitle={<span>Are you sure you want to delete <span className="font-bold text-[var(--color2)]">{site.host_name}</span>?</span>}
+        />
 
       <BackendSheet
         listIndex={backendModalState.listIndex}

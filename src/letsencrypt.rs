@@ -734,6 +734,11 @@ pub async fn bg_worker_for_lets_encrypt_certs(state: Arc<GlobalState>) {
                     .iter()
                     .flatten()
                     .filter(|x|x.enable_lets_encrypt.unwrap_or(false)).map(|x|x.host_name.clone())
+            ).chain(
+                state_guard.dir_server
+                    .iter()
+                    .flatten()
+                    .filter(|x|x.enable_lets_encrypt.unwrap_or(false)).map(|x|x.host_name.clone())
             ).collect::<Vec<String>>();
         
         drop(state_guard);

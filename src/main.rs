@@ -15,8 +15,7 @@ mod proxy;
 use anyhow::bail;
 use anyhow::Context;
 use clap::Parser;
-use configuration::v2::FullyResolvedInProcessSiteConfig;
-use configuration::LogFormat;
+use configuration::v2::FullyResolvedInProcessSiteConfig;use configuration::LogFormat;
 use configuration::OddBoxConfigVersion;
 use dashmap::DashMap;
 use global_state::GlobalState;
@@ -53,6 +52,7 @@ mod self_update;
 use types::app_state::AppState;
 use lazy_static::lazy_static;
 mod letsencrypt;
+mod custom_servers;
 
 lazy_static! {
     static ref PROC_THREAD_MAP: Arc<DashMap<ProcId, ProcInfo>> = Arc::new(DashMap::new());
@@ -326,7 +326,6 @@ fn initialize_configuration(args:&Args) -> anyhow::Result<(ConfigWrapper,OddBoxC
 
 #[tokio::main(flavor="multi_thread")]
 async fn main() -> anyhow::Result<()> {
-    
     match rustls::crypto::ring::default_provider().install_default() {
         Ok(_) => {},
         Err(e) => {
@@ -380,6 +379,8 @@ async fn main() -> anyhow::Result<()> {
 
     let cloned_procs = config.hosted_process.clone();
     let cloned_remotes = config.remote_target.clone();
+    let cloned_custom_dir = config.dir_server.clone();
+    
     
     let log_level : LevelFilter = match config.log_level{
         Some(LogLevel::Info) => LevelFilter::INFO,
@@ -511,6 +512,11 @@ async fn main() -> anyhow::Result<()> {
     // Add any remotes to the site list
     for x in cloned_remotes.iter().flatten() {
         inner_state_arc.site_status_map.insert(x.host_name.to_owned(), ProcState::Remote);
+    }
+
+    // Add any hosted dirs to site list
+    for x in cloned_custom_dir.iter().flatten() {
+        inner_state_arc.site_status_map.insert(x.host_name.to_owned(), ProcState::Dynamic);
     }
 
     // And spawn the hosted process worker loops

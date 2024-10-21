@@ -14,7 +14,7 @@
   --destructive: 0 60% 50%;
   --destructive-foreground: 0 0% 98%;
   --muted: 240 5% 25%;
-  --muted-foreground: 60 5% 85%;
+  --muted-foreground: 60 5% 75%;
   --card: 0 0% 12.2%;
   --card-foreground: 60 5% 90%;
   --popover: 240 5% 15%;
@@ -76,7 +76,7 @@ body {
   /* display:grid; */
   min-height:100dvh;
   transition: padding-left 0.25s;
-  font-family: "Ubuntu", sans-serif;
+  font-family: "Ubuntu", sans-serif; 
 
 
 }
@@ -88,9 +88,9 @@ body {
   padding-right: 0px;
   padding-top:60px;
   min-height: 100dvh;
-  @media screen and (min-width: 800px) {
-    padding-left:340px;
-    padding-right:40px;
+  @media screen and (min-width: 900px) {
+    padding-left:320px;
+    padding-right:20px;
   }
 }
 
@@ -156,7 +156,7 @@ p, h1, h2, h3, h4, h5, h6 {
   margin-bottom:20px;
 }
 
-@media (max-width: 800px) {
+@media (max-width: 768px) {
   .settings-item:not(.row-only) {
       align-items: stretch;
       flex-direction: column;
@@ -294,7 +294,7 @@ p, h1, h2, h3, h4, h5, h6 {
 
 
 .hide-when-small {
-  @media screen and (max-width: 800px) {
+  @media screen and (max-width: 768px) {
     display:none;
   }
 }

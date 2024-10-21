@@ -1,17 +1,23 @@
-import { ReactNode } from "react";
+import { ComponentPropsWithoutRef, ReactNode } from "react";
 import { useDrawerContext } from "./context";
 import { Link } from "@tanstack/react-router";
+
+type LinkProps = ComponentPropsWithoutRef<typeof Link>
+
 const MenuItem = ({
   title,
   icon,
-  href,
   fontSize,
   rightIcon,
   fontWeight,
   disabled,
   rightPadding,
-  onClick
+  onClick,
+  to,
+  searchParams
 }: {
+  searchParams?:LinkProps['search'],
+  to:LinkProps['to'],
   onClick?: () => void,
   rightPadding?: string;
   disabled?:boolean
@@ -19,24 +25,26 @@ const MenuItem = ({
   isBaseRoute?: boolean;
   title: string;
   icon: ReactNode;
-  href: string;
   fontSize?: string;
   fontWeight?:string
 }) => {
+
+
   const { setDrawerOpen } = useDrawerContext();
-const classNames = ["styled-link"];
+const classNames = ["flex items-center gap-3 px-[10px] py-2 break-all pr-0 text-white no-underline transition-all duration-200 rounded-[5px] styled-link"];
   if (disabled) {
     classNames.push("disabled");
   }
   
-  return (
-    <Link disabled={disabled} resetScroll={false}
+  return ( 
+    <Link disabled={disabled} resetScroll={false} activeOptions={{exact: false}}
       className={classNames.join(" ")}
       onClick={() => {
         onClick?.()
         setDrawerOpen(false)
       }}  
-      to={href}
+      to={to}
+      search={searchParams}
       style={{
         paddingRight: rightPadding ?? "0px",
       }}

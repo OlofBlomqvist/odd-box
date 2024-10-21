@@ -1,10 +1,8 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
-use axum::http::HeaderValue;
 use bytes::Bytes;
 use http_body::Frame;
-
 use http_body_util::{Either, Full, StreamBody};
 use hyper::service::Service;
 use hyper::{body::Incoming as IncomingBody, Request, Response};
@@ -82,6 +80,11 @@ pub fn create_stream_response(rx:tokio::sync::mpsc::Receiver<Result<Frame<Bytes>
 }
 
 
+
+pub fn create_simple_response_from_bytes(res:Response<bytes::Bytes>) -> Result<EpicResponse,CustomError> {
+    let (a,b) = res.into_parts();
+    Ok(EpicResponse::from_parts(a,Either::Right(Either::Left(b.into()))))
+}
 pub async fn create_simple_response_from_incoming(res:WrappedNormalResponse) -> Result<EpicResponse,CustomError> {
     let (p,b) = res.into_parts();
     Ok(EpicResponse::from_parts(p,Either::Left(b)))
@@ -94,19 +97,19 @@ fn handle_ws(svc:ReverseProxyService,mut req:hyper::Request<hyper::body::Incomin
     
     tokio::spawn(async move {crate::http_proxy::websockets::handle_ws(req, svc,websocket).await });
     let (p,b) = response.into_parts();
-    Ok(EpicResponse::from_parts(p,Either::Right(Either::Left(b))))
+    Ok(EpicResponse::from_parts(p,Either::Right(Either::Left(b.into()))))
 }
+
 
 impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
     type Response = EpicResponse;
     type Error = CustomError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
-
     
     fn call(&self, req: hyper::Request<hyper::body::Incoming>) -> Self::Future {    
         
-        tracing::trace!("INCOMING REQ: {:?}",req);
-        tracing::trace!("VERSION: {:?}",req.version());
+        // tracing::trace!("INCOMING REQ: {:?}",req);
+        // tracing::trace!("VERSION: {:?}",req.version());
 
         // handle websocket upgrades separately
         if hyper_tungstenite::is_upgrade_request(&req) {
@@ -167,6 +170,7 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
                 f.await
             })
         }
+
         
         // handle normal proxy path
         let f = handle_http_request(
@@ -177,13 +181,14 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
             self.is_https_only,
             self.client.clone(),
             self.h2_client.clone(),
-            self.resolved_target.clone()
+            self.resolved_target.clone(),
+            self.configuration.clone()
         );
         
         return Box::pin(async move {
             match f.await {
-                Ok(mut x) => {
-                    x.headers_mut().insert("odd-box", HeaderValue::from_static("YEAH BABY YEAH"));
+                Ok(x) => {
+                    //x.headers_mut().insert("odd-box", HeaderValue::from_static("YEAH BABY YEAH"));
                     Ok(x)
                 },
                 Err(e) => {
@@ -196,7 +201,6 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
     }
 }
 
-#[allow(dead_code)]
 async fn handle_http_request(
     client_ip: std::net::SocketAddr, 
     req: Request<hyper::body::Incoming>,
@@ -205,7 +209,8 @@ async fn handle_http_request(
     is_https:bool,
     client:  Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
     h2_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
-    peeked_target: Option<Arc<ReverseTcpProxyTarget>>
+    peeked_target: Option<Arc<ReverseTcpProxyTarget>>,
+    configuration: Arc<crate::configuration::ConfigWrapper>
 
 ) -> Result<EpicResponse, CustomError> {
     
@@ -251,13 +256,35 @@ async fn handle_http_request(
     if let Some(r) = intercept_local_commands(&req_host_name,&params,req_path,tx.clone()).await {
         return Ok(r)
     }
+
+
+    
+    let dir_target = configuration.dir_server.iter().flatten().find_map(|x| {
+        if x.host_name == req_host_name {
+            Some(x)
+        } else {
+            None
+        }
+    });
+
+    if let Some(t) = dir_target {
+        match crate::custom_servers::directory::handle(t.clone(),req).await {
+            Ok(r) => return Ok(r),
+            Err(e) => {
+                tracing::error!("Failed to handle file request: {e:?}");
+                let mut rr = EpicResponse::new(create_epic_string_full_body(&e.0));
+                *rr.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                return Ok(rr)
+            },
+        }
+    }
+
     
     let found_hosted_target = 
         if let Some(p) = peeked_target.as_ref().and_then(|x| x.hosted_target_config.clone()) {
             Some(p)
         } else {
-            let cfg_guard = state.config.read().await;
-            if let Some(processes) = &cfg_guard.hosted_process {
+            if let Some(processes) = &configuration.hosted_process {
                 if let Some(pp) = processes.iter().find(|p| {
                     req_host_name == p.host_name
                     || p.capture_subdomains.unwrap_or_default() 
@@ -416,7 +443,7 @@ async fn handle_http_request(
                 h2_client.clone()
             ).await
         }
-        else if let Some(remote_target_cfg) = &state.config.read().await.remote_target.iter().flatten().find(|p|{
+        else if let Some(remote_target_cfg) = &configuration.remote_target.iter().flatten().find(|p|{
             //tracing::info!("comparing incoming req: {} vs {} ",req_host_name,p.host_name);
             req_host_name == p.host_name
             || p.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",p.host_name))
@@ -524,6 +551,9 @@ async fn perform_remote_forwarding(
 async fn map_result(target_url:&str,result:Result<crate::http_proxy::ProxyCallResult,crate::http_proxy::ProxyError>) -> Result<EpicResponse,CustomError> {
     
     match result {
+        Ok(crate::http_proxy::ProxyCallResult::Bytes(response)) => {
+            return create_simple_response_from_bytes(response);
+        }
         Ok(super::ProxyCallResult::EpicResponse(epic_response)) => {
             return Ok(epic_response)
         }

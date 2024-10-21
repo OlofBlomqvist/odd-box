@@ -6,7 +6,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/dialog/dialog";
-import Button from "../../button/button";
+import {Button} from "../../ui/button";
+import { ReactNode } from "react";
 export function ConfirmationDialog({
   title,
   subtitle,
@@ -15,27 +16,29 @@ export function ConfirmationDialog({
   show,
   noBtnText,
   yesBtnText,
+  isDangerAction,
 }: {
+  isDangerAction?:boolean
   noBtnText?: string;
   yesBtnText?: string;
-  title: string;
-  subtitle: string;
+  title: ReactNode;
+  subtitle: ReactNode;
   onConfirm: () => void;
   onClose: () => void;
   show: boolean;
 }) {
   return (
     <Dialog open={show} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[425px] bg-[#09090b]">
+      <DialogContent className="sm:max-w-[425px] bg-[#09090b] border border-[#242424]">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{subtitle}</DialogDescription>
         </DialogHeader>
         <DialogFooter className="gap-2">
-          <Button onClick={onClose} secondary type="submit">
+          <Button onClick={onClose} variant="secondary" type="button">
             {noBtnText ?? "No, cancel"}
           </Button>
-          <Button onClick={onConfirm} type="submit">
+          <Button onClick={onConfirm} variant={isDangerAction ? "destructive" : "default"}>
             {yesBtnText ?? "Yes, confirm"}
           </Button>
         </DialogFooter>

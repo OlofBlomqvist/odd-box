@@ -35,8 +35,8 @@ const SettingsItem = ({
           {title}
         </label>
         <label
-          htmlFor={labelFor}
-          style={{ fontSize: ".8rem", opacity: 0.6, display: "block" }}
+          htmlFor={labelFor} className="text-muted-foreground"
+          style={{ fontSize: ".8rem", display: "block" }}
         >
           {subTitle}
           <br />

@@ -1,14 +1,23 @@
 import { useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { TTab } from "./types";
 import { cn } from "@/lib/cn";
 
 const Tabs = ({ sections }: { sections?: TTab[] }) => {
   const router = useRouter();
+  
   const searchParams = new URLSearchParams(window.location.search);
   const tab = searchParams.get("tab");
 
   const [tabIndex, setTabIndex] = useState(Number(tab) ?? 0);
+
+  useEffect(() => {
+    if (router.state.location.search.tab !== undefined) {
+      setTabIndex(router.state.location.search.tab)
+    } else {
+      setTabIndex(0)
+    }
+  },[router.state.location.search.tab])
 
   return (
     <>
@@ -18,7 +27,7 @@ const Tabs = ({ sections }: { sections?: TTab[] }) => {
             key={index}
             active={tabIndex === index}
             onClick={() => {
-              router.navigate({ search: { tab: index } });
+              router.navigate({ search: (x) => ({ ...x,tab: index }) });
               setTabIndex(index);
             }}
             title={section.name}

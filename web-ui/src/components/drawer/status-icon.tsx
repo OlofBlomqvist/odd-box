@@ -4,6 +4,7 @@ import useSiteMutations from "../../hooks/use-site-mutations";
 import { BasicProcState } from "../../generated-api";
 import { Popover, PopoverContent } from "../popover/popover";
 import { PopoverTrigger } from "@radix-ui/react-popover";
+import { cx } from "class-variance-authority";
 
 const statusColors = {
   Running: "greenyellow",
@@ -31,7 +32,7 @@ const StatusIcon = ({
     <Popover open={isPopoverOpen}>
       <PopoverTrigger asChild>
         <span
-          className="status-icon"
+          className="w-7 h-7 p-0 rounded-[5px] grid place-content-center cursor-pointer transition-all duration-100 border border-transparent hover:border-white/50"
           title={state}
           onClick={(e) => {
             e.preventDefault();
@@ -62,7 +63,7 @@ const StatusIcon = ({
           }}
         >
           <button
-            disabled={state === "Running"}
+            disabled={state === BasicProcState.Running}
             onClick={() => {
               toast.promise(startSite.mutateAsync({ hostname }), {
                 loading: `Starting site.. [${hostname}]`,
@@ -70,7 +71,7 @@ const StatusIcon = ({
                 error: (e) => `Failed to start site: ${e}`,
               });
             }}
-            className="button-dropdown-option"
+            className={cx("button-dropdown-option", state === BasicProcState.Running && "opacity-50")}
             style={{
               width: "100%",
               borderBottom: "1px solid var(--color4)",
@@ -81,7 +82,7 @@ const StatusIcon = ({
           </button>
 
           <button
-            disabled={state === "Stopped"}
+            disabled={state !== BasicProcState.Running}
             onClick={() => {
               toast.promise(stopSite.mutateAsync({ hostname }), {
                 loading: `Stopping site.. [${hostname}]`,
@@ -89,7 +90,7 @@ const StatusIcon = ({
                 error: (e) => `Failed to stop site: ${e}`,
               });
             }}
-            className="button-dropdown-option"
+            className={cx("button-dropdown-option",state !== BasicProcState.Running && "opacity-50")}
             style={{
               width: "100%",
               height: "36px",
