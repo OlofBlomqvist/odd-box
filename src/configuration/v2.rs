@@ -26,8 +26,6 @@ pub struct DirServer {
     pub enable_lets_encrypt: Option<bool>,
     pub enable_directory_browsing: Option<bool>,
     //pub rules: Option<Vec<ReqRule>>,
-    /// Allow insecure connections to this site. Not recommended! False by default. 
-    pub allow_insecure_connections: Option<bool>,
     // --- todo --------------------------------------
     // pub render_markdown: Option<bool>,
     // pub allow_directory_browsing: Option<bool>,
@@ -379,6 +377,23 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
             formatted_toml.push("]".to_string());
         } else {
             formatted_toml.push("env_vars = []".to_string());
+        }
+
+        if let Some(dir_sites) = &self.dir_server {
+            for s in dir_sites {
+                formatted_toml.push("\n[[dir_server]]".to_string());
+                formatted_toml.push(format!("host_name = {:?}", s.host_name));
+                formatted_toml.push(format!("dir = {:?}", s.dir));
+                if let Some(true) = s.capture_subdomains {
+                    formatted_toml.push(format!("capture_subdomains = true"));
+                }
+                if let Some(true) = s.enable_directory_browsing {
+                    formatted_toml.push(format!("enable_directory_browsing = true"));
+                }
+                if let Some(true) = s.enable_lets_encrypt {
+                    formatted_toml.push(format!("enable_lets_encrypt = true"));
+                }
+            }
         }
         
         if let Some(remote_sites) = &self.remote_target {

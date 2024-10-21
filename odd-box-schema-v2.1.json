@@ -178,13 +178,6 @@
         "host_name"
       ],
       "properties": {
-        "allow_insecure_connections": {
-          "description": "Allow insecure connections to this site. Not recommended! False by default.",
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
         "capture_subdomains": {
           "description": "Instead of only listening to yourdomain.com, you can capture subdomains which means this site will also respond to requests for *.yourdomain.com",
           "type": [
