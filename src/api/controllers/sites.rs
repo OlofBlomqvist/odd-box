@@ -250,13 +250,14 @@ pub async fn delete_handler(
     let mut conf_guard = global_state.config.write().await;
     
     let mut deleted = false;
-    
+    let mut deleted_is_proc = false;
     if let Some(sites) = conf_guard.hosted_process.as_mut() {
         
         sites.retain(|x| {
             let result = x.host_name != query.hostname;
             if result == false {
                 deleted = true;
+                deleted_is_proc = true;
             }
             result
         })
@@ -272,28 +273,38 @@ pub async fn delete_handler(
             result
         })
     }
+
+    if let Some(sites) = conf_guard.dir_server.as_mut() {
+        
+        sites.retain(|x| {
+            let result = x.host_name != query.hostname;
+            if result == false {
+                deleted = true;
+            }
+            result
+        })
+    }
     
 
     if deleted {
         global_state.app_state.site_status_map.remove( &query.hostname);
-        
         conf_guard.write_to_disk()
             .map_err(|e|
                 SitesError::UnknownError(format!("{e:?}"))
             )?;
         drop(conf_guard);
         tracing::info!("Config file updated due to change to site: {}", query.hostname);
-        let (tx,mut rx) = tokio::sync::mpsc::channel(1);
-        global_state.broadcaster.send(crate::http_proxy::ProcMessage::Delete( query.hostname.to_owned(),tx)).map_err(|e|
-            SitesError::UnknownError(format!("{e:?}"))
-        )?;
-
-        if rx.recv().await == Some(0) {
-            tracing::debug!("Received a confirmation that the process was deleted");
-        } else {
-            tracing::debug!("Failed to receive a confirmation that the process was deleted");
-        };
-
+        if deleted_is_proc {            
+            let (tx,mut rx) = tokio::sync::mpsc::channel(1);
+            global_state.broadcaster.send(crate::http_proxy::ProcMessage::Delete( query.hostname.to_owned(),tx)).map_err(|e|
+                SitesError::UnknownError(format!("{e:?}"))
+            )?;
+            if rx.recv().await == Some(0) {
+                tracing::debug!("Received a confirmation that the process was deleted");
+            } else {
+                tracing::debug!("Failed to receive a confirmation that the process was deleted");
+            };
+        }
         tracing::info!("Dropped site from configuration: {}", query.hostname);
     } else {
         tracing::info!("Attempt to drop non-existant site: {}", query.hostname);
