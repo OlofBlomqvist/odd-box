@@ -493,7 +493,7 @@ impl ConfigWrapper {
             
             let guard = &state.app_state.site_status_map;
             guard.retain(|k,_v| k != hostname);
-            guard.insert(hostname.to_owned(), crate::types::app_state::ProcState::Stopped);    
+            guard.insert(item.host_name, crate::types::app_state::ProcState::Stopped);    
         }
     
         self.reload();
@@ -519,7 +519,7 @@ impl ConfigWrapper {
             let map_guard = &state.app_state.site_status_map;
             map_guard.retain(|k,_v| *k != item.host_name);
             map_guard.retain(|k,_v| k != hostname);
-            map_guard.insert(hostname.to_owned(), crate::types::app_state::ProcState::Dynamic);
+            map_guard.insert(item.host_name, crate::types::app_state::ProcState::Dynamic);
         }
     
         self.reload();
@@ -541,7 +541,7 @@ impl ConfigWrapper {
             let map_guard = &state.app_state.site_status_map;
             map_guard.retain(|k,_v| *k != item.host_name);
             map_guard.retain(|k,_v| k != hostname);
-            map_guard.insert(hostname.to_owned(), crate::types::app_state::ProcState::Remote);
+            map_guard.insert(item.host_name, crate::types::app_state::ProcState::Remote);
         }
     
         self.reload();
