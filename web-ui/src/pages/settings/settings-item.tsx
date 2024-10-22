@@ -8,14 +8,16 @@ const SettingsItem = ({
   rowOnly,
   labelFor,
   vertical,
+  dangerText,
 }: {
   vertical?: boolean;
   rowOnly?: boolean;
   children?: ReactNode;
   title: string;
   subTitle?: string;
-  defaultValue?: string;
+  defaultValue?: string|number;
   labelFor?: string;
+  dangerText?: ReactNode;
 }) => {
   let classNames = ["settings-item"];
   if (rowOnly) {
@@ -34,13 +36,19 @@ const SettingsItem = ({
         >
           {title}
         </label>
-        <label
-          htmlFor={labelFor} className="text-muted-foreground"
-          style={{ fontSize: ".8rem", display: "block" }}
-        >
-          {subTitle}
-          <br />
-          {defaultValue && `Default: ${defaultValue}`}
+        {subTitle && (
+          <label
+            htmlFor={labelFor}
+            className="text-muted-foreground"
+            style={{ fontSize: ".8rem", display: "block" }}
+          >
+            {subTitle}
+            <br />
+            {defaultValue && `Default: ${defaultValue}`}
+          </label>
+        )}
+        <label className="text-[.8rem] text-muted-foreground block" htmlFor={labelFor}>
+        {dangerText}
         </label>
       </div>
       <div style={{ flexShrink: 0 }}>{children}</div>

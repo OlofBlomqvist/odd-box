@@ -42,6 +42,7 @@ export enum BasicProcState {
   Stopping = "Stopping",
   Running = "Running",
   Remote = "Remote",
+  Dynamic = "Dynamic",
 }
 
 export type ConfigItem =
@@ -50,6 +51,14 @@ export type ConfigItem =
     }
   | {
       HostedProcess: InProcessSiteConfig;
+    }
+  | {
+      /**
+       * A directory server configuration allows you to serve files from a directory on the local filesystem.
+       * Both unencrypted (http) and encrypted (https) connections are supported, either self-signed or thru lets-encrypt.
+       * You can specify rules for how the cache should behave, and you can also specify rules for how the files should be served.
+       */
+      DirServer: DirServer;
     };
 
 export type ConfigurationItem =
@@ -58,7 +67,30 @@ export type ConfigurationItem =
     }
   | {
       RemoteSite: RemoteSiteConfig;
+    }
+  | {
+      /**
+       * A directory server configuration allows you to serve files from a directory on the local filesystem.
+       * Both unencrypted (http) and encrypted (https) connections are supported, either self-signed or thru lets-encrypt.
+       * You can specify rules for how the cache should behave, and you can also specify rules for how the files should be served.
+       */
+      DirServer: DirServer;
     };
+
+/**
+ * A directory server configuration allows you to serve files from a directory on the local filesystem.
+ * Both unencrypted (http) and encrypted (https) connections are supported, either self-signed or thru lets-encrypt.
+ * You can specify rules for how the cache should behave, and you can also specify rules for how the files should be served.
+ */
+export interface DirServer {
+  /** Instead of only listening to yourdomain.com, you can capture subdomains which means this site will also respond to requests for *.yourdomain.com */
+  capture_subdomains?: boolean | null;
+  dir: string;
+  enable_directory_browsing?: boolean | null;
+  enable_lets_encrypt?: boolean | null;
+  /** This is the hostname that the site will respond to. */
+  host_name: string;
+}
 
 export interface EnvVar {
   key: string;
@@ -253,6 +285,7 @@ export interface OddBoxV2Config {
   alpn?: boolean | null;
   auto_start?: boolean | null;
   default_log_format?: LogFormat;
+  dir_server?: DirServer[] | null;
   env_vars: EnvVar[];
   hosted_process?: InProcessSiteConfig[] | null;
   /**
@@ -286,6 +319,7 @@ export enum ProcState {
   Stopping = "Stopping",
   Running = "Running",
   Remote = "Remote",
+  Dynamic = "Dynamic",
 }
 
 export interface RemoteSiteConfig {
@@ -307,6 +341,23 @@ export interface RemoteSiteConfig {
    */
   forward_subdomains?: boolean | null;
   host_name: string;
+}
+
+export interface ReqRule {
+  /** If no index.html is found, you can set this to true to allow directory browsing. */
+  allow_directory_browsing?: boolean | null;
+  /**
+   * The max age in seconds for the cache. If this is set to None, the cache will be disabled.
+   * This setting causes odd-box to add a Cache-Control header to the response.
+   * @format int64
+   * @min 0
+   */
+  max_age_in_seconds?: number | null;
+  /**
+   * Full url path of the file this rule should apply to, or a regex pattern for the url.
+   * For example: /index.html or /.*\.html
+   */
+  path_pattern?: string | null;
 }
 
 export interface SaveGlobalConfig {
@@ -586,7 +637,7 @@ export class HttpClient<SecurityDataType = unknown> {
 
 /**
  * @title ODD-BOX ADMIN-API 🤯
- * @version 0.1.7-preview2
+ * @version 0.1.8
  * @license
  * @externalDocs https://github.com/OlofBlomqvist/odd-box
  * @contact Olof Blomqvist <olof@twnet.se>

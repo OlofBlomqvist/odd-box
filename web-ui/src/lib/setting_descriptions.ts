@@ -2,12 +2,13 @@ const SettingDescriptions = {
     "h2_hint": "Hints are suggestions from the server to the client on how to prioritize resources or manage network behavior.",
     "hostname": "Choose hostname for this site.",
     "hostname_frontend": "Incoming name for binding to (frontend).",
-    "port": "Choose port for this site.",
+    "port": "Choose port for this site. Leave blank to use port from global settings.",
+    "https_port": "Choose TLS port for this site. Leave blank to use port from global settings.",
     "directory": "Path to working dir of this site.",
     "binary": "Name of the binary file to run.",
     "https": "Use HTTPS.",
     "auto_start": "Set this to false if you do not want this site to start automatically.",
-    "capture_subdomains": "If you wish to use wildcard routing for any subdomain under the 'host_name'.",
+    "capture_subdomains": "Instead of only listening to yourdomain.com, you can capture subdomains which means this site will also respond to requests for *.yourdomain.com",
     "disable_tcp_tunnel": "This is mostly useful in case the target uses SNI sniffing/routing.",
     "forward_subdomains": "If you wish to use the subdomain from the request in forwarded requests: test.example.com -> internal.site vs test.example.com -> test.internal.site.",
     "log_format": "Choose format for logs.",
@@ -27,6 +28,9 @@ const SettingDescriptions = {
     "exclude_from_start_all": "Will exempt the site from the start/stop all sites feature.",
     "backends": "All backends for this site.",
     "remote_site_address": "Address of the remote server.",
+    "enable_directory_browsing": "If enabled, the directory server will serve files from the root directory.",
+    "enable_lets_encrypt": "If enabled, the directory server will automatically obtain and renew TLS certificates from lets-encrypt.",
+    "lets_encrypt_account_email": "Email address for lets-encrypt account.",
 }
 
 export default SettingDescriptions;

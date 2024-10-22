@@ -9,10 +9,12 @@ import Checkbox from "../../components/checkbox/checkbox";
 import SettingDescriptions from "@/lib/setting_descriptions";
 import { EnvVariablesTable } from "@/components/table/env_variables/env_variables";
 import { ArgumentsTable } from "@/components/table/arguments/arguments";
+import useSettings from "@/hooks/use-settings";
 
 const NewHostedProcessSettings = () => {
+  const { data: settings } = useSettings();
   const [newName, setNewName] = useState("hostname");
-  const [newPort, setNewPort] = useState<number>(80);
+  const [newPort, setNewPort] = useState<string>("");
   const [newDir, setNewDir] = useState("");
   const [newBin, setNewBin] = useState("");
   const [https, setHttps] = useState(true);
@@ -27,13 +29,10 @@ const NewHostedProcessSettings = () => {
   const { updateSite } = useSiteMutations();
 
   const createSite = () => {
-    if (!newPort) {
-      return;
-    }
     updateSite.mutateAsync({
       siteSettings: {
         host_name: newName,
-        port: newPort,
+        port: newPort === "" ? undefined : Number(newPort),
         dir: newDir,
         bin: newBin,
         https,
@@ -62,14 +61,16 @@ const NewHostedProcessSettings = () => {
             onChange={(e) => setNewName(e.target.value)}
           />
         </SettingsItem>
-        <SettingsItem title="Port" subTitle={SettingDescriptions["port"]}>
+        <SettingsItem               title="Port"
+              defaultValue={settings.http_port}
+              subTitle={SettingDescriptions["port"]}>
           <Input
-            value={newPort}
+            value={newPort} placeholder={settings.http_port.toString()}
             onChange={(e) => {
               if (isNaN(Number(e.target.value))) {
                 return;
               }
-              setNewPort(Number(e.target.value));
+              setNewPort(e.target.value);
             }}
           />
         </SettingsItem>

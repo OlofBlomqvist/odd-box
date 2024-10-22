@@ -22,6 +22,7 @@ import { Route as IndexImport } from './routes/index'
 const SettingsLazyImport = createFileRoute('/settings')()
 const NewSiteLazyImport = createFileRoute('/new-site')()
 const NewProcessLazyImport = createFileRoute('/new-process')()
+const NewDirserverLazyImport = createFileRoute('/new-dirserver')()
 
 // Create/Update Routes
 
@@ -39,6 +40,11 @@ const NewProcessLazyRoute = NewProcessLazyImport.update({
   path: '/new-process',
   getParentRoute: () => rootRoute,
 } as any).lazy(() => import('./routes/new-process.lazy').then((d) => d.Route))
+
+const NewDirserverLazyRoute = NewDirserverLazyImport.update({
+  path: '/new-dirserver',
+  getParentRoute: () => rootRoute,
+} as any).lazy(() => import('./routes/new-dirserver.lazy').then((d) => d.Route))
 
 const SiteRoute = SiteImport.update({
   path: '/site',
@@ -80,6 +86,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SiteImport
       parentRoute: typeof rootRoute
     }
+    '/new-dirserver': {
+      id: '/new-dirserver'
+      path: '/new-dirserver'
+      fullPath: '/new-dirserver'
+      preLoaderRoute: typeof NewDirserverLazyImport
+      parentRoute: typeof rootRoute
+    }
     '/new-process': {
       id: '/new-process'
       path: '/new-process'
@@ -110,6 +123,7 @@ export const routeTree = rootRoute.addChildren({
   IndexRoute,
   LogsRoute,
   SiteRoute,
+  NewDirserverLazyRoute,
   NewProcessLazyRoute,
   NewSiteLazyRoute,
   SettingsLazyRoute,
@@ -126,6 +140,7 @@ export const routeTree = rootRoute.addChildren({
         "/",
         "/logs",
         "/site",
+        "/new-dirserver",
         "/new-process",
         "/new-site",
         "/settings"
@@ -139,6 +154,9 @@ export const routeTree = rootRoute.addChildren({
     },
     "/site": {
       "filePath": "site.tsx"
+    },
+    "/new-dirserver": {
+      "filePath": "new-dirserver.lazy.tsx"
     },
     "/new-process": {
       "filePath": "new-process.lazy.tsx"
