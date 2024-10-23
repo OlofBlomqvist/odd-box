@@ -79,7 +79,7 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
           <CardTitle>Directory server settings</CardTitle>
           <CardDescription>
             General configuration for{" "}
-            <span className="font-bold text-[var(--color2)]">
+            <span className="font-bold text-[var(--accent-text)]">
               {site.host_name}
             </span>
           </CardDescription>
@@ -124,7 +124,7 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
                     <br />
                     You can change it on the{" "}
                     <Link
-                      className="text-[var(--color2)] underline cursor-pointer"
+                      className="text-[var(--accent-text)] underline cursor-pointer"
                       to={"/settings"}
                     >
                       general settings
@@ -143,7 +143,7 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
                     <br />
                     You can change it on the{" "}
                     <Link
-                      className="text-[var(--color2)] underline cursor-pointer"
+                      className="text-[var(--accent-text)] underline cursor-pointer"
                       to={"/settings"}
                     >
                       general settings
@@ -209,7 +209,7 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
                     Note: You need to have a valid email address configured
                     under{" "}
                     <Link
-                      className="text-[var(--color2)] underline cursor-pointer"
+                      className="text-[var(--accent-text)] underline cursor-pointer"
                       to={"/settings"}
                     >
                       general settings
@@ -283,7 +283,7 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
               subtitle={
                 <span>
                   Are you sure you want to delete{" "}
-                  <span className="font-bold text-[var(--color2)]">
+                  <span className="font-bold text-[var(--accent-text)]">
                     {site.host_name}
                   </span>
                   ?

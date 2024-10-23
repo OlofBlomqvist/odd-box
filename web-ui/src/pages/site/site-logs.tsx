@@ -46,7 +46,7 @@ const SiteLogs = ({
         <CardTitle>Logs</CardTitle>
         <CardDescription>
           Monitoring logs for{" "}
-          <span className="font-bold text-[var(--color2)]">
+          <span className="font-bold text-[var(--accent-text)]">
             {hostname === "all"
               ? "all sites"
               : hostname === "system"
@@ -251,7 +251,7 @@ const SiteLogs = ({
                     }}
                   >
                     <span
-                      style={{ color: "var(--color2)", fontWeight: "bold" }}
+                      style={{ color: "var(--accent-text)", fontWeight: "bold" }}
                     >{`[${x.thread}] `}</span>
 
                     {x.msg}
