@@ -69,7 +69,7 @@ const TabItem = ({
       )
     }
       style={{
-        color: active ? "var(--color2)" : "#fff",
+        color: active ? "var(--accent-text)" : "#fff",
         cursor: "pointer",
         borderBottom: active ? "1px solid var(--bg-color)" : 0
       }}

@@ -69,10 +69,10 @@ export function EnvVariablesTable({
       <Table>
         {keys.length !== 0 && (<TableHeader>
           <TableRow className="pointer-events-none">
-            <TableHead className="w-[100px] text-[var(--color2)]">
+            <TableHead className="w-[100px] text-[var(--accent-text)]">
               Name
             </TableHead>
-            <TableHead className="text-[var(--color2)]">Value</TableHead>
+            <TableHead className="text-[var(--accent-text)]">Value</TableHead>
           </TableRow>
         </TableHeader>)}
         <TableBody>

@@ -78,7 +78,20 @@ body {
   transition: padding-left 0.25s;
   font-family: "Ubuntu", sans-serif; 
 
+  --menu-item-bg-active: 0 0% 24%;
+  --accent-text: var(--color2);
 
+
+}
+
+body.light {
+  --bg-color: #ffffff;
+  --card: 0, 0%, 92.2%;
+  --border: 0, 0%, 80%;
+  --card-foreground: 0 0% 3.9%;
+  --menu-item-bg-active: 0 0% 60%;
+  --muted-foreground: 0 0% 35%;
+  --accent-text: var(--color6);
 }
 
 .inner-content {

@@ -36,7 +36,7 @@ const SiteOverview = ({
             <CardTitle>Process details</CardTitle>
             <CardDescription>
               General information for{" "}
-              <span className="font-bold text-[var(--color2)]">
+              <span className="font-bold text-[var(--accent-text)]">
                 {hostedProcess.host_name}
               </span>
             </CardDescription>
@@ -57,51 +57,16 @@ const SiteOverview = ({
           </CardContent>
         </Card>
 
-        {/* TODO: THIS IS SOME DESIGN FOR METRICS, BUT WE DONT HAVE THIS THROUGH THE API YET. */}
         <Card>
           <CardHeader>
             <CardTitle>Metrics</CardTitle>
             <CardDescription>
               Metrics is not yet available for{" "}
-              <span className="font-bold text-[var(--color2)]">
+              <span className="font-bold text-[var(--accent-text)]">
                 {hostedProcess.host_name}
               </span>
             </CardDescription>
           </CardHeader>
-
-          {/* <h1 className="text-base font-bold mb-3 uppercase">Metrics</h1>
-              <p>Metrics is not yet available for this site.</p> */}
-          {/* <div className="grid gap-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <div className="text-sm font-medium text-muted-foreground">
-                    Requests
-                  </div>
-                  <div className="text-4xl font-bold">n/a</div>
-                </div>
-                <div>
-                  <div className="text-sm font-medium text-muted-foreground">
-                    Errors
-                  </div>
-                  <div className="text-4xl font-bold">n/a</div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <div className="text-sm font-medium text-muted-foreground">
-                    Bandwidth
-                  </div>
-                  <div className="text-4xl font-bold">n/a</div>
-                </div>
-                <div>
-                  <div className="text-sm font-medium text-muted-foreground">
-                    Response Time
-                  </div>
-                  <div className="text-4xl font-bold">n/a</div>
-                </div>
-              </div>
-            </div> */}
         </Card>
       </div>
 
@@ -111,7 +76,7 @@ const SiteOverview = ({
             <CardTitle>Status</CardTitle>
             <CardDescription>
               Current status for{" "}
-              <span className="font-bold text-[var(--color2)]">
+              <span className="font-bold text-[var(--accent-text)]">
                 {hostedProcess?.host_name}
               </span>
             </CardDescription>
@@ -133,7 +98,7 @@ const SiteOverview = ({
             <CardTitle>Actions</CardTitle>
             <CardDescription>
               Available actions for{" "}
-              <span className="font-bold text-[var(--color2)]">
+              <span className="font-bold text-[var(--accent-text)]">
                 {hostedProcess?.host_name}
               </span>
             </CardDescription>

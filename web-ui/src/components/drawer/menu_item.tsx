@@ -31,7 +31,7 @@ const MenuItem = ({
 
 
   const { setDrawerOpen } = useDrawerContext();
-const classNames = ["flex items-center gap-3 px-[10px] py-2 break-all pr-0 text-white no-underline transition-all duration-200 rounded-[5px] styled-link"];
+const classNames = ["flex items-center gap-3 px-[10px] py-2 break-all pr-0 text-[hsl(var(--card-foreground))] no-underline transition-all duration-200 rounded-[5px] styled-link"];
   if (disabled) {
     classNames.push("disabled");
   }
