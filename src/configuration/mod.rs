@@ -459,14 +459,10 @@ impl ConfigWrapper {
             hosted_site_configs.retain(|x| x.host_name != item.host_name);
             hosted_site_configs.retain(|x| x.host_name != hostname);
             hosted_site_configs.push(item.clone());            
-        } else {
+        } else {    
             self.hosted_process = Some(vec![item.clone()]);
         }
         self.write_to_disk()
-       
-    
-       
-    
     }
 
     // todo: work with the wrapper dashmap instead

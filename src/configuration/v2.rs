@@ -139,7 +139,9 @@ impl PartialEq for InProcessSiteConfig {
         self.port == other.port &&
         self.https == other.https &&
         compare_option_bool(self.capture_subdomains, other.capture_subdomains) &&
-        compare_option_bool(self.forward_subdomains, other.forward_subdomains)
+        compare_option_bool(self.forward_subdomains, other.forward_subdomains) &&
+        compare_option_bool(self.exclude_from_start_all, other.exclude_from_start_all)
+        
     }
 }
 
@@ -418,6 +420,12 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
                 if let Some(true) = s.enable_lets_encrypt {
                     formatted_toml.push(format!("enable_lets_encrypt = true"));
                 }
+                if let Some(true) = s.render_markdown {
+                    formatted_toml.push(format!("render_markdown = true"));
+                }
+                if let Some(true) = s.redirect_to_https {
+                    formatted_toml.push(format!("redirect_to_https = true"));
+                }
             }
         }
         
@@ -495,7 +503,10 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
                 if let Some(true) = process.enable_lets_encrypt {
                     formatted_toml.push(format!("enable_lets_encrypt = {}", true));
                 }
-                
+
+                if let Some(true) = process.exclude_from_start_all {
+                    formatted_toml.push(format!("exclude_from_start_all = {}", true));
+                }
                 
                 if let Some(b) = process.https {
                     formatted_toml.push(format!("https = {}", b));

@@ -340,8 +340,8 @@ fn generate_config(file_name:Option<&str>, fill_example:bool) -> anyhow::Result<
             // notably it only allows it when binding to 0.0.0.0 so we need to change the ip to
             init_cfg = init_cfg
                 .replace("ip = \"127.0.0.1\" ","ip = \"0.0.0.0\" ")
-                .replace("tls_port = \"4343\" ","ip = \"443\" ")
-                .replace("http_port = \"8080\" ","ip = \"80\" ");
+                .replace("tls_port = 4343","tls_port = 443")
+                .replace("http_port = 8080","http_port = 80");
         }
           
         let cfg = configuration::OddBoxConfig::parse(&init_cfg).map_err(|e| {
