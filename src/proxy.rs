@@ -375,6 +375,9 @@ async fn handle_new_tcp_stream(
                         }
                 }
             }
+            else {
+                tracing::trace!("We do not have any site configured for '{target}' that allows tcp tunnelling.. will use terminating proxy instead.");
+            }
         },
         
         // we see that this is tls data, and we expect tls data, and we also extracted a hostname by peeking.

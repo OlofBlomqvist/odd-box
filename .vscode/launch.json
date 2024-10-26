@@ -19,7 +19,7 @@
                     "kind": "bin"
                 }
             },
-            "args": ["odd-box-example-config.toml"],
+            "args": ["odd-box.toml","--tui=false"],
             "cwd": "${workspaceFolder}"
         }
     ]

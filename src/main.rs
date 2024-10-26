@@ -8,7 +8,7 @@ mod proxy;
 use anyhow::bail;
 use anyhow::Context;
 use clap::Parser;
-use configuration::v2::FullyResolvedInProcessSiteConfig;use configuration::LogFormat;
+use configuration::v2::FullyResolvedInProcessSiteConfig;
 use configuration::OddBoxConfigVersion;
 use dashmap::DashMap;
 use global_state::GlobalState;
@@ -16,6 +16,9 @@ use configuration::v2::InProcessSiteConfig;
 use configuration::v2::RemoteSiteConfig;
 use configuration::OddBoxConfiguration;
 use http_proxy::ProcMessage;
+use notify::RecommendedWatcher;
+use notify::Watcher;
+use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tracing_subscriber::layer::SubscriberExt;
 use types::args::Args;
@@ -25,6 +28,7 @@ use types::proc_info::ProcInfo;
 use configuration::{ConfigWrapper, LogLevel};
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -126,7 +130,18 @@ pub mod global_state {
         pub async fn try_find_site(&self,pre_filter_hostname:&str) -> Option<Arc<ReverseTcpProxyTarget>> {
 
             if let Some(pt) = self.reverse_tcp_proxy_target_cache.get(pre_filter_hostname) {
-                return Some(pt.clone())
+                let (_k,v)  = pt.pair();
+                if let Some(cached_proc_id) = &v.proc_id {
+                    if let Some(_proc_info) = crate::PROC_THREAD_MAP.get(cached_proc_id) {
+                        tracing::debug!("Cache hit for {pre_filter_hostname}");
+                        return Some(v.clone());
+                    } else {
+                        tracing::trace!("Cache miss for {pre_filter_hostname} due to missing proc info");
+                    }
+                }
+                
+            } else {
+                tracing::trace!("Cache miss for {pre_filter_hostname}");
             }
 
             let mut result = None;
@@ -141,6 +156,7 @@ pub mod global_state {
                 let port = y.active_port.unwrap_or_default();
                 if port > 0 {
                     let t = ReverseTcpProxyTarget {
+                        proc_id : Some(y.get_id().clone()),
                         disable_tcp_tunnel_mode: y.disable_tcp_tunnel_mode.unwrap_or_default(),
                         remote_target_config: None, // we dont need this for hosted processes
                         hosted_target_config: Some(y.clone()),
@@ -178,6 +194,7 @@ pub mod global_state {
                     let sub_domain = filter_result.and_then(|x|x);
 
                     let t = ReverseTcpProxyTarget { 
+                        proc_id : None,
                         disable_tcp_tunnel_mode: y.disable_tcp_tunnel_mode.unwrap_or_default(),
                         hosted_target_config: None,
                         remote_target_config: Some(y.clone()),
@@ -203,6 +220,92 @@ pub mod global_state {
     
 }
 
+fn async_watcher() -> notify::Result<(RecommendedWatcher, std::sync::mpsc::Receiver<notify::Result<notify::Event>>)> {
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    let watcher = <RecommendedWatcher as notify::Watcher>::new(
+        move |res| {
+            tx.send(res).unwrap();
+        },
+        notify::Config::default(),
+    )?;
+
+    Ok((watcher, rx))
+}
+
+lazy_static! {
+    static ref RELOADING_CONFIGURATION : tokio::sync::Semaphore = tokio::sync::Semaphore::new(1);
+} 
+
+
+async fn config_file_monitor(
+    config: Arc<RwLock<ConfigWrapper>>, 
+    global_state: Arc<GlobalState>
+) -> anyhow::Result<()> {
+    
+    let guard = config.read().await;
+    let cfg_path = guard.path.clone().expect("odd-box must be using a configuration file.");
+    drop(guard);
+
+    let (mut watcher, rx) = async_watcher()?;
+    
+    watcher.watch(Path::new(&cfg_path), notify::RecursiveMode::Recursive)?;
+    
+    loop {
+
+        let exit_requested_clone = &global_state.app_state.exit;
+        
+        if exit_requested_clone.load(Ordering::Relaxed) {
+            break;
+        }
+
+        match rx.try_recv() {
+            Ok(Err(e)) => {
+                tracing::warn!("Error while watching config file: {e:?}");
+            }
+            Ok(Ok(e)) => {
+                
+                
+                if RELOADING_CONFIGURATION.available_permits() == 0 {
+                    continue;
+                }
+
+                let _permit = RELOADING_CONFIGURATION.acquire().await.unwrap();
+
+                match e.kind {
+                    notify::EventKind::Modify(notify::event::ModifyKind::Data(_)) => {
+                            match crate::configuration::reload::reload_from_disk(global_state.clone()).await {
+                                Ok(_) => {},
+                                Err(e) => {
+                                    tracing::error!("Failed to reload configuration file: {e:?}");
+                                }
+                            }
+                    },
+                    notify::EventKind::Remove(_remove_kind) => {
+                        tracing::error!("Configuration file was removed. This is not supported. Please restart odd-box.");
+                    
+                    },
+                    _ => {},
+                }
+
+            },
+            Err(e) => {
+                match e {
+                    std::sync::mpsc::TryRecvError::Empty => {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    },
+                    std::sync::mpsc::TryRecvError::Disconnected => {
+                        tracing::error!("Config file watcher channel disconnected. This is a bug in odd-box.");
+                        break;
+                    }
+                }
+            },
+        }
+    }
+
+    Ok(())
+}
+
 async fn thread_cleaner() {
     let liveness_token = Arc::new(true);
     crate::BG_WORKER_THREAD_MAP.insert("The Janitor".into(), BgTaskInfo {
@@ -210,47 +313,62 @@ async fn thread_cleaner() {
         status: "Managing active tasks..".into()
     }); 
     loop {
-        // crate::BG_WORKER_THREAD_MAP
-        //     .get_mut("The Janitor")
-        //     .and_then(|mut guard| {
-        //         guard.value_mut().status = "Cleaning".into();
-        //         Some(())
-        //     });
-        PROC_THREAD_MAP.retain(|_k,v| v.liveness_ptr.upgrade().is_some());
-        BG_WORKER_THREAD_MAP.retain(|_k,v| v.liveness_ptr.upgrade().is_some());
-        tokio::time::sleep(Duration::from_secs(1)).await
+        {
+            PROC_THREAD_MAP.retain(|_k,v| v.liveness_ptr.upgrade().is_some());
+            BG_WORKER_THREAD_MAP.retain(|_k,v| v.liveness_ptr.upgrade().is_some());
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await
     }
 }
 
-fn generate_config(file_name:&str, fill_example:bool) -> anyhow::Result<()> {
 
+
+fn generate_config(file_name:Option<&str>, fill_example:bool) -> anyhow::Result<crate::configuration::v2::OddBoxV2Config> {
     let current_working_dir = std::env::current_dir()?;
-    let file_path = current_working_dir.join(file_name);
-
-    if std::path::Path::exists(std::path::Path::new(file_name)) {
-        return Err(anyhow::anyhow!(format!("File already exists: {file_path:?}")));
+    if let Some(file_name) = file_name {
+        let current_working_dir = std::env::current_dir()?;
+        let file_path = current_working_dir.join(file_name);
+        if std::path::Path::exists(std::path::Path::new(file_name)) {
+            return Err(anyhow::anyhow!(format!("File already exists: {file_path:?}")));
+        }
     }
-
-    let mut cfg = crate::configuration::v2::OddBoxV2Config::example();
-    
     if fill_example == false {
-        cfg.hosted_process = None;
-        cfg.remote_target = None;
-        cfg.env_vars = vec![];
-        cfg.alpn = None;
-        cfg.admin_api_port = None;
-        cfg.auto_start = None;
-        cfg.http_port = None;
-        cfg.tls_port = None;
-        cfg.ip = None;
-        cfg.log_level = None;
-        cfg.default_log_format = LogFormat::standard;
-    }
+        let mut init_cfg = include_str!("./init-cfg.toml").to_string();
 
-    let serialized = cfg.to_string()?;
-    std::fs::write(&file_path, serialized)?;
-    tracing::info!("Configuration file written to {file_path:?}");
-    return Ok(())
+        if cfg!(target_os = "macos") {
+            // mac os allows for binding to lower ports without root, so we can use the default ports.
+            // notably it only allows it when binding to 0.0.0.0 so we need to change the ip to
+            init_cfg = init_cfg
+                .replace("ip = \"127.0.0.1\" ","ip = \"0.0.0.0\" ")
+                .replace("tls_port = 4343","tls_port = 443")
+                .replace("http_port = 8080","http_port = 80");
+        }
+          
+        let cfg = configuration::OddBoxConfig::parse(&init_cfg).map_err(|e| {
+            anyhow::anyhow!(format!("Failed to parse initial configuration: {e}"))
+        })?;
+        match cfg {
+            configuration::OddBoxConfig::V2(parsed_config) => {
+                if let Some(file_name) = file_name {
+                    let file_path = current_working_dir.join(file_name);
+                    std::fs::write(&file_path, init_cfg)?;
+                    tracing::info!("Configuration file written to {file_path:?}");    
+                }
+                return Ok(parsed_config)
+            },
+            _ => {
+                return Err(anyhow::anyhow!("Failed to parse initial configuration"))
+            }
+        }
+    }     
+    let cfg = crate::configuration::v2::OddBoxV2Config::example();
+    if let Some(file_name) = file_name {
+        let serialized = cfg.to_string()?;
+        let file_path = current_working_dir.join(file_name);
+        std::fs::write(&file_path, serialized)?;
+        tracing::info!("Configuration file written to {file_path:?}");
+    }
+    return Ok(cfg)
 
 }
 
@@ -342,10 +460,10 @@ async fn main() -> anyhow::Result<()> {
     let tui_flag = args.tui.unwrap_or(true);
 
     if args.generate_example_cfg {
-        generate_config("odd-box-example-config.toml",true)?;
+        generate_config(Some("odd-box-example-config.toml"),true)?;
         return Ok(())
     } else if args.init {
-        generate_config("odd-box.toml",false)?;
+        generate_config(Some("odd-box.toml"),false)?;
         return Ok(())
     }
 
@@ -435,7 +553,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Spawn thread cleaner (removes dead threads from the proc_thread_map)
-    tokio::spawn(thread_cleaner());
+    let cleanup_thread = tokio::spawn(thread_cleaner());
+    let cfg_monitor = tokio::spawn(config_file_monitor(shared_config.clone(),global_state.clone()));
    
     let mut tui_task : Option<JoinHandle<()>> = None;
 
@@ -533,8 +652,10 @@ async fn main() -> anyhow::Result<()> {
         _ = tt.await;
     // otherwise we will wait for the exit signal set by ctrl-c
     } else {
+        
+        tracing::info!("odd-box started successfully. use ctrl-c to quit.");
         while global_state.app_state.exit.load(Ordering::Relaxed) == false {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }
 
@@ -585,7 +706,7 @@ async fn main() -> anyhow::Result<()> {
         } else {
             i+=1;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
  
     if tui_flag {
@@ -597,8 +718,10 @@ async fn main() -> anyhow::Result<()> {
     }
 
     _ = proxy_thread.abort();
-    _ = proxy_thread.await;
- 
+    _ = proxy_thread.await; 
+    _ = cfg_monitor.abort();
+    _ = cleanup_thread.abort();
+
 
     if tui_flag {
         println!("odd-box exited successfully");

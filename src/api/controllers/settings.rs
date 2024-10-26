@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use super::*;
 
 use utoipa::ToSchema;
@@ -157,53 +159,61 @@ pub async fn set_settings_handler(
     Json(new_settings): Json<SaveGlobalConfig>
 ) -> axum::response::Result<impl IntoResponse,impl IntoResponse> {
 
-    let mut guard = global_state.config.write().await;
+    // we clone the running config and update it with the new settings
+    // then we write it to disk. the disk update will be picked up by the reload function
+    // which will then apply the new settings.
+    let mut config = { global_state.config.read().await.clone() };
+    let nlea = if new_settings.lets_encrypt_account_email.len() > 0 {
+        Some(new_settings.lets_encrypt_account_email.clone())
+    } else {
+        None
+    };
     
-    if 1 == 2 {
-        return Err((StatusCode::BAD_REQUEST,format!("this wont ever happen, its just to poke the compiler so it knows the error type")));
-    }
-
-    let nlea = Some(new_settings.lets_encrypt_account_email.clone());
-    let has_changed_le_mail = guard.lets_encrypt_account_email != nlea;
-
-    guard.lets_encrypt_account_email = nlea;
-    guard.admin_api_port = Some(new_settings.admin_api_port);
-    guard.http_port = Some(new_settings.http_port);
-    guard.tls_port = Some(new_settings.tls_port);
-    guard.port_range_start = new_settings.port_range_start;
-    guard.alpn = Some(new_settings.alpn);
-    guard.auto_start = Some(new_settings.auto_start);
-    guard.default_log_format = crate::configuration::LogFormat::from(new_settings.default_log_format.clone());
-    guard.env_vars = new_settings.env_vars.iter().map(|x|{
+    config.lets_encrypt_account_email = nlea;
+    config.admin_api_port = Some(new_settings.admin_api_port);
+    config.http_port = Some(new_settings.http_port);
+    config.tls_port = Some(new_settings.tls_port);
+    config.port_range_start = new_settings.port_range_start;
+    config.alpn = Some(new_settings.alpn);
+    config.auto_start = Some(new_settings.auto_start);
+    config.default_log_format = crate::configuration::LogFormat::from(new_settings.default_log_format.clone());
+    config.env_vars = new_settings.env_vars.iter().map(|x|{
         crate::configuration::EnvVar {
             key: x.key.clone(),
             value: x.value.clone()
         }
     }).collect();
 
-    guard.ip = Some(new_settings.ip.parse().map_err(|e|(StatusCode::BAD_REQUEST,format!("Invalid IP address provided, refusing to save configuration. {e:?}")))?);
-    guard.log_level = Some(new_settings.log_level.clone().into());
+    config.ip = Some(new_settings.ip.parse().map_err(|e|(StatusCode::BAD_REQUEST,format!("Invalid IP address provided, refusing to save configuration. {e:?}")))?);
+    config.log_level = Some(new_settings.log_level.clone().into());
 
     if new_settings.root_dir.trim()=="" {
-        guard.root_dir = None;
+        config.root_dir = None;
     } else {
-        guard.root_dir = Some(new_settings.root_dir.clone());
+        config.root_dir = Some(new_settings.root_dir.clone());
     }
     
+    config.write_to_disk().map_err(|e|(StatusCode::BAD_REQUEST,format!("{}",e.to_string())))?;
 
-    
-    guard.write_to_disk().map_err(|e|(StatusCode::BAD_REQUEST,format!("{}",e.to_string())))?;
+    let mut i = 0;
+    tracing::info!("Configuration updated and written to disk. Waiting for reload to complete.");            
 
-    if has_changed_le_mail {
-        if guard.lets_encrypt_account_email.is_some() {
-            global_state.cert_resolver.enable_lets_encrypt();
-        } else {
-            global_state.cert_resolver.disable_lets_encrypt();
+    loop {
+        if i > 1000 { // 10 seconds
+            return Err((StatusCode::INTERNAL_SERVER_ERROR,"Failed to update global settings".to_string()));
         }
+        {
+            let active_config = global_state.config.read().await;
+            if active_config.internal_version > config.internal_version {
+                break;
+            }
+        }
+        i+=1;
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
     tracing::debug!("Global settings updated thru api");
 
-    Ok(())
+    Ok::<(),(StatusCode,String)>(())
     
 }
