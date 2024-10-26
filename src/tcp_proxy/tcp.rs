@@ -1,6 +1,8 @@
 use chrono::Local;
 use hyper::Version;
 use hyper_rustls::ConfigBuilderExt;
+use x509_parser::nom::Err;
+use std::f64::consts::E;
 use std::net::IpAddr;
 use std::time::Duration;
 use std::{
@@ -191,14 +193,17 @@ impl ReverseTcpProxy {
                         }
                     }
                     
+                }   
 
-                    
-                }
-                // HTTP/2 (h2c) check only after HTTP/1.x check fails
-                //return (managed_stream,Err(PeekError::Unknown("odd-box does not currently support h2c for TCP tunnel mode".into())));
+                // TODO this check needs to be moved further up
+                // // HTTP/2 (h2c) check only after HTTP/1.x check fails
+                // return Err(PeekError::Unknown("odd-box does not currently support h2c for TCP tunnel mode".into())); 
+                
+                         
             } else {
                 tracing::warn!("NOT VALID H1 OR H2");
             }
+
 
             tokio::time::sleep(Duration::from_millis(20)).await;
             attempts += 1;

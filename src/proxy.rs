@@ -18,6 +18,7 @@ use crate::http_proxy::ProcMessage;
 use crate::http_proxy::ReverseProxyService;
 use crate::tcp_proxy;
 use crate::http_proxy;
+use crate::tcp_proxy::DataType;
 use crate::tcp_proxy::ManagedStream;
 use crate::tcp_proxy::PeekResult;
 use crate::tcp_proxy::Peekable;
@@ -456,7 +457,7 @@ async fn handle_new_tcp_stream(
     mut fresh_service_template_with_source_info: ReverseProxyService,
     tcp_stream: TcpStream,
     source_addr:SocketAddr,
-    _incoming_connection_is_on_tls_port: bool,
+    incoming_connection_is_on_tls_port: bool,
     tx: std::sync::Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
     state: Arc<GlobalState>
 ) {
@@ -579,44 +580,39 @@ async fn handle_new_tcp_stream(
                     tracing::trace!("got incoming clear text connection for {} but the target is configured for tls tunneling.. will use terminating proxy instead.",cloned_target.host_name);
 
                 }
-            }
-        },
-      
-                }
-            }
-            else {
-                tracing::trace!("We do not have any site configured for '{target}' that allows tcp tunnelling.. will use terminating proxy instead.");
+            } else {
+                tracing::trace!("We do not have any site configured for '{target_host_name}' that allows tcp tunnelling.. will use terminating proxy instead.");
             }
         },
         
-        // we see that this is tls data, and we expect tls data, and we also extracted a hostname by peeking.
-        // at this point, we should check if the target is configured for https (tls) before forwarding.
-        Ok(PeekResult {
-            typ: DataType::TLS,
-            http_version:_,
-            target_host: Some(target_host_name)
-        }) if incoming_connection_is_on_tls_port => {
+        // // we see that this is tls data, and we expect tls data, and we also extracted a hostname by peeking.
+        // // at this point, we should check if the target is configured for https (tls) before forwarding.
+        // Ok(PeekResult {
+        //     typ: DataType::TLS,
+        //     http_version:_,
+        //     target_host: Some(target_host_name)
+        // }) if incoming_connection_is_on_tls_port => {
 
 
-            let host_name = target_host_name.to_lowercase();
+        //     let host_name = target_host_name.to_lowercase();
             
-            if let Some(target) = state.try_find_site(&target_host_name).await {
+        //     if let Some(target) = state.try_find_site(&target_host_name).await {
                
-                if target.disable_tcp_tunnel_mode == false && target.backends.iter().any(|x|x.https.unwrap_or_default()) {
-                    // at least one backend has https enabled so we will use the tls tunnel mode to there
-                    tracing::trace!("USING TCP PROXY FOR TLS TUNNEL TO TARGET {:?}",target.host_name);
-                    tcp_proxy::ReverseTcpProxy::tunnel(managed_stream, target, true,state.clone(),source_addr).await;
-                    return;
-                } else {
-                    tracing::trace!("peeked some tls tcp data and found that the target exists but is not configured for https/tls. we will use terminating mode for this..");
-                    fresh_service_template_with_source_info.resolved_target = Some(target);
-                }
+        //         if target.disable_tcp_tunnel_mode == false && target.backends.iter().any(|x|x.https.unwrap_or_default()) {
+        //             // at least one backend has https enabled so we will use the tls tunnel mode to there
+        //             tracing::trace!("USING TCP PROXY FOR TLS TUNNEL TO TARGET {:?}",target.host_name);
+        //             tcp_proxy::ReverseTcpProxy::tunnel(managed_stream, target, true,state.clone(),source_addr).await;
+        //             return;
+        //         } else {
+        //             tracing::trace!("peeked some tls tcp data and found that the target exists but is not configured for https/tls. we will use terminating mode for this..");
+        //             fresh_service_template_with_source_info.resolved_target = Some(target);
+        //         }
 
 
-            } else {
-                tracing::trace!("We do not have any site configured for '{host_name}' that allows tcp tunnelling.. will use terminating proxy instead.");
-            }
-        },
+        //     } else {
+        //         tracing::trace!("We do not have any site configured for '{host_name}' that allows tcp tunnelling.. will use terminating proxy instead.");
+        //     }
+        // },
         e => {
             tracing::warn!("tcp peek invalid result: {e:?}. this could be because of incoming and outgoing protocol mismatch or configuration - will use terminating proxy mode instead") 
         }

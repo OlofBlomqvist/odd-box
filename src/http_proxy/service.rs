@@ -348,6 +348,8 @@ async fn handle_http_request(
                             if hv.contains("MOZILLA") || hv.contains("SAFARI") || hv.contains("CHROME") || hv.contains("EDGE") {
                                 return Ok(EpicResponse::new(create_epic_string_full_body(&please_wait_response())))
                             }
+                            // todo - we dont seem to set the content type here..?
+                            
                         } else {
                             tracing::trace!("waiting for site to start.. 5 seconds..");
                             tokio::time::sleep(Duration::from_secs(5)).await
