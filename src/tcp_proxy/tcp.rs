@@ -9,6 +9,7 @@ use std::{
 use crate::configuration::v2::BackendFilter;
 use crate::global_state::GlobalState;
 use crate::tcp_proxy::tls::client_hello::TlsClientHello;
+use crate::types::proc_info::ProcId;
 use crate::types::proxy_state::{ProxyActiveConnection, ProxyActiveConnectionType};
 use tokio::net::TcpStream;
 use tracing::*;
@@ -29,7 +30,8 @@ pub struct ReverseTcpProxyTarget {
     pub forward_wildcard: bool,
     // subdomain is filled in otf upon receiving a request for this target and there is a subdomain used in the req
     pub sub_domain: Option<String> ,
-    pub disable_tcp_tunnel_mode : bool
+    pub disable_tcp_tunnel_mode : bool,
+    pub proc_id : Option<ProcId>,
 }
 
 

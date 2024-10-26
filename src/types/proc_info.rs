@@ -11,13 +11,17 @@ impl ProcId {
     pub fn new() -> Self {
         Self { id: uuid::Uuid::new_v4().to_string() }
     }
+    pub fn from(id:&str) -> Self {
+        Self { id: id.to_string() }
+    }
 }
 
 #[derive(Debug)]
 pub struct ProcInfo {
     pub liveness_ptr : Weak<AtomicBool>,
     pub config : FullyResolvedInProcessSiteConfig,
-    pub pid : Option<String>
+    pub pid : Option<String>,
+    pub marked_for_removal : bool
 }
 
 #[derive(Debug)]

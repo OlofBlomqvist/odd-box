@@ -3,12 +3,11 @@
   "title": "OddBoxV2Config",
   "type": "object",
   "required": [
-    "env_vars",
-    "port_range_start",
     "version"
   ],
   "properties": {
     "admin_api_port": {
+      "description": "The port for the admin api. If this is not set, the admin api will not be started. This setting also enabled the web-ui on the same port.",
       "type": [
         "integer",
         "null"
@@ -49,6 +48,8 @@
       }
     },
     "env_vars": {
+      "description": "Environment variables configured here will be made available to all processes started by odd-box.",
+      "default": [],
       "type": "array",
       "items": {
         "$ref": "#/definitions/EnvVar"
@@ -64,6 +65,7 @@
       }
     },
     "http_port": {
+      "description": "The port on which to listen for http requests. Defaults to 8080.",
       "default": 8080,
       "type": [
         "integer",
@@ -80,6 +82,7 @@
       "format": "ip"
     },
     "lets_encrypt_account_email": {
+      "description": "If you want to use lets-encrypt for generating certificates automatically for your sites",
       "type": [
         "string",
         "null"
@@ -96,13 +99,9 @@
         }
       ]
     },
-    "path": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "port_range_start": {
+      "description": "The port range start is used to determine which ports to use for hosted processes.",
+      "default": 4200,
       "type": "integer",
       "format": "uint16",
       "minimum": 0.0
@@ -123,6 +122,7 @@
       ]
     },
     "tls_port": {
+      "description": "The port on which to listen for https requests. Defaults to 4343.",
       "default": 4343,
       "type": [
         "integer",
@@ -132,7 +132,12 @@
       "minimum": 0.0
     },
     "version": {
-      "$ref": "#/definitions/OddBoxConfigVersion"
+      "description": "The schema version - you do not normally need to set this, it is set automatically when you save the configuration.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/OddBoxConfigVersion"
+        }
+      ]
     }
   },
   "definitions": {
@@ -203,6 +208,18 @@
         "host_name": {
           "description": "This is the hostname that the site will respond to.",
           "type": "string"
+        },
+        "redirect_to_https": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "render_markdown": {
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       }
     },
@@ -260,6 +277,7 @@
       ],
       "properties": {
         "args": {
+          "description": "Arguments to pass to the binary when starting it.",
           "type": [
             "array",
             "null"
@@ -276,6 +294,7 @@
           ]
         },
         "bin": {
+          "description": "The binary to start. This can be a path to a binary or a command that is in the PATH.",
           "type": "string"
         },
         "capture_subdomains": {
@@ -286,6 +305,7 @@
           ]
         },
         "dir": {
+          "description": "Working directory for the process. If this is not set, the current working directory will be used.",
           "type": [
             "string",
             "null"
@@ -306,6 +326,7 @@
           ]
         },
         "env_vars": {
+          "description": "Environment variables to set for the process.",
           "type": [
             "array",
             "null"
@@ -348,6 +369,7 @@
           ]
         },
         "log_format": {
+          "description": "The log format to use for this site. If this is not set, the default log format will be used. Currently the only supported log formats are \"standard\" and \"dotnet\".",
           "anyOf": [
             {
               "$ref": "#/definitions/LogFormat"
@@ -436,6 +458,13 @@
         },
         "host_name": {
           "type": "string"
+        },
+        "keep_original_host_header": {
+          "description": "If you wish to pass along the incoming request host header to the backend rather than the host name of the backends. Defaults to false.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       }
     }

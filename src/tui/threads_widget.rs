@@ -20,12 +20,13 @@ pub fn draw(
         return
     }
 
-    let headers = [ "Task", "Child PID", "Current Status"];
+    let headers = [ "Task","#Id","Child PID", "Current Status"];
     
     let mut rows : Vec<Vec<String>> =  crate::PROC_THREAD_MAP.iter().map(|guard| {
         let (_thread_id, thread_info) = guard.pair();
         vec![
             format!("[PROC_HOST] {}",thread_info.config.host_name),
+            format!("{}",thread_info.config.proc_id.id),
             format!("{}",thread_info.pid.as_ref().map_or(String::new(),|x|x.to_string())),
             format!("selected port: {:?}", thread_info.config.active_port)
         ]
@@ -84,9 +85,10 @@ pub fn draw(
     tui_state.threads_tab_state.scroll_state.total_rows = rows.len();
 
     let widths = [
-        Constraint::Min(50), 
-        Constraint::Min(20), 
-        Constraint::Percentage(100)       
+        Constraint::Min(10), 
+        Constraint::Min(10), 
+        Constraint::Min(10), 
+        Constraint::Min(10),   
     ];
     
     

@@ -1,0 +1,40 @@
+#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.1.json
+
+# ======================================================================================================
+# This is an initial odd-box configuration file, it was generated using the './odd-box --init' command.
+# It contains a very basic setup of all three types of services that odd-box can provide.
+# For simplicity, this file should be named odd-box.toml so that odd-box can find it automatically
+# when you run the './odd-box' command.  
+#
+# More information about which settings are available can be found at
+# https://github.com/OlofBlomqvist/odd-box
+# ======================================================================================================
+
+# Global settings
+version = "V2"
+ip = "127.0.0.1" 
+admin_api_port = 1234
+http_port = 8080        
+tls_port = 4343        
+
+# ======================================================================================================
+
+# This serves the directory where this file is located on the dir.localtest.me domain.
+[[dir_server]]
+host_name = "dir.localtest.me"
+dir = "$cfg_dir"
+
+# This sets up a basic reverse proxy to lobste.rs which you can reach thru the lobsters.localtest.me domain
+[[remote_target]] 
+host_name = "lobsters.localtest.me" 
+backends = [ 
+    { address = "lobste.rs", port = 443, https = true }
+]
+
+# This will spin up a python http server in the root directory of the config file (where this file is) -
+# you can reach it thru the py.localtest.me domain.
+[[hosted_process]]
+host_name = "py.localtest.me"
+bin = "python"
+auto_start = false
+args = ["-m", "http.server", "$port"] 

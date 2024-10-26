@@ -202,7 +202,11 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
                     Ok(x)
                 },
                 Err(e) => {
-                    Err(CustomError(format!("{e:?}")))
+                    //Err(CustomError(format!("{e:?}")))
+                    let body = create_epic_string_full_body(&format!("{e:?}"));
+                    let mut response = EpicResponse::new(body);
+                    *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+                    Ok(response)
                 },
             }
         })
@@ -266,18 +270,31 @@ async fn handle_http_request(
     if let Some(r) = intercept_local_commands(&req_host_name,&params,req_path,tx.clone()).await {
         return Ok(r)
     }
-
-
     
+    // todo - cache this?
     let dir_target = configuration.dir_server.iter().flatten().find_map(|x| {
         if x.host_name == req_host_name {
-            Some(x)
+            match configuration.resolve_dir_server_configuration(x) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    tracing::warn!("Failed to resolve dir server configuration: {e:?}");
+                    None
+                },
+            }
         } else {
             None
         }
     });
 
     if let Some(t) = dir_target {
+        if let Some(true) = t.redirect_to_https {
+            if !is_https {
+                let mut rr = EpicResponse::new(create_epic_string_full_body(&format!("Please use https://{req_host_name} instead of http://{req_host_name}")));
+                *rr.status_mut() = StatusCode::PERMANENT_REDIRECT;
+                rr.headers_mut().insert("Location", hyper::header::HeaderValue::from_str(&format!("https://{req_host_name}:{}{}",configuration.tls_port.unwrap_or(4343),req.uri())).unwrap());
+                return Ok(rr)
+            }
+        }
         match crate::custom_servers::directory::handle(t.clone(),req).await {
             Ok(r) => return Ok(r),
             Err(e) => {
@@ -289,9 +306,9 @@ async fn handle_http_request(
         }
     }
 
-    
     let found_hosted_target = 
         if let Some(p) = peeked_target.as_ref().and_then(|x| x.hosted_target_config.clone()) {
+            tracing::trace!("Found peeked target for {req_host_name}");
             Some(p)
         } else {
             if let Some(processes) = &configuration.hosted_process {
@@ -300,6 +317,7 @@ async fn handle_http_request(
                     || p.capture_subdomains.unwrap_or_default() 
                     && req_host_name.ends_with(&format!(".{}",p.host_name))
                 }) {
+                    tracing::trace!("Found hosted target for {req_host_name}");
                     Some(pp.clone())
                 } else {
                     None
@@ -309,11 +327,8 @@ async fn handle_http_request(
             }
         };
 
-
-
     if let Some(target_proc_cfg) = found_hosted_target {
 
-      
         let current_target_status : Option<crate::ProcState> = {
             let info = state.app_state.site_status_map.get(&target_proc_cfg.host_name);
             match info {
@@ -344,11 +359,13 @@ async fn handle_http_request(
                                 return Ok(EpicResponse::new(create_epic_string_full_body(&please_wait_response())))
                             }
                         } else {
+                            tracing::trace!("waiting for site to start.. 5 seconds..");
                             tokio::time::sleep(Duration::from_secs(5)).await
                         }
                     }  
                     _ => {
                         // we do this to give services some time to wake up instead of failing requests while cold-starting sites
+                        tracing::trace!("waiting for site to start.. 5 seconds...");
                         tokio::time::sleep(Duration::from_secs(5)).await
                     }           
                 }                 
@@ -358,24 +375,27 @@ async fn handle_http_request(
         let port;
         let mut wait_count = 0;
         loop {
-            if wait_count > 100 {
+            if wait_count > 10 {
                 return Err(CustomError(format!("No active port found for {req_host_name}.")))
+            } else {
+                tracing::warn!("attempting to find active port found for {req_host_name}...");
             }
             if let Some(info) = crate::PROC_THREAD_MAP.get(target_proc_cfg.get_id()) {
                 if info.pid.is_some() {
                     if let Some(p) = info.config.active_port {
                         port = p;
                         break;
+                    } else {
+                        tracing::warn!("No active port found for {req_host_name}.");
                     }
                 };
             } else {
-                return Err(CustomError("No site info found!".to_string()))
+                return Err(CustomError(format!("No site info found! (proc id missing: {:?})",target_proc_cfg.get_id())))
             };
             wait_count += 1;
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(1000)).await;
         }
 
-    
 
         let enforce_https = target_proc_cfg.https.is_some_and(|x|x);
         let scheme = if enforce_https { "https" } else { "http" };
@@ -441,7 +461,6 @@ async fn handle_http_request(
     }
 
     else {
-        
         if let Some(peeked_remote_config) = peeked_target.and_then(|x| x.remote_target_config.clone() ) {
 
             return perform_remote_forwarding(
@@ -561,9 +580,9 @@ async fn perform_remote_forwarding(
 async fn map_result(target_url:&str,result:Result<crate::http_proxy::ProxyCallResult,crate::http_proxy::ProxyError>) -> Result<EpicResponse,CustomError> {
     
     match result {
-        Ok(crate::http_proxy::ProxyCallResult::Bytes(response)) => {
-            return create_simple_response_from_bytes(response);
-        }
+        // Ok(crate::http_proxy::ProxyCallResult::Bytes(response)) => {
+        //     return create_simple_response_from_bytes(response);
+        // }
         Ok(super::ProxyCallResult::EpicResponse(epic_response)) => {
             return Ok(epic_response)
         }

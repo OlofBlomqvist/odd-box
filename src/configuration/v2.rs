@@ -1,6 +1,5 @@
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
-use std::path::Path;
 use schemars::JsonSchema;
 use anyhow::bail;
 use serde::Serialize;
@@ -25,10 +24,10 @@ pub struct DirServer {
     pub capture_subdomains : Option<bool>,
     pub enable_lets_encrypt: Option<bool>,
     pub enable_directory_browsing: Option<bool>,
+    pub redirect_to_https: Option<bool>,
     //pub rules: Option<Vec<ReqRule>>,
     // --- todo --------------------------------------
-    // pub render_markdown: Option<bool>,
-    // pub allow_directory_browsing: Option<bool>,
+    pub render_markdown: Option<bool>,
 }
 
 // note: there is no implementation using these yet..
@@ -62,10 +61,16 @@ pub struct InProcessSiteConfig {
     /// H2C or H2 - used to signal use of prior knowledge http2 or http2 over clear text. 
     pub hints : Option<Vec<Hint>>,
     pub host_name : String,
+    /// Working directory for the process. If this is not set, the current working directory will be used.
     pub dir : Option<String>,
+    /// The binary to start. This can be a path to a binary or a command that is in the PATH.
     pub bin : String,
+    /// Arguments to pass to the binary when starting it.
     pub args : Option<Vec<String>>,
+    /// Environment variables to set for the process.
     pub env_vars : Option<Vec<EnvVar>>,
+    /// The log format to use for this site. If this is not set, the default log format will be used.
+    /// Currently the only supported log formats are "standard" and "dotnet".
     pub log_format: Option<LogFormat>,
     /// Set this to false if you do not want this site to start automatically when odd-box starts.
     /// This also means that the site is excluded from the start_all command.
@@ -87,9 +92,13 @@ pub struct InProcessSiteConfig {
     /// Defaults to false. This feature will disable tcp tunnel mode.
     pub enable_lets_encrypt: Option<bool>
 }
+impl InProcessSiteConfig {
+    pub fn set_id(&mut self,id:ProcId){
+        self.proc_id = id;
+    }
+}
 
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash,Eq,PartialEq)]
 pub struct FullyResolvedInProcessSiteConfig {
     pub excluded_from_start_all: bool,
     pub proc_id : ProcId,
@@ -140,7 +149,7 @@ fn compare_option_bool(a: Option<bool>, b: Option<bool>) -> bool {
         (None, Some(false)) | (Some(false), None) => true,
         _ => a == b,
     };
-    println!("Comparing Option<bool>: {:?} vs {:?} -- result: {result}", a, b);
+    //println!("Comparing Option<bool>: {:?} vs {:?} -- result: {result}", a, b);
     result
 }
 
@@ -149,7 +158,7 @@ fn compare_option_log_format(a: &Option<LogFormat>, b: &Option<LogFormat>) -> bo
         (None, Some(LogFormat::standard)) | (Some(LogFormat::standard), None) => true,
         _ => a == b,
     };
-    println!("Comparing Option<LogFormat>: {:?} vs {:?} -- result: {result}", a, b);
+    //println!("Comparing Option<LogFormat>: {:?} vs {:?} -- result: {result}", a, b);
     result
 }
 
@@ -189,13 +198,18 @@ pub struct RemoteSiteConfig{
     pub forward_subdomains : Option<bool>,
     /// If you want to use lets-encrypt for generating certificates automatically for this site.
     /// Defaults to false. This feature will disable tcp tunnel mode.
-    pub enable_lets_encrypt: Option<bool>
+    pub enable_lets_encrypt: Option<bool>,
+    /// If you wish to pass along the incoming request host header to the backend
+    /// rather than the host name of the backends. Defaults to false.
+    pub keep_original_host_header: Option<bool>,
 }
 
 impl PartialEq for RemoteSiteConfig {
     fn eq(&self, other: &Self) -> bool {
         self.host_name == other.host_name &&
         self.backends == other.backends &&
+        compare_option_bool(self.keep_original_host_header,other.keep_original_host_header) &&
+        compare_option_bool(self.enable_lets_encrypt,other.enable_lets_encrypt) &&
         compare_option_bool(self.capture_subdomains, other.capture_subdomains) &&
         compare_option_bool(self.disable_tcp_tunnel_mode, other.disable_tcp_tunnel_mode) &&
         compare_option_bool(self.forward_subdomains, other.forward_subdomains)
@@ -253,6 +267,7 @@ impl RemoteSiteConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize,ToSchema, PartialEq, Eq, Hash, JsonSchema)]
 pub struct OddBoxV2Config {
+    /// The schema version - you do not normally need to set this, it is set automatically when you save the configuration.
     #[schema(value_type = String)]
     pub version : super::OddBoxConfigVersion,
     pub root_dir : Option<String>, 
@@ -261,24 +276,38 @@ pub struct OddBoxV2Config {
     /// Defaults to true. Lets you enable/disable h2/http11 tls alpn algs during initial connection phase. 
     #[serde(default = "true_option")]
     pub alpn : Option<bool>,
+    /// The port range start is used to determine which ports to use for hosted processes.
+    #[serde(default = "default_port_range_start")]
     pub port_range_start : u16,
     #[serde(default = "default_log_format")]
     pub default_log_format : LogFormat,
     #[schema(value_type = String)]
     pub ip : Option<IpAddr>,
+    /// The port on which to listen for http requests. Defaults to 8080.
     #[serde(default = "default_http_port_8080")]
     pub http_port : Option<u16>,
+    /// The port on which to listen for https requests. Defaults to 4343.
     #[serde(default = "default_https_port_4343")]
     pub tls_port : Option<u16>,
     #[serde(default = "true_option")]
     pub auto_start : Option<bool>,
+    /// Environment variables configured here will be made available to all processes started by odd-box.
+    #[serde(default = "Vec::<EnvVar>::new")]
     pub env_vars : Vec<EnvVar>,
     pub remote_target : Option<Vec<RemoteSiteConfig>>,
     pub hosted_process : Option<Vec<InProcessSiteConfig>>,
     pub dir_server : Option<Vec<DirServer>>,
+    /// The port for the admin api. If this is not set, the admin api will not be started.
+    /// This setting also enabled the web-ui on the same port.
     pub admin_api_port : Option<u16>,
+    #[serde(skip)]
     pub path : Option<String>,
+    /// If you want to use lets-encrypt for generating certificates automatically for your sites
     pub lets_encrypt_account_email: Option<String>
+}
+
+fn default_port_range_start() -> u16 {
+    4200
 }
 
 impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Config {
@@ -292,11 +321,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
         };
     
         let formatted_toml = self.to_string()?;
-    
-        let original_path = Path::new(&current_path);
-        let backup_path = original_path.with_extension("toml.backup");
-        std::fs::rename(original_path, &backup_path)?;
-    
+        
         if let Err(e) = std::fs::write(current_path, formatted_toml) {
             bail!("Failed to write config to disk: {e}")
         } else {
@@ -544,6 +569,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
             ]),
             remote_target: Some(vec![
                 RemoteSiteConfig { 
+                    keep_original_host_header: None,
                     enable_lets_encrypt: Some(false),
                     forward_subdomains: None,
                     host_name: "lobsters.local".into(), 
@@ -559,6 +585,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
                     disable_tcp_tunnel_mode: Some(false)
                 },
                 RemoteSiteConfig { 
+                    keep_original_host_header: None,
                     enable_lets_encrypt: Some(false),
                     forward_subdomains: Some(true),                    
                     host_name: "google.local".into(), 
@@ -685,6 +712,7 @@ impl TryFrom<super::v1::OddBoxV1Config> for super::v2::OddBoxV2Config{
             }).collect()),
             remote_target: Some(old_config.remote_target.unwrap_or_default().iter().map(|x|{
                 super::v2::RemoteSiteConfig {
+                    keep_original_host_header: None,
                     enable_lets_encrypt: Some(false),
                     disable_tcp_tunnel_mode: x.disable_tcp_tunnel_mode,
                     capture_subdomains: x.capture_subdomains,

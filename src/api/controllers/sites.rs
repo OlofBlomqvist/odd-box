@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::configuration::v2::{DirServer, InProcessSiteConfig, RemoteSiteConfig};
 use crate::configuration::OddBoxConfiguration;
@@ -170,12 +171,13 @@ pub struct UpdateQuery {
 )]
 pub async fn update_handler(State(state): axum::extract::State<Arc<GlobalState>>,Query(query): Query<UpdateQuery>, body: Json<UpdateRequest>) -> axum::response::Result<impl IntoResponse,SitesError> {
     
-    let mut conf_guard = state.config.write().await;
-
-    match &body.new_configuration {
+    // lets clone the current config and update it. then save to disk, causing reload to be triggered.
+    let mut new_conf = { state.config.read().await.clone() };
+    
+    let result = match &body.new_configuration {
         ConfigItem::DirServer(new_cfg) => {
             let hostname = query.hostname.clone().unwrap_or(new_cfg.host_name.clone());
-            match conf_guard.add_or_replace_dir_site(&hostname,new_cfg.to_owned(),state.clone()).await {
+            match new_conf.add_or_replace_dir_site(&hostname,new_cfg.to_owned(),state.clone()).await {
                 Ok(_) => {
                     state.invalidate_cache();
                     Ok(())
@@ -186,7 +188,7 @@ pub async fn update_handler(State(state): axum::extract::State<Arc<GlobalState>>
         ConfigItem::RemoteSite(new_cfg) => {
             let hostname = query.hostname.clone().unwrap_or(new_cfg.host_name.clone());
 
-            match conf_guard.add_or_replace_remote_site(
+            match new_conf.add_or_replace_remote_site(
                 &hostname,new_cfg.to_owned(),
                 state.clone()         
             ).await {
@@ -201,7 +203,7 @@ pub async fn update_handler(State(state): axum::extract::State<Arc<GlobalState>>
         ConfigItem::HostedProcess(new_cfg) => {
             
             let hostname = query.hostname.clone().unwrap_or(new_cfg.host_name.clone());
-            match conf_guard.add_or_replace_hosted_process(&hostname,new_cfg.to_owned(),state.clone()).await {
+            match new_conf.add_or_replace_hosted_process(&hostname,new_cfg.to_owned(),state.clone()).await {
                 Ok(_) => {
                     state.invalidate_cache();
                     Ok(())
@@ -210,13 +212,31 @@ pub async fn update_handler(State(state): axum::extract::State<Arc<GlobalState>>
             }
 
         }
+    };
 
-       
+    match result {
+        Ok(_) => {        
+            tracing::info!("Configuration updated and written to disk. Waiting for reload to complete.");            
+            let mut i = 0;
+            loop {
+                if i > 1000 { // 10 seconds
+                    return Err(SitesError::UnknownError("Failed to update configuration".to_string()));
+                }
+                {
+                let active_config = state.config.read().await.clone();
+                    if active_config.internal_version > new_conf.internal_version {
+                        break;
+                    }
+                }
+                i+=1;
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            tracing::debug!("Site settings updated thru api");
+            Ok(())
+        },
+        Err(e) => Err(e)
     }
 
-    
-
-    
 }
 
 #[derive(Deserialize,IntoParams)]
@@ -247,11 +267,11 @@ pub async fn delete_handler(
   
    
 
-    let mut conf_guard = global_state.config.write().await;
+    let mut new_config = global_state.config.read().await.clone();
     
     let mut deleted = false;
     let mut deleted_is_proc = false;
-    if let Some(sites) = conf_guard.hosted_process.as_mut() {
+    if let Some(sites) = new_config.hosted_process.as_mut() {
         
         sites.retain(|x| {
             let result = x.host_name != query.hostname;
@@ -263,7 +283,7 @@ pub async fn delete_handler(
         })
     }
         
-    if let Some(sites) = conf_guard.remote_target.as_mut() {
+    if let Some(sites) = new_config.remote_target.as_mut() {
         
         sites.retain(|x| {
             let result = x.host_name != query.hostname;
@@ -274,7 +294,7 @@ pub async fn delete_handler(
         })
     }
 
-    if let Some(sites) = conf_guard.dir_server.as_mut() {
+    if let Some(sites) = new_config.dir_server.as_mut() {
         
         sites.retain(|x| {
             let result = x.host_name != query.hostname;
@@ -288,22 +308,23 @@ pub async fn delete_handler(
 
     if deleted {
         global_state.app_state.site_status_map.remove( &query.hostname);
-        conf_guard.write_to_disk()
+        new_config.write_to_disk()
             .map_err(|e|
                 SitesError::UnknownError(format!("{e:?}"))
             )?;
-        drop(conf_guard);
-        tracing::info!("Config file updated due to change to site: {}", query.hostname);
-        if deleted_is_proc {            
-            let (tx,mut rx) = tokio::sync::mpsc::channel(1);
-            global_state.broadcaster.send(crate::http_proxy::ProcMessage::Delete( query.hostname.to_owned(),tx)).map_err(|e|
-                SitesError::UnknownError(format!("{e:?}"))
-            )?;
-            if rx.recv().await == Some(0) {
-                tracing::debug!("Received a confirmation that the process was deleted");
-            } else {
-                tracing::debug!("Failed to receive a confirmation that the process was deleted");
-            };
+        let mut i = 0;
+        loop {
+            if i > 1000 { // 10 seconds
+                return Err(SitesError::UnknownError("Failed to update configuration".to_string()));
+            }
+            {
+            let active_config = global_state.config.read().await;
+                if active_config.internal_version > new_config.internal_version {
+                    break;
+                }
+            }
+            i+=1;
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
         tracing::info!("Dropped site from configuration: {}", query.hostname);
     } else {
