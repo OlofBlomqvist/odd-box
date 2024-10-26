@@ -14,14 +14,13 @@ const statusColors = {
   Starting: "yellow",
   Remote: "white",
   Faulty: "yellow",
+  Dynamic: "white",
 };
 
 const StatusIcon = ({
   hostname,
-  state,
-  isRemoteSite,
+  state
 }: {
-  isRemoteSite?: boolean;
   state?: BasicProcState;
   hostname: string;
 }) => {
@@ -36,17 +35,14 @@ const StatusIcon = ({
           title={state}
           onClick={(e) => {
             e.preventDefault();
-            if (isRemoteSite) {
-              return;
-            }
             setIsPopoverOpen(true);
           }}
           style={{
             color: statusColors[state!],
-            fontSize: isRemoteSite ? ".7rem" : "1rem",
+            fontSize: "1rem",
           }}
         >
-          {isRemoteSite ? "R" : "●"}
+          {"●"}
         </span>
       </PopoverTrigger>
       <PopoverContent

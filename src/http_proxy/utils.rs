@@ -1,14 +1,13 @@
-use bytes::Bytes;
 use chrono::Local;
 use futures_util::FutureExt;
 use http_body::Frame;
 use http_body_util::BodyExt;
 use hyper::{
-    body::Incoming, header::{HeaderName, HeaderValue, InvalidHeaderValue, ToStrError}, upgrade::OnUpgrade, HeaderMap, Request, Response, StatusCode, Version
+    body::Incoming, header::{HeaderName, HeaderValue, InvalidHeaderValue, ToStrError}, upgrade::OnUpgrade, HeaderMap, Request, Response, StatusCode, Uri, Version
 };
 use hyper_rustls::HttpsConnector;
 use hyper_util::{client::legacy::{connect::HttpConnector, Client}, rt::TokioIo};
-use std::{net::SocketAddr, sync::Arc, task::Poll, time::Duration};
+use std::{net::SocketAddr, str::FromStr, sync::Arc, task::Poll, time::Duration};
 use tungstenite::http;
 
 use lazy_static::lazy_static;
@@ -40,7 +39,7 @@ lazy_static! {
 pub enum ProxyCallResult {
     NormalResponse(WrappedNormalResponse),
     EpicResponse(crate::http_proxy::service::EpicResponse),
-    Bytes(Response<Bytes>)
+    //Bytes(Response<bytes::Bytes>)
 }
 
 #[derive(Debug)]
@@ -89,7 +88,7 @@ pub async fn proxy(
 
 
     tracing::trace!(
-        "Incoming {incoming_http_version:?} request to terminating proxy from {client_ip:?} with target url: {target_url}!"
+        "Incoming {incoming_http_version:?} request to terminating proxy from {client_ip:?} with target url: {target_url}. original req: {req:#?}"
     );
     
     
@@ -132,10 +131,20 @@ pub async fn proxy(
         }
     }
 
+    let mut host_header_to_use = None;
+    match &target {
+        Target::Remote(remote_site_config) => {
+            if remote_site_config.keep_original_host_header.unwrap_or_default() {
+                host_header_to_use = Some(req_host_name.to_string());}
+        },
+        Target::Proc(_) => {
+            host_header_to_use = Some(req_host_name.to_string());
+        }
+    }
+
     
     let mut proxied_request =
-        create_proxied_request(&target_url, req, request_upgrade_type.as_ref(), &req_host_name)?;
-
+        create_proxied_request(&target_url, req, request_upgrade_type.as_ref(), host_header_to_use)?;
     
     if proxied_request.version() == Version::HTTP_2 {
         // if client connected to us with http2, we will attempt to do so with the backend as well..
@@ -174,17 +183,25 @@ pub async fn proxy(
     
     let req_is_https = proxied_request.uri().scheme().is_some_and(|x|*x==http::uri::Scheme::HTTPS);
     let target_scheme_info_str = if use_https_to_backend_target != req_is_https {
-        tracing::warn!("Target URL scheme does not match use_https_to_backend_target setting. This is a bug in odd-box, please report it. Will fallback to using the target URL scheme ({}).",target_url);
         if req_is_https {
-            "https"
+            "https<>http"
         } else {
-            "http"
+            "http<->https"
         }
     } else if use_https_to_backend_target {
         "https" 
     } else {
         "http"
     };
+
+    let p = proxied_request.uri().port().map_or(
+        if use_https_to_backend_target { 443 as u16 } else { 80  as u16 },
+        |x|x.as_u16()
+    );
+
+    let mut uri = proxied_request.uri_mut();
+    _ = update_port(&mut uri, p,use_https_to_backend_target);
+
 
     
     let con: ProxyActiveConnection = create_connection(
@@ -200,7 +217,7 @@ pub async fn proxy(
     );
 
 
-    tracing::trace!("Sending request:\n{:?}", proxied_request);
+    tracing::trace!("Sending request:\n{:#?}", proxied_request);
 
 
     // todo - prevent making a connection if client already has too many tcp connections open
@@ -375,7 +392,7 @@ fn create_proxied_request<B>(
     target_url: &str,
     mut request: Request<B>,
     upgrade_type: Option<&String>,
-    req_host_name: &str
+    req_host_name: Option<String>
 ) -> Result<Request<B>, ProxyError> {
     
     // replace the uri
@@ -386,12 +403,18 @@ fn create_proxied_request<B>(
     
     // we want to pass the original host header to the backend (the one that the client requested)
     // and not the one we are connecting to as that might as well just be an internal name or IP.
-    if let Ok(v) = HeaderValue::from_str(req_host_name) {
-        _ = request.headers_mut().insert("host",v);
+    if let Some(req_host_name) = req_host_name {
+        if let Ok(v) = HeaderValue::from_str(&req_host_name) {
+            let replaced = request.headers_mut().insert("Host",v);
+            tracing::trace!("Replaced host header '{replaced:?}' with {req_host_name}");
+        } else {
+            tracing::debug!("Failed to insert host header for '{req_host_name}'. Falling back to direct hostname call rather than 127.0.0.1.");
+            _ = request.uri_mut().host().replace(&req_host_name);
+        }    
     } else {
-        tracing::warn!("Failed to insert host header for '{req_host_name}'. Falling back to direct hostname call rather than 127.0.0.1.");
-        _ = request.uri_mut().host().replace(req_host_name);
-    }    
+        tracing::trace!("using automatic host header based on remote url");
+        request.headers_mut().remove("Host");
+    }
 
     // we will decide to use https or not to the backend ourselves, no need to forward this.
     _ = request
@@ -586,4 +609,23 @@ fn create_connection(
         description: None,
         connection_type: typ_info
     }
+}
+
+fn update_port(uri: &mut Uri, new_port: u16, use_https: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let mut parts = uri.clone().into_parts();
+
+    if let Some(authority) = &mut parts.authority {
+        let host = authority.host();
+
+        // Check if we need to add the port based on protocol and port number
+        let updated_authority = match (use_https, new_port) {
+            (true, 443) | (false, 80) => host.to_string(),           // Omit port for standard ports
+            _ => format!("{}:{}", host, new_port),                    // Include port for non-standard cases
+        };
+
+        parts.authority = Some(crate::http_proxy::utils::http::uri::Authority::from_str(&updated_authority)?);
+        *uri = Uri::from_parts(parts)?;
+    }
+
+    Ok(())
 }

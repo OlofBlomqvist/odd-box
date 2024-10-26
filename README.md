@@ -17,6 +17,7 @@ You can also build it yourself, or install it using brew, cargo, nix or devbox; 
 - Cross platform (win/lin/osx)
 - Easy to configure (toml files)
 - Keep a list of specified binaries running
+- Serve local directories (for static sites)
 - Uses PORT environment variable for routing
 - Allows for setting proc specific and global env vars
 - Remote target proxying
@@ -47,6 +48,9 @@ There is a basic administration API that can be enabled by adding "admin_api_por
 **odd-box v0.1.2:**
 ![Screenshot of oddbox v0.1.2](/screenshot.jpg)
 
+**odd-box web-ui v0.1.8:**
+![Screenshot of oddbox v0.1.8](/webui-screenshot.jpg)
+
 
 ## Installation
 
@@ -60,7 +64,7 @@ but there are more ways to install odd-box if you so wish :-)
 
 ```zsh
 brew tap OlofBlomqvist/repo
-brew install oddbox
+brew install odd-box
 ```
 
 - [Cargo install](https://doc.rust-lang.org/cargo/getting-started/installation.html)
@@ -224,15 +228,37 @@ There are more options than the ones shown here; these are the most commonly use
     - ``https``: (Optional) Set to true if the process uses HTTP (TLS)
     - ``enable_lets_encrypt``: (Optional) Set to true to enable lets-encrypt to be used for this site.
 
+4. Adding dir servers: for serving static websites or files. Supports directory indexing and markdown rendering.
+    ```toml
+    [[dir_server]]
+    host_name = "dir.localtest.me"
+    dir = "$cfg_dir"
+    enable_directory_browsing = true
+    render_markdown = true
+    ```
 
 
 
-#### Getting Started
+## Getting Started
 
-To get started quickly, simply copy the [minimal example configuration file](https://github.com/OlofBlomqvist/odd-box/blob/main/odd-box-example-config-minimal.toml), modify the relevant sections to add your remote targets or hosted processes, and run odd-box with your configuration file.
+### Creating a config file
 
+You can generate a basic "odd-box.toml" config file to get started:
+```
+odd-box --init 
+```
 
-## Upgrading odd-box
+From here, you can either open up the config file in your favorite editor, or just run odd-box and open your browser going to http://localhost:1234 where you can configure odd-box thru its web-interface.
+
+### Lets encrypt
+
+Lets encrypt support works by creating a virtual file that can be used for proving ownership of a domain name. No support exists for the DNS auth mode.
+
+You will need to have odd-box running on a server with a public IP and a DNS record pointing to it. Port 80 and 443 are both used and need to be open.
+
+Certificates are automatically renewed when they have less than 30 days left of validity.
+
+### Upgrading
 
 If you are not using a package manager such as homebrew to manage your odd-box installation, you can either manually download new versions from the github release section or use the built in command for doing the same:
 ```odd-box --update```

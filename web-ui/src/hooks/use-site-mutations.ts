@@ -4,9 +4,11 @@ import { useRouter } from "@tanstack/react-router";
 import {
   Api,
   BasicProcState,
+  DirServer,
   InProcessSiteConfig,
   RemoteSiteConfig,
 } from "../generated-api";
+import { getUrlFriendlyUrl } from "@/lib/get_url_friendly_url";
 
 const useSiteMutations = () => {
   let hostName = window.location.protocol + "//" + window.location.hostname
@@ -127,7 +129,7 @@ const useSiteMutations = () => {
       if (vars.hostname !== vars.siteSettings.host_name) {
         router.navigate({
           to: `/site`,
-          search: { hostname: vars.siteSettings.host_name.replace("http://", "").replace("https://", ""), tab: 0 },
+          search: { hostname: getUrlFriendlyUrl(vars.siteSettings.host_name), tab: 0 },
         });
       }
     },
@@ -158,9 +160,34 @@ const useSiteMutations = () => {
       if (vars.hostname !== vars.siteSettings.host_name) {
         router.navigate({
           to: `/site`,
-          search: { tab: 1, hostname: vars.siteSettings.host_name.replace("http://", "").replace("https://", "") },
+          search: { tab: 1, hostname: getUrlFriendlyUrl(vars.siteSettings.host_name) },
         });
       }
+    },
+  });
+
+  const updateDirServer = useMutation({
+    mutationKey: ["update--dir-server"],
+    mutationFn: ({
+      hostname,
+      siteSettings,
+    }: {
+      siteSettings: DirServer;
+      hostname?: string;
+    }) => {
+      return apiClient.api.set(
+        {
+          new_configuration: {
+            DirServer: siteSettings,
+          },
+        },
+        {
+          hostname,
+        }
+      );
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["sites"] });
     },
   });
 
@@ -180,6 +207,7 @@ const useSiteMutations = () => {
     updateSite,
     deleteSite,
     updateRemoteSite,
+    updateDirServer,
   };
 };
 

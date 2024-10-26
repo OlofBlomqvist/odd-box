@@ -150,3 +150,13 @@ use crate::configuration::OddBoxConfiguration;
 
 }
 
+
+#[test] 
+fn init_cfg_is_valid() {
+    crate::generate_config(None,false).expect("should be able to create initial config");
+}
+
+#[test]
+fn init_filled_cfg_is_valid() { 
+    crate::generate_config(None,true).expect("should be able to create initial filled config");
+}

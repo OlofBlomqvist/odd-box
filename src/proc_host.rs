@@ -20,6 +20,7 @@ pub async fn host(
     let my_arc = std::sync::Arc::new(AtomicBool::new(true));
 
     crate::PROC_THREAD_MAP.insert(resolved_proc.proc_id.clone(), crate::types::proc_info::ProcInfo { 
+        marked_for_removal: false,
         config: resolved_proc.clone(),
         pid: None,
         liveness_ptr: std::sync::Arc::<AtomicBool>::downgrade(&my_arc) 
@@ -71,6 +72,11 @@ pub async fn host(
             match entry {
                 Some(mut item) => {
                     item.pid = None;
+                    if item.marked_for_removal {
+                        tracing::warn!("Detected mark of removal, leaving main loop for {}",resolved_proc.host_name);
+                        state.app_state.site_status_map.remove(&resolved_proc.host_name);
+                        break;
+                    }
                 },
                 None => {
                     tracing::warn!("Something has gone very wrong! A thread is missing from the global thread map.. this is a bug in odd-box.")
@@ -347,6 +353,7 @@ pub async fn host(
                         break
                     }
                     
+                    state.app_state.site_status_map.insert(resolved_proc.host_name.clone(), ProcState::Running);
                 
                     while let Ok(msg) = rcv.try_recv() {
                         match msg {
@@ -379,6 +386,28 @@ pub async fn host(
                             _ => {}
                         }
                     }
+
+                    {
+                        let entry = crate::PROC_THREAD_MAP.get_mut(&resolved_proc.proc_id);
+                        match entry {
+                            Some(item) => {
+                                if item.marked_for_removal {               
+                                    tracing::warn!("Detected mark of removal, leaving main loop for {}",resolved_proc.host_name);                     
+                                    state.app_state.site_status_map.insert(resolved_proc.host_name.clone(), ProcState::Stopping);
+                                    if let Some(mut stdin) = child.stdin.take() {
+                                        _ = stdin.write_all(b"q");
+                                    } 
+                                    _ = child.kill();
+                                    return;
+                                }
+                            },
+                            None => {
+                                tracing::warn!("Something has gone very wrong! A thread is missing from the global thread map.. this is a bug in odd-box.")
+                            }
+                        }
+                    }
+            
+
                     if !enabled {
                         tracing::warn!("[{}] Stopping due to having been disabled by proxy.", resolved_proc.host_name);
                         // note: we just send q here because some apps like iisexpress requires it

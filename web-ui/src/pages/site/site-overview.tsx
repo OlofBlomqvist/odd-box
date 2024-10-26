@@ -33,7 +33,7 @@ const SiteOverview = ({
       <div className="flex-grow flex flex-col gap-4 sm:gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>Site details</CardTitle>
+            <CardTitle>Process details</CardTitle>
             <CardDescription>
               General information for{" "}
               <span className="font-bold text-[var(--color2)]">

@@ -21,7 +21,7 @@ const SettingsPage = () => {
   const { updateSettings } = useSettingsMutations();
   const { data: settings } = useSettings();
   const [newIp, setNewIp] = useState(settings.ip);
-
+  const [newLetsEncryptAccountEmail, setNewLetsEncryptAccountEmail] = useState(settings.lets_encrypt_account_email);
   const [newRootDir, setNewRootDir] = useState(settings.root_dir);
   const [newPort, setNewPort] = useState(settings.http_port);
   const [newTlsPort, setNewTlsPort] = useState(settings.tls_port);
@@ -220,6 +220,24 @@ const SettingsPage = () => {
                 <option value={"Standard"}>Standard</option>
                 <option value={"Dotnet"}>Dotnet</option>
               </select>
+            </SettingsItem>
+          </SettingsSection>
+
+          <SettingsSection marginTop="0px" noTopSeparator noBottomSeparator>
+            <SettingsItem
+              title="Lets Encrypt account email"
+              subTitle={SettingDescriptions["lets_encrypt_account_email"]}
+            >
+              <Input
+                withSaveButton
+                onSave={(newValue) => {
+                  updateSetting("lets_encrypt_account_email", newValue);
+                }}
+                type="text"
+                originalValue={settings.lets_encrypt_account_email}
+                value={newLetsEncryptAccountEmail}
+                onChange={(e) => setNewLetsEncryptAccountEmail(e.target.value)}
+              />
             </SettingsItem>
           </SettingsSection>
 

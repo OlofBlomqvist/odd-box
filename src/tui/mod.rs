@@ -103,6 +103,8 @@ pub async fn run(
     ).collect();
 
     
+    tracing::info!("odd-box started successfully");
+    
     // TUI event loop
     let tui_handle = {
         let terminal = Arc::clone(&terminal);

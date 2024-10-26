@@ -12,17 +12,25 @@ import SettingDescriptions from "@/lib/setting_descriptions";
 import { EnvVariablesTable } from "@/components/table/env_variables/env_variables";
 import { ArgumentsTable } from "@/components/table/arguments/arguments";
 import { ConfirmationDialog } from "@/components/dialog/confirm/confirm";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import useSettings from "@/hooks/use-settings";
 
 const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
   const { updateSite, deleteSite } = useSiteMutations();
+  const { data: settings } = useSettings();
   const [newName, setNewName] = useState(site.host_name);
-  const [newPort, setNewPort] = useState(site.port ?? 8080);
+  const [newPort, setNewPort] = useState<string>(`${site.port ?? ""}`);
   const [newDir, setNewDir] = useState(site.dir ?? undefined);
   const [newBin, setNewBin] = useState(site.bin);
   const [showConfirmDeleteModal, setShowConfirmDeleteModal] = useState(false);
   const router = useRouter();
-
+  
   const updateSetting = (key: string, value: any) => {
     let val =
       Array.isArray(value) || isNaN(value) === false ? value : `${value}`;
@@ -32,7 +40,7 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
         hostname: site.host_name,
         siteSettings: {
           ...site,
-          [key]: val,
+          [key]: key === "port" ? (val === "" ? undefined : Number(val)) : val,
         },
       }),
       {
@@ -53,13 +61,15 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
       }}
     >
       <Card className="mb-8">
-      <CardHeader>
-            <CardTitle>Settings</CardTitle>
-            <CardDescription>
-              Current configuration for{" "}
-              <span className="font-bold text-[var(--color2)]">{site.host_name}</span>
-            </CardDescription>
-          </CardHeader>
+        <CardHeader>
+          <CardTitle>Settings</CardTitle>
+          <CardDescription>
+            Current configuration for{" "}
+            <span className="font-bold text-[var(--color2)]">
+              {site.host_name}
+            </span>
+          </CardDescription>
+        </CardHeader>
         <CardContent>
           <SettingsSection marginTop="0px" noTopSeparator>
             <SettingsItem
@@ -76,19 +86,24 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
                 onChange={(e) => setNewName(e.target.value)}
               />
             </SettingsItem>
-            <SettingsItem title="Port" subTitle={SettingDescriptions["port"]}>
+            <SettingsItem
+              title="Port"
+              defaultValue={settings.http_port}
+              subTitle={SettingDescriptions["port"]}
+            >
               <Input
-                originalValue={site.port ?? 8080}
+                originalValue={`${site.port ?? ""}`}
                 withSaveButton
+                placeholder={settings.http_port.toString()}
                 onSave={(newValue) => {
                   updateSetting("port", newValue);
                 }}
                 value={newPort}
                 onChange={(e) => {
-                  if (isNaN(Number(e.target.value))) {
+                  if (e.target.value.length && isNaN(Number(e.target.value))) {
                     return;
                   }
-                  setNewPort(Number(e.target.value));
+                  setNewPort(e.target.value);
                 }}
               />
             </SettingsItem>
@@ -408,7 +423,15 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
             show={showConfirmDeleteModal}
             title="Delete"
             yesBtnText="Yes, delete it"
-            subtitle={<span>Are you sure you want to delete <span className="font-bold text-[var(--color2)]">{site.host_name}</span>?</span>}
+            subtitle={
+              <span>
+                Are you sure you want to delete{" "}
+                <span className="font-bold text-[var(--color2)]">
+                  {site.host_name}
+                </span>
+                ?
+              </span>
+            }
           />
         </CardContent>
       </Card>

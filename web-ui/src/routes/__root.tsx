@@ -14,6 +14,8 @@ import { LayoutDashboardIcon, Logs, Settings } from "lucide-react";
 import RemoteSitesList from "@/components/drawer/remote-sites-list";
 import { HostedProcessesMenuActions } from "@/components/drawer/hosted_processes_menu_actions";
 import { RemoteSitesMenuActions } from "@/components/drawer/remote_sites_menu_actions";
+import { DirectoryServersMenuActions } from "@/components/drawer/directory_servers_menu_actions";
+import DirServersList from "@/components/drawer/dir-servers-list";
 const queryClient = new QueryClient();
 
 export const Route = createRootRoute({
@@ -58,6 +60,12 @@ export const Route = createRootRoute({
               label="REMOTE SITES"
             />
             <RemoteSitesList />
+            <div className="my-4" />
+            <ListHeader
+              menuActions={<DirectoryServersMenuActions />}
+              label="DIRECTORY SERVERS"
+            />
+            <DirServersList />
           </SideDrawer>
           <Header />
           <div className="inner-content">

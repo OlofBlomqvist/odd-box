@@ -12,6 +12,7 @@ import {
   Ellipsis,
   GlobeIcon,
   PlusSquareIcon,
+  Server,
 } from "lucide-react";
 import {
   Table,
@@ -37,13 +38,22 @@ import { cn } from "@/lib/cn";
 import { BasicProcState } from "@/generated-api";
 import { SlidingTabBar } from "@/components/ui/sliding_tabs/sliding_tabs";
 import { getUrlFriendlyUrl } from "@/lib/get_url_friendly_url";
+import InfoCard from "./info-card";
+import { useDirServers } from "@/hooks/use-dir-servers";
 const HomePage = () => {
   const { data: hostedProcesses } = useHostedSites();
   const { data: remoteSites } = useRemoteSites();
   const { data: siteStatus } = useSiteStatus();
+  const { data: dirServers } = useDirServers();
   const router = useRouter();
   const searchParams = new URLSearchParams(window.location.search);
   const type = searchParams.get("type");
+
+  const slidingTabs = [
+    { label: "Processes", value: "processes" },
+    { label: "Sites", value: "sites" },
+    { label: "Servers", value: "servers" },
+  ]
 
   return (
     <main className="grid flex-1 items-start gap-4 sm:py-0 md:gap-8 max-w-[900px]">
@@ -57,97 +67,63 @@ const HomePage = () => {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 justify-between">
-                    Processes <ActivityIcon className="h-4 w-4" />
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center justify-between">
-                    <div className="text-4xl font-bold">
-                      {hostedProcesses.length}
-                    </div>
-
-                    <div className="text-4xl font-bold">
-                      {
-                        siteStatus.filter(
-                          (site) => site.state === BasicProcState.Running
-                        ).length
-                      }
-                    </div>
-                  </div>
-                  <div className="text-sm text-muted-foreground flex justify-between">
-                    <p>Total</p>
-                    <p>Running</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 justify-between">
-                    Sites <GlobeIcon className="h-4 w-4" />
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center justify-between">
-                    <div className="text-4xl font-bold">
-                      {remoteSites.length}
-                    </div>
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    Total sites
-                  </div>
-                </CardContent>
-              </Card>
+              <InfoCard
+                title="Processes"
+                icon={<ActivityIcon className="h-4 w-4" />}
+                leftData={{ label: "Total", value: hostedProcesses.length }}
+                rightData={{
+                  label: "Running",
+                  value: siteStatus.filter(
+                    (site) => site.state === BasicProcState.Running
+                  ).length,
+                }}
+              />
+              <InfoCard
+                title="Sites"
+                icon={<GlobeIcon className="h-4 w-4" />}
+                leftData={{ label: "Total", value: remoteSites.length }}
+              />
+              <InfoCard
+                title="Directory Servers"
+                icon={<Server className="h-4 w-4" />}
+                leftData={{ label: "Total", value: dirServers.length }}
+              />
             </div>
           </CardContent>
         </Card>
 
         <Tabs
-          defaultValue={type === "sites" ? "sites" : "processes"}
+          defaultValue={slidingTabs.find(x => x.value === type)?.value ?? "processes"}
           className="pb-8"
         >
           <div className="flex items-center">
             <TabsList>
-              <SlidingTabBar
-                tabs={[
-                  { label: "Processes", value: "processes" },
-                  { label: "Sites", value: "sites" },
-                ]}
+              <SlidingTabBar defaultTabIndex={slidingTabs.findIndex(x => x.value === type) ?? 0}
+                tabs={slidingTabs}
               />
             </TabsList>
-            <div className="ml-auto flex items-center gap-2">
-              <Button
+          </div>
+
+          <TabsContent value="processes">
+            <Card x-chunk="dashboard-06-chunk-1">
+              <CardHeader className="flex items-center justify-between flex-row">
+                <div>
+                <CardTitle>Processes</CardTitle>
+                <CardDescription>
+                  Viewing all hosted processes and their status.
+                </CardDescription>
+                </div>
+                <Button
                 onClick={() => {
                   router.navigate({
-                    to: "/new-site",
+                    to: "/new-process",
                   });
                 }}
                 className="opacity-[.9] flex gap-2 border border-transparent hover:border-white/20"
                 variant="ghost"
               >
-                <PlusSquareIcon /> New site
+                <PlusSquareIcon className="min-w-4" /> New process
               </Button>
-              <Button
-                onClick={() => {
-                  router.navigate({ to: "/new-process" });
-                }}
-                className="opacity-[.9] flex gap-2 border border-transparent hover:border-white/20"
-                variant="ghost"
-              >
-                <PlusSquareIcon /> New process
-              </Button>
-            </div>
-          </div>
-
-          <TabsContent value="processes">
-            <Card x-chunk="dashboard-06-chunk-1">
-              <CardHeader>
-                <CardTitle>Processes</CardTitle>
-                <CardDescription>
-                  Viewing all hosted processes and their status.
-                </CardDescription>
               </CardHeader>
               <CardContent>
                 <Table>
@@ -172,7 +148,12 @@ const HomePage = () => {
                           onClick={() => {
                             router.navigate({
                               to: `/site`,
-                              search: { tab: 1, hostname: getUrlFriendlyUrl(hostedProcess.host_name) },
+                              search: {
+                                tab: 1,
+                                hostname: getUrlFriendlyUrl(
+                                  hostedProcess.host_name
+                                ),
+                              },
                             });
                           }}
                         >
@@ -213,7 +194,12 @@ const HomePage = () => {
                                   onClick={() => {
                                     router.navigate({
                                       to: `/site`,
-                                      search: { tab: 0, hostname: getUrlFriendlyUrl(hostedProcess.host_name) },
+                                      search: {
+                                        tab: 0,
+                                        hostname: getUrlFriendlyUrl(
+                                          hostedProcess.host_name
+                                        ),
+                                      },
                                     });
                                   }}
                                 >
@@ -223,7 +209,12 @@ const HomePage = () => {
                                   onClick={() => {
                                     router.navigate({
                                       to: `/site`,
-                                      search: { tab: 1, hostname: getUrlFriendlyUrl(hostedProcess.host_name) },
+                                      search: {
+                                        tab: 1,
+                                        hostname: getUrlFriendlyUrl(
+                                          hostedProcess.host_name
+                                        ),
+                                      },
                                     });
                                   }}
                                 >
@@ -233,7 +224,12 @@ const HomePage = () => {
                                   onClick={() => {
                                     router.navigate({
                                       to: `/site`,
-                                      search: { tab: 2, hostname: getUrlFriendlyUrl(hostedProcess.host_name) },
+                                      search: {
+                                        tab: 2,
+                                        hostname: getUrlFriendlyUrl(
+                                          hostedProcess.host_name
+                                        ),
+                                      },
                                     });
                                   }}
                                 >
@@ -253,9 +249,22 @@ const HomePage = () => {
 
           <TabsContent value="sites">
             <Card x-chunk="dashboard-06-chunk-1">
-              <CardHeader>
-                <CardTitle>Sites</CardTitle>
+              <CardHeader className="flex items-center justify-between flex-row">
+                <div>
+                  <CardTitle>Sites</CardTitle>
                 <CardDescription>Viewing all remote sites</CardDescription>
+                </div>
+                <Button
+                onClick={() => {
+                  router.navigate({
+                    to: "/new-site",
+                  });
+                }}
+                className="opacity-[.9] flex gap-2 border border-transparent hover:border-white/20 m-0"
+                variant="ghost"
+              >
+                <PlusSquareIcon /> New site
+              </Button>
               </CardHeader>
               <CardContent>
                 <Table>
@@ -265,7 +274,6 @@ const HomePage = () => {
                       <TableHead className="hidden sm:table-cell">
                         Backends
                       </TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -277,7 +285,12 @@ const HomePage = () => {
                           onClick={() => {
                             router.navigate({
                               to: `/site`,
-                              search: { tab: 1, hostname: getUrlFriendlyUrl(remoteSite.host_name) },
+                              search: {
+                                tab: 1,
+                                hostname: getUrlFriendlyUrl(
+                                  remoteSite.host_name
+                                ),
+                              },
                             });
                           }}
                         >
@@ -303,34 +316,72 @@ const HomePage = () => {
                               })}
                             </div>
                           </TableCell>
-                          <TableCell
-                            className={`text-right ${remoteSite.backends.length > 1 ? "align-top" : ""}`}
-                          >
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  aria-haspopup="true"
-                                  size="icon"
-                                  variant="ghost"
-                                >
-                                  <Ellipsis className="h-4 w-4" />
-                                  <span className="sr-only">Toggle menu</span>
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                                <DropdownMenuItem
-                                  onClick={() => {
-                                    router.navigate({
-                                      to: `/site`,
-                                      search: { tab: 0, hostname: getUrlFriendlyUrl(remoteSite.host_name) },
-                                    });
-                                  }}
-                                >
-                                  Edit
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+
+          <TabsContent value="servers">
+            <Card x-chunk="dashboard-06-chunk-1">
+              <CardHeader className="flex items-center justify-between flex-row">
+                <div>
+                  <CardTitle>Servers</CardTitle>
+                <CardDescription>Viewing all directory servers</CardDescription>
+                </div>
+                <Button
+                onClick={() => {
+                  router.navigate({
+                    to: "/new-dirserver",
+                  });
+                }}
+                className="opacity-[.9] flex gap-2 border border-transparent hover:border-white/20 m-0"
+                variant="ghost"
+              >
+                <PlusSquareIcon /> New server
+              </Button>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Hostname</TableHead>
+                      <TableHead className="hidden sm:table-cell">
+                        Directory
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {dirServers.map((dirServer) => {
+                      return (
+                        <TableRow
+                          key={dirServer.host_name}
+                          className="hover:cursor-pointer"
+                          onClick={() => {
+                            router.navigate({
+                              to: `/site`,
+                              search: {
+                                tab: 1,
+                                hostname: getUrlFriendlyUrl(
+                                  dirServer.host_name
+                                ),
+                              },
+                            });
+                          }}
+                        >
+                          <TableCell>
+                            <div className="font-bold">
+                              {dirServer.host_name}
+                            </div>
+                          </TableCell>
+                          <TableCell className="hidden sm:table-cell">
+                            <div className="text-sm text-muted-foreground overflow-hidden text-ellipsis max-w-[30ch]">
+                              {dirServer.dir}
+                            </div>
                           </TableCell>
                         </TableRow>
                       );

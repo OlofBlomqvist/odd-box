@@ -10,6 +10,7 @@ use v2::{DirServer, FullyResolvedInProcessSiteConfig};
 pub mod legacy;
 pub mod v1;
 pub mod v2;
+pub mod reload;
 
 pub trait OddBoxConfiguration<T> { 
     fn example() -> T;
@@ -148,7 +149,8 @@ pub struct ConfigWrapper {
     internal_configuration : v2::OddBoxV2Config,
     pub remote_sites: DashMap<String, v2::RemoteSiteConfig>,
     pub hosted_processes: DashMap<String, v2::InProcessSiteConfig>,
-    pub wrapper_cache_map_is_dirty: bool
+    pub wrapper_cache_map_is_dirty: bool,
+    pub internal_version: u64
 }
 
 
@@ -189,6 +191,7 @@ impl ConfigWrapper {
         }
 
         ConfigWrapper {
+            internal_version: 0,
             internal_configuration: config,
             remote_sites,
             hosted_processes,
@@ -197,7 +200,7 @@ impl ConfigWrapper {
     }
 
     // re-populate the dashmaps from the internal configuration vectors
-    pub fn reload(&mut self) {
+    pub fn reload_dashmaps(&mut self) {
         
         self.hosted_processes.clear();
         self.remote_sites.clear();
@@ -213,6 +216,8 @@ impl ConfigWrapper {
                 self.hosted_processes.insert(proc.host_name.clone(), proc.clone());
             }
         }
+
+        
 
         self.wrapper_cache_map_is_dirty = false;
         
@@ -364,7 +369,7 @@ impl ConfigWrapper {
     }
     
 
-    pub fn get_parent_path(&mut self) -> anyhow::Result<String> {
+    pub fn get_parent_path(&self) -> anyhow::Result<String> {
         // todo - use cache and clear on path change
         // if let Some(pre_resolved) = &self.1 {
         //     return Ok(pre_resolved.to_string())
@@ -448,85 +453,36 @@ impl ConfigWrapper {
     
      // ---> port-mapping...
     // todo: work with the wrapper dashmap instead
-    pub async fn add_or_replace_hosted_process(&mut self,hostname:&str,item:crate::InProcessSiteConfig,state:Arc<crate::GlobalState>) -> anyhow::Result<()> {
+    pub async fn add_or_replace_hosted_process(&mut self,hostname:&str,item:crate::InProcessSiteConfig,_state:Arc<crate::GlobalState>) -> anyhow::Result<()> {
         
         if let Some(hosted_site_configs) = &mut self.hosted_process {
-            
-            for x in hosted_site_configs.iter_mut() {
-                if hostname == x.host_name {
-
-
-
-                    let (tx,mut rx) = tokio::sync::mpsc::channel(1);
-
-                    state.broadcaster.send(crate::http_proxy::ProcMessage::Delete(hostname.into(),tx))?;
-                            
-                    if rx.recv().await == Some(0) {
-                        // when we get this message, we know that the process has been stopped
-                        // and that the loop has been exited as well.
-                        tracing::debug!("Received a confirmation that the process was deleted");
-                    } else {
-                        tracing::debug!("Failed to receive a confirmation that the process was deleted. This is a bug in odd-box.");
-                    };
-
-
-                    break;
-                }
-            };
-
-            tracing::debug!("Pushing a new process to the configuration thru the admin api");
             hosted_site_configs.retain(|x| x.host_name != item.host_name);
             hosted_site_configs.retain(|x| x.host_name != hostname);
-            hosted_site_configs.push(item.clone());
-            
-
-            let resolved_proc = self.resolve_process_configuration(&item)?;
-
-            tokio::task::spawn(crate::proc_host::host(
-                resolved_proc,
-                state.broadcaster.subscribe(),
-                state.clone(),
-            ));
-            tracing::trace!("Spawned a new thread for site: {:?}",hostname);
-            
-            let guard = &state.app_state.site_status_map;
-            guard.retain(|k,_v| k != hostname);
-            guard.insert(hostname.to_owned(), crate::types::app_state::ProcState::Stopped);    
+            hosted_site_configs.push(item.clone());            
+        } else {    
+            self.hosted_process = Some(vec![item.clone()]);
         }
-    
-        self.reload();
-    
         self.write_to_disk()
-       
-    
-       
-    
     }
 
     // todo: work with the wrapper dashmap instead
-    pub async fn add_or_replace_dir_site(&mut self,hostname:&str,item:DirServer,state:Arc<crate::GlobalState>) -> anyhow::Result<()> {
+    pub async fn add_or_replace_dir_site(&mut self,old_hostname:&str,item:DirServer,_state:Arc<crate::GlobalState>) -> anyhow::Result<()> {
         
 
         if let Some(sites) = self.dir_server.as_mut() {
             // out with the old, in with the new
-            sites.retain(|x| x.host_name != hostname);
+            sites.retain(|x| x.host_name != old_hostname);
             sites.retain(|x| x.host_name != item.host_name);
             sites.push(item.clone());
-
-            // same as above but for the TUI state
-            let map_guard = &state.app_state.site_status_map;
-            map_guard.retain(|k,_v| *k != item.host_name);
-            map_guard.retain(|k,_v| k != hostname);
-            map_guard.insert(hostname.to_owned(), crate::types::app_state::ProcState::Dynamic);
+        } else {
+            self.dir_server = Some(vec![item.clone()]);
         }
-    
-        self.reload();
         self.write_to_disk()
     
     }
     
      // todo: work with the wrapper dashmap instead
-     pub async fn add_or_replace_remote_site(&mut self,hostname:&str,item:crate::RemoteSiteConfig,state:Arc<crate::GlobalState>) -> anyhow::Result<()> {
+     pub async fn add_or_replace_remote_site(&mut self,hostname:&str,item:crate::RemoteSiteConfig,_state:Arc<crate::GlobalState>) -> anyhow::Result<()> {
         
 
         if let Some(sites) = self.remote_target.as_mut() {
@@ -534,15 +490,9 @@ impl ConfigWrapper {
             sites.retain(|x| x.host_name != hostname);
             sites.retain(|x| x.host_name != item.host_name);
             sites.push(item.clone());
-
-            // same as above but for the TUI state
-            let map_guard = &state.app_state.site_status_map;
-            map_guard.retain(|k,_v| *k != item.host_name);
-            map_guard.retain(|k,_v| k != hostname);
-            map_guard.insert(hostname.to_owned(), crate::types::app_state::ProcState::Remote);
+        } else {
+            self.remote_target = Some(vec![item.clone()]);
         }
-    
-        self.reload();
         self.write_to_disk()
     
     }
@@ -619,33 +569,9 @@ impl ConfigWrapper {
         }
     }
 
+    pub fn resolve_dir_server_configuration(&self,item:&DirServer) -> anyhow::Result<DirServer> {
 
-    // this MUST be called by proc_host prior to starting a process in order to resolve all variables.
-    // it is done this way in order to avoid changing the global state of the configuration in to the resolved state
-    // since that would then be saved to disk and we would lose the original configuration with dynamic variables
-    // making configuration files less portable.
-    // todo - cache resolved configurations by hash?
-    // todo: work with the wrapper dashmap instead
-    pub fn resolve_process_configuration(&mut self,proc:&crate::InProcessSiteConfig) -> anyhow::Result<crate::FullyResolvedInProcessSiteConfig> {
-
-        let mut resolved_proc = crate::FullyResolvedInProcessSiteConfig {
-            excluded_from_start_all: proc.exclude_from_start_all.unwrap_or(false),
-            proc_id: proc.get_id().clone(),
-            active_port: proc.active_port,
-            disable_tcp_tunnel_mode: proc.disable_tcp_tunnel_mode,
-            hints: proc.hints.clone(),
-            host_name: proc.host_name.clone(),
-            dir: proc.dir.clone(),
-            bin: proc.bin.clone(),
-            args: proc.args.clone(),
-            env_vars: proc.env_vars.clone(),
-            log_format: proc.log_format.clone(),
-            auto_start: proc.auto_start,
-            port: proc.port,
-            https: proc.https,
-            capture_subdomains: proc.capture_subdomains,
-            forward_subdomains: proc.forward_subdomains
-        };
+        let mut resolved_dir_server = item.clone();
 
         let resolved_home_dir_path = dirs::home_dir().ok_or(anyhow::anyhow!(String::from("Failed to resolve home directory.")))?;
         let resolved_home_dir_str = resolved_home_dir_path.to_str().ok_or(anyhow::anyhow!(String::from("Failed to parse home directory.")))?;
@@ -681,6 +607,90 @@ impl ConfigWrapper {
             canonicalized_with_vars
         } else {
             "$root_dir".to_string()
+        };
+
+        let resolved_home_dir_path = dirs::home_dir().ok_or(anyhow::anyhow!(String::from("Failed to resolve home directory.")))?;
+        let resolved_home_dir_str = resolved_home_dir_path.to_str().ok_or(anyhow::anyhow!(String::from("Failed to parse home directory.")))?;
+        
+        let with_vars = |x:&str| -> String {
+            x.replace("$root_dir", &root_dir)
+            .replace("$cfg_dir", &cfg_dir)
+            .replace("~", resolved_home_dir_str)
+        };
+
+        resolved_dir_server.dir = with_vars(&item.dir);
+
+        Ok(resolved_dir_server)
+
+    }
+
+
+
+    // this MUST be called by proc_host prior to starting a process in order to resolve all variables.
+    // it is done this way in order to avoid changing the global state of the configuration in to the resolved state
+    // since that would then be saved to disk and we would lose the original configuration with dynamic variables
+    // making configuration files less portable.
+    // todo: work with the wrapper dashmap instead
+    // note: we dont cache this right now but perhaps we should...
+    //       the reason it's not cached is that the configuration may change at runtime
+    //       and we'd need to invalidate this cache every time the global configuration changes.
+    //       perhaps work on this later.
+    pub fn resolve_process_configuration(&mut self,proc:&crate::InProcessSiteConfig) -> anyhow::Result<crate::FullyResolvedInProcessSiteConfig> {
+
+        let mut resolved_proc = crate::FullyResolvedInProcessSiteConfig {
+            excluded_from_start_all: proc.exclude_from_start_all.unwrap_or(false),
+            proc_id: proc.get_id().clone(),
+            active_port: proc.active_port,
+            disable_tcp_tunnel_mode: proc.disable_tcp_tunnel_mode,
+            hints: proc.hints.clone(),
+            host_name: proc.host_name.clone(),
+            dir: proc.dir.clone(),
+            bin: proc.bin.clone(),
+            args: proc.args.clone(),
+            env_vars: proc.env_vars.clone(),
+            log_format: proc.log_format.clone(),
+            auto_start: proc.auto_start,
+            port: proc.port,
+            https: proc.https,
+            capture_subdomains: proc.capture_subdomains,
+            forward_subdomains: proc.forward_subdomains
+        };
+
+        let resolved_home_dir_path = dirs::home_dir().ok_or(anyhow::anyhow!(String::from("Failed to resolve home directory.")))?;
+        let resolved_home_dir_str = resolved_home_dir_path.to_str().ok_or(anyhow::anyhow!(String::from("Failed to parse home directory.")))?;
+
+        //tracing::info!("Resolved home directory: {}",&resolved_home_dir_str);
+
+        let cfg_dir = self.get_parent_path()?;
+
+
+        let root_dir = if let Some(rd) = &self.root_dir {
+            
+            if rd.contains("$root_dir") {
+                anyhow::bail!("it is clearly not a good idea to use $root_dir in the configuration of root dir...")
+            }
+
+            let rd_with_vars_replaced = rd
+                .replace("$cfg_dir", &cfg_dir)
+                .replace("~", resolved_home_dir_str);
+
+            let canonicalized_with_vars = 
+                match std::fs::canonicalize(rd_with_vars_replaced.clone()) {
+                    Ok(resolved_path) => {
+                        resolved_path.display().to_string()
+                            // we dont want to use ext path def on windows
+                            .replace("\\\\?\\", "")
+                    }
+                    Err(e) => {
+                        anyhow::bail!(format!("root_dir item in configuration ({rd}) resolved to this: '{rd_with_vars_replaced}' - error: {}", e));
+                    }
+                };
+            
+            //tracing::debug!("$root_dir resolved to: {rd}");
+            canonicalized_with_vars
+        } else {
+            let current_directory = std::env::current_dir()?;
+            current_directory.display().to_string()
         };
 
         let resolved_home_dir_path = dirs::home_dir().ok_or(anyhow::anyhow!(String::from("Failed to resolve home directory.")))?;

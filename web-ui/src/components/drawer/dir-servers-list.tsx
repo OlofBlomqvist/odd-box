@@ -1,18 +1,18 @@
 import MenuItem from "./menu_item";
-import { useRemoteSites } from "../../hooks/use-remote-sites";
 import { PlusIcon } from "lucide-react";
 import { getUrlFriendlyUrl } from "@/lib/get_url_friendly_url";
+import { useDirServers } from "@/hooks/use-dir-servers";
 
-const RemoteSitesList = () => {
-  const { data: remoteSites } = useRemoteSites();
+const DirServersList = () => {
+  const { data: dirServers } = useDirServers();
 
-  const remoteSitesOrdered = remoteSites.sort((a, b) =>
+  const orderedDirServers = dirServers.sort((a, b) =>
     a.host_name.localeCompare(b.host_name)
   );
 
   return (
     <>
-      {remoteSitesOrdered.map((site) => {
+      {orderedDirServers.map((site) => {
         return (
           <MenuItem
             key={site.host_name}
@@ -23,11 +23,11 @@ const RemoteSitesList = () => {
           />
         );
       })}
-      {remoteSitesOrdered.length === 0 && (
+      {orderedDirServers.length === 0 && (
         <MenuItem
           fontSize=".9rem"
           title="Add new"
-          to="/new-site"
+          to="/new-dirserver"
           icon={<PlusIcon />}
         />
       )}
@@ -35,4 +35,4 @@ const RemoteSitesList = () => {
   );
 };
 
-export default RemoteSitesList;
+export default DirServersList;

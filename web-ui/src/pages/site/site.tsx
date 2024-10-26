@@ -7,19 +7,27 @@ import RemoteSiteSettings from "./remote-site-settings";
 import HostedProcessSettings from "./hosted-process-settings";
 import { Route } from "@/routes/site";
 import { getUrlFriendlyUrl } from "@/lib/get_url_friendly_url";
+import { useDirServers } from "@/hooks/use-dir-servers";
+import DirServerSettings from "./dir-server-settings";
 
 const SitePage = () => {
   const { hostname } = Route.useSearch();
   
   const { data: sites } = useHostedSites();
   const { data: remoteSites } = useRemoteSites();
-
+  const { data: dirServers } = useDirServers();
+  
   const thisHostedProcess = sites.find(
     (x) =>
       getUrlFriendlyUrl(x.host_name) ===
       hostname
   );
   const thisRemoteSite = remoteSites.find(
+    (x) =>
+      getUrlFriendlyUrl(x.host_name) ===
+      hostname
+  );
+  const thisDirServer = dirServers.find(
     (x) =>
       getUrlFriendlyUrl(x.host_name) ===
       hostname
@@ -32,6 +40,10 @@ const SitePage = () => {
         site={thisRemoteSite}
       />
     );
+  }
+
+  if (thisDirServer) {
+    return <DirServerSettings site={thisDirServer} />;
   }
 
   if (!thisHostedProcess) {
