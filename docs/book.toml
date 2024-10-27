@@ -18,7 +18,7 @@ no-section-label = false
 git-repository-url = "https://github.com/OlofBlomqvist/odd-box"
 git-repository-icon = "fa-github"
 edit-url-template = "https://github.com/OlofBlomqvist/odd-box/edit/docs/guide/{path}"
-site-url = "/odd-box"
+site-url = "/odd-box/book"
 cname = "twnet.se"
 #input-404 = "not-found.md"
 
