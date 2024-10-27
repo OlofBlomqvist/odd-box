@@ -94,7 +94,7 @@
                  
                  <a href="/" style="font-size:x-large;text-decoration:none">
 
-                 <img src="/ob3.png" class="logo" style="border-radius:50%;width:100px;height:100px;">
+                 <img src="/odd-box/ob3.png" class="logo" style="border-radius:50%;width:100px;height:100px;">
                  
                 <h1 style="margin:0px;font-size: 2em;">THE DOCS</h1> 
                </a>
@@ -157,7 +157,7 @@
                         <a href="https://github.com/OlofBlomqvist/odd-box" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/OlofBlomqvist/odd-box/edit/docs/guide/src/upgrading.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/OlofBlomqvist/odd-box/edit/main/docs/src/upgrading.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -214,22 +214,6 @@
 
         </div>
 
-        <!-- Livereload script (if served using the cli tool) -->
-        <script>
-            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
-            const socket = new WebSocket(wsAddress);
-            socket.onmessage = function (event) {
-                if (event.data === "reload") {
-                    socket.close();
-                    location.reload();
-                }
-            };
-
-            window.onbeforeunload = function() {
-                socket.close();
-            }
-        </script>
 
 
 
