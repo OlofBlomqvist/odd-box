@@ -18,8 +18,8 @@ no-section-label = false
 git-repository-url = "https://github.com/OlofBlomqvist/odd-box"
 git-repository-icon = "fa-github"
 edit-url-template = "https://github.com/OlofBlomqvist/odd-box/edit/main/docs/{path}"
-site-url = "/odd-box/book"
-cname = "twnet.se"
+site-url = "/book"
+cname = "cruma.io"
 #input-404 = "not-found.md"
 
 [output.html.search]
