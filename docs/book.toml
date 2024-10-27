@@ -1,0 +1,55 @@
+[book]
+authors = ["Olof Blomqvist"]
+language = "en"
+multilingual = false
+src = "src"
+title = "odd-box-dox"
+
+[output.html]
+#theme = "theme"
+default-theme = "dark"
+preferred-dark-theme = "ayu"
+smart-punctuation = true
+mathjax-support = false
+copy-fonts = true
+# additional-css = ["custom.css", "custom2.css"]
+# additional-js = ["custom.js"]
+no-section-label = false
+git-repository-url = "https://github.com/OlofBlomqvist/odd-box"
+git-repository-icon = "fa-github"
+edit-url-template = "https://github.com/OlofBlomqvist/odd-box/edit/docs/guide/{path}"
+#site-url = "/example-book/"
+cname = "odd-box.io"
+#input-404 = "not-found.md"
+
+[output.html.search]
+enable = true            # enables the search feature
+limit-results = 30       # maximum number of search results
+teaser-word-count = 30   # number of words used for a search result teaser
+use-boolean-and = true   # multiple search terms must all match
+boost-title = 2          # ranking boost factor for matches in headers
+boost-hierarchy = 1      # ranking boost factor for matches in page names
+boost-paragraph = 1      # ranking boost factor for matches in text
+expand = true            # partial words will match longer terms
+heading-split-level = 3  # link results to heading levels
+copy-js = true           # include Javascript code for search
+
+[output.html.code]
+# A prefix string per language (one or more chars).
+# Any line starting with whitespace+prefix is hidden.
+hidelines = { python = "~" }
+
+[output.html.playground]
+editable = false         # allows editing the source code
+copyable = true          # include the copy button for copying code snippets
+copy-js = true           # includes the JavaScript for the code editor
+line-numbers = false     # displays line numbers for editable code
+runnable = true          # displays a run button for rust code
+
+[output.html.fold]
+enable = true    # whether or not to enable section folding
+level = 2         # the depth to start folding
+
+[output.html.print]
+enable = false    # include support for printable output
+page-break = true # insert page-break after each chapter

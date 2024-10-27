@@ -3,6 +3,7 @@
 TODO.MD
 result
 odd-box.toml
+**/.devbox
 **/node_modules
 **/.DS_Store
 web-ui/.env.development
