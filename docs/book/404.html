@@ -4,7 +4,7 @@
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
         <title>Page not found - odd-box-dox</title>
-        <base href="/">
+        <base href="/odd-box/book">
 
 
         <!-- Custom HTML head -->
@@ -95,7 +95,7 @@
                  
                  <a href="/" style="font-size:x-large;text-decoration:none">
 
-                 <img src="/ob3.png" class="logo" style="border-radius:50%;width:100px;height:100px;">
+                 <img src="/odd-box/ob3.png" class="logo" style="border-radius:50%;width:100px;height:100px;">
                  
                 <h1 style="margin:0px;font-size: 2em;">THE DOCS</h1> 
                </a>
@@ -204,22 +204,6 @@
 
         </div>
 
-        <!-- Livereload script (if served using the cli tool) -->
-        <script>
-            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
-            const socket = new WebSocket(wsAddress);
-            socket.onmessage = function (event) {
-                if (event.data === "reload") {
-                    socket.close();
-                    location.reload();
-                }
-            };
-
-            window.onbeforeunload = function() {
-                socket.close();
-            }
-        </script>
 
 
 
