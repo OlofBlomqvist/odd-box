@@ -1,0 +1,345 @@
+<!DOCTYPE HTML>
+<html lang="en" class="dark" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Configuration - odd-box-dox</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;900&amp;display=swap" rel="stylesheet">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "ayu" : "dark";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('dark')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            
+            <div class="sidebar-scrollbox">
+                <div style="text-align:center" class="left-side-bar-title">
+                 
+                 <a href="/" style="font-size:x-large;text-decoration:none">
+
+                 <img src="/ob3.png" class="logo" style="border-radius:50%;width:100px;height:100px;">
+                 
+                <h1 style="margin:0px;font-size: 2em;">THE DOCS</h1> 
+               </a>
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="index.html">Read Me First</a></li><li class="chapter-item expanded affix "><li class="spacer"></li><li class="chapter-item expanded "><a href="features.html"><strong aria-hidden="true">1.</strong> Features</a></li><li class="chapter-item expanded "><a href="performance.html"><strong aria-hidden="true">2.</strong> Performance</a></li><li class="chapter-item expanded "><a href="tui.html"><strong aria-hidden="true">3.</strong> Terminal User Interface</a></li><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">4.</strong> Installation</a></li><li class="chapter-item expanded "><a href="workflow.html"><strong aria-hidden="true">5.</strong> Workflow Tips</a></li><li class="chapter-item expanded "><a href="dns.html"><strong aria-hidden="true">6.</strong> DNS and Routing</a></li><li class="chapter-item expanded "><a href="security.html"><strong aria-hidden="true">7.</strong> Security Tips</a></li><li class="chapter-item expanded "><a href="configuration.html" class="active"><strong aria-hidden="true">8.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="getting_started.html"><strong aria-hidden="true">9.</strong> Getting Started</a></li><li class="chapter-item expanded "><a href="lets_encrypt.html"><strong aria-hidden="true">10.</strong> Let’s Encrypt</a></li><li class="chapter-item expanded "><a href="upgrading.html"><strong aria-hidden="true">11.</strong> Upgrading</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="nonhttp://localhost:44419e"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">odd-box-dox</h1>
+
+                    <div class="right-buttons">
+                        <a href="https://github.com/OlofBlomqvist/odd-box" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+                        <a href="https://github.com/OlofBlomqvist/odd-box/edit/docs/guide/src/configuration.md" title="Suggest an edit" aria-label="Suggest an edit">
+                            <i id="git-edit-button" class="fa fa-edit"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search for anything.." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h2 id="configuration-v2"><a class="header" href="#configuration-v2">Configuration (V2)</a></h2>
+<p>To configure the <code>odd-box</code> proxy server, create a configuration file following the format provided in the <a href="https://github.com/OlofBlomqvist/odd-box/blob/main/odd-box-example-config.toml">example configuration file</a>. The configuration file uses the TOML format and is designed to define both remote targets (sites that <code>odd-box</code> proxies traffic to) and hosted processes (sites or services managed directly by <code>odd-box</code>).</p>
+<p>Running odd-box without any arguments it will first try to read from odd-box.toml, then Config.toml. You can supply a custom config path using: ./odd-box “/tmp/my-file.toml”</p>
+<p>It is also possible to update the active configuration at runtime thru an administration API which fully documents the possible settings.</p>
+<h3 id="configuration-variables"><a class="header" href="#configuration-variables">Configuration Variables</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Variable</th><th>Description</th></tr></thead><tbody>
+<tr><td>$root_dir</td><td>Resolves to whatever you set it to in the global configuration section.</td></tr>
+<tr><td>$cfg_dir</td><td>Resolves to the directory which the configuration toml file was read from.</td></tr>
+<tr><td>$port</td><td>Resolves to whatever port has been specified in the configuration. Only used for hosted processes.</td></tr>
+</tbody></table>
+</div>
+<blockquote>
+<p>Tip: if you are editing the confguration file using vs-code you should try the “even better toml” extension, which will provide you not only with syntax highlighting but also intellisense based on the configuration files ‘#:schema …’ tag.</p>
+</blockquote>
+<h3 id="basic-configuration-structure"><a class="header" href="#basic-configuration-structure">Basic Configuration Structure</a></h3>
+<p>There are more options than the ones shown here; these are the most commonly used ones. See the example configuration or schema.json file for a list of all possible options.</p>
+<ol>
+<li>
+<p><strong>Global Settings:</strong> Set the global properties like <code>http_port</code>, <code>tls_port</code>, <code>ip</code>, <code>log_level</code>, <code>port_range_start</code>, and <code>env_vars</code>. These settings control the overall behavior of <code>odd-box</code>.</p>
+<pre><code class="language-toml">#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.json
+version = "V2"
+http_port = 8080
+tls_port = 4343
+ip = "127.0.0.1"
+log_level = "Trace"
+port_range_start = 4242
+env_vars = []
+lets_encrypt_account_email = "example@example.com"
+</code></pre>
+<ul>
+<li><code>version</code>: Must be “V2”</li>
+<li><code>http_port</code>: TCP Port for the server to use. Defaults to 8080 if not specified.</li>
+<li><code>tls_port</code>: TCP Port for the server to buse. Defaults to 4343 if not specified.</li>
+<li><code>ip</code>: IP Address for the server to use. Defaults to 127.0.0.1 if not specified.</li>
+<li><code>log_level</code>: info/warn/err/debug/trace - defaults to info of not specified.</li>
+<li><code>port_range_start</code>: Must be specified - used for automatically assign the PORT env var to hosted sites (if not set explicity for a site).</li>
+<li><code>env_vars</code>: List of environment variables that all hosted processes should have.</li>
+<li><code>lets_encrypt_account_email</code>: (Optional) Set email to use if you wish to use lets-encrypt.</li>
+</ul>
+</li>
+<li>
+<p>Adding Remote Targets: Define remote targets to forward traffic to external servers. Each remote_target requires a host_name (the incoming domain) and a list of backends (the target servers). To add a new remote site:</p>
+<pre><code class="language-toml">[[remote_target]]
+host_name = "example.com"
+backends = [
+    # hints are optional and used for specifying if server requires for example H2C.
+    { https = true, address="example.com", port=443, hints = [] }
+]
+</code></pre>
+<ul>
+<li><code>host_name</code>: The incoming domain that odd-box will listen for.</li>
+<li><code>backends</code>: A list of backend servers to forward traffic to. The https property specifies if TLS is used.</li>
+</ul>
+</li>
+<li>
+<p>Adding Hosted Processes: Define hosted processes that odd-box will manage. These are services that odd-box can start, stop, and restart. Each hosted_process requires a <code>host_name</code>, <code>dir</code>, <code>bin</code>, and <code>args</code>:</p>
+<pre><code class="language-toml">[[hosted_process]]
+host_name = "myapp.local"
+dir = "/home/kalle/" # variables like $root_dir or $config_dir are allowed here
+bin = "/usr/bin/python3" # variables like $root_dir or $config_dir are allowed here
+args = ["-m", "http.server", "$port"] # variables like $port, $root_dir &amp; $config_dir are allowed here
+auto_start = true 
+hints = ["NOH2","H2C","H2"] 
+https = false 
+env_vars = [
+    { key = "some-environment-variable", value = "example-value" }, 
+]
+</code></pre>
+<ul>
+<li><code>host_name</code>: The incoming domain that odd-box will listen for.</li>
+<li><code>dir</code>: Directory where the process will be executed.</li>
+<li><code>bin</code>: Executable path to a binary file (absolute, relative to dir, or in pwd)</li>
+<li><code>args</code>: Arguments to pass to the binary.</li>
+<li><code>auto_start</code>: (Optional) Set to true to automatically start the process with odd-box.</li>
+<li><code>hints</code>: (Optional) Not normally needed but can be set to specify that a server requires for example H2C.</li>
+<li><code>https</code>: (Optional) Set to true if the process uses HTTP (TLS)</li>
+<li><code>enable_lets_encrypt</code>: (Optional) Set to true to enable lets-encrypt to be used for this site.</li>
+</ul>
+</li>
+<li>
+<p>Adding dir servers: for serving static websites or files. Supports directory indexing and markdown rendering.</p>
+<pre><code class="language-toml">[[dir_server]]
+host_name = "dir.localtest.me"
+dir = "$cfg_dir"
+enable_directory_browsing = true
+render_markdown = true
+</code></pre>
+</li>
+</ol>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="security.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="getting_started.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="security.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="getting_started.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav> 
+
+        </div>
+
+        <!-- Livereload script (if served using the cli tool) -->
+        <script>
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
+            const socket = new WebSocket(wsAddress);
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>
