@@ -389,9 +389,9 @@ fn initialize_configuration(args:&Args) -> anyhow::Result<(ConfigWrapper,OddBoxC
         };
 
 
-    let mut file = std::fs::File::open(&cfg_path)?;
+    let mut file = std::fs::File::open(&cfg_path).with_context(||format!("failed to open configuration file {cfg_path:?}"))?;
     let mut contents = String::new();
-    file.read_to_string(&mut contents)?;    
+    file.read_to_string(&mut contents).with_context(||format!("failed to read data from configuration file {cfg_path:?}"))?;   
     
     let (mut config,original_version) = 
         match configuration::OddBoxConfig::parse(&contents) {
@@ -576,24 +576,8 @@ async fn main() -> anyhow::Result<()> {
             filter
         )));
     } else {
-        let fmt_layer = tracing_subscriber::fmt::layer()
-            .compact()
-            .with_thread_names(true)
-            .with_timer(
-                tracing_subscriber::fmt::time::OffsetTime::new(
-                    time::UtcOffset::from_whole_seconds(
-                        chrono::Local::now().offset().local_minus_utc()
-                    ).expect("time... works"), 
-                    time::macros::format_description!("[hour]:[minute]:[second]")
-                )
-            );
-     
-        let subscriber = tracing_subscriber::Registry::default()
-            .with(fmt_layer)
-            .with(intial_log_filter)
-            .with(logging::NonTuiLoggerLayer { broadcaster: tracing_broadcaster.clone() });
 
-        subscriber.init();
+        init_logging(intial_log_filter, Some(tracing_broadcaster));
 
         // From now on, we need to capture ctrl-c and make sure to shut down the application gracefully
         // as we are about to spawn a bunch of processes that we need to shut down properly.
@@ -733,3 +717,33 @@ async fn main() -> anyhow::Result<()> {
 
 }
 
+
+
+
+pub fn init_logging(intial_log_filter:EnvFilter,tracing_broadcaster:Option<tokio::sync::broadcast::Sender<String>>) {
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .compact()
+        .with_thread_names(true)
+        .with_timer(
+            tracing_subscriber::fmt::time::OffsetTime::new(
+                time::UtcOffset::from_whole_seconds(
+                    chrono::Local::now().offset().local_minus_utc()
+                ).expect("time... works"), 
+                time::macros::format_description!("[hour]:[minute]:[second]")
+            )
+    );
+
+    if let Some(tracing_broadcaster) = tracing_broadcaster {
+
+    tracing_subscriber::Registry::default()
+        .with(fmt_layer)
+        .with(intial_log_filter)
+        .with(logging::NonTuiLoggerLayer { broadcaster: tracing_broadcaster.clone() })
+        .init()
+    } else {
+        tracing_subscriber::Registry::default()
+        .with(fmt_layer)
+        .with(intial_log_filter)
+        .init()
+    };
+}
