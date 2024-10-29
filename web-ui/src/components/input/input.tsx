@@ -3,12 +3,14 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   withSaveButton?: boolean;
   originalValue?: string | number;
   onSave?: (newValue: string | number | readonly string[] | undefined) => void;
+  disableSaveButton?:boolean
 }
 
 const Input = ({
   withSaveButton,
   originalValue,
   onSave,
+  disableSaveButton,
   ...rest
 }: InputProps) => {
   let textInputStyle: React.CSSProperties = {
@@ -34,6 +36,10 @@ const Input = ({
     inputSaveButtonClassNames.push("border-l border-[#00000033]");
   }
 
+  if (disableSaveButton) {
+    inputSaveButtonClassNames.push("opacity-[.5] pointer-events-none")
+  }
+
   return (
     <div
       style={{
@@ -52,7 +58,7 @@ const Input = ({
         style={rest.type !== "checkbox" ? textInputStyle : {}}
       />
       {rest.type !== "checkbox" && withSaveButton && (
-        <button
+        <button disabled={disableSaveButton}
           tabIndex={-1}
           onClick={() => onSave?.(rest.value)}
           className={inputSaveButtonClassNames.join(" ")}

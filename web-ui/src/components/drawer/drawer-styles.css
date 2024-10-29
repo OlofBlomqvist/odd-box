@@ -1,6 +1,6 @@
 
 .styled-link.active {
-    background: #ffffff22;
+    background: hsl(var(--menu-item-bg-active));
     color: var(--color2);
 }
 

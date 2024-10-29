@@ -58,7 +58,7 @@ const HomePage = () => {
   return (
     <main className="grid flex-1 items-start gap-4 sm:py-0 md:gap-8 max-w-[900px]">
       <div className="grid auto-rows-max items-start gap-4 md:gap-8">
-        <Card x-chunk="dashboard-06-chunk-0">
+        <Card>
           <CardHeader>
             <CardTitle>Dashboard</CardTitle>
             <CardDescription>
@@ -105,7 +105,7 @@ const HomePage = () => {
           </div>
 
           <TabsContent value="processes">
-            <Card x-chunk="dashboard-06-chunk-1">
+            <Card>
               <CardHeader className="flex items-center justify-between flex-row">
                 <div>
                 <CardTitle>Processes</CardTitle>
@@ -248,7 +248,7 @@ const HomePage = () => {
           </TabsContent>
 
           <TabsContent value="sites">
-            <Card x-chunk="dashboard-06-chunk-1">
+            <Card>
               <CardHeader className="flex items-center justify-between flex-row">
                 <div>
                   <CardTitle>Sites</CardTitle>
@@ -327,7 +327,7 @@ const HomePage = () => {
 
 
           <TabsContent value="servers">
-            <Card x-chunk="dashboard-06-chunk-1">
+            <Card>
               <CardHeader className="flex items-center justify-between flex-row">
                 <div>
                   <CardTitle>Servers</CardTitle>

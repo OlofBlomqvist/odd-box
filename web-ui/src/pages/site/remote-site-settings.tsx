@@ -76,7 +76,7 @@ const RemoteSiteSettings = ({ site }: { site: RemoteSiteConfig }) => {
             <CardTitle>Site details</CardTitle>
             <CardDescription>
               General configuration for{" "}
-              <span className="font-bold text-[var(--color2)]">{site.host_name}</span>
+              <span className="font-bold text-[var(--accent-text)]">{site.host_name}</span>
             </CardDescription>
           </CardHeader>
         <CardContent>
@@ -199,7 +199,7 @@ const RemoteSiteSettings = ({ site }: { site: RemoteSiteConfig }) => {
         show={showConfirmDeleteModal}
         title="Delete"
         yesBtnText="Yes, delete it"
-        subtitle={<span>Are you sure you want to delete <span className="font-bold text-[var(--color2)]">{site.host_name}</span>?</span>}
+        subtitle={<span>Are you sure you want to delete <span className="font-bold text-[var(--accent-text)]">{site.host_name}</span>?</span>}
         />
 
       <BackendSheet

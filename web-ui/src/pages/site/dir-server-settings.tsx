@@ -79,7 +79,7 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
           <CardTitle>Directory server settings</CardTitle>
           <CardDescription>
             General configuration for{" "}
-            <span className="font-bold text-[var(--color2)]">
+            <span className="font-bold text-[var(--accent-text)]">
               {site.host_name}
             </span>
           </CardDescription>
@@ -91,7 +91,7 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
                 title="Hostname"
                 subTitle={SettingDescriptions["hostname_frontend"]}
               >
-                <Input
+                <Input disableSaveButton={updateDirServer.isPending}
                   originalValue={site.host_name}
                   onSave={(newValue) => {
                     updateSetting("host_name", newValue);
@@ -107,6 +107,7 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
                 subTitle={SettingDescriptions["directory"]}
               >
                 <Input
+                disableSaveButton={updateDirServer.isPending}
                   originalValue={site.dir}
                   onSave={(newValue) => {
                     updateSetting("dir", newValue);
@@ -124,7 +125,7 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
                     <br />
                     You can change it on the{" "}
                     <Link
-                      className="text-[var(--color2)] underline cursor-pointer"
+                      className="text-[var(--accent-text)] underline cursor-pointer"
                       to={"/settings"}
                     >
                       general settings
@@ -143,7 +144,7 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
                     <br />
                     You can change it on the{" "}
                     <Link
-                      className="text-[var(--color2)] underline cursor-pointer"
+                      className="text-[var(--accent-text)] underline cursor-pointer"
                       to={"/settings"}
                     >
                       general settings
@@ -164,7 +165,7 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
                 title="Capture sub-domains"
                 subTitle={SettingDescriptions["capture_subdomains"]}
               >
-                <Input
+                <Input disabled={updateDirServer.isPending}
                   onChange={() => {
                     updateSetting(
                       "capture_subdomains",
@@ -185,7 +186,7 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
                 title="Enable directory browsing"
                 subTitle={SettingDescriptions["enable_directory_browsing"]}
               >
-                <Input
+                <Input disabled={updateDirServer.isPending}
                   type="checkbox"
                   onChange={() => {
                     updateSetting(
@@ -202,6 +203,66 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
 
               <SettingsItem
                 rowOnly
+                labelFor="render_markdown"
+                title="Render markdown"
+                subTitle="Render .md files as formatted text instead of raw content."
+              >
+                <Input disabled={updateDirServer.isPending}
+                  type="checkbox"
+                  onChange={() => {
+                    updateSetting(
+                      "render_markdown",
+                      !site.render_markdown
+                    );
+                  }}
+                  checked={Boolean(site.render_markdown)}
+                  id="render_markdown"
+                  name="render_markdown"
+                  style={{ width: "20px", height: "20px" }}
+                />
+              </SettingsItem>
+
+              <SettingsItem
+                rowOnly
+                labelFor="redirect_to_https"
+                title="Redirect to https"
+                dangerText={
+                  <p className="text-[.8rem]">
+                    Should{" "}
+                    <Link  target="_blank"
+                      className="text-[var(--accent-text)] underline cursor-pointer"
+                      to={`http://${site.host_name}`}
+                    >
+                      http://{site.host_name}
+                    </Link>{" "}
+                    redirect to{" "}
+                    <Link
+                      className="text-[var(--accent-text)] underline cursor-pointer"
+                      to={`https://${site.host_name}`}
+                    >
+                      https://{site.host_name}
+                    </Link>?
+                  </p>
+                }
+              >
+                <Input disabled={updateDirServer.isPending}
+                  type="checkbox"
+                  onChange={() => {
+                    updateSetting(
+                      "redirect_to_https",
+                      !site.redirect_to_https
+                    );
+                  }}
+                  checked={Boolean(site.redirect_to_https)}
+                  id="redirect_to_https"
+                  name="redirect_to_https"
+                  style={{ width: "20px", height: "20px" }}
+                />
+              </SettingsItem>
+
+
+              <SettingsItem
+                rowOnly
                 labelFor="lets_encrypt"
                 title="Enable Lets-Encrypt"
                 dangerText={
@@ -209,7 +270,7 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
                     Note: You need to have a valid email address configured
                     under{" "}
                     <Link
-                      className="text-[var(--color2)] underline cursor-pointer"
+                      className="text-[var(--accent-text)] underline cursor-pointer"
                       to={"/settings"}
                     >
                       general settings
@@ -218,8 +279,8 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
                   </p>
                 }
               >
-                <Input
-                  disabled={!settings.lets_encrypt_account_email && !site.enable_lets_encrypt}
+                <Input 
+                  disabled={(!settings.lets_encrypt_account_email && !site.enable_lets_encrypt) || updateDirServer.isPending}
                   type="checkbox"
                   title={
                     !settings.lets_encrypt_account_email
@@ -238,6 +299,7 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
                   style={{ width: "20px", height: "20px" }}
                 />
               </SettingsItem>
+
             </SettingsSection>
 
             <div
@@ -283,7 +345,7 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
               subtitle={
                 <span>
                   Are you sure you want to delete{" "}
-                  <span className="font-bold text-[var(--color2)]">
+                  <span className="font-bold text-[var(--accent-text)]">
                     {site.host_name}
                   </span>
                   ?

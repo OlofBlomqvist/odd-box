@@ -70,7 +70,7 @@ const NewDirServerSettings = () => {
         </SettingsItem>
         <SettingsItem dangerText={
                     <span className="text-[.8rem]">
-                    This is the HTTP port configured for all sites, you can change it on the <Link className="text-[var(--color2)] underline cursor-pointer" to={"/settings"}>general settings</Link> page.
+                    This is the HTTP port configured for all sites, you can change it on the <Link className="text-[var(--accent-text)] underline cursor-pointer" to={"/settings"}>general settings</Link> page.
                   </span>
         } title="HTTP Port">
           <Input
@@ -81,7 +81,7 @@ const NewDirServerSettings = () => {
         </SettingsItem>
         <SettingsItem dangerText={
                     <span className="text-[.8rem]">
-                    This is the TLS port configured for all sites, you can change it on the <Link className="text-[var(--color2)] underline cursor-pointer" to={"/settings"}>general settings</Link> page.
+                    This is the TLS port configured for all sites, you can change it on the <Link className="text-[var(--accent-text)] underline cursor-pointer" to={"/settings"}>general settings</Link> page.
                   </span>
         } title="TLS Port">
           <Input
@@ -141,7 +141,7 @@ const NewDirServerSettings = () => {
               Note: You need to have a valid email address configured
               under{" "}
               <Link
-                className="text-[var(--color2)] underline cursor-pointer"
+                className="text-[var(--accent-text)] underline cursor-pointer"
                 to={"/settings"}
               >
                 general settings

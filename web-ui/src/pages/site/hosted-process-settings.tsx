@@ -65,7 +65,7 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
           <CardTitle>Settings</CardTitle>
           <CardDescription>
             Current configuration for{" "}
-            <span className="font-bold text-[var(--color2)]">
+            <span className="font-bold text-[var(--accent-text)]">
               {site.host_name}
             </span>
           </CardDescription>
@@ -426,7 +426,7 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
             subtitle={
               <span>
                 Are you sure you want to delete{" "}
-                <span className="font-bold text-[var(--color2)]">
+                <span className="font-bold text-[var(--accent-text)]">
                   {site.host_name}
                 </span>
                 ?

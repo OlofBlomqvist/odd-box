@@ -27,13 +27,14 @@ const SideDrawer = ({ children,bottomItem }: { bottomItem?:ReactNode,children?: 
         customIdSuffix="x" 
         style={{
           boxShadow: "unset",
-          background: "#1f1f1f",
+          background: "hsl(var(--card))",
           backdropFilter: "blur(10px)",
           WebkitBackdropFilter: "blur(10px)",
           borderRight: "1px solid #242424",
           display:"flex",
           flexDirection:"column",
-          justifyContent:"space-between"
+          justifyContent:"space-between",
+          color:"hsl(var(--card-foreground))"
         }}
         onClose={() => setDrawerOpen(false)}
         open={isBigScreen || drawerOpen}
