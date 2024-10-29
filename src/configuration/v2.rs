@@ -687,24 +687,12 @@ impl TryFrom<super::v1::OddBoxV1Config> for super::v2::OddBoxV2Config{
             hosted_process: Some(old_config.hosted_process.unwrap_or_default().into_iter().map(|x|{
                 super::v2::InProcessSiteConfig {
                     enable_lets_encrypt: Some(false),
-                    exclude_from_start_all: None,
                     proc_id: ProcId::new(),
                     active_port: None,
                     forward_subdomains: x.forward_subdomains,
                     disable_tcp_tunnel_mode: x.disable_tcp_tunnel_mode,
                     args: if x.args.len() > 0 { Some(x.args) } else { None },
-                    auto_start: {
-                        if x.disabled != x.auto_start {
-                            tracing::warn!("Your configuration contains both auto_start and disabled for the same process. The auto_start setting will be used. Please remove the disabled setting as it is no longer used.")
-                        }
-                        if let Some(d) = x.disabled {
-                            Some(!d)
-                        } else if let Some(a) = x.auto_start { 
-                            Some(a) 
-                        } else { 
-                            None 
-                        }
-                    },
+                    auto_start: x.auto_start,
                     bin: x.bin,
                     capture_subdomains: x.capture_subdomains,
                     env_vars: if x.env_vars.len() > 0 { Some(x.env_vars) } else { None },
@@ -717,7 +705,8 @@ impl TryFrom<super::v1::OddBoxV1Config> for super::v2::OddBoxV2Config{
                         Some(super::H2Hint::H2) => Some(vec![crate::configuration::v2::Hint::H2]),
                         Some(super::H2Hint::H2C) => Some(vec![crate::configuration::v2::Hint::H2C]),               
                         None => None,
-                    }
+                    },
+                    exclude_from_start_all: x.disabled
                     
                 }
             }).collect()),
