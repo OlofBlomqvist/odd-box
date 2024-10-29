@@ -43,7 +43,7 @@ const SitePage = () => {
   }
 
   if (thisDirServer) {
-    return <DirServerSettings site={thisDirServer} />;
+    return <DirServerSettings key={thisDirServer.host_name} site={thisDirServer} />;
   }
 
   if (!thisHostedProcess) {

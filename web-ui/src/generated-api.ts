@@ -90,6 +90,8 @@ export interface DirServer {
   enable_lets_encrypt?: boolean | null;
   /** This is the hostname that the site will respond to. */
   host_name: string;
+  redirect_to_https?: boolean | null;
+  render_markdown?: boolean | null;
 }
 
 export interface EnvVar {
@@ -137,15 +139,18 @@ export enum Hint {
 }
 
 export interface InProcessSiteConfig {
+  /** Arguments to pass to the binary when starting it. */
   args?: string[] | null;
   /**
    * Set this to false if you do not want this site to start automatically when odd-box starts.
    * This also means that the site is excluded from the start_all command.
    */
   auto_start?: boolean | null;
+  /** The binary to start. This can be a path to a binary or a command that is in the PATH. */
   bin: string;
   /** If you wish to use wildcard routing for any subdomain under the 'host_name' */
   capture_subdomains?: boolean | null;
+  /** Working directory for the process. If this is not set, the current working directory will be used. */
   dir?: string | null;
   /** This is mostly useful in case the target uses SNI sniffing/routing */
   disable_tcp_tunnel_mode?: boolean | null;
@@ -154,6 +159,7 @@ export interface InProcessSiteConfig {
    * Defaults to false. This feature will disable tcp tunnel mode.
    */
   enable_lets_encrypt?: boolean | null;
+  /** Environment variables to set for the process. */
   env_vars?: EnvVar[] | null;
   /**
    * If you wish to exclude this site from the start_all command.
@@ -277,6 +283,8 @@ export interface OddBoxV1Config {
 
 export interface OddBoxV2Config {
   /**
+   * The port for the admin api. If this is not set, the admin api will not be started.
+   * This setting also enabled the web-ui on the same port.
    * @format int32
    * @min 0
    */
@@ -286,29 +294,34 @@ export interface OddBoxV2Config {
   auto_start?: boolean | null;
   default_log_format?: LogFormat;
   dir_server?: DirServer[] | null;
-  env_vars: EnvVar[];
+  /** Environment variables configured here will be made available to all processes started by odd-box. */
+  env_vars?: EnvVar[];
   hosted_process?: InProcessSiteConfig[] | null;
   /**
+   * The port on which to listen for http requests. Defaults to 8080.
    * @format int32
    * @min 0
    */
   http_port?: number | null;
   ip: string;
+  /** If you want to use lets-encrypt for generating certificates automatically for your sites */
   lets_encrypt_account_email?: string | null;
   log_level?: LogLevel | null;
-  path?: string | null;
   /**
+   * The port range start is used to determine which ports to use for hosted processes.
    * @format int32
    * @min 0
    */
-  port_range_start: number;
+  port_range_start?: number;
   remote_target?: RemoteSiteConfig[] | null;
   root_dir?: string | null;
   /**
+   * The port on which to listen for https requests. Defaults to 4343.
    * @format int32
    * @min 0
    */
   tls_port?: number | null;
+  /** The schema version - you do not normally need to set this, it is set automatically when you save the configuration. */
   version: string;
 }
 
@@ -341,6 +354,11 @@ export interface RemoteSiteConfig {
    */
   forward_subdomains?: boolean | null;
   host_name: string;
+  /**
+   * If you wish to pass along the incoming request host header to the backend
+   * rather than the host name of the backends. Defaults to false.
+   */
+  keep_original_host_header?: boolean | null;
 }
 
 export interface ReqRule {
@@ -637,7 +655,7 @@ export class HttpClient<SecurityDataType = unknown> {
 
 /**
  * @title ODD-BOX ADMIN-API 🤯
- * @version 0.1.8
+ * @version 0.1.9
  * @license
  * @externalDocs https://github.com/OlofBlomqvist/odd-box
  * @contact Olof Blomqvist <olof@twnet.se>
