@@ -60,7 +60,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
                 r.active_port = existing.config.active_port;
                 x.set_id(r.proc_id.clone());
                 if existing.config.eq(&r) {
-                    warn!("Process {} has not changed, skipping restart",x.host_name);
+                    trace!("Process {} has not changed, skipping restart",x.host_name);
                     return None;
                 } else {
                     info!("Process {} has changed, will restart",x.host_name);
