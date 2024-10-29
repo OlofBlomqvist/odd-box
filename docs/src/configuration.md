@@ -62,8 +62,10 @@ There are more options than the ones shown here; these are the most commonly use
     dir = "/home/kalle/" # variables like $root_dir or $config_dir are allowed here
     bin = "/usr/bin/python3" # variables like $root_dir or $config_dir are allowed here
     args = ["-m", "http.server", "$port"] # variables like $port, $root_dir & $config_dir are allowed here
+    exclude_from_start_all = false # if you do not wish start this site when pressing the 's' key in tui mode.
     auto_start = true 
-    hints = ["NOH2","H2C","H2"] 
+    hints = ["NOH2","H2C","H2"]
+    capture_subdomains = false
     https = false 
     env_vars = [
         { key = "some-environment-variable", value = "example-value" }, 
@@ -77,6 +79,8 @@ There are more options than the ones shown here; these are the most commonly use
     - ``hints``: (Optional) Not normally needed but can be set to specify that a server requires for example H2C.
     - ``https``: (Optional) Set to true if the process uses HTTP (TLS)
     - ``enable_lets_encrypt``: (Optional) Set to true to enable lets-encrypt to be used for this site.
+    - ``exclude_from_Start_all``: (Optional) Set this to false if you do not want this site to start automatically when odd-box starts, and to have it excluded from the start_all command.
+    - ``capture_subdomains``: (Optional) Set to true if you want to listen to *.host_name and not just host_name.
 
 4. Adding dir servers: for serving static websites or files. Supports directory indexing and markdown rendering.
     ```toml
