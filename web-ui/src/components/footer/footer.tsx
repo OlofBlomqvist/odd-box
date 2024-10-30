@@ -38,15 +38,15 @@ const Footer = () => {
             href="https://github.com/OlofBlomqvist/odd-box/releases"
             className="text-sm opacity-90 cursor-pointer hover:underline"
           >
-            Change log
+            Releases
           </a>
           <a
             target="_blank"
             rel="noopener noreferrer"
-            href="https://github.com/OlofBlomqvist/odd-box/releases"
+            href="https://odd-box.cruma.io/"
             className="text-sm opacity-90 cursor-pointer hover:underline"
           >
-            Releases
+            Documentation
           </a>
         </div>
       </div>

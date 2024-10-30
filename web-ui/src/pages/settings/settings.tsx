@@ -7,7 +7,6 @@ import toast from "react-hot-toast";
 import useSettingsMutations from "../../hooks/use-settings-mutations";
 import { LogFormat } from "../../generated-api";
 import SettingDescriptions from "@/lib/setting_descriptions";
-import { EnvVariablesTable } from "@/components/table/env_variables/env_variables";
 import {
   Card,
   CardContent,
@@ -15,15 +14,23 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-
+import {
+  envVarsStringToArray,
+  envVarsToString,
+} from "@/lib/env_vars_to_string";
 
 const SettingsPage = () => {
   const { updateSettings } = useSettingsMutations();
   const { data: settings } = useSettings();
   const [newIp, setNewIp] = useState(settings.ip);
-  const [newLetsEncryptAccountEmail, setNewLetsEncryptAccountEmail] = useState(settings.lets_encrypt_account_email);
+  const [newLetsEncryptAccountEmail, setNewLetsEncryptAccountEmail] = useState(
+    settings.lets_encrypt_account_email
+  );
   const [newRootDir, setNewRootDir] = useState(settings.root_dir);
   const [newPort, setNewPort] = useState(settings.http_port);
+  const [newEnvVars, setNewEnvVars] = useState(
+    envVarsToString(settings.env_vars ?? [])
+  );
   const [newTlsPort, setNewTlsPort] = useState(settings.tls_port);
   const [newPortRangeStart, setNewPortRangeStart] = useState(
     settings.port_range_start
@@ -244,23 +251,20 @@ const SettingsPage = () => {
           <SettingsItem
             vertical
             title="Environment variables"
-            subTitle={SettingDescriptions["global_env_vars"]}
+            subTitle={
+              "Semicolon separated list of environment variables to be set on oddbox start."
+            }
           >
-            <EnvVariablesTable
-              keys={settings.env_vars ?? []}
-              onRemoveKey={(keyName) => {
-                updateSetting(
-                  "env_vars",
-                  settings.env_vars?.filter((key: any) => key.key !== keyName)
-                );
+            <Input
+              withSaveButton
+              disableSaveButton={updateSettings.isPending}
+              originalValue={envVarsToString(settings.env_vars ?? [])}
+              value={newEnvVars}
+              onSave={() => {
+                updateSetting("env_vars", envVarsStringToArray(newEnvVars));
               }}
-              onNewKey={(key, originalName) => {
-                updateSetting("env_vars", [
-                  ...settings.env_vars.filter(
-                    (x: any) => x.key !== key.key && x.key !== originalName
-                  ),
-                  { key: key.key, value: key.value },
-                ]);
+              onChange={(e) => {
+                setNewEnvVars(e.target.value);
               }}
             />
           </SettingsItem>

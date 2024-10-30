@@ -3,13 +3,12 @@ import SettingsSection from "../settings/settings-section";
 import Input from "../../components/input/input";
 import useSiteMutations from "../../hooks/use-site-mutations";
 import { useState } from "react";
-import { Hint, KvP, LogFormat } from "../../generated-api";
+import { Hint, LogFormat } from "../../generated-api";
 import Checkbox from "../../components/checkbox/checkbox";
 import SettingDescriptions from "@/lib/setting_descriptions";
-import { EnvVariablesTable } from "@/components/table/env_variables/env_variables";
-import { ArgumentsTable } from "@/components/table/arguments/arguments";
 import useSettings from "@/hooks/use-settings";
 import { Button } from "@/components/ui/button";
+import { envVarsStringToArray } from "@/lib/env_vars_to_string";
 
 const NewHostedProcessSettings = () => {
   const { data: settings } = useSettings();
@@ -24,8 +23,8 @@ const NewHostedProcessSettings = () => {
   const [forwardSubdomains, setForwardSubdomains] = useState(false);
   const [H2hints, setH2Hints] = useState<Array<Hint>>([]);
   const [logFormat, setLogFormat] = useState<LogFormat>(LogFormat.Dotnet);
-  const [envVars, setEnvVars] = useState<Array<KvP>>([]);
-  const [args, setArgs] = useState<Array<string>>([]);
+  const [envVars, setEnvVars] = useState("");
+  const [args, setArgs] = useState("");
   const { updateSite } = useSiteMutations();
 
   const createSite = () => {
@@ -42,8 +41,8 @@ const NewHostedProcessSettings = () => {
         forward_subdomains: forwardSubdomains,
         hints: H2hints,
         log_format: logFormat,
-        env_vars: envVars,
-        args,
+        env_vars: envVarsStringToArray(envVars),
+        args: args.split(";"),
       },
     });
   };
@@ -61,11 +60,14 @@ const NewHostedProcessSettings = () => {
             onChange={(e) => setNewName(e.target.value)}
           />
         </SettingsItem>
-        <SettingsItem               title="Port"
-              defaultValue={settings.http_port}
-              subTitle={SettingDescriptions["port"]}>
+        <SettingsItem
+          title="Port"
+          defaultValue={settings.http_port}
+          subTitle={SettingDescriptions["port"]}
+        >
           <Input
-            value={newPort} placeholder={settings.http_port.toString()}
+            value={newPort}
+            placeholder={settings.http_port.toString()}
             onChange={(e) => {
               if (isNaN(Number(e.target.value))) {
                 return;
@@ -275,16 +277,10 @@ const NewHostedProcessSettings = () => {
           title="Environment variables"
           subTitle={SettingDescriptions["env_vars"]}
         >
-          <EnvVariablesTable
-            keys={envVars}
-            onRemoveKey={(keyName) => {
-              setEnvVars(envVars?.filter((key) => key.key !== keyName));
-            }}
-            onNewKey={(key, originalName) => {
-              setEnvVars((old) => [
-                ...old.filter((x) => x.key !== originalName),
-                key,
-              ]);
+          <Input
+            value={envVars}
+            onChange={(e) => {
+              setEnvVars(e.target.value);
             }}
           />
         </SettingsItem>
@@ -296,17 +292,10 @@ const NewHostedProcessSettings = () => {
           title="Arguments"
           subTitle={SettingDescriptions["args"]}
         >
-          <ArgumentsTable
-            onAddArg={(arg, originalValue) => {
-              setArgs((old) => [
-                ...old.filter((x) => x !== originalValue),
-                arg,
-              ]);
-            }}
-            onRemoveArg={(arg: string) => {
-              setArgs(args.filter((x) => x !== arg));
-            }}
-            defaultKeys={args}
+          <Input
+            disableSaveButton={updateSite.isPending}
+            value={args}
+            onChange={(e) => setArgs(e.target.value)}
           />
         </SettingsItem>
       </SettingsSection>
@@ -318,7 +307,12 @@ const NewHostedProcessSettings = () => {
           marginTop: "20px",
         }}
       >
-        <Button variant={"start"} loadingText="Creating.." isLoading={updateSite.isPending} className="uppercase w-max-content font-bold" size={"sm"}
+        <Button
+          variant={"start"}
+          loadingText="Creating.."
+          isLoading={updateSite.isPending}
+          className="uppercase w-max-content font-bold"
+          size={"sm"}
           onClick={createSite}
         >
           Create site

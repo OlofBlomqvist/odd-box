@@ -13,12 +13,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/cn";
+import useSettings from "@/hooks/use-settings";
 
 const SiteOverview = ({
   hostedProcess,
 }: {
   hostedProcess: InProcessSiteConfig;
 }) => {
+  const {data:settings} = useSettings()
   const { startSite, stopSite } = useSiteMutations();
   const siteStatus = useSiteStatus();
   const thisSiteStatus =
@@ -50,7 +52,7 @@ const SiteOverview = ({
               {hostedProcess && (
                 <div>
                   <p className="text-sm mb-1">Port</p>
-                  <Input disabled value={hostedProcess.port!} />
+                  <Input disabled value={hostedProcess.port ?? settings.http_port} />
                 </div>
               )}
             </div>

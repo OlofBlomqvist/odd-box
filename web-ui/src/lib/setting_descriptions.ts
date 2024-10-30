@@ -7,7 +7,7 @@ const SettingDescriptions = {
     "directory": "Path to working dir of this site.",
     "binary": "Name of the binary file to run.",
     "https": "Use HTTPS.",
-    "auto_start": "Set this to false if you do not want this site to start automatically.",
+    "auto_start": "Enable this if you want this site to start automatically when oddbox starts.",
     "capture_subdomains": "Instead of only listening to yourdomain.com, you can capture subdomains which means this site will also respond to requests for *.yourdomain.com",
     "disable_tcp_tunnel": "This is mostly useful in case the target uses SNI sniffing/routing.",
     "forward_subdomains": "If you wish to use the subdomain from the request in forwarded requests: test.example.com -> internal.site vs test.example.com -> test.internal.site.",
