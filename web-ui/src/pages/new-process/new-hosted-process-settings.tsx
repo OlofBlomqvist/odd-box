@@ -1,7 +1,6 @@
 import SettingsItem from "../settings/settings-item";
 import SettingsSection from "../settings/settings-section";
 import Input from "../../components/input/input";
-import Button from "../../components/button/button";
 import useSiteMutations from "../../hooks/use-site-mutations";
 import { useState } from "react";
 import { Hint, KvP, LogFormat } from "../../generated-api";
@@ -10,6 +9,7 @@ import SettingDescriptions from "@/lib/setting_descriptions";
 import { EnvVariablesTable } from "@/components/table/env_variables/env_variables";
 import { ArgumentsTable } from "@/components/table/arguments/arguments";
 import useSettings from "@/hooks/use-settings";
+import { Button } from "@/components/ui/button";
 
 const NewHostedProcessSettings = () => {
   const { data: settings } = useSettings();
@@ -318,9 +318,8 @@ const NewHostedProcessSettings = () => {
           marginTop: "20px",
         }}
       >
-        <Button
+        <Button variant={"start"} loadingText="Creating.." isLoading={updateSite.isPending} className="uppercase w-max-content font-bold" size={"sm"}
           onClick={createSite}
-          style={{ width: "max-content", background: "var(--color7)" }}
         >
           Create site
         </Button>

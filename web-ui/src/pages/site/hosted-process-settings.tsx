@@ -406,19 +406,21 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
           </div>
 
           <ConfirmationDialog
-            isDangerAction
+            isDangerAction isSuccessLoading={deleteSite.isPending}
             onClose={() => setShowConfirmDeleteModal(false)}
-            onConfirm={() => {
-              setShowConfirmDeleteModal(false);
-              deleteSite.mutateAsync(
+            inProgressText="Deleting.."
+            onConfirm={async () => {
+              await deleteSite.mutateAsync(
                 { hostname: site.host_name },
                 {
                   onSuccess: () => {
+                    console.log("onsuccess!")
                     setShowConfirmDeleteModal(false);
                     router.navigate({ to: "/", search: { type: "processes" } });
                   },
                 }
               );
+              console.log("done here")
             }}
             show={showConfirmDeleteModal}
             title="Delete"

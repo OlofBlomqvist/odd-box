@@ -962,6 +962,32 @@ body {
   transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
 }
 
+@keyframes slideIn {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-slideIn {
+  animation: slideIn 0.5s ease-in-out forwards;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
 .cursor-default {
   cursor: default;
 }
@@ -1385,6 +1411,11 @@ body {
   padding-bottom: 1.5rem;
 }
 
+.py-\[\.35rem\] {
+  padding-top: .35rem;
+  padding-bottom: .35rem;
+}
+
 .pb-8 {
   padding-bottom: 2rem;
 }
@@ -1477,6 +1508,11 @@ body {
   line-height: 1.25rem;
 }
 
+.text-xl {
+  font-size: 1.25rem;
+  line-height: 1.75rem;
+}
+
 .text-xs {
   font-size: 0.75rem;
   line-height: 1rem;
@@ -1516,6 +1552,11 @@ body {
 
 .text-\[\#00000099\] {
   color: #00000099;
+}
+
+.text-\[\#ff6c00\] {
+  --tw-text-opacity: 1;
+  color: rgb(255 108 0 / var(--tw-text-opacity));
 }
 
 .text-\[hsl\(var\(--card-foreground\)\)\] {
@@ -1604,16 +1645,12 @@ body {
   opacity: 0.9;
 }
 
-.opacity-\[\.9\] {
-  opacity: .9;
-}
-
-.opacity-\[\.2\] {
-  opacity: .2;
-}
-
 .opacity-\[\.5\] {
   opacity: .5;
+}
+
+.opacity-\[\.9\] {
+  opacity: .9;
 }
 
 .shadow-lg {
@@ -1700,6 +1737,10 @@ body {
   transition-duration: 300ms;
 }
 
+.ease-in {
+  transition-timing-function: cubic-bezier(0.4, 0, 1, 1);
+}
+
 .ease-in-out {
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -1728,6 +1769,10 @@ body {
 
 .duration-300 {
   animation-duration: 300ms;
+}
+
+.ease-in {
+  animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
 }
 
 .ease-in-out {

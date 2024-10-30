@@ -105,7 +105,7 @@ const SiteOverview = ({
           </CardHeader>
           <CardContent>
             <div className="flex flex-col gap-2">
-              <Button
+              <Button loadingText="Starting.." isLoading={startSite.isPending}
                 disabled={
                   startSite.isPending ||
                   stopSite.isPending ||
@@ -131,7 +131,7 @@ const SiteOverview = ({
               >
                 start
               </Button>
-              <Button
+              <Button loadingText="Stopping.." isLoading={stopSite.isPending}
                 disabled={
                   startSite.isPending ||
                   stopSite.isPending ||

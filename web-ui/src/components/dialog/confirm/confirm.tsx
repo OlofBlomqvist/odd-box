@@ -6,8 +6,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/dialog/dialog";
-import {Button} from "../../ui/button";
+import { Button } from "../../ui/button";
 import { ReactNode } from "react";
+import { Loader2 } from "lucide-react";
 export function ConfirmationDialog({
   title,
   subtitle,
@@ -17,15 +18,19 @@ export function ConfirmationDialog({
   noBtnText,
   yesBtnText,
   isDangerAction,
+  isSuccessLoading,
+  inProgressText
 }: {
-  isDangerAction?:boolean
+  inProgressText?:string
+  isDangerAction?: boolean;
   noBtnText?: string;
   yesBtnText?: string;
   title: ReactNode;
   subtitle: ReactNode;
-  onConfirm: () => void;
+  onConfirm: () => Promise<void>;
   onClose: () => void;
   show: boolean;
+  isSuccessLoading?:boolean
 }) {
   return (
     <Dialog open={show} onOpenChange={onClose}>
@@ -38,8 +43,13 @@ export function ConfirmationDialog({
           <Button onClick={onClose} variant="secondary" type="button">
             {noBtnText ?? "No, cancel"}
           </Button>
-          <Button onClick={onConfirm} variant={isDangerAction ? "destructive" : "default"}>
-            {yesBtnText ?? "Yes, confirm"}
+          <Button
+            disabled={isSuccessLoading}
+            onClick={onConfirm}
+            variant={isDangerAction ? "destructive" : "default"}
+          >
+            {isSuccessLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {isSuccessLoading && inProgressText ? inProgressText : (yesBtnText ?? "Yes, confirm")}
           </Button>
         </DialogFooter>
       </DialogContent>

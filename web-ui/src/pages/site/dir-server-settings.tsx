@@ -324,7 +324,7 @@ const DirServerSettings = ({ site }: { site: DirServer }) => {
             <ConfirmationDialog
               isDangerAction
               onClose={() => setShowConfirmDeleteModal(false)}
-              onConfirm={() => {
+              onConfirm={async () => {
                 setShowConfirmDeleteModal(false);
                 deleteSite.mutateAsync(
                   { hostname: site.host_name },

@@ -184,7 +184,7 @@ const RemoteSiteSettings = ({ site }: { site: RemoteSiteConfig }) => {
       <ConfirmationDialog
       isDangerAction
         onClose={() => setShowConfirmDeleteModal(false)}
-        onConfirm={() => {
+        onConfirm={async () => {
           setShowConfirmDeleteModal(false);
           deleteSite.mutateAsync(
             { hostname: site.host_name },

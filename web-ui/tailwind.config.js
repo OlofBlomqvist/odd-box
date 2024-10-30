@@ -4,6 +4,15 @@ export default {
     content: ["./src/**/*.{html,js,ts,tsx}"],
     theme: {
     	extend: {
+			animation: {
+				slideIn: "slideIn 0.5s ease-in-out forwards",
+			  },
+			  keyframes: {
+				slideIn: {
+				  '0%': { transform: 'translateX(-100%)', opacity: '0' },
+				  '100%': { transform: 'translateX(0)', opacity: '1' },
+				},
+			  },
 			screens: {
 				ml: "900px",
 			},
