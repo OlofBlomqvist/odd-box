@@ -30,7 +30,7 @@ const useLiveLog = () => {
       msg.timestamp = new Date().toLocaleTimeString()
       setMessageHistory((prev) => ([
         msg,
-        ...prev
+        ...prev.slice(0,999)
       ]));
     }
   }, [lastMessage]);

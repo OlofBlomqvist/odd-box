@@ -1,4 +1,3 @@
-import useLiveLog from "../../hooks/use-live-log";
 import { useState } from "react";
 import SettingsSection from "../settings/settings-section";
 import SettingsItem from "../settings/settings-item";
@@ -15,6 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Route } from "@/routes/logs";
 import { useRouter } from "@tanstack/react-router";
+import { useLiveLogsContext } from "@/providers/live_logs";
 
 const SiteLogs = ({
   host
@@ -22,11 +22,11 @@ const SiteLogs = ({
   host?:string
 }) => {
   const router = useRouter();
-  const { hostname } = host ? { hostname: host } : Route.useSearch();
+  const hostname = host ?? Route.useSearch()?.hostname ?? "all";
   const { data: hostedSites } = useHostedSites();
   const { data: remoteSites } = useRemoteSites();
 
-  let { messageHistory } = useLiveLog();
+  let { messageHistory } = useLiveLogsContext();
   const [lvlFilter, setLvlFilter] = useState<Array<string>>([
     "info",
     "warn",
@@ -41,7 +41,7 @@ const SiteLogs = ({
   );
 
   return (
-    <Card>
+    <Card className="mb-8">
       <CardHeader>
         <CardTitle>Logs</CardTitle>
         <CardDescription>
@@ -177,7 +177,7 @@ const SiteLogs = ({
             {filteredMessages.map((x, i) => (
               <div
                 className="flex p-[10px] cursor-pointer gap-[10px] hover:bg-[#ffffff10]"
-                key={`${x.timestamp}_${x.msg}`}
+                key={`${x.timestamp}_${x.msg}_${i}`}
               >
                 <div
                   className="hide-when-small"
