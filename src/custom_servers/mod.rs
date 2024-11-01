@@ -1,13 +1,21 @@
+use markdown::{CompileOptions, Options, ParseOptions};
+
 pub mod directory;
 
 
 pub fn markdown_to_html(title: &str, text: &str) -> Result<String, markdown::message::Message> {
-    let mut mo = markdown::Options::default();
+    let mut mo = Options {
+        parse: ParseOptions::gfm(),
+        compile: CompileOptions {
+          allow_dangerous_html: true,
+          ..CompileOptions::default()
+        }
+    };
     mo.parse.constructs.gfm_table = true;
     mo.parse.constructs.thematic_break = true;
     mo.compile.allow_dangerous_html = true;
-    mo.compile.allow_dangerous_protocol = true;
     mo.parse.constructs.code_text = true;
+    
     let html = markdown::to_html_with_options(&text, &mo)?;
 
     Ok(format!(
@@ -79,6 +87,9 @@ pub fn markdown_to_html(title: &str, text: &str) -> Result<String, markdown::mes
         }}
         .dark-mode pre {{
             border: 1px solid #333;
+        }}
+        .markdown-body pre code {{
+            white-space: break-spaces !important;
         }}
         </style>
         <script>
