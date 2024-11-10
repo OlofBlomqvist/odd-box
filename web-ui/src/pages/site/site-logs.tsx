@@ -63,7 +63,7 @@ const SiteLogs = ({
               subTitle="Which site do you want to see messages from"
             >
               <select
-                className="text-black rounded pl-3 pr-3" disabled={Boolean(host)}
+                className="text-black rounded pl-3 pr-3 bg-white border border-[var(--border)]" disabled={Boolean(host)}
                 onChange={(e) => {
                   router.navigate({
                     search: {

@@ -2,9 +2,11 @@ import { useMediaQuery } from "react-responsive";
 import { useDrawerContext } from "../drawer/context";
 import Hamburger from "hamburger-react";
 import { SiteSearchBox } from "../combobox/site_search_box";
+import { useThemeContext } from "@/providers/theme";
 const Header = () => {
   const { setDrawerOpen, drawerOpen } = useDrawerContext();
   const isBigScreen = useMediaQuery({ query: "(min-width: 900px)" });
+  const {lightMode} = useThemeContext()
 
   return (
     <header className="fixed flex items-center top-0 left-0 right-0 bg-[var(--bg-color)] z-[1000] h-[60px] justify-between ml:pl-[20px] pr-[20px] ml:pr-[20px]">
@@ -20,17 +22,16 @@ const Header = () => {
           />
 
         )}
-        <p>odd</p><span className="text-[#ff6c00]">box</span>
+        <p className="text-[var(--color)]">odd</p><span className="text-[#ff6c00]">box</span>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
         <SiteSearchBox />
-
         <a
           title="GitHub"
           target="_blank"
           href="https://github.com/OlofBlomqvist/odd-box"
         >
-          <img src="/github2.png" style={{ height: "20px",minWidth:"20px" }} />
+          <img src={lightMode ? '/github-mark.svg' : "/github-mark-white.svg"} style={{ height: "20px",minWidth:"20px" }} />
         </a>
       </div>
     </header>

@@ -199,7 +199,7 @@ const NewHostedProcessSettings = () => {
           subTitle={SettingDescriptions["log_format"]}
         >
           <select
-            className="text-black rounded pl-3 pr-3"
+            className="text-black rounded pl-3 pr-3 bg-white border border-[var(--border)]"
             value={logFormat}
             onChange={(e) => {
               setLogFormat(e.target.value as LogFormat);
@@ -311,7 +311,7 @@ const NewHostedProcessSettings = () => {
           variant={"start"}
           loadingText="Creating.."
           isLoading={updateSite.isPending}
-          className="uppercase w-max-content font-bold"
+          className="uppercase w-max-content font-bold text-white"
           size={"sm"}
           onClick={createSite}
         >

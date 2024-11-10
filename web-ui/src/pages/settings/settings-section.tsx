@@ -22,9 +22,9 @@ const SettingsSection = ({
         marginBottom: "20px",
       }}
     >
-      {!noTopSeparator && <hr className="bg-[#ffffff24]" />}
+      {!noTopSeparator && <hr className="bg-[--var(--border)]" />}
       {children}
-      {!noBottomSeparator && <hr className="bg-[#ffffff24]" />}
+      {!noBottomSeparator && <hr className="bg-[--var(--border)]" />}
     </div>
   );
 };

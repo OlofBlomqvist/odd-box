@@ -34,7 +34,7 @@ export function ConfirmationDialog({
 }) {
   return (
     <Dialog open={show} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[425px] bg-[#09090b] border border-[#242424]">
+      <DialogContent className="sm:max-w-[425px] bg-[var(--modal-bg)] border border-[#242424]">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{subtitle}</DialogDescription>

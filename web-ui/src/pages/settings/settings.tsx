@@ -18,8 +18,10 @@ import {
   envVarsStringToArray,
   envVarsToString,
 } from "@/lib/env_vars_to_string";
+import { useThemeContext } from "@/providers/theme";
 
 const SettingsPage = () => {
+  const {lightMode} = useThemeContext()
   const { updateSettings } = useSettingsMutations();
   const { data: settings } = useSettings();
   const [newIp, setNewIp] = useState(settings.ip);
@@ -55,7 +57,7 @@ const SettingsPage = () => {
 
   return (
     <main className="grid flex-1 items-start gap-4 sm:py-0 md:gap-8 max-w-[900px]">
-      <Card className="mb-8">
+      <Card>
         <CardHeader>
           <CardTitle>Settings</CardTitle>
           <CardDescription>
@@ -196,7 +198,9 @@ const SettingsPage = () => {
               subTitle={SettingDescriptions["log_level"]}
             >
               <select
-                className="text-black rounded pl-3 pr-3"
+                className={
+                  "text-black rounded pl-3 pr-3 bg-white border border-[var(--border)]"
+                }
                 value={settings.log_level}
                 onChange={(e) => {
                   updateSetting("log_level", e.target.value);
@@ -216,7 +220,7 @@ const SettingsPage = () => {
               subTitle={SettingDescriptions["default_log_format"]}
             >
               <select
-                className="text-black rounded pl-3 pr-3"
+                className="text-black rounded pl-3 pr-3 border bg-white border-[var(--border)]"
                 value={settings.default_log_format ?? LogFormat.Standard}
                 onChange={(e) => {
                   updateSetting("default_log_format", e.target.value);
@@ -268,6 +272,24 @@ const SettingsPage = () => {
               }}
             />
           </SettingsItem>
+          <SettingsSection noTopSeparator noBottomSeparator>
+            <SettingsItem
+              title="Light mode"
+              rowOnly
+              subTitle={"Use an experimental light mode"}
+              labelFor="lightmode"
+            >
+              <Input
+                id="lightmode"
+                type="checkbox"
+                checked={lightMode}
+                onChange={() =>
+                  document.body.classList.toggle("light")
+                }
+                style={{ width: "20px", height: "20px" }}
+              />
+            </SettingsItem>
+          </SettingsSection>
         </CardContent>
       </Card>
     </main>

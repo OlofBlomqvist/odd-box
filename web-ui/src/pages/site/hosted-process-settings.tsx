@@ -66,7 +66,7 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
         e.preventDefault();
       }}
     >
-      <Card className="mb-8">
+      <Card>
         <CardHeader>
           <CardTitle>Settings</CardTitle>
           <CardDescription>
@@ -308,7 +308,7 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
               subTitle={SettingDescriptions["log_format"]}
             >
               <select
-                className="text-black rounded pl-3 pr-3"
+                className="text-black rounded pl-3 pr-3 bg-white border border-[var(--border)]"
                 value={site.log_format ?? LogFormat.Standard}
                 onChange={(e) => {
                   updateSetting("log_format", e.target.value);

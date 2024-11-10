@@ -4,10 +4,19 @@
     color: var(--color2);
 }
 
+body.light .styled-link.active {
+    background: #00000088;
+    color: var(--color2);
+}
+
 .styled-link.disabled {
     background: transparent;
 }
 
 .styled-link:not(.active):hover {
     background: #ffffff10;
+}
+
+body.light .styled-link:not(.active):hover {
+    background: #00000010;
 }

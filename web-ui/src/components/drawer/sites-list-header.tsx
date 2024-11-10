@@ -15,9 +15,9 @@ const SectionDivider = ({
         paddingRight: "0px",
       }}
     >
-      <p
+      <p className="text-[var(--color-muted)]"
         style={{
-          opacity: 0.6,
+          // opacity: 0.6,
           fontSize: ".8rem",
           fontWeight: "bold",
           letterSpacing: ".12rem",

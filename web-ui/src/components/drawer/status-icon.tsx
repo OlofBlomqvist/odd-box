@@ -7,7 +7,7 @@ import { PopoverTrigger } from "@radix-ui/react-popover";
 import { cx } from "class-variance-authority";
 
 const statusColors = {
-  Running: "greenyellow",
+  Running: "#27e72e",
   Stopped: "var(--color1)",
   Disabled: "gray",
   Stopping: "yellow",

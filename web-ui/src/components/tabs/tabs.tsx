@@ -38,7 +38,7 @@ const Tabs = ({ sections }: { sections?: TTab[] }) => {
         style={{
           height: "1px",
           width: "100%",
-          background: "#ffffff44",
+          background: "var(--border)",
           marginTop: "-1px",
           marginBottom: "20px",
         }}
@@ -62,14 +62,14 @@ const TabItem = ({
     <div className={
       cn(
         "p-2",
-        active && "border border-[#ffffff44]",
+        active && "border border-[var(--border)]",
         !active && "border border-transparent",
         "rounded-tl-lg",
         "rounded-tr-lg",
       )
     }
       style={{
-        color: active ? "var(--accent-text)" : "#fff",
+        color: active ? "var(--accent-text)" : "var(--color)",
         cursor: "pointer",
         borderBottom: active ? "1px solid var(--bg-color)" : 0
       }}

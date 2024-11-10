@@ -49,7 +49,7 @@ export const SlidingTabBar = ({
         className={`absolute bottom-0 top-0 -z-10 flex overflow-hidden rounded-md py-2 ${isLoaded ? "transition-all duration-300" : ""}`}
         style={{ left: tabUnderlineLeft, width: tabUnderlineWidth }}
       >
-        <span className="h-full w-full rounded-md bg-gray-200/30" />
+        <span className="h-full w-full rounded-md bg-[var(--card)] border border-[var(--border)]" />
       </span>
       {tabs.map((tab, index) => {
         const isActive = activeTabIndex === index;
@@ -59,8 +59,8 @@ export const SlidingTabBar = ({
             <button
               ref={(el) => (tabsRef.current[index] = el)}
               className={`${
-                isActive ? `` : `hover:text-neutral-300 hover:bg-white/5`
-              } my-auto cursor-pointer select-none rounded-md px-4 text-center font-light text-white`}
+                isActive ? `` : `hover:bg-[var(--card)] hover:text-[var(--color)]`
+              } my-auto cursor-pointer select-none rounded-md px-4 text-center font-light text-[var(--color)]`}
               onClick={() => setActiveTabIndex(index)}
             >
               {tab.label}

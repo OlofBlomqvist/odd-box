@@ -37,23 +37,23 @@ export function SiteSearchBox() {
         <div
           role="combobox"
           aria-expanded={open}
-          className="w-[200px] justify-between flex items-center rounded pl-2 pr-2 h-[32px] border-[rgba(255,255,255,0.2)] border"
+          className="w-[200px] justify-between text-[var(--color-muted)] flex items-center rounded pl-2 pr-2 h-[32px] border-[var(--border)] border"
         >
           Find site...
           <CaretSortIcon className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </div>
       </PopoverTrigger>
-      <PopoverContent className="w-[200px] p-0 border-[rgba(255,255,255,0.2)] bg-[rgba(36,36,36,1)]">
-        <Command className="bg-[rgba(36,36,36,1)]">
-          <CommandInput placeholder="Search sites..." className="h-9" />
+      <PopoverContent className="w-[200px] p-0 border-[rgba(255,255,255,0.2)]">
+        <Command className="bg-[var(--card)]">
+          <CommandInput placeholder="Search sites..." className="h-9 text-black" />
           <CommandList>
-            <CommandEmpty className="text-white p-3 text-sm">
+            <CommandEmpty className="text-[var(--color)] p-3 text-sm">
               No site found
             </CommandEmpty>
             <CommandGroup>
               {options.map((framework) => (
                 <CommandItem
-                  className="hover:bg-[rgba(255,255,255,0.1)] hover:cursor-pointer text-white"
+                  className="hover:bg-[rgba(255,255,255,0.1)] hover:cursor-pointer text-[var(--color)]"
                   key={framework.value}
                   value={framework.value}
                   onSelect={(currentValue: any) => {

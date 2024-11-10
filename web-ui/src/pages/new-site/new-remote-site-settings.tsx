@@ -218,7 +218,7 @@ const NewRemoteSiteSettings = () => {
           marginTop: "20px",
         }}
       >
-        <Button variant={"start"} loadingText="Creating.." isLoading={updateRemoteSite.isPending} className="uppercase w-max-content font-bold" size={"sm"}
+        <Button variant={"start"} loadingText="Creating.." isLoading={updateRemoteSite.isPending} className="uppercase w-max-content font-bold text-white" size={"sm"}
           onClick={createSite}
         >
           Create site
