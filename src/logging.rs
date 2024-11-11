@@ -3,11 +3,12 @@ use std::{collections::HashMap, sync::Arc};
 
 use std::sync::Mutex;
 
+use serde::Serialize;
 use tracing::Subscriber;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct LogMsg {
     pub msg: String,
     pub lvl: tracing::Level,
@@ -48,11 +49,11 @@ impl LogVisitor {
 }
 
 pub struct NonTuiLoggerLayer {
-    pub broadcaster: tokio::sync::broadcast::Sender<String>
+    pub broadcaster: tokio::sync::broadcast::Sender<crate::types::odd_box_event::Event>
 }
 impl<S: Subscriber> tracing_subscriber::Layer<S> for NonTuiLoggerLayer {
     fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
-
+        
         let metadata = event.metadata();
         let target = metadata.target();
         
@@ -92,7 +93,7 @@ impl<S: Subscriber> tracing_subscriber::Layer<S> for NonTuiLoggerLayer {
             msg,
         };
         
-        _ = self.broadcaster.send(serde_json::to_string_pretty(&log_message).expect("should always be possible to serialize log messages"));
+        _ = self.broadcaster.send(crate::types::odd_box_event::Event::Log(log_message));
 
     
     }
@@ -143,7 +144,7 @@ impl SharedLogBuffer {
 
 pub struct TuiLoggerLayer {
     pub log_buffer: Arc<Mutex<SharedLogBuffer>>,
-    pub broadcaster: tokio::sync::broadcast::Sender<String>
+    pub broadcaster: tokio::sync::broadcast::Sender<crate::types::odd_box_event::Event>
 }
 
 impl<S: Subscriber> Layer<S> for TuiLoggerLayer {
@@ -191,7 +192,7 @@ impl<S: Subscriber> Layer<S> for TuiLoggerLayer {
             msg,
         };
         
-        _ = self.broadcaster.send(serde_json::to_string_pretty(&log_message).expect("should always be possible to serialize log messages"));
+        _ = self.broadcaster.send(crate::types::odd_box_event::Event::Log(log_message.clone()));
         let mut buffer = self.log_buffer.lock().expect("must always be able to lock log buffer");
         buffer.push(log_message.clone());
         

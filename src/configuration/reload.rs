@@ -1,10 +1,11 @@
 // this module is responsible for reloading the configuration file at runtime (hot-reload)
 
-use std::{io::Read, sync::Arc, time::Duration};
+use std::{borrow::BorrowMut, io::Read, str::FromStr, sync::Arc, time::Duration};
 use anyhow::{bail, Result};
-use tracing::{info, trace, warn};
+use tracing::{info, level_filters::LevelFilter, trace, warn};
+use tracing_subscriber::EnvFilter;
 
-use crate::{configuration::v2::{DirServer, InProcessSiteConfig, RemoteSiteConfig}, global_state::GlobalState, proc_host, types::app_state::ProcState};
+use crate::{configuration::{v2::{DirServer, InProcessSiteConfig, RemoteSiteConfig}, LogLevel}, global_state::GlobalState, proc_host, types::app_state::ProcState};
 
 use super::{ConfigWrapper, OddBoxConfig};
 
@@ -60,7 +61,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
                 r.active_port = existing.config.active_port;
                 x.set_id(r.proc_id.clone());
                 if existing.config.eq(&r) {
-                    trace!("Process {} has not changed, skipping restart",x.host_name);
+                    //trace!("Process {} has not changed, skipping restart",x.host_name);
                     return None;
                 } else {
                     info!("Process {} has changed, will restart",x.host_name);
@@ -93,7 +94,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
             x.marked_for_removal = true; 
         } else if new_configuration.hosted_process.iter().flatten().any(|p|p.host_name==x.config.host_name) {
             // ok so this process is still in the new configuration, but it has not changed
-            info!("Process {} is still in the new configuration, but has not changed",x.config.host_name);
+            //info!("Process {} is still in the new configuration, but has not changed",x.config.host_name);
         } else {
             info!("Marking process {} for removal as it is no longer in the configuration",x.config.host_name);
             x.marked_for_removal = true;   
@@ -140,10 +141,50 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
         }
     }
 
-
+    let new_log_level = new_configuration.log_level.clone();
     let mut guard = global_state.config.write().await;
     *guard = new_configuration;
     drop(guard);
+
+    
+    let log_level : LevelFilter = match new_log_level {
+        Some(LogLevel::Info) => LevelFilter::INFO,
+        Some(LogLevel::Error) => LevelFilter::ERROR,
+        Some(LogLevel::Warn) => LevelFilter::WARN,
+        Some(LogLevel::Trace) => LevelFilter::TRACE,
+        Some(LogLevel::Debug) => LevelFilter::DEBUG,
+        _ => LevelFilter::INFO
+    };
+
+    let what = EnvFilter::from_default_env()
+        .add_directive(format!("odd_box={}", log_level).parse().expect("This directive should always work"))
+        .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"));
+
+    match &global_state.log_handle {
+        crate::OddLogHandle::CLI(rw_lock) => {
+            match rw_lock.write().await.reload(what) {
+                Ok(_) => {
+                    tracing::warn!("LOG LEVEL WAS CHANGED DUE TO CONFIGURATION FILE MODIFIED - NEW VALUE: {log_level:?}")
+                },
+                Err(e) => {
+                    tracing::error!("failed to change log level due to error {e:?}")
+                },
+            }
+        },
+        crate::OddLogHandle::TUI(rw_lock) => {
+            match rw_lock.write().await.reload(what) {
+                Ok(_) => {
+                    tracing::warn!("LOG LEVEL WAS CHANGED DUE TO CONFIGURATION FILE MODIFIED - NEW VALUE: {log_level:?}")
+                },
+                Err(e) => {
+                    tracing::error!("failed to change log level due to error {e:?}")
+                },
+            }
+        },
+        crate::OddLogHandle::None => {
+            tracing::error!("NO LOG HANDLE EXISTS!!")
+        },
+    };
 
 
 

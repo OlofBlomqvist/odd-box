@@ -14,7 +14,7 @@ use utoipa_swagger_ui::SwaggerUi;
 pub struct WebSocketGlobalState {
     
 
-    pub broadcast_channel: tokio::sync::broadcast::Sender<String>,
+    pub broadcast_channel_to_all_websocket_clients: tokio::sync::broadcast::Sender<Event>,
 
     pub global_state: Arc<crate::global_state::GlobalState>
 }
@@ -23,6 +23,8 @@ pub struct WebSocketGlobalState {
 mod controllers;
 
 use utoipauto::utoipauto;
+
+use crate::types::odd_box_event::Event;
 
 #[utoipauto]
 #[derive(OpenApi)]
@@ -72,11 +74,11 @@ async fn set_cors(request: axum::extract::Request, next: axum::middleware::Next,
 }
 
 
-pub async fn run(globally_shared_state: Arc<crate::global_state::GlobalState>,port:u16,tracing_broadcaster:tokio::sync::broadcast::Sender::<String>) {
+pub async fn run(globally_shared_state: Arc<crate::global_state::GlobalState>,port:u16,tracing_broadcaster:tokio::sync::broadcast::Sender::<Event>) {
 
     let websocket_state = WebSocketGlobalState {
 
-        broadcast_channel: tokio::sync::broadcast::channel(10).0,
+        broadcast_channel_to_all_websocket_clients: tokio::sync::broadcast::channel(10).0,
         global_state: globally_shared_state.clone()
     };
     
@@ -250,7 +252,7 @@ async fn ws_log_messages_handler(
 
 async fn handle_socket(client_socket: WebSocket, who: SocketAddr, state: WebSocketGlobalState) {
     let (mut sender, mut receiver) = client_socket.split();
-    let mut broadcast_receiver = state.broadcast_channel.subscribe();
+    let mut broadcast_receiver = state.broadcast_channel_to_all_websocket_clients.subscribe();
 
     loop {
         tokio::select! {
@@ -274,9 +276,13 @@ async fn handle_socket(client_socket: WebSocket, who: SocketAddr, state: WebSock
             broadcast_message = broadcast_receiver.recv() => {
                 match broadcast_message {
                     Ok(msg) => {
-                        if sender.send(Message::Text(msg)).await.is_err() {
-                            tracing::trace!("Failed to send message to client {who}, disconnecting...");
-                            break;
+                        if let Ok(msg_json) = serde_json::to_string(&msg) {
+                            if sender.send(Message::Text(msg_json)).await.is_err() {
+                                tracing::trace!("Failed to send message to client {who}, disconnecting...");
+                                break;
+                            }
+                        } else {
+                            tracing::trace!("Failed to serialize message to json for client {who}");
                         }
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
@@ -296,12 +302,12 @@ async fn handle_socket(client_socket: WebSocket, who: SocketAddr, state: WebSock
 }
 
 
-async fn broadcast_manager(state: WebSocketGlobalState,tracing_broadcaster:tokio::sync::broadcast::Sender::<String>) {
+async fn broadcast_manager(state: WebSocketGlobalState,tracing_broadcaster:tokio::sync::broadcast::Sender::<Event>) {
 
-    let mut broadcast_receiver = tracing_broadcaster.subscribe();
+    let mut odd_box_broadcast_channel = tracing_broadcaster.subscribe();
 
-    while let Ok(msg) = broadcast_receiver.recv().await {
-        _ = state.broadcast_channel.send(msg);
+    while let Ok(msg) = odd_box_broadcast_channel.recv().await {
+        _ = state.broadcast_channel_to_all_websocket_clients.send(msg);
     }
 
     //tracing::warn!("leaving broadcast manager main loop")

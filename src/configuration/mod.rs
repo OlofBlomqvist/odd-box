@@ -543,7 +543,7 @@ impl ConfigWrapper {
                 }
             }
             
-            tracing::info!("[{}] Using the first available port found (starting from the configured start port: {min_auto_port}) ---> '{}'",&resolved_proc.host_name,inner_selected_port);
+            tracing::trace!("[{}] Using the first available port found (starting from the configured start port: {min_auto_port}) ---> '{}'",&resolved_proc.host_name,inner_selected_port);
             selected_port = Some(inner_selected_port);
         }
 
@@ -638,6 +638,7 @@ impl ConfigWrapper {
     pub fn resolve_process_configuration(&mut self,proc:&crate::InProcessSiteConfig) -> anyhow::Result<crate::FullyResolvedInProcessSiteConfig> {
 
         let mut resolved_proc = crate::FullyResolvedInProcessSiteConfig {
+            log_level: proc.log_level.clone(),
             excluded_from_start_all: proc.exclude_from_start_all.unwrap_or(false),
             proc_id: proc.get_id().clone(),
             active_port: proc.active_port,

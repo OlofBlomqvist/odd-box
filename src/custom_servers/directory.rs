@@ -38,9 +38,9 @@ pub async fn handle(
 
     let root_dir = Path::new(&target.dir);
 
-    let req_path = req.uri().path().to_string();
-
-    let cache_key = req_path.clone();
+    let req_path : String = urlencoding::decode(req.uri().path()).map_err(|e|CustomError(format!("{e:?}")))?.to_string();
+        
+    let cache_key = req_path.trim_end_matches('/').to_string();
     {
         tracing::trace!("checking cache for {}", cache_key);
         let mut expired_in_cache = false;
@@ -49,7 +49,7 @@ pub async fn handle(
             let (_content_type, cache_time,res) = guard.value();
             // todo - configurable cache time
             if cache_time.elapsed() < Duration::from_secs(10) {
-                tracing::trace!("cache hit for {}", cache_key);
+                tracing::trace!("cache hit for {}", if cache_key.is_empty() {"/"} else {&cache_key});
                 return create_simple_response_from_bytes(res.clone());
             } else {
                 tracing::trace!("cache expired for {}", cache_key);
@@ -156,6 +156,17 @@ pub async fn handle(
 
         create_simple_response_from_bytes(response)
     } else if full_path.is_dir() {
+
+        if req_path.ends_with("/") == false {
+            let response = hyper::Response::builder()
+                .status(301)
+                .header("Location", format!("{}/", req_path))
+                .body("".into())
+                .map_err(|e| CustomError(format!("Failed to create response: {}", e).into()))?;
+
+            return create_simple_response_from_bytes(response);
+        }
+
         // Check for default files before listing the directory
         let default_files = ["index.html", "index.htm", "index.md"];
 

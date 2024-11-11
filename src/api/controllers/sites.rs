@@ -38,20 +38,11 @@ pub struct ListResponse {
 
 #[derive(ToSchema,Serialize)]
 pub struct StatusResponse {
-    pub items : Vec<StatusItem>
+    pub items : Vec<crate::types::site_status::SiteStatus>
 }
 
+use crate::types::site_status::State as BasicProcState;
 
-#[derive(Debug,PartialEq,Clone,serde::Serialize,ToSchema)]
-pub enum BasicProcState {
-    Faulty,
-    Stopped,    
-    Starting,
-    Stopping,
-    Running,
-    Remote,
-    Dynamic
-}
 impl From<crate::ProcState> for BasicProcState {
     fn from(l: crate::ProcState) -> Self {
         match l {
@@ -66,11 +57,8 @@ impl From<crate::ProcState> for BasicProcState {
         }
     }
 }
-#[derive(ToSchema,Serialize)]
-pub struct StatusItem {
-    pub hostname: String,
-    pub state: BasicProcState
-}
+
+
 
 /// List all configured sites.
 #[utoipa::path(
@@ -118,8 +106,8 @@ pub async fn status_handler(state: axum::extract::State<Arc<GlobalState>>) -> ax
     Ok(Json(StatusResponse {
         items: state.app_state.site_status_map.iter().map(|guard|{
             let (site,state) = guard.pair();
-            StatusItem {
-                hostname: site.clone(),
+            crate::types::site_status::SiteStatus {
+                host_name: site.clone(),
                 state: state.clone().into()
             }
         }).collect()

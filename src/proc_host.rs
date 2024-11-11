@@ -1,4 +1,4 @@
-use crate::configuration::LogFormat;
+use crate::configuration::{LogFormat, LogLevel};
 use crate::global_state::GlobalState;
 use crate::http_proxy::ProcMessage;
 use crate::types::app_state::ProcState;
@@ -56,7 +56,17 @@ pub async fn host(
     let re = regex::Regex::new(r"^\d* *\[.*?\] .*? - ").expect("host regex always works");
     
 
-    let mut selected_port: Option<u16> = None;
+    let mut selected_port: Option<u16> = {
+        let mut guard = state.config.write().await;
+        if let Ok(p) = guard.set_active_port(&mut resolved_proc) {
+            let selected_port = Some(p);
+            resolved_proc.active_port = selected_port;
+            selected_port
+        } else {
+            None
+        }
+    };
+
 
     let mut missing_bin: bool = false;
 
@@ -185,7 +195,18 @@ pub async fn host(
         
         let workdir = &resolved_proc.dir.as_ref().map_or(current_work_dir, |x|x.to_string());
 
-        tracing::warn!("[{}] Executing command '{}' in directory '{}'",resolved_proc.host_name,resolved_proc.bin,workdir);
+
+        
+        let (global_min_loglevel,global_default_log_format) = {
+            let guard = state.config.read().await;
+            (guard.log_level.clone().unwrap_or(LogLevel::Info),guard.default_log_format.clone())
+        };
+
+        let do_initial_trace = if let Some(ref ll) = resolved_proc.log_level { ll == &LogLevel::Trace } else { global_min_loglevel == LogLevel::Trace };
+
+        if do_initial_trace {
+            tracing::trace!("[{}] Executing command '{}' in directory '{}'",resolved_proc.host_name,resolved_proc.bin,workdir);
+        }
 
         
         let resolved_bin_path = if let Some(p) = resolve_bin_path(&workdir, &resolved_proc.bin) {
@@ -204,14 +225,18 @@ pub async fn host(
         {
             let state_guard = state.config.read().await;
             for kvp in &state_guard.env_vars.clone() {
-                tracing::debug!("[{}] ADDING GLOBAL ENV VAR '{}': {}", &resolved_proc.host_name,&kvp.key,&kvp.value);
+                if do_initial_trace {
+                    tracing::trace!("[{}] ADDING GLOBAL ENV VAR '{}': {}", &resolved_proc.host_name,&kvp.key,&kvp.value);
+                }
                 process_specific_environment_variables.insert(kvp.key.clone(), kvp.value.clone());
             }  
         }
 
         // more specific env vars should override globals
         for kvp in resolved_proc.env_vars.iter().flatten() {
-            tracing::debug!("[{}] ADDING ENV VAR '{}': {}", &resolved_proc.host_name,&kvp.key,&kvp.value);
+            if do_initial_trace {
+                tracing::trace!("[{}] ADDING ENV VAR '{}': {}", &resolved_proc.host_name,&kvp.key,&kvp.value);
+            }
             process_specific_environment_variables.insert(kvp.key.clone(), kvp.value.clone());
         }  
 
@@ -289,44 +314,81 @@ pub async fn host(
                 let stderr_reader = std::io::BufReader::new(stderr);
                 let procname = resolved_proc.host_name.clone();
                 let reclone = re.clone();
-                let logformat = resolved_proc.log_format.clone();
+                
+
+                let (_global_min_loglevel,global_default_log_format) = {
+                    let guard = state.config.read().await;
+                    (guard.log_level.clone().unwrap_or(LogLevel::Info),guard.default_log_format.clone())
+                };
+
+                let logformat = resolved_proc.log_format.clone().unwrap_or(global_default_log_format);
+
+
+                // --- USE THE DEAFULT GLOBAL LOG FORMNAT!!!
+
+                // note: global min loglevel IS NOT supposed to be used as default for processes - processes should always default to info
+                let proc_loglevel = resolved_proc.log_level.clone().unwrap_or(LogLevel::Info);
+                
+                
                 _ = std::thread::Builder::new().name(format!("{procname}")).spawn(move || {
                     
                     let mut current_log_level = 0;
                     
+                    let min_log_level_for_the_process = match proc_loglevel {
+                        LogLevel::Trace => 1,
+                        LogLevel::Debug => 2,
+                        LogLevel::Info => 3,
+                        LogLevel::Warn => 4,
+                        LogLevel::Error => 5
+                    };
+
                     for line in std::io::BufRead::lines(stdout_reader) {
                         if let Ok(line) = line{
 
                             // todo: should move custom logging elsewhere if theres ever more than one
-                            if let Some(LogFormat::dotnet) = &logformat {
+                            if let LogFormat::dotnet = &logformat {
                                 if line.len() > 0 {
                                     let mut trimmed = reclone.replace(&line, "").to_string();                       
                                     if trimmed.contains(" WARN ") || trimmed.contains("warn:") {
-                                        current_log_level = 3;
-                                        trimmed.replace("warn:", "").trim().to_string();
-                                    } else if trimmed.contains("ERROR") || trimmed.contains("error:"){
                                         current_log_level = 4;
+                                        trimmed.replace("warn:", "").trim().to_string();
+                                    } else if trimmed.contains("ERROR") || trimmed.contains("error:") {
+                                        current_log_level = 5;
                                         trimmed.replace("error:", "").trim().to_string();
-                                    } else if trimmed.contains("DEBUG")|| trimmed.contains("debug:"){
-                                        current_log_level = 1;
-                                        trimmed.replace("debug:", "").trim().to_string();
-                                    } else if trimmed.contains("INFO")|| trimmed.contains("info:"){
+                                    } else if trimmed.contains("DEBUG") || trimmed.contains("debug:") || trimmed.contains("dbug:") {
                                         current_log_level = 2;
+                                        trimmed.replace("debug:", "").trim().to_string();
+                                    } else if trimmed.contains("INFO")|| trimmed.contains("info:") {
+                                        current_log_level = 3;
                                         trimmed = trimmed.replace("info:", "").trim().to_string()
                                     }
-                                    // TODO - support for separate log levels between odd-box and its hosted processes ?
-                                    match &current_log_level {
-                                        1 => tracing::debug!("{}",trimmed),
-                                        2 => tracing::info!("{}",trimmed), 
-                                        3 => tracing::warn!("{}",trimmed),
-                                        4 => tracing::error!("{}",trimmed),
-                                        _ => tracing::trace!("{}",trimmed) // hide anything does has no explicit level unless running in trace mode
-                                    }  
+                                   
+                                    if current_log_level >= min_log_level_for_the_process {
+                                        match &current_log_level {
+                                            1  => { 
+                                                tracing::trace!("{}",trimmed)
+                                            },
+                                            2  => { 
+                                                tracing::debug!("{}",trimmed)
+                                            },
+                                            3  => { 
+                                                tracing::info!("{}",trimmed)
+                                            },
+                                            4 => { 
+                                                tracing::warn!("{}",trimmed)
+                                            }, 
+                                            5  => { 
+                                                tracing::error!("{}",trimmed)
+                                            },
+                                            _ => tracing::info!("{}",trimmed) // hide anything does has no explicit level unless running in trace mode
+                                        }  
+                                    }
+                                
                                 } else {
                                     current_log_level = 0;
                                 }
                             } else {
-                                tracing::info!("{}",line)
+                                tracing::info!("[STDOUT] {}",line)
                             }
                         }                        
                     }
@@ -337,7 +399,7 @@ pub async fn host(
                     for line in std::io::BufRead::lines(stderr_reader) {
                         if let Ok(line) = line{
                             if line.len() > 0 {
-                                tracing::error!("{}",line.trim());
+                                tracing::error!("[STDERR] {}",line.trim());
                             }
                         }                        
                     }
@@ -352,7 +414,28 @@ pub async fn host(
                         _ = child.kill();
                         break
                     }
-                    
+
+                    let live_proc_config = {
+                        let entry = state.config.read().await;
+                        let config = entry.hosted_processes.get(&resolved_proc.host_name);
+                        if let Some(c) = config {
+                            Some(c.clone())
+                        } else {
+                            None
+                        }
+                    };
+
+                    if let Some(live_proc_config) = live_proc_config {
+                        if live_proc_config.get_id() != &resolved_proc.proc_id {
+                            tracing::warn!("[{}] Stopping due to having been replaced by a new process with the same name", resolved_proc.host_name);
+                            state.app_state.site_status_map.insert(resolved_proc.host_name.clone(), ProcState::Stopping);
+                            _ = child.kill();
+                            break
+                        }
+                        resolved_proc.log_format = live_proc_config.log_format;
+                        resolved_proc.log_level = live_proc_config.log_level;
+                    }
+
                     state.app_state.site_status_map.insert(resolved_proc.host_name.clone(), ProcState::Running);
                 
                     while let Ok(msg) = rcv.try_recv() {

@@ -1,5 +1,6 @@
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
+use std::vec;
 use schemars::JsonSchema;
 use anyhow::bail;
 use serde::Serialize;
@@ -44,7 +45,6 @@ pub struct ReqRule {
     pub allow_directory_browsing: Option<bool>,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash, JsonSchema)]
 pub struct InProcessSiteConfig {
     
@@ -55,10 +55,10 @@ pub struct InProcessSiteConfig {
     /// and can avoid conflicts when starting new processes. settings this in toml conf file will have no effect.
     #[serde(skip)] // <-- dont want to even read or write this to the config file, nor exposed in the api docs
     pub active_port : Option<u16>,
-
     /// This is mostly useful in case the target uses SNI sniffing/routing
     pub disable_tcp_tunnel_mode : Option<bool>,
-    /// H2C or H2 - used to signal use of prior knowledge http2 or http2 over clear text. 
+    /// H1,H2,H2C,H2CPK,H3 - empty means H1 is expected to work with passthru: everything else will be 
+    /// using terminating mode.
     pub hints : Option<Vec<Hint>>,
     pub host_name : String,
     /// Working directory for the process. If this is not set, the current working directory will be used.
@@ -90,7 +90,11 @@ pub struct InProcessSiteConfig {
     pub exclude_from_start_all: Option<bool>,
     /// If you want to use lets-encrypt for generating certificates automatically for this site.
     /// Defaults to false. This feature will disable tcp tunnel mode.
-    pub enable_lets_encrypt: Option<bool>
+    pub enable_lets_encrypt: Option<bool>,
+    /// If you wish to set a specific loglevel for this hosted process.
+    /// Defaults to "Info".
+    /// If this level is lower than the global log_level you will get the message elevated to the global log level instead but tagged with the actual log level.
+    pub log_level: Option<LogLevel>,
 }
 impl InProcessSiteConfig {
     pub fn set_id(&mut self,id:ProcId){
@@ -111,6 +115,7 @@ pub struct FullyResolvedInProcessSiteConfig {
     pub args : Option<Vec<String>>,
     pub env_vars : Option<Vec<EnvVar>>,
     pub log_format: Option<LogFormat>,
+    pub log_level: Option<LogLevel>,
     pub auto_start: Option<bool>,
     pub port: Option<u16>,
     pub https : Option<bool>,
@@ -127,6 +132,7 @@ impl InProcessSiteConfig {
 impl PartialEq for InProcessSiteConfig {
     
     fn eq(&self, other: &Self) -> bool {
+        self.log_level.eq(&other.log_level) &&
         compare_option_bool(self.disable_tcp_tunnel_mode,other.disable_tcp_tunnel_mode) &&
         self.hints == other.hints &&
         self.host_name == other.host_name &&
@@ -164,6 +170,7 @@ fn compare_option_log_format(a: &Option<LogFormat>, b: &Option<LogFormat>) -> bo
     result
 }
 
+
 #[derive(Debug, Eq,PartialEq,Hash, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub enum Hint {
     /// Server supports http2 over tls
@@ -171,8 +178,11 @@ pub enum Hint {
     /// Server supports http2 via clear text by using an upgrade header
     H2C,
     /// Server supports http2 via clear text by using prior knowledge
-    H2CPK,
-    NOH2
+    H2PK,
+    /// Server supports http1.x
+    H1,
+    /// Server supports http3
+    H3
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema,Eq,PartialEq,Hash, JsonSchema)]
@@ -220,23 +230,100 @@ impl PartialEq for RemoteSiteConfig {
 
 impl Eq for RemoteSiteConfig {}
 
+#[derive(Debug, Clone,)]
 pub enum BackendFilter {
-    Http,
-    Https,
-    Any
+    Any,
+    Http2, // implies tls
+    Http1,
+    H2PriorKnowledge,
+    H2C,
+    AnyTLS
 }
+
+
 fn filter_backend(backend: &Backend, filter: &BackendFilter) -> bool {
+
+    let hints = backend.hints.iter().flatten().collect::<Vec<&Hint>>();
+    
+
     match filter {
-        BackendFilter::Http => backend.https.unwrap_or_default() == false,
-        BackendFilter::Https => backend.https.unwrap_or_default() == true,
-        BackendFilter::Any => true
+        BackendFilter::Any => true,
+        BackendFilter::AnyTLS => backend.https.unwrap_or_default(),
+        BackendFilter::Http2 => 
+            // only allow http2 if the backend explicitly supports it
+            hints.iter().any(|h|**h == Hint::H2),
+        BackendFilter::Http1 =>
+            // if no hints are set, we assume http1 is supported
+            hints.len() == 0 || hints.iter().any(|h|**h == Hint::H1) 
+        ,
+        BackendFilter::H2PriorKnowledge => 
+            hints.iter().any(|h|**h == Hint::H2PK),
+        BackendFilter::H2C => 
+            hints.iter().any(|h|**h == Hint::H2C),
+            
+        
     }
 }
 
+impl InProcessSiteConfig {
+
+
+    // TODO - MAJOR:
+
+    // we removed the "tunneled" arg from the other next_backend...
+    // now we dont properly add statistics for the tunnelled connections when we are in remote tunnel mode...
+    // need to add back.
+
+
+    pub async fn next_backend(&self,state:&GlobalState, backend_filter: BackendFilter) -> Option<Backend> {
+        
+        // port needs to be: 
+        // - self.active_port, if it is set.
+        // - otherwise, self.port if it is set.
+        // - otherwise, 443 if https is set.
+        // - otherwise, 80
+        let port = if let Some(p) = self.active_port { p } else {
+            if let Some(p) = self.port { p } else {
+                if self.https.unwrap_or_default() { 443 } else { 80 }
+            }
+        };
+
+        let backends = vec![Backend {
+            address: "localhost".to_string(), // we are always connecting to localhost since we are the ones hosting this process
+            port: port,
+            https: self.https,
+            hints: self.hints.clone(),
+        }];
+
+          
+        let filtered_backends = backends.iter().filter(|x|filter_backend(x,&backend_filter))
+            .collect::<Vec<&crate::configuration::v2::Backend>>();
+
+        if filtered_backends.len() == 1 { return Some(filtered_backends[0].clone()) };
+        if filtered_backends.len() == 0 { return None };
+        
+        let current_req_count_for_target_host_name = {
+            state.app_state.statistics.connections_per_hostname
+            .get(&self.host_name).and_then(|x|Some(x.load(std::sync::atomic::Ordering::SeqCst)))
+            .unwrap_or(0)
+        };
+
+        let selected_backend = filtered_backends.get((current_req_count_for_target_host_name % (filtered_backends.len() as usize)) as usize );
+
+        if let Some(b) = selected_backend{
+            Some((*b).clone())
+        } else {
+            tracing::error!("Could not find a backend for host: {:?}",self.host_name);
+            None
+        }
+        
+
+    }
+}
 impl RemoteSiteConfig {
 
 
-    pub async fn next_backend(&self,state:&GlobalState, backend_filter: BackendFilter, tunnel_mode: bool) -> Option<Backend> {
+    pub async fn next_backend(&self,state:&GlobalState, backend_filter: BackendFilter) -> Option<Backend> {
             
         let filtered_backends = self.backends.iter().filter(|x|filter_backend(x,&backend_filter))
             .collect::<Vec<&crate::configuration::v2::Backend>>();
@@ -244,12 +331,8 @@ impl RemoteSiteConfig {
         if filtered_backends.len() == 1 { return Some(filtered_backends[0].clone()) };
         if filtered_backends.len() == 0 { return None };
         
-        let current_req_count_for_target_host_name = if tunnel_mode {
-            state.app_state.statistics.tunnelled_tcp_connections_per_hostname
-                .get(&self.host_name).and_then(|x|Some(x.load(std::sync::atomic::Ordering::SeqCst)))
-                .unwrap_or(0)
-        } else {
-            state.app_state.statistics.terminated_http_connections_per_hostname
+        let current_req_count_for_target_host_name = {
+            state.app_state.statistics.connections_per_hostname
             .get(&self.host_name).and_then(|x|Some(x.load(std::sync::atomic::Ordering::SeqCst)))
             .unwrap_or(0)
         };
@@ -273,6 +356,8 @@ pub struct OddBoxV2Config {
     #[schema(value_type = String)]
     pub version : super::OddBoxConfigVersion,
     pub root_dir : Option<String>, 
+    /// Log level of the odd-box application itself. Defaults to Info.
+    /// For hosted processes, you can instead set the log level for site individually.
     #[serde(default = "default_log_level")]
     pub log_level : Option<LogLevel>,
     /// Defaults to true. Lets you enable/disable h2/http11 tls alpn algs during initial connection phase. 
@@ -344,7 +429,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
         let mut formatted_toml = Vec::new();
 
         // this is to nudge editor plugins to use the correct schema for validation and intellisense
-        formatted_toml.push(format!("#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.1.json"));
+        formatted_toml.push(format!("#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.2.json"));
         
         // this is for our own use to know which version of the configuration we are using
         formatted_toml.push(format!("version = \"{:?}\"", self.version));
@@ -500,6 +585,10 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
                     formatted_toml.push(format!("auto_start = {}", auto_start));
                 }
 
+                if let Some(log_level) = &process.log_level {
+                    formatted_toml.push(format!("log_level = \"{:?}\"", log_level));
+                }
+
                 if let Some(true) = process.enable_lets_encrypt {
                     formatted_toml.push(format!("enable_lets_encrypt = {}", true));
                 }
@@ -555,6 +644,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
             port_range_start: 4200,
             hosted_process: Some(vec![
                 InProcessSiteConfig {
+                    log_level: None,
                     enable_lets_encrypt: Some(false),
                     proc_id: ProcId::new(),
                     active_port: None,
@@ -686,6 +776,7 @@ impl TryFrom<super::v1::OddBoxV1Config> for super::v2::OddBoxV2Config{
             port_range_start: old_config.port_range_start,
             hosted_process: Some(old_config.hosted_process.unwrap_or_default().into_iter().map(|x|{
                 super::v2::InProcessSiteConfig {
+                    log_level: None,
                     enable_lets_encrypt: Some(false),
                     proc_id: ProcId::new(),
                     active_port: None,

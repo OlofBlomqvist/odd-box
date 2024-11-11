@@ -1,17 +1,18 @@
+use core::panic;
 use std::net::SocketAddr;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
+use chrono::format;
+use hyper::Version;
 use hyper_rustls::ConfigBuilderExt;
 use lazy_static::lazy_static;
 use socket2::Socket;
-use tokio::io;
-use tokio::io::AsyncRead;
-use tokio::io::AsyncWrite;
 use tokio::net::TcpStream;
 use tokio::sync::Notify;
 use tokio::sync::RwLock;
 use tokio_rustls::TlsAcceptor;
+use crate::configuration::v2::Backend;
+use crate::configuration::v2::Hint;
 use crate::configuration::ConfigWrapper;
 use crate::global_state::GlobalState;
 use crate::http_proxy::ProcMessage;
@@ -22,7 +23,11 @@ use crate::tcp_proxy::DataType;
 use crate::tcp_proxy::ManagedStream;
 use crate::tcp_proxy::PeekResult;
 use crate::tcp_proxy::Peekable;
+use crate::tcp_proxy::GenericManagedStream;
+use crate::tcp_proxy::TunnelError;
 use crate::types::app_state;
+use crate::types::proxy_state::ConnectionKey;
+use crate::types::proxy_state::ProxyActiveTCPConnection;
 
 
 use tokio_util::sync::CancellationToken;
@@ -117,6 +122,7 @@ pub async fn listen(
                 .build(connector);
 
             let terminating_proxy_service = ReverseProxyService { 
+                connection_key: 0,
                 configuration: Arc::new(cfg.read().await.clone()),
                 resolved_target: None,
                 state: state.clone(), 
@@ -229,13 +235,15 @@ async fn listen_http(
             }
         }
 
-        // let permit = if let Ok(p) = ACTIVE_TCP_CONNECTIONS_SEMAPHORE.acquire().await {
-        //     p
-        // } else {
-        //     tracing::warn!("Error acquiring semaphore permit.. This is a bug in odd-box :<");
-        //     break
-        // };
+        let permit = if let Ok(p) = ACTIVE_TCP_CONNECTIONS_SEMAPHORE.acquire().await {
+            p
+        } else {
+            tracing::error!("Error acquiring semaphore permit!");
+            break;
+        };
 
+        permit.forget();
+        
         //tracing::info!("accepting http connection..");
         tokio::select! {
             _ = cancel_token.cancelled() => {
@@ -245,23 +253,23 @@ async fn listen_http(
             x = tokio_listener.accept() => {
                 match x {
                     Ok((tcp_stream,source_addr)) => {
-                    
-                        //tracing::trace!("Accepted connection! current active: {}", 200-ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
+                        
                         let mut service: ReverseProxyService = terminating_service_template.clone();
                         service.configuration = Arc::new(state.config.read().await.clone());
                         service.remote_addr = Some(source_addr);   
                         let tx = tx.clone();
                         let state = state.clone();
-                        tokio::spawn(async move {                   
-                            //let _moved_permit = permit;          
-                            handle_new_tcp_stream(None, service,tcp_stream, source_addr, false,tx.clone(),state.clone())
+                        tokio::spawn(async move {           
+                            handle_new_tcp_stream(None, service,tcp_stream, source_addr,tx.clone(),state.clone())
                                 .await;
+                            ACTIVE_TCP_CONNECTIONS_SEMAPHORE.add_permits(1);
                         });
                         
 
                     }
                     Err(e) => {
                         tracing::warn!("error accepting tcp connection: {:?}", e);
+                        ACTIVE_TCP_CONNECTIONS_SEMAPHORE.add_permits(1);
                         //break;
                     }
                 }
@@ -300,10 +308,10 @@ async fn listen_https(
     let tokio_listener = tokio::net::TcpListener::from_std(listener).expect("we must be able to listen to https port..");
     
     let mut rustls_config = 
-    tokio_rustls::rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_cert_resolver(state.cert_resolver.clone());
-        
+        tokio_rustls::rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_cert_resolver(state.cert_resolver.clone());
+    
     if let Some(true) = state.config.read().await.alpn {
         rustls_config.alpn_protocols.push("h2".into());
         rustls_config.alpn_protocols.push("http/1.1".into());
@@ -323,14 +331,15 @@ async fn listen_https(
             break;
         }
 
+     
         let permit = if let Ok(p) = ACTIVE_TCP_CONNECTIONS_SEMAPHORE.acquire().await {
             p
         } else {
-            tracing::warn!("Error acquiring semaphore permit.. This is a bug in odd-box :<");
-            break
+            tracing::error!("Error acquiring semaphore permit!");
+            break;
         };
 
-        //tracing::info!("accepting https connection..");
+        permit.forget();
 
         tokio::select! {
             _ = cancel_token.cancelled() => {
@@ -341,24 +350,23 @@ async fn listen_https(
                 match x {
                     Ok((tcp_stream,source_addr)) => {
                     
-                        tracing::trace!("accepted connection! current active: {}", 200-ACTIVE_TCP_CONNECTIONS_SEMAPHORE.available_permits() );
                         let mut service: ReverseProxyService = terminating_service_template.clone();
                         service.configuration = Arc::new(state.config.read().await.clone());
-
                         service.remote_addr = Some(source_addr);  
                         let tx = tx.clone();
                         let arced_tls_config = Some(arced_tls_config.clone());
                         let state = state.clone();
-                        tokio::spawn(async move {      
-                            let _moved_permit = permit;             
-                            handle_new_tcp_stream(arced_tls_config,service,tcp_stream, source_addr, true,tx.clone(),state.clone())
+                        tokio::spawn(async move {               
+                            handle_new_tcp_stream(arced_tls_config,service,tcp_stream, source_addr,tx.clone(),state.clone())
                                 .await;
+                            ACTIVE_TCP_CONNECTIONS_SEMAPHORE.add_permits(1);
                         });
                         
 
                     }
                     Err(e) => {
                         tracing::warn!("error accepting tcp connection: {:?}", e);
+                        ACTIVE_TCP_CONNECTIONS_SEMAPHORE.add_permits(1);
                         //break;
                     }
                 }
@@ -369,87 +377,6 @@ async fn listen_https(
     tracing::warn!("listen_https went bye bye.")
 }
 
-pub enum SomeSortOfManagedStream{
-    ClearText(ManagedStream<TcpStream>),
-    TLS(ManagedStream<tokio_rustls::server::TlsStream<TcpStream>>)
-}
-
-impl crate::tcp_proxy::Peekable for SomeSortOfManagedStream {
-    fn seal(&mut self) {
-        match self {
-            SomeSortOfManagedStream::ClearText(managed_stream) => managed_stream.seal(),
-            SomeSortOfManagedStream::TLS(managed_stream) => managed_stream.seal(),
-        }
-    }
-    async fn peek_async(&mut self) -> Result<(bool, Vec<u8>), io::Error> {
-        match self {
-            SomeSortOfManagedStream::ClearText(managed_stream) => managed_stream.peek_async().await,
-            SomeSortOfManagedStream::TLS(managed_stream) => managed_stream.peek_async().await,
-        }
-    }
-}
-impl SomeSortOfManagedStream {
-    pub async fn do_inspection_stuff(&mut self) {
-        match self {
-            SomeSortOfManagedStream::ClearText(managed_stream) => {
-                managed_stream.inspect().await;
-            },
-            SomeSortOfManagedStream::TLS(managed_stream) => {
-                managed_stream.inspect().await;
-            }
-        }
-    }
-}
-
-impl AsyncRead for SomeSortOfManagedStream {
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            SomeSortOfManagedStream::ClearText(managed_stream) => 
-                Pin::new(managed_stream).poll_read(cx,buf),
-            SomeSortOfManagedStream::TLS(managed_stream) => 
-                Pin::new(managed_stream).poll_read(cx,buf),
-        }
-    }
-}
-
-impl AsyncWrite for SomeSortOfManagedStream {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<Result<usize, std::io::Error>> {
-
-        match self.get_mut() {
-            SomeSortOfManagedStream::ClearText(managed_stream) => 
-                Pin::new(managed_stream).poll_write(cx,buf),
-            SomeSortOfManagedStream::TLS(managed_stream) => 
-                Pin::new(managed_stream).poll_write(cx,buf),
-        }
-    }
-
-    fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), std::io::Error>> {
-        match self.get_mut() {
-            SomeSortOfManagedStream::ClearText(managed_stream) => 
-                Pin::new(managed_stream).poll_flush(cx),
-            SomeSortOfManagedStream::TLS(managed_stream) => 
-                Pin::new(managed_stream).poll_flush(cx),
-        }
-    }
-
-    fn poll_shutdown(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), std::io::Error>> {
-        match self.get_mut() {
-            SomeSortOfManagedStream::ClearText(managed_stream) => 
-                Pin::new(managed_stream).poll_shutdown(cx),
-            SomeSortOfManagedStream::TLS(managed_stream) => 
-                Pin::new(managed_stream).poll_shutdown(cx),
-        }
-    }
-}
-
 // this will peek in to the incoming tcp stream and either create a direct tcp tunnel (passthru mode)
 // or hand it off to the terminating http/https hyper services
 async fn handle_new_tcp_stream(
@@ -457,173 +384,409 @@ async fn handle_new_tcp_stream(
     mut fresh_service_template_with_source_info: ReverseProxyService,
     tcp_stream: TcpStream,
     source_addr:SocketAddr,
-    incoming_connection_is_on_tls_port: bool,
     tx: std::sync::Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
     state: Arc<GlobalState>
 ) {
 
-   // fresh_service_template_with_source_info.remote_addr = Some(source_addr);
+    let mut peekable_tcp_stream = GenericManagedStream::from_tcp_stream(tcp_stream,state.clone());
+    let peek_result =  peekable_tcp_stream.peek_managed_stream(source_addr).await;
+    peekable_tcp_stream.seal();
+
+    fresh_service_template_with_source_info.connection_key = *peekable_tcp_stream.get_id();
+
+    // add to global tracking. we will update the state of this connection as it progresses through the system
+    match &peekable_tcp_stream {
+        GenericManagedStream::TCP(peekable_tcp_stream) => {
+            tracing::info!("Accepted TCP connection from {source_addr} - tls: {:?} ", peekable_tcp_stream.is_tls);
+        },
+        GenericManagedStream::TerminatedTLS(_managed_stream) => {
+            tracing::info!("Terminated TLS connection from {source_addr}.");
+        },
+    }
+    peekable_tcp_stream.track();
     
-    let mut managed_stream : SomeSortOfManagedStream;
-    let mut sni_server_name = None;
-
-    let peek_result = if let Some(tls_cfg) = rustls_config {
-        //fresh_service_template_with_source_info.is_https_only = true;
-        let tls_acceptor = TlsAcceptor::from(tls_cfg.clone());
-        match tls_acceptor.accept(tcp_stream).await {
-            Ok(tls_stream) => {
-                
-                if let Some(sni) = tls_stream.get_ref().1.server_name() {
-                    sni_server_name = Some(sni.to_string());
-                }
-
-                managed_stream = crate::proxy::SomeSortOfManagedStream::TLS(ManagedStream::from_tls_stream(tls_stream));
-                tcp_proxy::ReverseTcpProxy::eat_tcp_stream(&mut managed_stream, source_addr).await
-            },
-            Err(e) => {
-                tracing::warn!("accept_tcp_stream_via_tls_terminating_proxy_service failed with error: {e:?}");
-                return 
-            }
-        }
-    } else {
-        managed_stream = crate::proxy::SomeSortOfManagedStream::ClearText(ManagedStream::from_tcp_stream(tcp_stream));
-        tcp_proxy::ReverseTcpProxy::eat_tcp_stream(&mut managed_stream, source_addr).await
-    };
     
-    managed_stream.seal();
-
     match peek_result {
         
         // we see that this is cleartext data, and we expect clear text data, and we also extracted a hostname by peeking.
         // at this point, we should check if the target is NOT configured for https (tls) before forwarding.
         Ok(PeekResult {
-            typ: _, // <-- will always be cleartext as we have already wrapped any outer tls stream in a managed stream
-            http_version: _http_version,
-            target_host: h2_authority_or_h1_host_header
+            typ,
+            http_version,
+            target_host: h2_authority_or_h1_host_header,
+            is_h2c_upgrade
         }) => {
 
-            let target_host_name = if let Some(n) = sni_server_name.or(h2_authority_or_h1_host_header) {
+
+            let is_tls = typ == DataType::TLS;
+
+            // if is_tls {
+            //     tracing::trace!("tls peeked type: {typ:?} - v:{http_version:?} - host: {h2_authority_or_h1_host_header:?}");
+            // } else {
+            //     tracing::trace!("tcp peeked type: {typ:?} - v:{http_version:?} - host: {h2_authority_or_h1_host_header:?}");
+
+            // }
+
+            let target_host_name = if let Some(n) = h2_authority_or_h1_host_header {
                 n
             } else {
                 tracing::warn!("No target host found in peeked data.. will use terminating proxy mode instead.");
-               // http_proxy::serve(fresh_service_template_with_source_info, managed_stream).await;
+                http_proxy::serve(fresh_service_template_with_source_info, peekable_tcp_stream).await;
                 return;
             };
             
+          
             if let Some(target) = state.try_find_site(&target_host_name).await {
-
 
                 let cloned_target = target.clone();
 
-               // fresh_service_template_with_source_info.resolved_target = Some(cloned_target.clone());
+                fresh_service_template_with_source_info.resolved_target = Some(cloned_target.clone());
                 
-                if target.disable_tcp_tunnel_mode == false {
+                if target.is_hosted {
 
-                        if target.is_hosted {
-                            
-                            let proc_state = {
+                    if let Some(cfg) = &target.hosted_target_config {
+                        let hints : Vec<&crate::configuration::v2::Hint> = cfg.hints.iter().flatten().collect();
+                        if let Some(Version::HTTP_2) = http_version {
+                            if hints.iter().any(|h| **h==Hint::H2 ) {
+                                tracing::trace!("Incoming http version is 2.0 and target supports it thru hints. Proceeding with tunnel mode.");
+                            } else {
+                                tracing::trace!("Incoming http version is 2.0 but no hints are provided for the target to support it. Falling back to terminating mode.");
+                                return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info,
+                                    FallbackReason::IncomingHttp2ButTargetDoesNotSupportIt
+                                ).await;
+                            }
+                        }
+                    }
+                    
+                    let proc_state = {
+                        match state.app_state.site_status_map.get(&target.host_name) {
+                            Some(v) => Some(v.clone()),
+                            _ => None
+                        }
+                    };
+
+                    match proc_state {
+                        None => {
+                            tracing::warn!("error 0001 has occurred")
+                        },
+                        Some(app_state::ProcState::Stopped) 
+                        | Some(app_state::ProcState::Starting) => {
+                            _ = tx.send(ProcMessage::Start(target.host_name.clone()));
+                            let thn = target.host_name.clone();
+                            let mut has_started = false;
+                            // done here to allow non-browser clients to reach the target socket without receiving unexpected loading screen html blobs
+                            // as long as we are able to start the backing process within 10 seconds
+                            tracing::debug!("handling an incoming request to a stopped target, waiting for {thn} to spin up - after this we will release the request to the terminating proxy and show a 'please wait' page instaead.");
+                                
+                            for _ in 1..100 {
                                 match state.app_state.site_status_map.get(&target.host_name) {
-                                    Some(v) => Some(v.clone()),
-                                    _ => None
-                                }
-                            };
-                            match proc_state {
-                                None => {
-                                    tracing::warn!("error 0001 has occurred")
-                                },
-                                Some(app_state::ProcState::Stopped) 
-                                | Some(app_state::ProcState::Starting) => {
-                                    _ = tx.send(ProcMessage::Start(target.host_name.clone()));
-                                    let thn = target.host_name.clone();
-                                    let mut has_started = false;
-                                    // done here to allow non-browser clients to reach the target socket without receiving unexpected loading screen html blobs
-                                    // as long as we are able to start the backing process within 10 seconds
-                                    tracing::debug!("handling an incoming request to a stopped target, waiting for {thn} to spin up - after this we will release the request to the terminating proxy and show a 'please wait' page instaead.");
-                                        
-                                    for _ in 1..100 {
-                                        match state.app_state.site_status_map.get(&target.host_name) {
-                                            Some(my_ref) => {
-                                                match my_ref.value() {
-                                                    app_state::ProcState::Running => {
-                                                        tracing::info!("{thn} is now running!");
-                                                        has_started = true;
-                                                        // give the hosted target some time to set up it's tcp listener
-                                                        tokio::time::sleep(Duration::from_millis(3000)).await;
-                                                        break
-                                                    },
-                                                    _ => { }
-                                                }
+                                    Some(my_ref) => {
+                                        match my_ref.value() {
+                                            app_state::ProcState::Running => {
+                                                tracing::info!("{thn} is now running!");
+                                                has_started = true;
+                                                // give the hosted target some time to set up it's tcp listener
+                                                tokio::time::sleep(Duration::from_millis(3000)).await;
+                                                break
                                             },
                                             _ => { }
                                         }
-                                        tokio::time::sleep(Duration::from_millis(100)).await;
-                                    }
-                                    if has_started {
-                                        tcp_proxy::ReverseTcpProxy::tunnel(managed_stream, cloned_target, false,state.clone(),source_addr).await;
-                                        return;
-                                    } else {
-                                        tracing::trace!("{thn} is still not running...giving up.");
-                                        return;
-                                    }
+                                    },
+                                    _ => { }
                                 }
-                                , _  => {
-                                    tcp_proxy::ReverseTcpProxy::tunnel(managed_stream, cloned_target, false,state.clone(),source_addr).await;
-                                    return;
-                                }
+                                tokio::time::sleep(Duration::from_millis(100)).await;
                             }
+                            if has_started {
 
-                        } else {
-                            tcp_proxy::ReverseTcpProxy::tunnel(managed_stream, cloned_target, false,state.clone(),source_addr).await;
-                            return;
+                                match tcp_proxy::ReverseTcpProxy::tunnel(
+                                    peekable_tcp_stream,
+                                     cloned_target, 
+                                     is_tls,
+                                     state.clone(),
+                                     source_addr, 
+                                     rustls_config.clone(),
+                                     target_host_name,
+                                     http_version,
+                                     is_h2c_upgrade,
+                                ).await {
+                                    Ok(_) => {
+                                        return;
+                                    },
+                                    Err(e) => {
+                                        match e {
+                                            TunnelError::NoUsableBackendFound(s) => {
+                                                return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::NoHostedOrRemoteTargetFound).await;
+
+                                            },
+                                            TunnelError::CanNeverWork(e) => {
+                                                tracing::warn!("Tunnel error: {e:?}");
+                                                return;
+                                            },
+                                            TunnelError::MustTerminate(s) => {
+                                                return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::MustTerminate).await;
+                                            }
+                                        };
+                                    },
+                                }
+                                
+                            } else {
+                                tracing::trace!("{thn} is still not running...giving up.");
+                                return;
+                            }
                         }
+                        , _  => {
+                            match tcp_proxy::ReverseTcpProxy::tunnel(
+                                peekable_tcp_stream, 
+                                cloned_target, 
+                                is_tls,
+                                state.clone(),
+                                source_addr, 
+                                rustls_config.clone(),
+                                target_host_name,
+                                http_version,
+                                is_h2c_upgrade
+                            ).await {
+                                Ok(_) => {
+                                    return;
+                                },
+                                Err(e) => {
+                                    match e {
+                                        TunnelError::NoUsableBackendFound(s) => {
+                                            return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::MustTerminate).await;
+                                        },
+                                        TunnelError::CanNeverWork(e) => {
+                                            tracing::warn!("Tunnel error: {e:?}");
+                                            return;
+                                        },
+                                        TunnelError::MustTerminate(s) => {
+                                            return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::MustTerminate).await;
+                                        }
+                                    };
+                                },
+                            }
+                        }
+                    }
+
                 } else {
-                    tracing::trace!("got incoming clear text connection for {} but the target is configured for tls tunneling.. will use terminating proxy instead.",cloned_target.host_name);
+                    
+                    if let Some(cfg) = &target.remote_target_config {
+                        
+                        if let Some(Version::HTTP_2) = http_version {
+                            let mut hints = cfg.backends.iter()
+                                .flat_map(|b| b.hints.clone().unwrap_or_default());
+                            if hints.any(|x|x==Hint::H2) {
+                                tracing::trace!("Incoming http version is 2.0 and target supports it thru hints. Proceeding with tunnel mode.");
+                            } else {
+                                return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info,
+                                    FallbackReason::Unknown("Incoming http version is 2.0, but all backends explicitly disallow H2, falling back to terminating mode.".to_string())
+                                ).await;
+                            }
+                        }
+                    }
+
+                    match tcp_proxy::ReverseTcpProxy::tunnel(
+                        peekable_tcp_stream, 
+                        cloned_target, 
+                        is_tls,
+                        state.clone(),
+                        source_addr,rustls_config.clone(),
+                        target_host_name,
+                        http_version,
+                        is_h2c_upgrade
+                    ).await {
+                        Ok(_) => {
+                            return;
+                        },
+                        Err(e) => {
+                           match e {
+                                TunnelError::NoUsableBackendFound(s) => {
+                                    return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::NoHostedOrRemoteTargetFound).await;
+                                },
+                                TunnelError::CanNeverWork(e) => {
+                                    tracing::warn!("Tunnel error: {e:?}");
+                                    return;
+                                },
+                                TunnelError::MustTerminate(s) => {
+                                    return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::MustTerminate).await;
+                                }
+                            };
+                        },
+                    }
+                }
+                
+            } else {
+                // fallback mode also handles directory services, and other non-hosted targets
+                return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, FallbackReason::NoHostedOrRemoteTargetFound).await;
+
+            }
+        }
+        Err(e) => {
+            match e {
+                tcp_proxy::PeekError::H2PriorKnowledgeNeedsToBeTerminated => {
+                    return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, FallbackReason::H2CPriorKnowledge).await;
+                },
+                tcp_proxy::PeekError::StreamIsClosed => {
+                   return;
+                },
+                e => {
+                    return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, FallbackReason::Unknown(
+                        format!("Peek error: {:?}",e)
+                    )).await;
 
                 }
-            } else {
-                tracing::trace!("We do not have any site configured for '{target_host_name}' that allows tcp tunnelling.. will use terminating proxy instead.");
             }
-        },
-        
-        // // we see that this is tls data, and we expect tls data, and we also extracted a hostname by peeking.
-        // // at this point, we should check if the target is configured for https (tls) before forwarding.
-        // Ok(PeekResult {
-        //     typ: DataType::TLS,
-        //     http_version:_,
-        //     target_host: Some(target_host_name)
-        // }) if incoming_connection_is_on_tls_port => {
-
-
-        //     let host_name = target_host_name.to_lowercase();
-            
-        //     if let Some(target) = state.try_find_site(&target_host_name).await {
-               
-        //         if target.disable_tcp_tunnel_mode == false && target.backends.iter().any(|x|x.https.unwrap_or_default()) {
-        //             // at least one backend has https enabled so we will use the tls tunnel mode to there
-        //             tracing::trace!("USING TCP PROXY FOR TLS TUNNEL TO TARGET {:?}",target.host_name);
-        //             tcp_proxy::ReverseTcpProxy::tunnel(managed_stream, target, true,state.clone(),source_addr).await;
-        //             return;
-        //         } else {
-        //             tracing::trace!("peeked some tls tcp data and found that the target exists but is not configured for https/tls. we will use terminating mode for this..");
-        //             fresh_service_template_with_source_info.resolved_target = Some(target);
-        //         }
-
-
-        //     } else {
-        //         tracing::trace!("We do not have any site configured for '{host_name}' that allows tcp tunnelling.. will use terminating proxy instead.");
-        //     }
-        // },
-        e => {
-            tracing::warn!("tcp peek invalid result: {e:?}. this could be because of incoming and outgoing protocol mismatch or configuration - will use terminating proxy mode instead") 
         }
     }
 
 
+    
+}
 
-    // // at this point we have failed to use direct tunnel mode (or the target was not configured for it)
-    tracing::trace!("handing off clear text tcp stream to terminating proxy for target!");     
-    http_proxy::serve(fresh_service_template_with_source_info, managed_stream).await;
+
+#[derive(Debug)]
+pub enum FallbackReason {
+    IncomingHttp2ButTargetDoesNotSupportIt,
+    H2CPriorKnowledge, // when a clear text connection comes in with http2 prior knowledge and client did not pass a host/authority header
+                       // we have to engage in the http2 session negotiation dance.. this can be handled by the terminating proxy service.
+    Unknown(String),
+    NoHostedOrRemoteTargetFound,
+    MustTerminate
+}
+
+async fn use_fallback_mode(
+    rustls_config: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>, 
+    mut generic_managed_stream: GenericManagedStream, 
+    fresh_service_template_with_source_info: ReverseProxyService,
+    reason: FallbackReason
+) {
+
+    generic_managed_stream.add_event(format!("using fallback_mode - reason: {:?}",reason));
+    
+    match reason {
+        FallbackReason::IncomingHttp2ButTargetDoesNotSupportIt => {
+            tracing::warn!("Falling back to http terminating mode as the incoming connection is HTTP2, but the target does not support HTTP2");
+        },
+        FallbackReason::H2CPriorKnowledge => {
+            tracing::warn!("Falling back to http terminating mode for http2 prior knowledge request");
+        },
+        FallbackReason::Unknown(reason) => {
+           // tracing::warn!("falling back to terminating proxy mode because: {reason}");
+            //tracing::error!("NOT ALLOWED DURING TESTING");
+            tracing::warn!("ignoring incoming connection because: {reason}");
+            return;
+        },
+        FallbackReason::NoHostedOrRemoteTargetFound => {
+            tracing::warn!("Falling back to terminating proxy mode because no hosted or remote target was found");
+        },
+        FallbackReason::MustTerminate => {
+            tracing::warn!("Falling back to terminating proxy mode because the site is configured to not allow non-terminated connections");
+        }
+    }
     
 
-    
+    // // Neither TCP Tunnel mode nor Worm Hole mode is NOT possible if we got here!
+    // //  - At this point we have determined that we are not going to use the tcp tunnel mode, and we will use the terminating proxy mode instead.
+    // //  - If the incoming connection is a tls stream we will first terminate it here.
+
+
+    match rustls_config {
+        Some(tls_cfg) => {
+
+            match generic_managed_stream {
+                // GenericManagedStream::TLS(_peekable_tls_stream) => {
+                //     tracing::error!("unexpected state: tls stream in handle_new_tcp_stream");
+                // },
+                GenericManagedStream::TCP(peekable_tcp_stream) => {
+                            
+                    let tls_acceptor = TlsAcceptor::from(tls_cfg.clone());
+                    match tls_acceptor.accept(peekable_tcp_stream).await {
+                        Ok(tls_stream) => {
+                            tracing::warn!("falling back to TLS termination combined with legacy http terminating mode");
+                            let mut new_peekable = GenericManagedStream::from_terminated_tls_stream(ManagedStream::from_tls_stream(tls_stream));
+                            new_peekable.seal();
+                            new_peekable.update_tracked_info(|x| {
+                                x.http_terminated = true;
+                                x.tls_terminated = true;
+                                x.incoming_connection_uses_tls = true;
+                            });
+                            new_peekable.add_event("Terminated incoming tls, redirecting tcp stream in to http terminating proxy service".to_string());
+                            http_proxy::serve(fresh_service_template_with_source_info, new_peekable).await;
+                        },
+                        Err(e) => {
+                            tracing::warn!("accept_tcp_stream_via_tls_terminating_proxy_service failed with error: {e:?}");
+                            return 
+                        }
+                    }
+                },
+                terminated_stream => {
+                    terminated_stream.update_tracked_info(|x| {
+                        x.http_terminated = true;
+                        x.tls_terminated = true;
+                        x.target = if let Some(v) = fresh_service_template_with_source_info.resolved_target.as_ref() {
+                            let inner_target = (*v.as_ref()).clone();
+                            Some(inner_target)
+                        } else {
+                            None
+                        };
+                    });
+                    http_proxy::serve(fresh_service_template_with_source_info, terminated_stream).await;
+                },
+            }
+
+
+        }, 
+        _ => {
+            generic_managed_stream.update_tracked_info(|x| {
+                x.http_terminated = true;
+                x.target = if let Some(v) = fresh_service_template_with_source_info.resolved_target.as_ref() {
+                    let inner_target = (*v.as_ref()).clone();
+                    Some(inner_target)
+                } else {
+                    None
+                };
+            });
+            http_proxy::serve(fresh_service_template_with_source_info, generic_managed_stream).await;
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+pub fn add_or_update_connection(state:Arc<GlobalState>,connection:ProxyActiveTCPConnection) {
+    if let Some(key) = connection.connection_key_pointer.upgrade() {
+        let app_state = state.app_state.clone();
+        _ = app_state.statistics.active_connections.insert(*key, connection);
+    } else {
+        tracing::warn!("Failed to add connection to global state, connection key was dropped.");
+    }
+}
+
+pub fn mutate_tracked_connection(
+    state:&Arc<GlobalState>,
+    key:&ConnectionKey,
+    mutator: impl FnOnce(&mut ProxyActiveTCPConnection) -> ()
+)  {
+    let app_state = state.app_state.clone();
+    let guard = app_state.statistics.clone();
+    let item = guard.active_connections.get_mut(key);
+    if let Some(mut conn) = item {
+        mutator(conn.value_mut());
+    }
+}
+
+pub fn del_connection(state:Arc<GlobalState>,key:&ConnectionKey) {
+    let app_state = state.app_state.clone();
+    let guard = app_state.statistics.clone();
+    _ = guard.active_connections.remove(key);
 }

@@ -597,6 +597,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-targets 0.52.6",
 ]
@@ -2137,7 +2138,7 @@ dependencies = [
 
 [[package]]
 name = "odd-box"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "axum",
@@ -2199,6 +2200,7 @@ dependencies = [
  "tracing-subscriber",
  "tungstenite 0.24.0",
  "url",
+ "urlencoding",
  "utoipa",
  "utoipa-rapidoc",
  "utoipa-redoc",

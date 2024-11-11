@@ -6,6 +6,7 @@ use ratatui::widgets::{BorderType, List, ListItem };
 use tokio::task;
 use tracing::level_filters::LevelFilter;
 use tracing::Level;
+use tracing_subscriber::reload::Handle;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use std::io::Stdout;
@@ -14,6 +15,7 @@ use crate::global_state::GlobalState;
 use crate::logging::SharedLogBuffer;
 use crate::logging::LogMsg;
 use crate::types::app_state::*;
+use crate::types::odd_box_event::Event as OddBoxEvent;
 use crate::types::tui_state::{Page, TuiSiteWindowState, TuiState};
 use std::sync::{Arc, Mutex};
 use crate::http_proxy::ProcMessage;
@@ -66,7 +68,7 @@ pub fn init() {
 pub async fn run(
     global_state: Arc<GlobalState>,
     tx: tokio::sync::broadcast::Sender<ProcMessage>,
-    trace_msg_broadcaster: tokio::sync::broadcast::Sender<String>,
+    trace_msg_broadcaster: tokio::sync::broadcast::Sender<OddBoxEvent>,
     reloadable_filter : tracing_subscriber::reload::Layer<EnvFilter, tracing_subscriber::layer::Layered<crate::logging::TuiLoggerLayer, tracing_subscriber::Registry>>,
 ) {
 
@@ -117,6 +119,8 @@ pub async fn run(
                 dark_light::Mode::Light => Theme::Light(light_style),
                 dark_light::Mode::Default => Theme::Dark(dark_style),
             };
+
+            let mut last_set_log_level_by_tui = tracing::level_filters::LevelFilter::TRACE;
 
             let mut count = 0;
             
@@ -284,34 +288,60 @@ pub async fn run(
                                         
                                         let handle = reloadable_filter_handle.clone();
                                         
-                                        // rewrite to use the current log level and jump to the next in a cyclic way:
-
-                                        match LevelFilter::current() {
+                                        // we cannot use the current log level anymore as we set different levels for proc host and main app
+                                        // thus we will instead save a local copy of the current log level and circle through the levels here.
+                                        match last_set_log_level_by_tui {
                                             tracing::level_filters::LevelFilter::TRACE => {
-                                                _ = handle.reload(EnvFilter::from_str("odd_box=info").unwrap());
+                                                last_set_log_level_by_tui = tracing::level_filters::LevelFilter::INFO;
+                                                _ = handle.reload(
+                                                    EnvFilter::from_str("odd_box=info").unwrap()
+                                                    // we always allow host processes to log anything - its controlled by site specific config
+                                                    // and filtered in the host_proc logic. same with all levels below here.
+                                                    .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
+                                                );
                                                 tracing::info!("Switched log level to INFO");
                                             }
                                             tracing::level_filters::LevelFilter::INFO => {
-                                                _ = handle.reload(EnvFilter::from_str("odd_box=warn").unwrap());
+                                                last_set_log_level_by_tui = tracing::level_filters::LevelFilter::WARN;
+                                                _ = handle.reload(
+                                                    EnvFilter::from_str("odd_box=warn").unwrap()
+                                                    .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
+                                                );
                                                 // use warn log as it is now the lowest visible log level
                                                 tracing::warn!("Switched log level to WARN"); 
                                             }
                                             tracing::level_filters::LevelFilter::WARN => {
-                                                _ = handle.reload(EnvFilter::from_str("odd_box=error").unwrap());
+                                                last_set_log_level_by_tui = tracing::level_filters::LevelFilter::ERROR;
+                                                _ = handle.reload(
+                                                    EnvFilter::from_str("odd_box=error").unwrap()
+                                                    .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
+                                                );
                                                 // use error log as it is now the lowest visible log level
                                                 tracing::error!("Switched log level to ERROR");
                                             }
                                             tracing::level_filters::LevelFilter::ERROR => {
-                                                _ = handle.reload(EnvFilter::from_str("odd_box=debug").unwrap());
+                                                last_set_log_level_by_tui = tracing::level_filters::LevelFilter::DEBUG;
+                                                _ = handle.reload(
+                                                    EnvFilter::from_str("odd_box=debug").unwrap()
+                                                    .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
+                                                );
                                                 tracing::info!("Switched log level to DEBUG");
                                             }
                                             tracing::level_filters::LevelFilter::DEBUG => {
-                                                _ = handle.reload(EnvFilter::from_str("odd_box=trace").unwrap());
+                                                last_set_log_level_by_tui = tracing::level_filters::LevelFilter::TRACE;
+                                                _ = handle.reload(
+                                                    EnvFilter::from_str("odd_box=trace").unwrap()
+                                                    .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
+                                                );
                                                 tracing::info!("Switched log level to TRACE");
                                             }
-                                            _ => {
-                                                _ = handle.reload(EnvFilter::from_str("odd_box=info").unwrap());
-                                                tracing::info!("Switched log level to INFO");
+                                            x => {
+                                                last_set_log_level_by_tui = tracing::level_filters::LevelFilter::INFO;
+                                                _ = handle.reload(
+                                                    EnvFilter::from_str("odd_box=info").unwrap()
+                                                    .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
+                                                );
+                                                tracing::info!("Switched log level to INFO from {x:?}");
                                             }
                                         }
                                         
@@ -651,7 +681,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
              ratatui::text::Span::styled("[4] Threads", Style::default().fg(tab_fg_color))
         ]).highlight_style(
             if is_dark_theme {
-                Style::new().fg(Color::Cyan)
+                Style::new().fg(Color::LightYellow)
             } else {
                 Style::new().fg(Color::Black)
             }

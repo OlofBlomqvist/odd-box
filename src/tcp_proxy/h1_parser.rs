@@ -1,4 +1,3 @@
-use std::{collections::HashMap};
 use httparse;
 
 #[derive(Debug)]
@@ -6,7 +5,7 @@ pub struct HttpRequest {
     pub method: String,
     pub path: String,
     pub version: String,
-    pub headers: HashMap<String, String>,
+    pub headers: std::collections::HashMap<String, String>,
     pub body: Vec<u8>,
     pub possibly_body: String
 }
@@ -29,7 +28,7 @@ pub fn parse_http_requests(data: &[u8]) -> Result<Vec<HttpRequest>, String> {
 
                 let headers_map = req.headers.iter()
                     .map(|h| (h.name.to_string(), String::from_utf8_lossy(h.value).trim().to_string()))
-                    .collect::<HashMap<_, _>>();
+                    .collect::<std::collections::HashMap<_, _>>();
 
                 let content_length = headers_map.get("Content-Length")
                     .and_then(|v| v.parse::<usize>().ok())

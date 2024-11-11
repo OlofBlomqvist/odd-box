@@ -1,6 +1,8 @@
 use std::borrow::Cow;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use axum::http::{HeaderName, HeaderValue};
 use bytes::Bytes;
 use http_body::Frame;
 use http_body_util::{Either, Full, StreamBody};
@@ -13,12 +15,13 @@ use hyper_util::rt::TokioExecutor;
 use tokio_stream::wrappers::ReceiverStream;
 use std::future::Future;
 use std::pin::Pin;
+use crate::configuration::v2::Backend;
 use crate::global_state::GlobalState;
-use crate::proxy::SomeSortOfManagedStream;
-use crate::tcp_proxy::ReverseTcpProxyTarget;
+use crate::tcp_proxy::{GenericManagedStream, ReverseTcpProxyTarget};
 use crate::types::app_state::ProcState;
+use crate::types::proxy_state::ConnectionKey;
 use crate::CustomError;
-use hyper::{Method, StatusCode};
+use hyper::{HeaderMap, Method, StatusCode};
 use lazy_static::lazy_static;
 use super::{ProcMessage, ReverseProxyService, WrappedNormalResponse};
 use super::proxy;
@@ -29,12 +32,18 @@ lazy_static! {
     static ref SERVER_ONE: hyper_util::server::conn::auto::Builder<TokioExecutor> = 
         hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
 }
-pub async fn serve(service:ReverseProxyService,io:SomeSortOfManagedStream) {
+pub async fn serve(service:ReverseProxyService,io:GenericManagedStream) {
     
     let result = match io {
-        SomeSortOfManagedStream::ClearText(io) =>  SERVER_ONE.serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(io), service).await,
-        SomeSortOfManagedStream::TLS(io) =>  SERVER_ONE.serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(io), service).await
+        // GenericManagedStream::TLS(peekable_tls_stream) => 
+        //     SERVER_ONE.serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(peekable_tls_stream.managed_tls_stream), service).await,
+        GenericManagedStream::TCP(peekable_tcp_stream) => 
+            SERVER_ONE.serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(peekable_tcp_stream), service).await,
+        GenericManagedStream::TerminatedTLS(stream) => 
+            SERVER_ONE.serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(stream), service).await,
+            
     };
+        
        
     match result {
         Ok(_) => {},
@@ -64,6 +73,46 @@ pub type EpicBody =
     >;
 
 pub type EpicResponse = hyper::Response<EpicBody>;
+
+pub struct OddResponse(EpicResponse);
+impl OddResponse {
+    pub fn new(body:EpicBody) -> Self {
+        Self(EpicResponse::new(body))
+    }
+    pub fn empty() -> Self {
+        Self(EpicResponse::new(Either::Right(FullOrStreamBody::Left(Full::new(Bytes::new())))))
+    }
+}
+impl From<EpicResponse> for OddResponse {
+    fn from(r:EpicResponse) -> Self {
+        OddResponse(r)
+    }
+}
+impl From<OddResponse> for EpicResponse {
+    fn from(r:OddResponse) -> Self {
+        r.0
+    }
+}
+impl OddResponse {
+    pub fn with_status(self, status:StatusCode) -> Self {
+        let (parts,body) = self.0.into_parts();
+        let mut response = Response::from_parts(parts,body);
+        *response.status_mut() = status;
+        Self(response)
+    }
+    pub fn with_headers(self, headers:Vec<(&str,&str)>) -> Self {
+        let (parts,body) = self.0.into_parts();
+        let mut response = Response::from_parts(parts,body);
+        let headers = HeaderMap::from_iter(headers.iter().filter_map(|(k,v)| {
+            match (HeaderName::from_str(k), HeaderValue::from_str(v)) {
+                (Ok(k), Ok(v)) => Some((k,v)),
+                _ => { None }
+            }
+        }));
+        *response.headers_mut() = headers;
+        Self(response)
+    }
+}
 
 
 pub fn create_response_channel(buf_size:usize) -> (
@@ -182,7 +231,8 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
             self.client.clone(),
             self.h2_client.clone(),
             self.resolved_target.clone(),
-            self.configuration.clone()
+            self.configuration.clone(),
+            self.connection_key.clone()
         );
         
         return Box::pin(async move {
@@ -214,7 +264,8 @@ async fn handle_http_request(
     client:  Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
     h2_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
     peeked_target: Option<Arc<ReverseTcpProxyTarget>>,
-    configuration: Arc<crate::configuration::ConfigWrapper>
+    configuration: Arc<crate::configuration::ConfigWrapper>,
+    connection_key: ConnectionKey
 
 ) -> Result<EpicResponse, CustomError> {
     
@@ -228,18 +279,58 @@ async fn handle_http_request(
             req.uri().authority().ok_or(CustomError(format!("No hostname and no Authority found")))?.host().to_string()
         };
 
+    if req_host_name == "localhost" || req_host_name == "oddbox.localhost" || req_host_name == "odd-box.localhost"  {
+
+        crate::proxy::mutate_tracked_connection(&state, &connection_key, |x|{
+            x.is_odd_box_admin_api_req = true;
+            x.outgoing_connection_is_tls = false; // todo: we should actually place the admin api behind tls.
+                                                  // we could even expose it as an adhoc remote server?
+        });
+
+        if client_ip.ip().is_loopback() {
+            tracing::warn!("Received request to localhost, this is allowed for loopback.");
+            if let Some(p) = configuration.admin_api_port {
+                return Ok(
+                    OddResponse::empty()
+                        .with_headers(vec![
+                            ("Location", &format!("http://localhost:{p}"))
+                        ])
+                        .with_status(StatusCode::TEMPORARY_REDIRECT)
+                        .into()
+                );
+            } else {
+                return Ok(
+                    OddResponse::new(create_epic_string_full_body("odd-box admin ui is disabled in config"))
+                        .with_headers(vec![
+                            ("Content-Type", "text/plain")
+                        ])
+                        .with_status(StatusCode::NOT_FOUND)
+                        .into()
+                    );
+                        
+            }
+           
+        } else {
+            tracing::warn!("Received request to localhost, but not from loopback, this is not allowed and also highly suspicious. client ip was: {client_ip:?}");
+            return Ok(
+                OddResponse::new(create_epic_string_full_body("access to odd-box ui is only allowed from loopback"))
+                    .with_status(StatusCode::NOT_FOUND)
+                    .into()
+                );
+        }
+    }
 
     
     tracing::trace!("Handling request from {client_ip:?} on hostname {req_host_name:?}");
     
     // THIS SHOULD BE THE ONLY PLACE WE INCREMENT THE TERMINATION COUNTER
-    match state.app_state.statistics.terminated_http_connections_per_hostname.get_mut(&req_host_name) {
+    match state.app_state.statistics.connections_per_hostname.get_mut(&req_host_name) {
         Some(mut guard) => {
             let (_k,v) = guard.pair_mut();
             1 + v.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
         },
         None => {
-            state.app_state.statistics.terminated_http_connections_per_hostname.insert(req_host_name.clone(), std::sync::atomic::AtomicUsize::new(1));
+            state.app_state.statistics.connections_per_hostname.insert(req_host_name.clone(), std::sync::atomic::AtomicUsize::new(1));
             1
         }
     };
@@ -265,7 +356,13 @@ async fn handle_http_request(
     let dir_target = configuration.dir_server.iter().flatten().find_map(|x| {
         if x.host_name == req_host_name {
             match configuration.resolve_dir_server_configuration(x) {
-                Ok(r) => Some(r),
+                Ok(r) => {
+                    crate::proxy::mutate_tracked_connection(&state, &connection_key, |x|{
+                        x.dir_server = Some(r.clone());
+                        x.outgoing_connection_is_tls = x.incoming_connection_uses_tls;
+                    });            
+                    Some(r)
+                },
                 Err(e) => {
                     tracing::warn!("Failed to resolve dir server configuration: {e:?}");
                     None
@@ -397,16 +494,17 @@ async fn handle_http_request(
         if original_path_and_query == "/" { original_path_and_query = ""}
 
 
-        let parsed_host_name = {
+        let (parsed_host_name,subdomain) = {
             let forward_subdomains = target_proc_cfg.forward_subdomains.unwrap_or_default();
+            let sub = get_subdomain(&req_host_name, &target_proc_cfg.host_name);
             if forward_subdomains {
-                if let Some(subdomain) = get_subdomain(&req_host_name, &target_proc_cfg.host_name) {
-                    Cow::Owned(format!("{subdomain}.{}", &target_proc_cfg.host_name))
+                if let Some(subdomain) = sub {
+                    (Cow::Owned(format!("{subdomain}.{}", &target_proc_cfg.host_name)),Some(subdomain))
                 } else {
-                    Cow::Borrowed(&target_proc_cfg.host_name)
+                    (Cow::Borrowed(&target_proc_cfg.host_name),sub)
                 }
             } else {
-                Cow::Borrowed(&target_proc_cfg.host_name)
+                (Cow::Borrowed(&target_proc_cfg.host_name),sub)
             }
         };
 
@@ -426,7 +524,32 @@ async fn handle_http_request(
 
         let target_cfg = target_proc_cfg.clone();
         let hints = target_cfg.hints.clone();
-        let target = crate::http_proxy::Target::Proc(target_cfg);
+        let target = crate::http_proxy::Target::Proc(target_cfg.clone());
+
+        let backend = crate::configuration::v2::Backend {
+            hints: hints,
+            // we are hosting this service so clearly it is local
+            address: "localhost".to_string(),
+            port: port,
+            https: Some(enforce_https)
+        };
+
+        crate::proxy::mutate_tracked_connection(&state, &connection_key, |x| {
+            x.backend = Some(backend.clone());
+            x.outgoing_connection_is_tls = enforce_https;
+            x.target = Some(ReverseTcpProxyTarget { 
+                proc_id : Some(target_cfg.get_id().clone()),
+                disable_tcp_tunnel_mode: false,
+                host_name: target_cfg.host_name.to_owned(),
+                capture_subdomains: target_cfg.capture_subdomains.unwrap_or_default(),
+                forward_wildcard: target_cfg.forward_subdomains.unwrap_or_default(),
+                hosted_target_config: Some(target_cfg),
+                remote_target_config: None,
+                backends: vec![backend.clone()],
+                is_hosted: true,
+                sub_domain: subdomain
+            });
+        });
 
         let result = 
             proxy(
@@ -441,12 +564,7 @@ async fn handle_http_request(
                 h2_client,
                 &target_url,
                 enforce_https,
-                crate::configuration::v2::Backend {
-                    hints: hints,
-                    address: parsed_host_name.to_string(),
-                    port: port,
-                    https: Some(enforce_https)
-                }
+                backend
             ).await;
 
         map_result(&target_url,result).await
@@ -461,7 +579,8 @@ async fn handle_http_request(
                 client_ip,
                 &peeked_remote_config,
                 req,client.clone(),
-                h2_client.clone()
+                h2_client.clone(),
+                connection_key
             ).await
         }
         else if let Some(remote_target_cfg) = &configuration.remote_target.iter().flatten().find(|p|{
@@ -475,7 +594,8 @@ async fn handle_http_request(
                 client_ip,
                 remote_target_cfg,
                 req,client.clone(),
-                h2_client.clone()
+                h2_client.clone(),
+                connection_key
             ).await
         }
 
@@ -510,6 +630,7 @@ async fn perform_remote_forwarding(
     req:hyper::Request<IncomingBody>,
     client:  Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
     h2_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
+    connection_key: ConnectionKey
 ) -> Result<EpicResponse,CustomError> {
     
     
@@ -517,7 +638,7 @@ async fn perform_remote_forwarding(
         .and_then(|x| Some(x.as_str())).unwrap_or_default();
     if original_path_and_query == "/" { original_path_and_query = ""}
    
-    let next_backend_target = if let Some(b) = remote_target_config.next_backend(&state, crate::configuration::v2::BackendFilter::Any,false).await {
+    let next_backend_target = if let Some(b) = remote_target_config.next_backend(&state, crate::configuration::v2::BackendFilter::Any).await {
         b
     } else {
         return Err(CustomError("No backend found".to_string()))
@@ -528,17 +649,17 @@ async fn perform_remote_forwarding(
    
     let scheme = if enforce_https { "https" } else { "http" }; 
     
-    let resolved_host_name = {
-
+    let (resolved_host_name,subdomain) = {
+        let sub = get_subdomain(&req_host_name, &remote_target_config.host_name);
         if remote_target_config.forward_subdomains.unwrap_or_default() {
-            if let Some(subdomain) = get_subdomain(&req_host_name, &remote_target_config.host_name) {
+            if let Some(subdomain) = sub {
             //tracing::debug!("remote forward terminating proxy rewrote subdomain: {subdomain}!");
-                format!("{subdomain}.{}", &next_backend_target.address)
+                (format!("{subdomain}.{}", &next_backend_target.address),Some(subdomain))
             } else {
-                next_backend_target.address.clone()
+                (next_backend_target.address.clone(),sub)
             }
         } else {
-            next_backend_target.address.clone()
+            (next_backend_target.address.clone(),sub)
         }
     };
         
@@ -547,6 +668,25 @@ async fn perform_remote_forwarding(
         next_backend_target.port,
         original_path_and_query
     );
+
+    crate::proxy::mutate_tracked_connection(&state, &connection_key, |x| {
+        
+        x.backend = Some(next_backend_target.clone());
+        x.outgoing_connection_is_tls = enforce_https;
+
+        x.target = Some(ReverseTcpProxyTarget { 
+            proc_id : None,
+            disable_tcp_tunnel_mode: false,
+            host_name: remote_target_config.host_name.to_owned(),
+            capture_subdomains: remote_target_config.capture_subdomains.unwrap_or_default(),
+            forward_wildcard: remote_target_config.forward_subdomains.unwrap_or_default(),
+            hosted_target_config: None,
+            remote_target_config: Some(remote_target_config.clone()),
+            backends: remote_target_config.backends.clone(),
+            is_hosted: true,
+            sub_domain: subdomain
+        });
+    });
 
     //tracing::info!("Incoming request to '{}' for remote proxy target {target_url}",next_backend_target.address);
     let result = 

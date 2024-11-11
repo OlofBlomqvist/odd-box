@@ -30,9 +30,8 @@ impl AppState {
         let result = AppState {
             site_status_map: Arc::new(dashmap::DashMap::new()),
             statistics : Arc::new(ProxyStats { 
-                terminated_http_connections_per_hostname: dashmap::DashMap::new(),
-                active_connections: dashmap::DashMap::new(),
-                tunnelled_tcp_connections_per_hostname: dashmap::DashMap::new()
+                connections_per_hostname: dashmap::DashMap::new(),
+                active_connections: dashmap::DashMap::new()
                 
             }),
             exit: AtomicBool::new(false),

@@ -28,11 +28,14 @@ use notify::Watcher;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::Layer;
 use types::args::Args;
+use types::odd_box_event::Event;
 use types::proc_info::BgTaskInfo;
 use types::proc_info::ProcId;
 use types::proc_info::ProcInfo;
 use configuration::{ConfigWrapper, LogLevel};
+use core::fmt;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -72,32 +75,39 @@ pub fn generate_unique_id() -> u64 {
 pub mod global_state {
     use std::sync::{atomic::AtomicU64, Arc};
 
-    use crate::{certs::DynamicCertResolver, tcp_proxy::{ReverseTcpProxy, ReverseTcpProxyTarget}};
+
+    use crate::{certs::DynamicCertResolver, tcp_proxy::{ReverseTcpProxy, ReverseTcpProxyTarget}, types::odd_box_event::Event};
     #[derive(Debug)]
     pub struct GlobalState {
+        pub log_handle : crate::OddLogHandle,
         pub app_state: std::sync::Arc<crate::types::app_state::AppState>,
         pub config: std::sync::Arc<tokio::sync::RwLock<crate::configuration::ConfigWrapper>>,
         pub broadcaster: tokio::sync::broadcast::Sender<crate::http_proxy::ProcMessage>,
         pub target_request_counts: dashmap::DashMap<String, AtomicU64>,
         pub cert_resolver: std::sync::Arc<DynamicCertResolver>,
-        reverse_tcp_proxy_target_cache : dashmap::DashMap<String,Arc<ReverseTcpProxyTarget>>
+        reverse_tcp_proxy_target_cache : dashmap::DashMap<String,Arc<ReverseTcpProxyTarget>>,
+        pub global_broadcast_channel: tokio::sync::broadcast::Sender<Event>
     }
     impl GlobalState {
         
         pub fn new(
             app_state: std::sync::Arc<crate::types::app_state::AppState>,
             config: std::sync::Arc<tokio::sync::RwLock<crate::configuration::ConfigWrapper>>,
-            broadcaster: tokio::sync::broadcast::Sender<crate::http_proxy::ProcMessage>,
-            cert_resolver: std::sync::Arc<DynamicCertResolver>        
+            tx_to_process_hosts: tokio::sync::broadcast::Sender<crate::http_proxy::ProcMessage>,
+            cert_resolver: std::sync::Arc<DynamicCertResolver>   ,
+            global_broadcast_channel: tokio::sync::broadcast::Sender<Event>,
+            log_handle : crate::OddLogHandle
         ) -> Self {
 
             Self {
+                log_handle,
                 app_state,
                 config,
-                broadcaster,
+                broadcaster: tx_to_process_hosts,
                 target_request_counts: dashmap::DashMap::new(),
                 cert_resolver,
                 reverse_tcp_proxy_target_cache: dashmap::DashMap::new(),
+                global_broadcast_channel
             }
         }
         
@@ -155,9 +165,11 @@ pub mod global_state {
             let cfg = self.config.read().await;
 
             for y in cfg.hosted_process.iter().flatten() {
-
+                
                 let filter_result = Self::filter_fun(pre_filter_hostname, &y.host_name, y.capture_subdomains.unwrap_or_default());
-                if filter_result.is_none() { continue };
+                if filter_result.is_none() { 
+                    continue
+                 };
                 let sub_domain = filter_result.and_then(|x|x);
                 
                 let port = y.active_port.unwrap_or_default();
@@ -187,6 +199,8 @@ pub mod global_state {
                     self.reverse_tcp_proxy_target_cache.insert(pre_filter_hostname.into(), shared_result.clone());
                     result = Some(shared_result);
                     break;
+                } else {
+                    tracing::warn!("the target was found but is not running.")
                 }
 
                 
@@ -195,7 +209,7 @@ pub mod global_state {
 
             if let Some(x) = &cfg.remote_target {
                 for y in x.iter().filter(|x|pre_filter_hostname.to_uppercase().contains(&x.host_name.to_uppercase()))  {
-                    
+                    //tracing::warn!("comparing {pre_filter_hostname} with remote target {}",y.host_name);
                     let filter_result = Self::filter_fun(pre_filter_hostname, &y.host_name, y.capture_subdomains.unwrap_or_default());
                     if filter_result.is_none() { continue };
                     let sub_domain = filter_result.and_then(|x|x);
@@ -247,7 +261,7 @@ lazy_static! {
 
 async fn config_file_monitor(
     config: Arc<RwLock<ConfigWrapper>>, 
-    global_state: Arc<GlobalState>
+    global_state: Arc<GlobalState>,
 ) -> anyhow::Result<()> {
     
     let guard = config.read().await;
@@ -508,8 +522,8 @@ async fn main() -> anyhow::Result<()> {
         Some(LogLevel::Debug) => LevelFilter::DEBUG,
         _ => LevelFilter::INFO
     };
-    let tracing_broadcaster = tokio::sync::broadcast::Sender::<String>::new(10);
-    let (tx,_) = tokio::sync::broadcast::channel::<ProcMessage>(33);
+    let global_event_broadcaster = tokio::sync::broadcast::Sender::<Event>::new(10);
+    let (proc_msg_tx,_) = tokio::sync::broadcast::channel::<ProcMessage>(33);
     let inner_state = AppState::new();  
     let api_port = config.admin_api_port.clone();
     let inner_state_arc = std::sync::Arc::new(inner_state);
@@ -532,33 +546,74 @@ async fn main() -> anyhow::Result<()> {
     
     let enable_lets_encrypt = config.lets_encrypt_account_email.is_some();
 
-    let arced_tx = std::sync::Arc::new(tx.clone());
+    let arced_tx = std::sync::Arc::new(proc_msg_tx.clone());
     let shutdown_signal = Arc::new(tokio::sync::Notify::new());
-    let api_broadcaster = tracing_broadcaster.clone();
-    let le_acc_mail = config.lets_encrypt_account_email.clone();
+    let event_broadcast_channel = global_event_broadcaster.clone();
     let shared_config = std::sync::Arc::new(tokio::sync::RwLock::new(config));
     
-    let global_state = Arc::new(crate::global_state::GlobalState::new( 
+
+    let mut global_state = crate::global_state::GlobalState::new( 
         inner_state_arc.clone(), 
         shared_config.clone(), 
-        tx.clone(),
-        Arc::new(certs::DynamicCertResolver::new(
-            enable_lets_encrypt,le_acc_mail).await.context("could not create cert resolver for the global state!")?
-        ),
+        proc_msg_tx.clone(),
+        Arc::new(certs::DynamicCertResolver::new(enable_lets_encrypt)),
+        global_event_broadcaster.clone(),
+        OddLogHandle::None
+    );
+
+    
+    let (cli_filter, cli_reload_handle) = 
+        tracing_subscriber::reload::Layer::new(EnvFilter::from_default_env()
+            .add_directive(format!("odd_box={}", log_level).parse().expect("This directive should always work"))
+            .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work")));
+    
+    let (tui_filter, tui_reload_handle) = 
+        tracing_subscriber::reload::Layer::new(EnvFilter::from_default_env()
+            .add_directive(format!("odd_box={}", log_level).parse().expect("This directive should always work"))
+            .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work")));
+
+    
+
+    if !tui_flag { 
         
-    ));
+        global_state.log_handle = OddLogHandle::CLI(RwLock::new(cli_reload_handle));
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .compact()
+            .with_thread_names(true)
+            .with_timer(
+                tracing_subscriber::fmt::time::OffsetTime::new(
+                    time::UtcOffset::from_whole_seconds(
+                        chrono::Local::now().offset().local_minus_utc()
+                    ).expect("time... works"), 
+                    time::macros::format_description!("[hour]:[minute]:[second]")
+                )
+        ).boxed();
 
+        let subscriber = tracing_subscriber::registry().with(fmt_layer);
 
-    tokio::task::spawn(crate::letsencrypt::bg_worker_for_lets_encrypt_certs(global_state.clone()));
+        subscriber
+            .with(logging::NonTuiLoggerLayer { broadcaster: global_event_broadcaster.clone() })
+            .with(cli_filter)
+            .init();
+    } else {
+
+        global_state.log_handle = OddLogHandle::TUI(RwLock::new(tui_reload_handle));
+        
+    }
+    
+    let global_state = Arc::new(global_state);
+
     
     // Spawn task for the admin api if enabled
     if let Some(api_port) = api_port {
         let api_state = global_state.clone();
         tokio::spawn(async move {
-            api::run(api_state,api_port, api_broadcaster).await
+            api::run(api_state,api_port, event_broadcast_channel).await
         });
     }
 
+    tokio::task::spawn(crate::letsencrypt::bg_worker_for_lets_encrypt_certs(global_state.clone()));
+    
     // Spawn thread cleaner (removes dead threads from the proc_thread_map)
     let cleanup_thread = tokio::spawn(thread_cleaner());
     let cfg_monitor = tokio::spawn(config_file_monitor(shared_config.clone(),global_state.clone()));
@@ -566,25 +621,17 @@ async fn main() -> anyhow::Result<()> {
     let mut tui_task : Option<JoinHandle<()>> = None;
 
 
-    let intial_log_filter = EnvFilter::from_default_env()
-        .add_directive(format!("odd_box={}",log_level).parse().expect("this directive will always work"));
-
     // Before starting the proxy thread(s) we need to initialize the tracing system and the tui if enabled.
     if tui_flag {
         
-        // note: we use reload-handle because we plan to implement support for switching log level at runtime at least in tui mode.
-        let (filter, _reload_handle) = tracing_subscriber::reload::Layer::new(intial_log_filter);
-            // ^ todo: perhaps invert this logic
         tui::init();
         tui_task = Some(tokio::spawn(tui::run(
             global_state.clone(),
-            tx, 
-            tracing_broadcaster,
-            filter
+            proc_msg_tx, 
+            global_event_broadcaster,
+            tui_filter
         )));
     } else {
-
-        init_logging(intial_log_filter, Some(tracing_broadcaster));
 
         // From now on, we need to capture ctrl-c and make sure to shut down the application gracefully
         // as we are about to spawn a bunch of processes that we need to shut down properly.
@@ -725,32 +772,19 @@ async fn main() -> anyhow::Result<()> {
 }
 
 
+type CliLogHandle = tracing_subscriber::reload::Handle<EnvFilter,tracing_subscriber::layer::Layered<logging::NonTuiLoggerLayer,tracing_subscriber::layer::Layered<Box<dyn Layer<tracing_subscriber::Registry> +Send+Sync>,tracing_subscriber::Registry>>>;
+type TuiLogHandle = tracing_subscriber::reload::Handle<EnvFilter, tracing_subscriber::layer::Layered<logging::TuiLoggerLayer, tracing_subscriber::Registry>>;
 
 
-pub fn init_logging(intial_log_filter:EnvFilter,tracing_broadcaster:Option<tokio::sync::broadcast::Sender<String>>) {
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .compact()
-        .with_thread_names(true)
-        .with_timer(
-            tracing_subscriber::fmt::time::OffsetTime::new(
-                time::UtcOffset::from_whole_seconds(
-                    chrono::Local::now().offset().local_minus_utc()
-                ).expect("time... works"), 
-                time::macros::format_description!("[hour]:[minute]:[second]")
-            )
-    );
 
-    if let Some(tracing_broadcaster) = tracing_broadcaster {
+pub enum OddLogHandle {
+    CLI(RwLock<CliLogHandle>),
+    TUI(RwLock<TuiLogHandle>),
+    None
+}
 
-    tracing_subscriber::Registry::default()
-        .with(fmt_layer)
-        .with(intial_log_filter)
-        .with(logging::NonTuiLoggerLayer { broadcaster: tracing_broadcaster.clone() })
-        .init()
-    } else {
-        tracing_subscriber::Registry::default()
-        .with(fmt_layer)
-        .with(intial_log_filter)
-        .init()
-    };
+impl fmt::Debug for OddLogHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OddLogHandle")
+    }
 }

@@ -1,7 +1,7 @@
 [package]
 name = "odd-box"
-description = "dead simple reverse proxy server"
-version = "0.1.9"
+description = "a dead simple reverse proxy server and web server"
+version = "0.1.10"
 edition = "2021"
 authors = ["Olof Blomqvist <olof@twnet.se>"]
 repository = "https://github.com/OlofBlomqvist/odd-box"
@@ -44,7 +44,7 @@ socket2 = "0.5.5"
 hyper-tungstenite = "0.14.0"
 ratatui = "0.28.1"
 crossterm = { version = "0.28.1"  }
-chrono = "0.4.31"
+chrono = { version = "0.4.38", features= ["serde"] }
 time = {version="0.3.36",features=["macros","formatting","parsing"]}
 reqwest = { version = "0.12.7", features = ["json","rustls-tls"], default-features = false}
 serde_json = "1.0.111"
@@ -77,7 +77,7 @@ hpack = "0.3.0"
 include_dir = "0.7.4"
 mime_guess = "2.0.5"
 tokio-util = "0.7.12"
-
+urlencoding = "2.1"
 # [target.'cfg(not(target_env = "msvc"))'.dependencies]
 # tikv-jemallocator = "0.6.0"
 

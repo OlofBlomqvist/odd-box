@@ -1,5 +1,9 @@
+use std::any;
+
 use anyhow::bail;
 use hyper::http::Version;
+
+use super::h1_initial_parser::ParsedHttpRequest;
 
 // note: this method is performance critical, be careful when changing it
 // todo: add as many tests as possible to ensure this method is correct and performant
@@ -63,4 +67,7 @@ pub fn try_decode_http_host(http_request: &str) -> Option<String> {
         }
     }
     None
+}
+pub fn try_decode_http_host_and_h2c(http_request: &[u8]) -> anyhow::Result<ParsedHttpRequest> {
+    super::h1_initial_parser::parse_http_request_fast(http_request)
 }
