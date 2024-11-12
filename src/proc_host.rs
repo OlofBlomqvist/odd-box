@@ -56,7 +56,6 @@ pub async fn host(
     let re = regex::Regex::new(r"^\d* *\[.*?\] .*? - ").expect("host regex always works");
     
 
-    let mut selected_port: Option<u16> = None;
 
     let mut missing_bin: bool = false;
 
@@ -160,12 +159,11 @@ pub async fn host(
     
         let mut guard = state.config.write().await;
         if let Ok(p) = guard.set_active_port(&mut resolved_proc) {
-            selected_port = Some(p);
-            resolved_proc.active_port = selected_port;
+            resolved_proc.active_port = Some(p);
         }
         drop(guard);
         
-        if selected_port.is_none() {
+        if resolved_proc.active_port.is_none() {
             let ms = 3000;
             tracing::warn!("[{}] No usable port found. Waiting for {}ms before retrying..",&resolved_proc.host_name,ms);
             tokio::time::sleep(Duration::from_millis(ms)).await;
@@ -221,7 +219,7 @@ pub async fn host(
             process_specific_environment_variables.insert(kvp.key.clone(), kvp.value.clone());
         }  
 
-        let port = selected_port
+        let port = resolved_proc.active_port
             .expect("it should not be possible to start a process without a port first having been chosen - this is a bug in odd-box").to_string();
 
         process_specific_environment_variables.insert("PORT".into(), port.clone());
