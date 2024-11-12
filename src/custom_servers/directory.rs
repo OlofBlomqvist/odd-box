@@ -51,7 +51,7 @@ let req_path : String = urlencoding::decode(req.uri().path()).map_err(|e|CustomE
                 tracing::trace!("Cache hit for {}", if cache_key.is_empty() {"/"} else {&cache_key});
                 return create_simple_response_from_bytes(res.clone());
             } else {
-                tracing::trace!("Cache expired for {}", cache_key);
+                // tracing::trace!("Cache expired for {}", cache_key);
                 expired_in_cache = true;
             }
         }
@@ -60,7 +60,7 @@ let req_path : String = urlencoding::decode(req.uri().path()).map_err(|e|CustomE
         }
     }
 
-    tracing::trace!("Fetching cold file");
+    tracing::trace!("Fetching cold file: {}", req_path);
 
     let requested_path = Path::new(&req_path);
     let full_path = root_dir.join(requested_path.strip_prefix("/").unwrap_or(requested_path));
