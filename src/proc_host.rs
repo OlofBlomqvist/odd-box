@@ -56,17 +56,7 @@ pub async fn host(
     let re = regex::Regex::new(r"^\d* *\[.*?\] .*? - ").expect("host regex always works");
     
 
-    let mut selected_port: Option<u16> = {
-        let mut guard = state.config.write().await;
-        if let Ok(p) = guard.set_active_port(&mut resolved_proc) {
-            let selected_port = Some(p);
-            resolved_proc.active_port = selected_port;
-            selected_port
-        } else {
-            None
-        }
-    };
-
+    let mut selected_port: Option<u16> = None;
 
     let mut missing_bin: bool = false;
 
@@ -165,32 +155,23 @@ pub async fn host(
         }
 
         
-
-        
-        if selected_port == None {
-            
-            let mut guard = state.config.write().await;
-            
-            if let Ok(p) = guard.set_active_port(&mut resolved_proc) {
-                selected_port = Some(p);
-                resolved_proc.active_port = selected_port;
-            }
-
-            drop(guard);
-            
-            if selected_port.is_none() {
-                let ms = 3000;
-                tracing::warn!("[{}] No usable port found. Waiting for {}ms before retrying..",&resolved_proc.host_name,ms);
-                tokio::time::sleep(Duration::from_millis(ms)).await;
-                continue;
-            }
+        // just to make sure we havnt messed up timing-wise and selected the same port for two different processes
+        // we will always call this function to get a new port (or keep the old one if we are the only one using it)
     
-
+        let mut guard = state.config.write().await;
+        if let Ok(p) = guard.set_active_port(&mut resolved_proc) {
+            selected_port = Some(p);
+            resolved_proc.active_port = selected_port;
         }
-        else {
-            tracing::info!("[{}] Using the previously selected port '{:?}'",&resolved_proc.host_name,selected_port);    
+        drop(guard);
+        
+        if selected_port.is_none() {
+            let ms = 3000;
+            tracing::warn!("[{}] No usable port found. Waiting for {}ms before retrying..",&resolved_proc.host_name,ms);
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+            continue;
         }
-
+            
         let current_work_dir = std::env::current_dir().expect("could not get current directory").to_str().expect("could not convert current directory to string").to_string();
         
         let workdir = &resolved_proc.dir.as_ref().map_or(current_work_dir, |x|x.to_string());

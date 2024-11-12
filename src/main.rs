@@ -85,7 +85,7 @@ pub mod global_state {
         pub broadcaster: tokio::sync::broadcast::Sender<crate::http_proxy::ProcMessage>,
         pub target_request_counts: dashmap::DashMap<String, AtomicU64>,
         pub cert_resolver: std::sync::Arc<DynamicCertResolver>,
-        reverse_tcp_proxy_target_cache : dashmap::DashMap<String,Arc<ReverseTcpProxyTarget>>,
+        pub reverse_tcp_proxy_target_cache : dashmap::DashMap<String,Arc<ReverseTcpProxyTarget>>,
         pub global_broadcast_channel: tokio::sync::broadcast::Sender<Event>
     }
     impl GlobalState {

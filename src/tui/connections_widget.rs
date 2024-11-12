@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use ratatui::layout::{Flex, Rect};
@@ -102,12 +103,13 @@ pub fn draw(
         return
     }
 
-    let headers = [ "Site", "Endpoints", "Description"];
+
+    let headers = [ "Site", "Source","Destination", "Description"];
     
-    let rows : Vec<Vec<String>> = global_state.app_state.statistics.active_connections.iter().map(|guard| {
+    let mut rows = global_state.app_state.statistics.active_connections.iter().map(|guard| {
         let (_,active_connection) = guard.pair();
         let src = active_connection.client_addr.clone();
-        let backend = match &active_connection.backend {
+        let mut backend = match &active_connection.backend {
             Some(b) => format!("{}:{}",b.address,b.port),
             None if active_connection.is_odd_box_admin_api_req => "odd-box".to_string(),
             None => match active_connection {
@@ -139,11 +141,11 @@ pub fn draw(
             (false, false, false, true) => ConnectionType::OpaqueTlsForwarding
         }.to_string();
 
-
         if let Some(t) = &active_connection.target {
             vec![
                 t.host_name.clone(),
-                format!("{} <--> {}",src,backend),
+                src,
+                backend,
                 connection_type, 
                 
             ]
@@ -154,12 +156,15 @@ pub fn draw(
                     (None,true) => "odd-box-admin-api".to_string(),
                     _ => "<UNKNOWN>".to_string()
                 },
-                format!("{} <--> {}",src,backend),
+                src,
+                backend,
                 connection_type, 
             ]
         }        
-    }).collect();
-
+    }).collect::<Vec<Vec<String>>>();
+    
+    rows.sort_by_key(|row| row[0].clone());
+    
     // let rows : Vec<Vec<String>> = vec![
     //     vec!["QQQQQQQQQQ".to_string(),"BBBBBBB".to_string(),"CCCCCC".to_string(),"DDDDDD".to_string()],
     // ];
@@ -214,8 +219,9 @@ pub fn draw(
 
     let widths = [
         Constraint::Fill(1),
-        Constraint::Fill(2), 
-        Constraint::Fill(3),        
+        Constraint::Fill(1), 
+        Constraint::Fill(1),         
+        Constraint::Fill(4),        
     ];
     
     let table = Table::new(table_rows, widths.clone())

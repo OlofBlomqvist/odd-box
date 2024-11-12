@@ -18,6 +18,7 @@ pub fn draw(
     area: Rect,
     theme: &Theme,
 ) {
+    
     let size = area.as_size();
     if size.height < 20 || size.width < 50 {
         return;
@@ -57,18 +58,20 @@ pub fn draw(
     let style = if is_dark_theme { Style::new().fg(Color::White) } else { Style::new().fg(Color::Black) };
 
 
-    let p2 = Paragraph::new(format!(
-        "Terminated HTTP connections: {}",
-        total_connections
-    )).style(style);
+    // let p2 = Paragraph::new(format!(
+    //     "Received TCP connections: {}",
+    //     total_connections // <--- this i no longer just tcp connections , its a mix.. we need to sort this out
+                             // after the rewrite so that we use the correct data from the new implementation
+    // )).style(style);
 
+    let p2 = Paragraph::new(format!("This page is under re-construction..")).style(style);
     
 
-    let p3 = Paragraph::new(format!("Number of unique hostnames seen: {}", num_unique_hostnames)).style(style);
+    // let p3 = Paragraph::new(format!("Number of unique hostnames seen: {}", num_unique_hostnames)).style(style);
 
     //f.render_widget(p1, area.offset(Offset { x: 4, y: 1 }));
     f.render_widget(p2, area.offset(Offset { x: 4, y: 1 }));
-    f.render_widget(p3, area.offset(Offset { x: 4, y: 2 }));
+    // f.render_widget(p3, area.offset(Offset { x: 4, y: 2 }));
 
 
     // TODO - Use a scrollable table and display all host specific stats

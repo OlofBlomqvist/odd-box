@@ -501,12 +501,18 @@ impl ConfigWrapper {
     pub fn set_active_port(&mut self, resolved_proc:&mut FullyResolvedInProcessSiteConfig) -> anyhow::Result<u16> {
       
     
-        let mut selected_port = None;
+        let mut selected_port = resolved_proc.active_port;
 
         // ports in use or configured for use by other sites
         let unavailable_ports = self.busy_ports().into_iter().filter(|x|{
                 x.0 != resolved_proc.host_name 
         }).collect::<Vec<(String,u16)>>();
+
+        if let Some(currently_selected_port) = selected_port {
+            if !unavailable_ports.iter().any(|x|x.1 == currently_selected_port) {
+                return Ok(currently_selected_port)
+            }
+        }
 
         // decide which port to use (ie. which port to add as the environment variable PORT)
         if let Some(prefered_port) = resolved_proc.port {

@@ -128,12 +128,17 @@ impl GenericManagedStream {
         let my_id = self.get_id();
         match self {
             GenericManagedStream::TCP(peekable_tcp_stream) => {
-                
+                let client_addr = peekable_tcp_stream.stream.peer_addr();
+                let client_addr = if let Ok(v) = client_addr {
+                    format!("{:?}",v)
+                } else {
+                    "???".to_string()
+                };
                 crate::proxy::add_or_update_connection(
                     self.global_state(),
                     ProxyActiveTCPConnection {
                         connection_key_pointer: std::sync::Arc::<u64>::downgrade(&my_id),
-                        client_addr: format!("{:?}",peekable_tcp_stream.stream.peer_addr()),
+                        client_addr: client_addr,
                         target: None,
                         backend: None,
                         incoming_connection_uses_tls: peekable_tcp_stream.is_tls,
@@ -147,11 +152,17 @@ impl GenericManagedStream {
                 );
             },
             GenericManagedStream::TerminatedTLS(managed_stream) => {
+                let client_addr = managed_stream.stream.get_ref().0.stream.peer_addr();
+                let client_addr = if let Ok(v) = client_addr {
+                    format!("{:?}",v)
+                } else {
+                    "???".to_string()
+                };
                 crate::proxy::add_or_update_connection(
                     self.global_state(),
                     ProxyActiveTCPConnection {
                         connection_key_pointer: std::sync::Arc::<u64>::downgrade(&my_id),
-                        client_addr: format!("{:?}",managed_stream.stream.get_ref().0.stream.peer_addr()),
+                        client_addr: client_addr,
                         target: None,
                         backend: None,
                         incoming_connection_uses_tls: true,
