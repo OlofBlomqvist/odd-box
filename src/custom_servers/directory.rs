@@ -41,6 +41,9 @@ pub async fn handle(
     let req_path : String = urlencoding::decode(req.uri().path()).map_err(|e|CustomError(format!("{e:?}")))?.to_string();
         
     let cache_key = req_path.trim_end_matches('/').to_string();
+    let req_path : String = urlencoding::decode(req.uri().path()).map_err(|e|CustomError(format!("{e:?}")))?.to_string();
+        
+    let cache_key = req_path.trim_end_matches('/').to_string();
     {
         tracing::trace!("checking cache for {}", cache_key);
         let mut expired_in_cache = false;

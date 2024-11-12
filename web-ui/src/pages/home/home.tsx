@@ -94,7 +94,6 @@ const HomePage = () => {
 
         <Tabs
           defaultValue={slidingTabs.find(x => x.value === type)?.value ?? "processes"}
-          className="pb-8"
         >
           <div className="flex items-center">
             <TabsList>
@@ -178,7 +177,7 @@ const HomePage = () => {
                           </TableCell>
                           <TableCell className="text-right hidden sm:table-cell">
                             <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
+                              <DropdownMenuTrigger className="hover:bg-[#00000040]" asChild>
                                 <Button
                                   aria-haspopup="true"
                                   size="icon"

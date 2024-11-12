@@ -16,12 +16,16 @@ import { HostedProcessesMenuActions } from "@/components/drawer/hosted_processes
 import { RemoteSitesMenuActions } from "@/components/drawer/remote_sites_menu_actions";
 import { DirectoryServersMenuActions } from "@/components/drawer/directory_servers_menu_actions";
 import DirServersList from "@/components/drawer/dir-servers-list";
+import LiveLogsProvider from "@/providers/live_logs";
+import ThemeContextProvider from "@/providers/theme";
 const queryClient = new QueryClient();
 
 export const Route = createRootRoute({
   component: () => (
     <>
+    <ThemeContextProvider>
       <QueryClientProvider client={queryClient}>
+        <LiveLogsProvider>
         <DrawerProvider>
           <Toaster
             toastOptions={{
@@ -74,7 +78,9 @@ export const Route = createRootRoute({
           <Footer />
         </DrawerProvider>
         <ReactQueryDevtools initialIsOpen={false} />
+        </LiveLogsProvider>
       </QueryClientProvider>
+      </ThemeContextProvider>
     </>
   ),
 });

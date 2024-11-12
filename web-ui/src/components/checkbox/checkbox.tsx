@@ -13,7 +13,7 @@ const Checkbox = ({
     <label style={{ pointerEvents: "none" }} htmlFor="use_https">
       {title}
     </label>
-    <div className="border grid border-[#ffffff24] w-[18px] h-[18px] p-[2px] rounded place-content-center">
+    <div className="border grid border-[var(--border)] w-[18px] h-[18px] p-[2px] rounded place-content-center">
       <Check className={`${checked ? "opacity-100" : "opacity-0"}`}/>
     </div>
   </div>

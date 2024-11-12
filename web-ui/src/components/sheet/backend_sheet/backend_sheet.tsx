@@ -62,7 +62,6 @@ export const BackendSheet = ({
   };
 
   if (!thisBackend) {
-    console.log("null");
     return null;
   }
 

@@ -9,8 +9,6 @@ import { useRouter } from "@tanstack/react-router";
 import { Hint, InProcessSiteConfig, LogFormat } from "../../generated-api";
 import Checkbox from "@/components/checkbox/checkbox";
 import SettingDescriptions from "@/lib/setting_descriptions";
-import { EnvVariablesTable } from "@/components/table/env_variables/env_variables";
-import { ArgumentsTable } from "@/components/table/arguments/arguments";
 import { ConfirmationDialog } from "@/components/dialog/confirm/confirm";
 import {
   Card,
@@ -20,17 +18,25 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import useSettings from "@/hooks/use-settings";
+import {
+  envVarsStringToArray,
+  envVarsToString,
+} from "@/lib/env_vars_to_string";
 
 const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
   const { updateSite, deleteSite } = useSiteMutations();
   const { data: settings } = useSettings();
   const [newName, setNewName] = useState(site.host_name);
+  const [newArgs, setNewArgs] = useState((site.args ?? []).join(";"));
+  const [newEnvVars, setNewEnvVars] = useState(
+    envVarsToString(site.env_vars ?? [])
+  );
   const [newPort, setNewPort] = useState<string>(`${site.port ?? ""}`);
   const [newDir, setNewDir] = useState(site.dir ?? undefined);
   const [newBin, setNewBin] = useState(site.bin);
   const [showConfirmDeleteModal, setShowConfirmDeleteModal] = useState(false);
   const router = useRouter();
-  
+
   const updateSetting = (key: string, value: any) => {
     let val =
       Array.isArray(value) || isNaN(value) === false ? value : `${value}`;
@@ -60,7 +66,7 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
         e.preventDefault();
       }}
     >
-      <Card className="mb-8">
+      <Card>
         <CardHeader>
           <CardTitle>Settings</CardTitle>
           <CardDescription>
@@ -302,7 +308,7 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
               subTitle={SettingDescriptions["log_format"]}
             >
               <select
-                className="text-black rounded pl-3 pr-3"
+                className="text-black rounded pl-3 pr-3 bg-white border border-[var(--border)]"
                 value={site.log_format ?? LogFormat.Standard}
                 onChange={(e) => {
                   updateSetting("log_format", e.target.value);
@@ -342,23 +348,23 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
             <SettingsItem
               vertical
               title="Environment variables"
-              subTitle={SettingDescriptions["env_vars"]}
+              subTitle={
+                "Semicolon separated list of environment variables to be set on process start."
+              }
+              dangerText={
+                "Example: my_variable=my_value;my_other_variable=my_other_value"
+              }
             >
-              <EnvVariablesTable
-                keys={site.env_vars ?? []}
-                onRemoveKey={(keyName) => {
-                  updateSetting(
-                    "env_vars",
-                    site.env_vars?.filter((key) => key.key !== keyName)
-                  );
+              <Input
+                withSaveButton
+                disableSaveButton={updateSite.isPending}
+                originalValue={envVarsToString(site.env_vars ?? [])}
+                value={newEnvVars}
+                onSave={() => {
+                  updateSetting("env_vars", envVarsStringToArray(newEnvVars));
                 }}
-                onNewKey={(key, originalName) => {
-                  updateSetting("env_vars", [
-                    ...(site.env_vars?.filter(
-                      (x) => x.key !== key.key && x.key !== originalName
-                    ) ?? []),
-                    { key: key.key, value: key.value },
-                  ]);
+                onChange={(e) => {
+                  setNewEnvVars(e.target.value);
                 }}
               />
             </SettingsItem>
@@ -368,21 +374,21 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
             <SettingsItem
               vertical
               title="Arguments"
-              subTitle={SettingDescriptions["args"]}
+              subTitle={
+                "Semicolon separated list of arguments. Applied in the same order shown here."
+              }
             >
-              <ArgumentsTable
-                onAddArg={(arg, originalValue) => {
-                  updateSetting("args", [
-                    ...(site.args?.filter((x) => x !== originalValue) ?? []),
-                    arg,
-                  ]);
+              <Input
+                withSaveButton
+                disableSaveButton={updateSite.isPending}
+                originalValue={(site.args ?? []).join(";")}
+                value={newArgs}
+                onSave={() => {
+                  updateSetting("args", newArgs.split(";"));
                 }}
-                onRemoveArg={(arg: string) => {
-                  updateSetting("args", [
-                    ...(site.args?.filter((x) => x !== arg) ?? []),
-                  ]);
+                onChange={(e) => {
+                  setNewArgs(e.target.value);
                 }}
-                defaultKeys={site.args ?? []}
               />
             </SettingsItem>
           </SettingsSection>
@@ -407,10 +413,11 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
 
           <ConfirmationDialog
             isDangerAction
+            isSuccessLoading={deleteSite.isPending}
             onClose={() => setShowConfirmDeleteModal(false)}
-            onConfirm={() => {
-              setShowConfirmDeleteModal(false);
-              deleteSite.mutateAsync(
+            inProgressText="Deleting.."
+            onConfirm={async () => {
+              await deleteSite.mutateAsync(
                 { hostname: site.host_name },
                 {
                   onSuccess: () => {

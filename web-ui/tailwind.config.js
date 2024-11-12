@@ -4,6 +4,15 @@ export default {
     content: ["./src/**/*.{html,js,ts,tsx}"],
     theme: {
     	extend: {
+			animation: {
+				slideIn: "slideIn 0.5s ease-in-out forwards",
+			  },
+			  keyframes: {
+				slideIn: {
+				  '0%': { transform: 'translateX(-100%)', opacity: '0' },
+				  '100%': { transform: 'translateX(0)', opacity: '1' },
+				},
+			  },
 			screens: {
 				ml: "900px",
 			},
@@ -21,8 +30,8 @@ export default {
     			background: 'hsl(var(--background))',
     			foreground: 'hsl(var(--foreground))',
     			card: {
-    				DEFAULT: 'hsl(var(--card))',
-    				foreground: 'hsl(var(--card-foreground))'
+    				DEFAULT: 'var(--card)',
+    				foreground: 'var(--card-foreground)'
     			},
     			popover: {
     				DEFAULT: 'hsl(var(--popover))',
@@ -48,7 +57,7 @@ export default {
     				DEFAULT: 'hsl(var(--destructive))',
     				foreground: 'hsl(var(--destructive-foreground))'
     			},
-    			border: 'hsl(var(--border))',
+    			border: 'var(--border)',
     			input: 'hsl(var(--input))',
     			ring: 'hsl(var(--ring))',
     			chart: {

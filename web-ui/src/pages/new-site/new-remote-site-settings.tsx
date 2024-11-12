@@ -2,11 +2,11 @@ import SettingsItem from "../settings/settings-item";
 import SettingsSection from "../settings/settings-section";
 import Input from "../../components/input/input";
 import Checkbox from "../../components/checkbox/checkbox";
-import Button from "../../components/button/button";
 import useSiteMutations from "../../hooks/use-site-mutations";
 import { useState } from "react";
 import { Hint } from "../../generated-api";
 import SettingDescriptions from "@/lib/setting_descriptions";
+import { Button } from "@/components/ui/button";
 
 const NewRemoteSiteSettings = () => {
   const [newRemoteHost, setNewRemoteHost] = useState("");
@@ -218,12 +218,8 @@ const NewRemoteSiteSettings = () => {
           marginTop: "20px",
         }}
       >
-        <Button
+        <Button variant={"start"} loadingText="Creating.." isLoading={updateRemoteSite.isPending} className="uppercase w-max-content font-bold text-white" size={"sm"}
           onClick={createSite}
-          style={{
-            width: "max-content",
-            background: "var(--color7)",
-          }}
         >
           Create site
         </Button>

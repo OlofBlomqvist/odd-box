@@ -410,7 +410,7 @@ fn initialize_configuration(args:&Args) -> anyhow::Result<(ConfigWrapper,OddBoxC
         };
 
 
-    let mut file = std::fs::File::open(&cfg_path).with_context(||format!("failed to open configuration file {cfg_path:?}"))?;
+    let mut file = std::fs::File::open(&cfg_path).with_context(||format!("failed to open configuration file {cfg_path:?}")).with_context(||format!("failed to open configuration file {cfg_path:?}"))?;
     let mut contents = String::new();
     file.read_to_string(&mut contents).with_context(||format!("failed to read data from configuration file {cfg_path:?}"))?;   
     

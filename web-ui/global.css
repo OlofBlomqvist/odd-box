@@ -15,11 +15,11 @@
   --destructive-foreground: 0 0% 98%;
   --muted: 240 5% 25%;
   --muted-foreground: 60 5% 75%;
-  --card: 0 0% 12.2%;
-  --card-foreground: 60 5% 90%;
+  --card: #212121;
+  --card-foreground: #ffffff;
   --popover: 240 5% 15%;
   --popover-foreground: 60 5% 85%;
-  --border: 0, 0%, 100%, 0.04;
+  --border: #ffffff14;
   --input: 240 6% 20%;
   --ring: 240 5% 90%;
   --radius: 0.5rem;
@@ -27,6 +27,7 @@
 
 
   --bg-color: #242424;
+  --color-muted: #ffffff88;
   --color: var(--color4);
   --color1: #ed6a5a;
   --color1-5: #ed6a5a55;
@@ -45,6 +46,8 @@
   --color8: #bb6cde;
   --color8-5: #bb6cde55;
   --separator: 0,0%,100%,0.10;
+
+  --modal-bg: #09090b;
 }
 
 /*
@@ -86,12 +89,15 @@ body {
 
 body.light {
   --bg-color: #ffffff;
-  --card: 0, 0%, 92.2%;
-  --border: 0, 0%, 80%;
-  --card-foreground: 0 0% 3.9%;
+  --card: #efefef;
+  --border: #00000014;
+  --card-foreground: #000000;
   --menu-item-bg-active: 0 0% 60%;
   --muted-foreground: 0 0% 35%;
   --accent-text: var(--color6);
+  --color: #000;
+  --color-muted: #00000088;
+  --modal-bg: #fff;
 }
 
 .inner-content {

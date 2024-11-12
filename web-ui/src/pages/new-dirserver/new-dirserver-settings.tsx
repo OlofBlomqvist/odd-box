@@ -1,13 +1,13 @@
 import SettingsItem from "../settings/settings-item";
 import SettingsSection from "../settings/settings-section";
 import Input from "../../components/input/input";
-import Button from "../../components/button/button";
 import useSiteMutations from "../../hooks/use-site-mutations";
 import { useState } from "react";
 import SettingDescriptions from "@/lib/setting_descriptions";
 import useSettings from "@/hooks/use-settings";
 import { Link, useRouter } from "@tanstack/react-router";
 import { getUrlFriendlyUrl } from "@/lib/get_url_friendly_url";
+import { Button } from "@/components/ui/button";
 
 const NewDirServerSettings = () => {
   const [newName, setNewName] = useState("");
@@ -174,12 +174,8 @@ const NewDirServerSettings = () => {
           marginTop: "20px",
         }}
       >
-        <Button
+        <Button variant={"start"} loadingText="Creating.." isLoading={updateDirServer.isPending} className="uppercase w-max-content font-bold text-white" size={"sm"}
           onClick={createSite}
-          style={{
-            width: "max-content",
-            background: "var(--color7)",
-          }}
         >
           Create site
         </Button>

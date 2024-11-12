@@ -9,7 +9,7 @@ import NewRemoteSiteSettings from "./new-remote-site-settings";
 
 const NewSitePage = () => {
   return (
-    <main className="grid flex-1 items-start gap-4 md:pb-8 md:gap-8 max-w-[900px]">
+    <main className="grid flex-1 items-start gap-4 md:gap-8 max-w-[900px]">
       <Card>
         <CardHeader>
           <CardTitle>New remote site</CardTitle>

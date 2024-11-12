@@ -14,8 +14,10 @@ const MenuItem = ({
   rightPadding,
   onClick,
   to,
-  searchParams
+  searchParams,
+  animateIn
 }: {
+  animateIn?:boolean
   searchParams?:LinkProps['search'],
   to:LinkProps['to'],
   onClick?: () => void,
@@ -31,9 +33,12 @@ const MenuItem = ({
 
 
   const { setDrawerOpen } = useDrawerContext();
-const classNames = ["flex items-center gap-3 px-[10px] py-2 break-all pr-0 text-[hsl(var(--card-foreground))] no-underline transition-all duration-200 rounded-[5px] styled-link"];
+const classNames = ["flex items-center gap-3 px-[10px] py-[.35rem] break-all pr-0 text-[hsl(var(--card-foreground))] no-underline transition-all duration-200 rounded-[5px] styled-link"];
   if (disabled) {
     classNames.push("disabled");
+  }
+  if (animateIn) {
+    classNames.push("animate-slideIn")
   }
   
   return ( 

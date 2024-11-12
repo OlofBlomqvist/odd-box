@@ -50,6 +50,7 @@ const Input = ({
         height: "32px",
         borderRadius: withSaveButton ? "3px" : 0,
         overflow: "hidden",
+        border: rest.type === "checkbox" ? 0 : "1px solid var(--border)",
       }}
     >
       <input
