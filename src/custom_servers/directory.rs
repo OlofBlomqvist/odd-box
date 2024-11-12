@@ -37,36 +37,30 @@ pub async fn handle(
     use mime_guess::from_path;
 
     let root_dir = Path::new(&target.dir);
-
-    let req_path : String = urlencoding::decode(req.uri().path()).map_err(|e|CustomError(format!("{e:?}")))?.to_string();
-        
-    let cache_key = req_path.trim_end_matches('/').to_string();
-    let req_path : String = urlencoding::decode(req.uri().path()).map_err(|e|CustomError(format!("{e:?}")))?.to_string();
+let req_path : String = urlencoding::decode(req.uri().path()).map_err(|e|CustomError(format!("{e:?}")))?.to_string();
         
     let cache_key = req_path.trim_end_matches('/').to_string();
     {
-        tracing::trace!("checking cache for {}", cache_key);
+        //tracing::trace!("checking cache for {}", cache_key);
         let mut expired_in_cache = false;
         if let Some(guard) = RESPONSE_CACHE.get(&cache_key) {
             
             let (_content_type, cache_time,res) = guard.value();
             // todo - configurable cache time
             if cache_time.elapsed() < Duration::from_secs(10) {
-                tracing::trace!("cache hit for {}", if cache_key.is_empty() {"/"} else {&cache_key});
+                tracing::trace!("Cache hit for {}", if cache_key.is_empty() {"/"} else {&cache_key});
                 return create_simple_response_from_bytes(res.clone());
             } else {
-                tracing::trace!("cache expired for {}", cache_key);
+                tracing::trace!("Cache expired for {}", cache_key);
                 expired_in_cache = true;
             }
-        } else {
-            tracing::trace!("cache miss for {}", cache_key);
         }
         if expired_in_cache {
             RESPONSE_CACHE.remove(&cache_key);
         }
     }
 
-    tracing::trace!("fetching cold file");
+    tracing::trace!("Fetching cold file");
 
     let requested_path = Path::new(&req_path);
     let full_path = root_dir.join(requested_path.strip_prefix("/").unwrap_or(requested_path));

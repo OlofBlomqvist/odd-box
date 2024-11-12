@@ -150,7 +150,7 @@ pub mod global_state {
                 let (_k,v)  = pt.pair();
                 if let Some(cached_proc_id) = &v.proc_id {
                     if let Some(_proc_info) = crate::PROC_THREAD_MAP.get(cached_proc_id) {
-                        tracing::debug!("Cache hit for {pre_filter_hostname}");
+                        //tracing::debug!("Cache hit for {pre_filter_hostname}");
                         return Some(v.clone());
                     } else {
                         tracing::trace!("Cache miss for {pre_filter_hostname} due to missing proc info");

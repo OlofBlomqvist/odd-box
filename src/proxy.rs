@@ -397,10 +397,10 @@ async fn handle_new_tcp_stream(
     // add to global tracking. we will update the state of this connection as it progresses through the system
     match &peekable_tcp_stream {
         GenericManagedStream::TCP(peekable_tcp_stream) => {
-            tracing::info!("Accepted TCP connection from {source_addr} - tls: {:?} ", peekable_tcp_stream.is_tls);
+            tracing::trace!("Accepted TCP connection from {source_addr} - tls: {:?} ", peekable_tcp_stream.is_tls);
         },
         GenericManagedStream::TerminatedTLS(_managed_stream) => {
-            tracing::info!("Terminated TLS connection from {source_addr}.");
+            tracing::trace!("Terminated TLS connection from {source_addr}.");
         },
     }
     peekable_tcp_stream.track();
@@ -515,7 +515,7 @@ async fn handle_new_tcp_stream(
                                     Err(e) => {
                                         match e {
                                             TunnelError::NoUsableBackendFound(s) => {
-                                                return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::NoHostedOrRemoteTargetFound).await;
+                                                return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::MustTerminate).await;
 
                                             },
                                             TunnelError::CanNeverWork(e) => {
@@ -577,8 +577,9 @@ async fn handle_new_tcp_stream(
                             if hints.any(|x|x==Hint::H2) {
                                 tracing::trace!("Incoming http version is 2.0 and target supports it thru hints. Proceeding with tunnel mode.");
                             } else {
+                                tracing::trace!("Incoming http version is 2.0, but all backends explicitly disallow H2, falling back to terminating mode.");
                                 return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info,
-                                    FallbackReason::Unknown("Incoming http version is 2.0, but all backends explicitly disallow H2, falling back to terminating mode.".to_string())
+                                    FallbackReason::MustTerminate
                                 ).await;
                             }
                         }
@@ -600,7 +601,7 @@ async fn handle_new_tcp_stream(
                         Err(e) => {
                            match e {
                                 TunnelError::NoUsableBackendFound(s) => {
-                                    return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::NoHostedOrRemoteTargetFound).await;
+                                    return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::MustTerminate).await;
                                 },
                                 TunnelError::CanNeverWork(e) => {
                                     tracing::warn!("Tunnel error: {e:?}");
@@ -616,7 +617,7 @@ async fn handle_new_tcp_stream(
                 
             } else {
                 // fallback mode also handles directory services, and other non-hosted targets
-                return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, FallbackReason::NoHostedOrRemoteTargetFound).await;
+                return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, FallbackReason::NoTargetFound).await;
 
             }
         }
@@ -649,7 +650,12 @@ pub enum FallbackReason {
     H2CPriorKnowledge, // when a clear text connection comes in with http2 prior knowledge and client did not pass a host/authority header
                        // we have to engage in the http2 session negotiation dance.. this can be handled by the terminating proxy service.
     Unknown(String),
-    NoHostedOrRemoteTargetFound,
+    // This means there was no backend that can accept the incoming http request as is.
+    // We will need to terminate the http session and establish new http connections to the backend.
+    NoBackendFound,
+    // Could be directory services etc. or just wrong host name
+    NoTargetFound,
+    // Target configured to not allow non-terminated connections
     MustTerminate
 }
 
@@ -664,19 +670,23 @@ async fn use_fallback_mode(
     
     match reason {
         FallbackReason::IncomingHttp2ButTargetDoesNotSupportIt => {
-            tracing::warn!("Falling back to http terminating mode as the incoming connection is HTTP2, but the target does not support HTTP2");
+            tracing::debug!("Falling back to http terminating mode as the incoming connection is HTTP2, but the target does not support HTTP2");
         },
         FallbackReason::H2CPriorKnowledge => {
-            tracing::warn!("Falling back to http terminating mode for http2 prior knowledge request");
+            tracing::debug!("Falling back to http terminating mode for http2 prior knowledge request");
         },
         FallbackReason::Unknown(reason) => {
            // tracing::warn!("falling back to terminating proxy mode because: {reason}");
             //tracing::error!("NOT ALLOWED DURING TESTING");
-            tracing::warn!("ignoring incoming connection because: {reason}");
+            tracing::warn!("ignoring incoming tcp connection because: {reason}");
             return;
         },
-        FallbackReason::NoHostedOrRemoteTargetFound => {
-            tracing::warn!("Falling back to terminating proxy mode because no hosted or remote target was found");
+        FallbackReason::NoTargetFound => {
+            // this is no problem as we expect incoming requests for dir servers etc.
+            tracing::trace!("Falling back to terminating proxy mode because no hosted or remote target was found, no need for warnings");
+        },
+        FallbackReason::NoBackendFound => {
+            tracing::trace!("Falling back to terminating proxy mode because no backend exists that can handle the incoming requests as is.");
         },
         FallbackReason::MustTerminate => {
             tracing::warn!("Falling back to terminating proxy mode because the site is configured to not allow non-terminated connections");

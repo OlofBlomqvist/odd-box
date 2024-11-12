@@ -327,7 +327,6 @@ async fn run_managed_bidirectional_tunnel(
         let arc_config = Arc::new(config);
         let connector = TlsConnector::from(arc_config);
 
-        // Specify the server name for SNI // TODO!!!!! must pass the target info to here
         let server_name = if let Ok(n) = ServerName::try_from(server_name.clone()) {
             n
         } else {
@@ -352,7 +351,7 @@ async fn run_managed_bidirectional_tunnel(
                 peekable_tls_stream.inspect().await;
             },
             GenericManagedStream::TCP(ref mut peekable_tcp_stream) => {
-                tracing::trace!("Wormhole established: tunneling from cleartext to tls");
+                tracing::trace!("Tunneling from cleartext to tls");
                 match tokio::io::copy_bidirectional(peekable_tcp_stream, &mut backend_tls_stream).await {
                     Ok((_bytes_from_client, _bytes_from_backend)) => {}
                     Err(e) => {
