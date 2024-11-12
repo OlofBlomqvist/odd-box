@@ -1,6 +1,5 @@
 use hyper::Version;
 use hyper_rustls::ConfigBuilderExt;
-use tracing_subscriber::registry::Data;
 use std::fmt::Debug;
 use std::net::IpAddr;
 use std::{
@@ -72,15 +71,24 @@ impl ReverseTcpProxyTarget {
 pub struct ReverseTcpProxy {
     pub socket_addr: SocketAddr,
 }
-
+#[derive(Debug)]
 pub enum TunnelError {
     /// No backend was found that matched the incoming traffic,
     /// we cannot tunnel the traffic to a backend directly but need to terminate it and 
     /// establish a new connection to the backend.
     NoUsableBackendFound(GenericManagedStream),
-    CanNeverWork(String),
-    MustTerminate(GenericManagedStream)
+    Unknown(String)
 }
+impl std::error::Error for TunnelError {}
+impl std::fmt::Display for TunnelError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TunnelError::NoUsableBackendFound(_) => write!(f, "No usable backend found for incoming traffic"),
+            TunnelError::Unknown(e) => write!(f, "Unknown error: {}",e),
+        }
+    }
+}
+
 impl ReverseTcpProxy {
 
     pub fn get_subdomain(requested_hostname: &str, backend_hostname: &str) -> Option<String> {
@@ -144,7 +152,7 @@ impl ReverseTcpProxy {
             let tls_cfg = if let Some(cfg) = rustls_config {
                 cfg
             } else {
-                return Err(TunnelError::CanNeverWork("TLS termination is required but no rustls config provided. Stream cannot be processed further.".into()))
+                return Err(TunnelError::Unknown("TLS termination is required but no rustls config provided. Stream cannot be processed further.".into()))
             };
 
             match client_tcp_stream {
@@ -166,7 +174,7 @@ impl ReverseTcpProxy {
                                     (true,gen_stream,backend_filter)
                                 },
                                 Err(e) => {
-                                    return Err(TunnelError::NoUsableBackendFound(gen_stream))
+                                    return Err(TunnelError::Unknown(format!("error peeking stream {e:?}")));
                                 },
                             }
 

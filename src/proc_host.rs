@@ -197,7 +197,7 @@ pub async fn host(
 
 
         
-        let (global_min_loglevel,global_default_log_format) = {
+        let (global_min_loglevel,_global_default_log_format) = {
             let guard = state.config.read().await;
             (guard.log_level.clone().unwrap_or(LogLevel::Info),guard.default_log_format.clone())
         };

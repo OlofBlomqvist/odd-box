@@ -303,12 +303,14 @@ async fn handle_socket(client_socket: WebSocket, who: SocketAddr, state: WebSock
 
 
 async fn broadcast_manager(state: WebSocketGlobalState,tracing_broadcaster:tokio::sync::broadcast::Sender::<Event>) {
-
-    let mut odd_box_broadcast_channel = tracing_broadcaster.subscribe();
-
-    while let Ok(msg) = odd_box_broadcast_channel.recv().await {
-        _ = state.broadcast_channel_to_all_websocket_clients.send(msg);
+    // need this in a loop as we will drop all senders when log level is changed at runtime
+    // and we dont want to stop sending messages to the websocket clients just because the log level was changed..
+    loop {
+        let mut odd_box_broadcast_channel = tracing_broadcaster.subscribe();
+        while let Ok(msg) = odd_box_broadcast_channel.recv().await {
+            _ = state.broadcast_channel_to_all_websocket_clients.send(msg);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
-    //tracing::warn!("leaving broadcast manager main loop")
 }

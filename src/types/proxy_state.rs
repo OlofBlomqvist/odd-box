@@ -1,8 +1,8 @@
-use std::{net::SocketAddr, sync::Weak};
+use std::sync::Weak;
 use std::sync::atomic::AtomicUsize;
 
 use crate::configuration::v2::DirServer;
-use crate::{configuration::v2::Backend, tcp_proxy::{GenericManagedStream, ReverseTcpProxyTarget}};
+use crate::{configuration::v2::Backend, tcp_proxy::ReverseTcpProxyTarget};
 
 
 #[derive(Debug)]

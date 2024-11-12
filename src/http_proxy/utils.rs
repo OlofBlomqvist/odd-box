@@ -255,7 +255,7 @@ impl WrappedNormalResponse {
     }
 
     
-    pub fn new(res:Response<Incoming>,state: Arc<GlobalState>) -> Self {
+    pub fn new(res:Response<Incoming>,_state: Arc<GlobalState>) -> Self {
         
         let (a,b) = res.into_parts();
         Self {

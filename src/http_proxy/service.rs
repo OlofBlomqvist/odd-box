@@ -15,7 +15,6 @@ use hyper_util::rt::TokioExecutor;
 use tokio_stream::wrappers::ReceiverStream;
 use std::future::Future;
 use std::pin::Pin;
-use crate::configuration::v2::Backend;
 use crate::global_state::GlobalState;
 use crate::tcp_proxy::{GenericManagedStream, ReverseTcpProxyTarget};
 use crate::types::app_state::ProcState;
@@ -467,7 +466,9 @@ async fn handle_http_request(
             if wait_count > 10 {
                 return Err(CustomError(format!("No active port found for {req_host_name}.")))
             } else {
-                tracing::warn!("attempting to find active port found for {req_host_name}...");
+                let id: &crate::types::proc_info::ProcId = target_proc_cfg.get_id();
+                let name = target_proc_cfg.host_name.clone();
+                tracing::trace!("Attempting to find active port found for {req_host_name}... id: {id:?} - name: {name:?}");
             }
             if let Some(info) = crate::PROC_THREAD_MAP.get(target_proc_cfg.get_id()) {
                 if info.pid.is_some() {

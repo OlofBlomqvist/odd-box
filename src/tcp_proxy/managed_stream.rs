@@ -45,7 +45,7 @@ pub struct ManagedStream<T> where T: AsyncRead + AsyncWrite + Unpin {
 }
 
 
-
+#[derive(Debug)]
 pub enum GenericManagedStream {
     // TLS(PeekableTlsStream),
     TCP(ManagedStream<TcpStream>),
@@ -98,8 +98,7 @@ impl Peekable for GenericManagedStream {
                 peekable_tls_stream.sealed=true;
                 peekable_tls_stream.stream.get_mut().0.seal();
             },
-            GenericManagedStream::TCP(peekable_tcp_stream) => peekable_tcp_stream.seal(),
-            _ => {}
+            GenericManagedStream::TCP(peekable_tcp_stream) => peekable_tcp_stream.seal()
         }
     }
 }
@@ -327,22 +326,22 @@ impl GenericManagedStream {
 }
 
 
-impl GenericManagedStream {
-    pub async fn inspect(&mut self) {
-        match self {
-            GenericManagedStream::TCP(managed_stream) => {
-                managed_stream.inspect().await;
-            },
-            // GenericManagedStream::TLS(managed_stream) => {
-            //     tracing::error!("TerminatedTLS stream cannot be inspected. This is a bug in odd-box as inspect should not have been called for this stream.");
-            // },
-            GenericManagedStream::TerminatedTLS(stream) => {
-                stream.inspect().await;
+// impl GenericManagedStream {
+//     // pub async fn inspect(&mut self) {
+//     //     match self {
+//     //         GenericManagedStream::TCP(managed_stream) => {
+//     //             managed_stream.inspect().await;
+//     //         },
+//     //         // GenericManagedStream::TLS(managed_stream) => {
+//     //         //     tracing::error!("TerminatedTLS stream cannot be inspected. This is a bug in odd-box as inspect should not have been called for this stream.");
+//     //         // },
+//     //         GenericManagedStream::TerminatedTLS(stream) => {
+//     //             stream.inspect().await;
                 
-            }
-        }
-    }
-}
+//     //         }
+//     //     }
+//     // }
+// }
 
 
 

@@ -1,9 +1,6 @@
 use std::collections::VecDeque;
 use std::{collections::HashMap, sync::Arc};
-
 use std::sync::Mutex;
-
-use serde::Serialize;
 use tracing::Subscriber;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;

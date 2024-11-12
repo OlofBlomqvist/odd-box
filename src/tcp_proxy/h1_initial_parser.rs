@@ -7,7 +7,6 @@ pub struct ParsedHttpRequest {
 
 pub fn parse_http_request_fast(request: &[u8]) -> anyhow::Result<ParsedHttpRequest> {
     let mut host = None;
-    let mut is_h2c_upgrade = false;
 
     // Flags for h2c detection
     let mut has_upgrade_h2c = false;
@@ -66,7 +65,7 @@ pub fn parse_http_request_fast(request: &[u8]) -> anyhow::Result<ParsedHttpReque
         pos = line_end;
     }
 
-    is_h2c_upgrade = has_upgrade_h2c && has_connection_upgrade && has_http2_settings;
+    let is_h2c_upgrade = has_upgrade_h2c && has_connection_upgrade && has_http2_settings;
     if let Some(host) = host {
         Ok(ParsedHttpRequest { host, is_h2c_upgrade })
     } else {

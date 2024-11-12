@@ -1,6 +1,6 @@
 // this module is responsible for reloading the configuration file at runtime (hot-reload)
 
-use std::{borrow::BorrowMut, io::Read, str::FromStr, sync::Arc, time::Duration};
+use std::{io::Read, sync::Arc, time::Duration};
 use anyhow::{bail, Result};
 use tracing::{info, level_filters::LevelFilter, trace, warn};
 use tracing_subscriber::EnvFilter;

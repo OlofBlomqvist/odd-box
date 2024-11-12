@@ -2,7 +2,6 @@ use core::panic;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use chrono::format;
 use hyper::Version;
 use hyper_rustls::ConfigBuilderExt;
 use lazy_static::lazy_static;
@@ -11,7 +10,6 @@ use tokio::net::TcpStream;
 use tokio::sync::Notify;
 use tokio::sync::RwLock;
 use tokio_rustls::TlsAcceptor;
-use crate::configuration::v2::Backend;
 use crate::configuration::v2::Hint;
 use crate::configuration::ConfigWrapper;
 use crate::global_state::GlobalState;
@@ -515,16 +513,13 @@ async fn handle_new_tcp_stream(
                                     Err(e) => {
                                         match e {
                                             TunnelError::NoUsableBackendFound(s) => {
-                                                return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::MustTerminate).await;
+                                                return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::NoBackendFound).await;
 
                                             },
-                                            TunnelError::CanNeverWork(e) => {
+                                            TunnelError::Unknown(e) => {
                                                 tracing::warn!("Tunnel error: {e:?}");
                                                 return;
                                             },
-                                            TunnelError::MustTerminate(s) => {
-                                                return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::MustTerminate).await;
-                                            }
                                         };
                                     },
                                 }
@@ -552,14 +547,11 @@ async fn handle_new_tcp_stream(
                                 Err(e) => {
                                     match e {
                                         TunnelError::NoUsableBackendFound(s) => {
-                                            return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::MustTerminate).await;
+                                            return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::NoBackendFound).await;
                                         },
-                                        TunnelError::CanNeverWork(e) => {
+                                        TunnelError::Unknown(e) => {
                                             tracing::warn!("Tunnel error: {e:?}");
                                             return;
-                                        },
-                                        TunnelError::MustTerminate(s) => {
-                                            return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::MustTerminate).await;
                                         }
                                     };
                                 },
@@ -579,7 +571,7 @@ async fn handle_new_tcp_stream(
                             } else {
                                 tracing::trace!("Incoming http version is 2.0, but all backends explicitly disallow H2, falling back to terminating mode.");
                                 return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info,
-                                    FallbackReason::MustTerminate
+                                    FallbackReason::NoBackendFound
                                 ).await;
                             }
                         }
@@ -601,14 +593,11 @@ async fn handle_new_tcp_stream(
                         Err(e) => {
                            match e {
                                 TunnelError::NoUsableBackendFound(s) => {
-                                    return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::MustTerminate).await;
+                                    return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::NoBackendFound).await;
                                 },
-                                TunnelError::CanNeverWork(e) => {
+                                TunnelError::Unknown(e) => {
                                     tracing::warn!("Tunnel error: {e:?}");
                                     return;
-                                },
-                                TunnelError::MustTerminate(s) => {
-                                    return use_fallback_mode(rustls_config, s, fresh_service_template_with_source_info, FallbackReason::MustTerminate).await;
                                 }
                             };
                         },
@@ -655,8 +644,6 @@ pub enum FallbackReason {
     NoBackendFound,
     // Could be directory services etc. or just wrong host name
     NoTargetFound,
-    // Target configured to not allow non-terminated connections
-    MustTerminate
 }
 
 async fn use_fallback_mode(
@@ -688,9 +675,6 @@ async fn use_fallback_mode(
         FallbackReason::NoBackendFound => {
             tracing::trace!("Falling back to terminating proxy mode because no backend exists that can handle the incoming requests as is.");
         },
-        FallbackReason::MustTerminate => {
-            tracing::warn!("Falling back to terminating proxy mode because the site is configured to not allow non-terminated connections");
-        }
     }
     
 

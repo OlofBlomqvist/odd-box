@@ -6,7 +6,6 @@ use ratatui::widgets::{BorderType, List, ListItem };
 use tokio::task;
 use tracing::level_filters::LevelFilter;
 use tracing::Level;
-use tracing_subscriber::reload::Handle;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use std::io::Stdout;
