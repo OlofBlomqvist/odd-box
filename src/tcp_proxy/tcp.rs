@@ -295,7 +295,7 @@ impl ReverseTcpProxy {
                    tracing::warn!("failed to read socket peer address..");
                 }
             },
-            Err(e) => warn!("failed to connect to target {target:?} (using addr: {resolved_address}) --> {e:?}"),
+            Err(e) => warn!("failed to connect to target {host} (using addr: {resolved_address}) --> {e:?}",host=target.host_name),
         }
 
         Ok(())
