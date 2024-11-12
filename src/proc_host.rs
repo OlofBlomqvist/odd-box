@@ -359,15 +359,17 @@ pub async fn host(
                                             5  => { 
                                                 tracing::error!("{}",trimmed)
                                             },
-                                            _ => tracing::info!("{}",trimmed) // hide anything does has no explicit level unless running in trace mode
+                                            _ => tracing::info!("{}",trimmed) 
                                         }  
+                                    } else if current_log_level == 0 {
+                                        tracing::info!("{}",trimmed)
                                     }
                                 
                                 } else {
                                     current_log_level = 0;
                                 }
                             } else {
-                                tracing::info!("[STDOUT] {}",line)
+                                tracing::info!("{}",line)
                             }
                         }                        
                     }
@@ -378,7 +380,7 @@ pub async fn host(
                     for line in std::io::BufRead::lines(stderr_reader) {
                         if let Ok(line) = line{
                             if line.len() > 0 {
-                                tracing::error!("[STDERR] {}",line.trim());
+                                tracing::error!("{}",line.trim());
                             }
                         }                        
                     }
