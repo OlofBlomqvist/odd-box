@@ -24,6 +24,7 @@ use crate::tcp_proxy::Peekable;
 use crate::tcp_proxy::GenericManagedStream;
 use crate::tcp_proxy::TunnelError;
 use crate::types::app_state;
+use crate::types::odd_box_event::Event;
 use crate::types::proxy_state::ConnectionKey;
 use crate::types::proxy_state::ProxyActiveTCPConnection;
 
@@ -757,10 +758,17 @@ async fn use_fallback_mode(
 
 
 
-pub fn add_or_update_connection(state:Arc<GlobalState>,connection:ProxyActiveTCPConnection) {
+pub fn add_or_update_connection(state:Arc<GlobalState>,mut connection:ProxyActiveTCPConnection) {
+    if connection.resolved_connection_type.is_none() {
+        let result = connection.get_connection_type();
+        let result_str = result.to_string();
+        connection.resolved_connection_type = Some(result);
+        connection.resolved_connection_type_description = Some(result_str);
+    }
     if let Some(key) = connection.connection_key_pointer.upgrade() {
         let app_state = state.app_state.clone();
-        _ = app_state.statistics.active_connections.insert(*key, connection);
+        _ = app_state.statistics.active_connections.insert(*key, connection.clone());
+        _ = state.global_broadcast_channel.send(Event::TcpEvent(crate::types::odd_box_event::TCPEvent::Open(connection)));    
     } else {
         tracing::warn!("Failed to add connection to global state, connection key was dropped.");
     }
@@ -775,7 +783,13 @@ pub fn mutate_tracked_connection(
     let guard = app_state.statistics.clone();
     let item = guard.active_connections.get_mut(key);
     if let Some(mut conn) = item {
+        if conn.resolved_connection_type.is_none() {
+            tracing::warn!("Resolved connection type is None, this should not happen.");
+        }
+        let v = conn.version;
         mutator(conn.value_mut());
+        conn.version = v + 1;
+        _ = state.global_broadcast_channel.send(Event::TcpEvent(crate::types::odd_box_event::TCPEvent::Update(conn.clone())));   
     }
 }
 
@@ -783,4 +797,5 @@ pub fn del_connection(state:Arc<GlobalState>,key:&ConnectionKey) {
     let app_state = state.app_state.clone();
     let guard = app_state.statistics.clone();
     _ = guard.active_connections.remove(key);
+    _ = state.global_broadcast_channel.send(Event::TcpEvent(crate::types::odd_box_event::TCPEvent::Close(*key))); 
 }

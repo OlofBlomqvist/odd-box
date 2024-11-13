@@ -13,10 +13,17 @@ pub struct ProxyStats {
 
 pub type ConnectionKey = u64;
 
-#[derive(Debug,Clone)]
+use serde::Serialize;
+
+use super::connection_type::ConnectionType;
+
+#[derive(Debug,Clone,Serialize)]
 #[allow(dead_code)]
 pub struct ProxyActiveTCPConnection {
+    pub tcp_peer_addr : String,
+    #[serde(skip)]
     pub connection_key_pointer : Weak<ConnectionKey>,
+    pub connection_key: ConnectionKey,
     pub client_addr : String,
     pub target: Option<ReverseTcpProxyTarget>,
     pub backend: Option<Backend>,
@@ -28,5 +35,37 @@ pub struct ProxyActiveTCPConnection {
     pub http_terminated: bool,
     pub outgoing_connection_is_tls: bool,
     pub is_odd_box_admin_api_req: bool,
-    pub dir_server: Option<DirServer>
+    pub dir_server: Option<DirServer>,
+    pub version : u64,
+    pub resolved_connection_type: Option<ConnectionType>,
+    pub resolved_connection_type_description: Option<String>,
+}
+
+impl ProxyActiveTCPConnection {
+    pub fn get_connection_type(&self) -> ConnectionType {
+        match (
+            self.incoming_connection_uses_tls,
+            self.tls_terminated,
+            self.http_terminated,
+            self.outgoing_connection_is_tls,
+        ) {
+            (false,false,false,false) => ConnectionType::PlainEndToEndForwarding,
+            (true, true, true, true) => ConnectionType::FullTlsTerminatedWithHttpReEncryptedOutgoingTls,
+            (true, true, true, false) => ConnectionType::MixedTerminationWithPlainOutgoing,
+            (true, true, false, true) => ConnectionType::TlsTerminatedWithReEncryptedOutgoingTls,
+            (true, true, false, false) => ConnectionType::TlsTerminatedWithPlainOutgoing,
+            (true, false, true, true) => ConnectionType::OpaqueIncomingTlsPassthroughWithOutgoingTls,
+            (true, false, true, false) => ConnectionType::OpaqueIncomingTlsPassthroughWithPlainOutgoing,
+            (true, false, false, true) => ConnectionType::OpaqueIncomingTlsPassthroughWithOutgoingTls,
+            (true, false, false, false) => ConnectionType::OpaqueIncomingTlsPassthroughWithPlainOutgoing,
+            (false, true, true, true) => ConnectionType::HttpTerminatedWithOutgoingTls,
+            (false, true, true, false) => ConnectionType::HttpTerminatedWithPlainOutgoing,
+            (false, true, false, true) => ConnectionType::TlsTerminatedWithReEncryptedOutgoingTls,
+            (false, true, false, false) => ConnectionType::TlsTerminatedWithPlainOutgoing,
+            (false, false, true, true) => ConnectionType::HttpTerminatedWithOutgoingTls,
+            (false, false, true, false) => ConnectionType::HttpTerminatedWithPlainOutgoing,
+            (false, false, false, true) => ConnectionType::OpaqueTlsForwarding
+        }
+
+    }
 }

@@ -1,56 +1,14 @@
-use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use ratatui::layout::{Flex, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::widgets::{Cell, Row, Scrollbar, ScrollbarOrientation, Table};
 use crate::global_state::GlobalState;
+use crate::types::connection_type::ConnectionType;
 use crate::types::proxy_state::*;
 use crate::types::tui_state::TuiState;
 use ratatui::layout::Constraint;
 use super::Theme;
-
-#[derive(Debug)]
-enum ConnectionType {
-    /// Full-TLS Terminated Proxy: The incoming connection uses TLS and is terminated. HTTP processing occurs,
-    /// and a new outgoing connection is established with re-encrypted TLS.
-    FullTlsTerminatedWithHttpReEncryptedOutgoingTls,
-
-    /// Mixed Termination: The incoming connection uses TLS, is terminated, HTTP processing occurs,
-    /// and a plain (unencrypted) outgoing connection is established.
-    MixedTerminationWithPlainOutgoing,
-
-    /// TLS Terminated Proxy with End-to-End TLS: Incoming connection uses TLS and is terminated,
-    /// and a new TLS connection is established with the outgoing target.
-    TlsTerminatedWithReEncryptedOutgoingTls,
-
-    /// TLS Terminated Proxy: Incoming connection uses TLS, is terminated, and the outgoing connection is plain (unencrypted).
-    TlsTerminatedWithPlainOutgoing,
-
-    /// Opaque HTTP with TLS: The incoming connection is plaintext, HTTP is processed, and the outgoing
-    /// connection is encrypted with TLS.
-    HttpTerminatedWithOutgoingTls,
-
-    /// Plain HTTP Proxy: The incoming connection is plaintext, HTTP is processed, and the outgoing connection
-    /// is also plaintext.
-    HttpTerminatedWithPlainOutgoing,
-
-    /// Opaque TLS Forwarding: Incoming TLS traffic is not terminated. Data is forwarded as-is to the outgoing
-    /// target, preserving end-to-end encryption without decryption or re-encryption.
-    OpaqueTlsForwarding,
-
-    /// Plain End-to-End Forwarding: No TLS or HTTP termination occurs. Data is forwarded in plaintext
-    /// from incoming to outgoing without modification.
-    PlainEndToEndForwarding,
-
-    /// Opaque Incoming TLS Passthrough with Plain Outgoing: Incoming connection uses TLS but is not terminated,
-    /// and data is forwarded as plaintext to the outgoing connection.
-    OpaqueIncomingTlsPassthroughWithPlainOutgoing,
-
-    /// Opaque Incoming TLS Passthrough with Re-encrypted TLS: Incoming connection uses TLS but is not terminated,
-    /// and data is forwarded as opaque to an outgoing TLS connection.
-    OpaqueIncomingTlsPassthroughWithOutgoingTls,
-}
 
 impl Display for ConnectionType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -109,7 +67,7 @@ pub fn draw(
     let mut rows = global_state.app_state.statistics.active_connections.iter().map(|guard| {
         let (_,active_connection) = guard.pair();
         let src = active_connection.client_addr.clone();
-        let mut backend = match &active_connection.backend {
+        let backend = match &active_connection.backend {
             Some(b) => format!("{}:{}",b.address,b.port),
             None if active_connection.is_odd_box_admin_api_req => "odd-box".to_string(),
             None => match active_connection {
@@ -117,29 +75,7 @@ pub fn draw(
                 _ => "<UNKNOWN>".to_string()
             }
         };
-        let connection_type = match (
-            active_connection.incoming_connection_uses_tls,
-            active_connection.tls_terminated,
-            active_connection.http_terminated,
-            active_connection.outgoing_connection_is_tls,
-        ) {
-            (false,false,false,false) => ConnectionType::PlainEndToEndForwarding,
-            (true, true, true, true) => ConnectionType::FullTlsTerminatedWithHttpReEncryptedOutgoingTls,
-            (true, true, true, false) => ConnectionType::MixedTerminationWithPlainOutgoing,
-            (true, true, false, true) => ConnectionType::TlsTerminatedWithReEncryptedOutgoingTls,
-            (true, true, false, false) => ConnectionType::TlsTerminatedWithPlainOutgoing,
-            (true, false, true, true) => ConnectionType::OpaqueIncomingTlsPassthroughWithOutgoingTls,
-            (true, false, true, false) => ConnectionType::OpaqueIncomingTlsPassthroughWithPlainOutgoing,
-            (true, false, false, true) => ConnectionType::OpaqueIncomingTlsPassthroughWithOutgoingTls,
-            (true, false, false, false) => ConnectionType::OpaqueIncomingTlsPassthroughWithPlainOutgoing,
-            (false, true, true, true) => ConnectionType::HttpTerminatedWithOutgoingTls,
-            (false, true, true, false) => ConnectionType::HttpTerminatedWithPlainOutgoing,
-            (false, true, false, true) => ConnectionType::TlsTerminatedWithReEncryptedOutgoingTls,
-            (false, true, false, false) => ConnectionType::TlsTerminatedWithPlainOutgoing,
-            (false, false, true, true) => ConnectionType::HttpTerminatedWithOutgoingTls,
-            (false, false, true, false) => ConnectionType::HttpTerminatedWithPlainOutgoing,
-            (false, false, false, true) => ConnectionType::OpaqueTlsForwarding
-        }.to_string();
+        let connection_type = active_connection.get_connection_type().to_string();
 
         if let Some(t) = &active_connection.target {
             vec![

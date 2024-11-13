@@ -425,8 +425,13 @@ export enum State {
   Dynamic = "Dynamic",
 }
 
+export interface StatusItem {
+  hostname: string;
+  state: any;
+}
+
 export interface StatusResponse {
-  items: any[];
+  items: StatusItem[];
 }
 
 export interface UpdateRequest {

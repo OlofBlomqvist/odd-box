@@ -1,5 +1,6 @@
 use hyper::Version;
 use hyper_rustls::ConfigBuilderExt;
+use serde::Serialize;
 use std::fmt::Debug;
 use std::net::IpAddr;
 use std::{
@@ -18,7 +19,7 @@ use super::{ManagedStream, GenericManagedStream};
 
 /// Non-terminating reverse proxy service for HTTP and HTTPS.
 /// Achieves TLS passthru by peeking at the ClientHello SNI ext data.
-#[derive(Debug,Eq,PartialEq,Hash,Clone)]
+#[derive(Debug,Eq,PartialEq,Hash,Clone,Serialize)]
 pub struct ReverseTcpProxyTarget {
     pub remote_target_config: Option<crate::configuration::v2::RemoteSiteConfig>,
     pub hosted_target_config: Option<crate::configuration::v2::InProcessSiteConfig>,
@@ -48,7 +49,7 @@ pub struct PeekResult {
     pub target_host : Option<String>,
     pub is_h2c_upgrade : bool
 }
-
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum PeekError {
     StreamIsClosed,
@@ -67,12 +68,12 @@ impl ReverseTcpProxyTarget {
     }
 
 }
-
+#[allow(dead_code)]
 pub struct ReverseTcpProxy {
     pub socket_addr: SocketAddr,
 }
 #[derive(Debug)]
-pub enum TunnelError {
+pub enum TunnelError{
     /// No backend was found that matched the incoming traffic,
     /// we cannot tunnel the traffic to a backend directly but need to terminate it and 
     /// establish a new connection to the backend.
@@ -432,9 +433,7 @@ fn peekresult_to_backend_filter(
     ) {
 
         // HTTP/2 over ClearText without TLS termination (HTTP/2 Prior Knowledge)
-        (Some(Version::HTTP_2), ClearText, false, false) => None, // the client will be expecting a http2 settings header back from us prior
-                                                                  // to sending their headers, so we need to terminate the http session
-                                                                  // and establish a new one to the backend once we get the host header.
+        (Some(Version::HTTP_2), ClearText, false, false) => Some(BackendFilter::H2CPriorKnowledge), 
 
         // HTTP 1.1 request with H2C upgrade header
         (Some(Version::HTTP_11), ClearText, false, true) => Some(BackendFilter::H2C),

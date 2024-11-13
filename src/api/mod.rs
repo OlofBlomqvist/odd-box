@@ -104,7 +104,7 @@ pub async fn run(globally_shared_state: Arc<crate::global_state::GlobalState>,po
         //.route("/script.js", axum::routing::get(script))
 
         // WEBSOCKET ROUTE FOR LOGS
-        .route("/ws/live_logs", axum::routing::get( move|ws,user_agent,origin,addr,state|
+        .route("/ws/event_stream", axum::routing::get( move|ws,user_agent,origin,addr,state|
             ws_log_messages_handler(ws,user_agent,origin,addr,state, cors_env_var_cloned_for_ws)).with_state(websocket_state.clone()))
 
         // STATIC FILES FOR WEB-UI
@@ -163,10 +163,10 @@ async fn serve_static_file(axum::extract::Path(file): axum::extract::Path<String
 /// Simple websocket interface for log messages.
 /// Warning: The format of messages emitted is not guaranteed to be stable.
 #[utoipa::path(
-    operation_id="live_logs",
+    operation_id="event_stream",
     get,
-    tag = "Logs",
-    path = "/ws/live_logs",
+    tag = "Events",
+    path = "/ws/event_stream",
 )]
 async fn ws_log_messages_handler(
     ws: WebSocketUpgrade,
@@ -206,16 +206,28 @@ async fn ws_log_messages_handler(
                 let possibly_admin_port = state.global_state.config.read().await.admin_api_port;
                 
                 if let Some(p) = possibly_admin_port {
-                    let expected_origin = format!("http://localhost:{p}");
-                    if lower_cased_orgin_from_client != expected_origin {
-                        tracing::warn!("Client origin does not match '{expected_origin}', denying connection");
+                    
+                    if !addr.ip().is_loopback() {
+                        tracing::warn!("Client origin is not localhost, denying connection");
+                        return Response::builder()
+                            .status(StatusCode::FORBIDDEN)
+                            .header("reason", "bad origin")
+                            .body(Body::from("origin not allowed."))
+                            .expect("must be able to create response")
+                    }
+
+                    let expected_origin_name = format!("http://localhost:{p}");
+                    let expected_origin_ip = format!("http://127.0.0.1:{p}");
+                    
+                    if lower_cased_orgin_from_client != expected_origin_name && lower_cased_orgin_from_client != expected_origin_ip {
+                        tracing::warn!("Client origin does not match '{expected_origin_name}', denying connection");
                         return Response::builder()
                             .status(StatusCode::FORBIDDEN)
                             .header("reason", "bad origin")
                             .body(Body::from("origin not allowed."))
                             .expect("must be able to create response")
                     } else {
-                        tracing::debug!("Client origin matches '{expected_origin}', allowing connection");
+                        tracing::debug!("Client origin matches '{expected_origin_name}', allowing connection");
                     }
                 } else {
                     

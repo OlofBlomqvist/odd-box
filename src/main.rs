@@ -82,7 +82,7 @@ pub mod global_state {
         pub log_handle : crate::OddLogHandle,
         pub app_state: std::sync::Arc<crate::types::app_state::AppState>,
         pub config: std::sync::Arc<tokio::sync::RwLock<crate::configuration::ConfigWrapper>>,
-        pub broadcaster: tokio::sync::broadcast::Sender<crate::http_proxy::ProcMessage>,
+        pub proc_broadcaster: tokio::sync::broadcast::Sender<crate::http_proxy::ProcMessage>,
         pub target_request_counts: dashmap::DashMap<String, AtomicU64>,
         pub cert_resolver: std::sync::Arc<DynamicCertResolver>,
         pub reverse_tcp_proxy_target_cache : dashmap::DashMap<String,Arc<ReverseTcpProxyTarget>>,
@@ -103,7 +103,7 @@ pub mod global_state {
                 log_handle,
                 app_state,
                 config,
-                broadcaster: tx_to_process_hosts,
+                proc_broadcaster: tx_to_process_hosts,
                 target_request_counts: dashmap::DashMap::new(),
                 cert_resolver,
                 reverse_tcp_proxy_target_cache: dashmap::DashMap::new(),
@@ -550,8 +550,7 @@ async fn main() -> anyhow::Result<()> {
     let shutdown_signal = Arc::new(tokio::sync::Notify::new());
     let event_broadcast_channel = global_event_broadcaster.clone();
     let shared_config = std::sync::Arc::new(tokio::sync::RwLock::new(config));
-    
-
+        
     let mut global_state = crate::global_state::GlobalState::new( 
         inner_state_arc.clone(), 
         shared_config.clone(), 
@@ -561,7 +560,7 @@ async fn main() -> anyhow::Result<()> {
         OddLogHandle::None
     );
 
-    
+  
     let (cli_filter, cli_reload_handle) = 
         tracing_subscriber::reload::Layer::new(EnvFilter::from_default_env()
             .add_directive(format!("odd_box={}", log_level).parse().expect("This directive should always work"))

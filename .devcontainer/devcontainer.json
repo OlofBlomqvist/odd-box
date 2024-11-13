@@ -4,7 +4,7 @@
 	"features": {
 	  "ghcr.io/lee-orr/rusty-dev-containers/cargo-watch:0": {},
 	  "ghcr.io/devcontainers/features/node:1": {
-      "version": "lts" 
+      "version": "latest"
     }
 	},
 	"mounts": [

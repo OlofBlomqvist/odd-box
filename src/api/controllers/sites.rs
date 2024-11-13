@@ -38,7 +38,14 @@ pub struct ListResponse {
 
 #[derive(ToSchema,Serialize)]
 pub struct StatusResponse {
-    pub items : Vec<crate::types::site_status::SiteStatus>
+    pub items : Vec<StatusItem>
+}
+
+#[derive(ToSchema,Serialize)]
+
+pub struct StatusItem {
+    pub hostname: String,
+    pub state: BasicProcState
 }
 
 use crate::types::site_status::State as BasicProcState;
@@ -106,8 +113,8 @@ pub async fn status_handler(state: axum::extract::State<Arc<GlobalState>>) -> ax
     Ok(Json(StatusResponse {
         items: state.app_state.site_status_map.iter().map(|guard|{
             let (site,state) = guard.pair();
-            crate::types::site_status::SiteStatus {
-                host_name: site.clone(),
+            StatusItem {
+                hostname: site.clone(),
                 state: state.clone().into()
             }
         }).collect()
@@ -361,7 +368,7 @@ pub async fn stop_handler(
     };
 
    // todo - check if site exists and if its already stopped?
-    global_state.broadcaster.send(signal).map_err(|e|
+    global_state.proc_broadcaster.send(signal).map_err(|e|
         SitesError::UnknownError(format!("{e:?}"))    
     )?;
     Ok(())
@@ -401,7 +408,7 @@ pub async fn start_handler(
         crate::http_proxy::ProcMessage::Start(query.hostname)
     };
 
-    global_state.broadcaster.send(signal).map_err(|e|
+    global_state.proc_broadcaster.send(signal).map_err(|e|
         SitesError::UnknownError(format!("{e:?}"))    
     )?;
     Ok(())

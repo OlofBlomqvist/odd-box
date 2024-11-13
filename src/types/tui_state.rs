@@ -126,13 +126,13 @@ pub struct LogPageState {
 
 #[derive(Debug,Default)]
 pub struct ThreadsTabState {
-    pub test : String,
+    pub _test : String,
     pub scroll_state : ScrollStateWrapper
 }
 
 #[derive(Debug,Default)]
 pub struct ConnectionsTabState {
-    pub test : String,
+    pub _test : String,
     pub scroll_state : ScrollStateWrapper
 }
 

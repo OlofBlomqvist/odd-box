@@ -22,6 +22,8 @@ impl std::fmt::Debug for H2Observer {
     }
 }
 
+// TODO - Should probably make it so that we can rip out the bytes as we transform them in to events
+//        instead of having to keep them in memory
 impl H2Observer {
     pub fn new() -> Self {
         H2Observer {
@@ -36,7 +38,7 @@ impl H2Observer {
     pub fn write_incoming(&mut self, data: &[u8]) {
         self.incoming.write(data);
     }
-
+    #[allow(dead_code)]
     pub fn write_outgoing(&mut self, data: &[u8]) {
         self.outgoing.write(data);
     }
@@ -54,6 +56,7 @@ impl H2Observer {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum H2Event {
     Priority {
         stream_id: u32,
@@ -459,6 +462,7 @@ impl H2Buffer {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct HttpRequest {
     pub stream_id: u32,
@@ -468,6 +472,7 @@ pub struct HttpRequest {
     pub body: Vec<u8>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum H2Frame {
     Data {

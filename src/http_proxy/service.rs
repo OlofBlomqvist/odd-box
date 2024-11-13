@@ -36,10 +36,11 @@ pub async fn serve(service:ReverseProxyService,io:GenericManagedStream) {
     let result = match io {
         // GenericManagedStream::TLS(peekable_tls_stream) => 
         //     SERVER_ONE.serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(peekable_tls_stream.managed_tls_stream), service).await,
-        GenericManagedStream::TCP(peekable_tcp_stream) => 
-            SERVER_ONE.serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(peekable_tcp_stream), service).await,
         GenericManagedStream::TerminatedTLS(stream) => 
             SERVER_ONE.serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(stream), service).await,
+        GenericManagedStream::TCP(peekable_tcp_stream) => 
+            SERVER_ONE.serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(peekable_tcp_stream), service).await,
+
             
     };
         

@@ -76,7 +76,7 @@ pub async fn proxy(
     h2_only_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
     _fallback_url: &str,
     use_https_to_backend_target: bool,
-    _backend: crate::configuration::v2::Backend
+    backend: crate::configuration::v2::Backend
 ) -> Result<ProxyCallResult, ProxyError> {
 
     let incoming_http_version = req.version();
@@ -109,16 +109,20 @@ pub async fn proxy(
     }
 
     let mut host_header_to_use = None;
+
     match &target {
         Target::Remote(remote_site_config) => {
             if remote_site_config.keep_original_host_header.unwrap_or_default() {
-                host_header_to_use = Some(req_host_name.to_string());}
+                host_header_to_use = Some(req_host_name.to_string());
+            }
         },
-        Target::Proc(_) => {
+        Target::Proc(_cfg) => {
             host_header_to_use = Some(req_host_name.to_string());
         }
-    }
+    };
 
+
+    let hints = backend.hints.clone().unwrap_or_default();
     
     let mut proxied_request =
         create_proxied_request(&target_url, req, request_upgrade_type.as_ref(), host_header_to_use)?;
@@ -127,6 +131,17 @@ pub async fn proxy(
     if proxied_request.version() == Version::HTTP_2 && !original_connection_is_https && !incoming_req_used_h2c_upgrade_header {
         use_prior_knowledge_h2c = true;
     }
+
+    // unless we have already decided to use h2cpk lets check the hints to see if we should use it...
+    if use_prior_knowledge_h2c == false && hints.len() > 0 && proxied_request.version() != Version::HTTP_2 {
+
+        // if the incoming request is http1 but the server is set to allow h2cpk but not h1, we will use http2 prior knowledge.
+        if hints.contains(&crate::configuration::v2::Hint::H2CPK) && !hints.contains(&crate::configuration::v2::Hint::H1) && !original_connection_is_https  
+        {
+            use_prior_knowledge_h2c = true;
+        }
+    }
+
 
     
     let client = if use_prior_knowledge_h2c {

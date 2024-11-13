@@ -134,7 +134,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
             Ok(x) => {
                 tokio::task::spawn(proc_host::host(
                     x,
-                    global_state.broadcaster.subscribe(),
+                    global_state.proc_broadcaster.subscribe(),
                     global_state.clone(),
                 ));
             }

@@ -29,16 +29,16 @@ pub fn draw(
 
     use std::collections::HashSet;
 
-    let total_connections = global_state
-        .app_state
-        .statistics
-        .connections_per_hostname
-        .iter()
-        .map(|x| {
-            let (_, count) = x.pair();
-            count.load(std::sync::atomic::Ordering::SeqCst)
-        })
-        .sum::<usize>();
+    // let total_connections = global_state
+    //     .app_state
+    //     .statistics
+    //     .connections_per_hostname
+    //     .iter()
+    //     .map(|x| {
+    //         let (_, count) = x.pair();
+    //         count.load(std::sync::atomic::Ordering::SeqCst)
+    //     })
+    //     .sum::<usize>();
 
     let mut unique_hostnames = HashSet::new();
 
@@ -53,7 +53,7 @@ pub fn draw(
         unique_hostnames.insert(domain_name.clone());
     }
 
-    let num_unique_hostnames = unique_hostnames.len();
+    //let num_unique_hostnames = unique_hostnames.len();
 
     let style = if is_dark_theme { Style::new().fg(Color::White) } else { Style::new().fg(Color::Black) };
 
