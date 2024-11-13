@@ -3,7 +3,7 @@ use futures::stream::Stream;
 use std::collections::HashMap;
 use std::task::{Context, Poll, Waker};
 use std::pin::Pin;
-use hpack::decoder::Decoder;
+use hpack_patched::decoder::Decoder;
 
 
 pub struct H2Observer {

@@ -1458,10 +1458,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "hpack"
+name = "hpack-patched"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c68f61350ad23817dd207b035b5258d91ac5eaef69e96f906628aaed8854dda"
+checksum = "83dd68e9ac6f591cf72a960f6ab2c40dcf6d173ee829f9ff3a0b69be8413a8e8"
 dependencies = [
  "log 0.3.9",
 ]
@@ -2156,7 +2156,7 @@ dependencies = [
  "fluke-hpack",
  "futures",
  "futures-util",
- "hpack",
+ "hpack-patched",
  "http-body",
  "http-body-util",
  "httparse",
