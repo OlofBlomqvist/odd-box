@@ -29,6 +29,40 @@ You can generate a basic "odd-box.toml" config file to get started:
 odd-box --init 
 ```
 
+The resulting file will look something like this:
+```toml
+#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.2.json
+
+# Global settings
+version = "V2"
+ip = "127.0.0.1" 
+admin_api_port = 1234
+http_port = 8080        
+tls_port = 4343        
+
+# ==========================================================
+
+# This serves the directory where this file is located on the dir.localtest.me domain.
+[[dir_server]]
+host_name = "dir.localtest.me"
+dir = "$cfg_dir"
+
+# This sets up a basic reverse proxy to lobste.rs which you can reach thru the lobsters.localtest.me domain
+[[remote_target]] 
+host_name = "lobsters.localtest.me" 
+backends = [ 
+    { address = "lobste.rs", port = 443, https = true }
+]
+
+# This will spin up a python http server in the root directory of the config file (where this file is) -
+# you can reach it thru the py.localtest.me domain.
+[[hosted_process]]
+host_name = "py.localtest.me"
+bin = "python"
+auto_start = false
+args = ["-m", "http.server", "$port"] 
+```
+
 From here, you can either open up the config file in your favorite editor, or just run odd-box and open your browser going to http://localhost:1234 where you can configure odd-box thru its web-interface.
 
 ## Documentation

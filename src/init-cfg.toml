@@ -1,4 +1,4 @@
-#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.1.json
+#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.2.json
 
 # ======================================================================================================
 # This is an initial odd-box configuration file, it was generated using the './odd-box --init' command.
