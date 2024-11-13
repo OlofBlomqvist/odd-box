@@ -243,8 +243,8 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
 
           <SettingsSection noTopSeparator noBottomSeparator>
             <SettingsItem
-              title="H2 Hints"
-              subTitle={SettingDescriptions["h2_hint"]}
+              title="Hints"
+              subTitle={SettingDescriptions["site_hints"]}
             ></SettingsItem>
             <div
               style={{
@@ -254,6 +254,18 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
                 justifyContent: "start",
               }}
             >
+              <Checkbox
+                onClick={() => {
+                  updateSetting(
+                    "hints",
+                    site.hints?.includes(Hint.H1)
+                      ? site.hints.filter((x) => x !== Hint.H1)
+                      : [...(site.hints ?? []), Hint.H1]
+                  );
+                }}
+                checked={Boolean(site?.hints?.includes(Hint.H1))}
+                title="H1"
+              />
               <Checkbox
                 onClick={() => {
                   updateSetting(
@@ -289,18 +301,6 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
                 }}
                 checked={Boolean(site?.hints?.includes(Hint.H2CPK))}
                 title="H2CPK"
-              />
-              <Checkbox
-                onClick={() => {
-                  updateSetting(
-                    "hints",
-                    site.hints?.includes(Hint.NOH2)
-                      ? site.hints.filter((x) => x !== Hint.NOH2)
-                      : [...(site.hints ?? []), Hint.NOH2]
-                  );
-                }}
-                checked={Boolean(site?.hints?.includes(Hint.NOH2))}
-                title="NOH2"
               />
             </div>
             <SettingsItem

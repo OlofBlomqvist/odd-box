@@ -31,6 +31,8 @@ const SiteLogs = ({
     "info",
     "warn",
     "error",
+    "debug",
+    "trace"
   ]);
 
   const filteredMessages = messageHistory.filter(
@@ -92,6 +94,32 @@ const SiteLogs = ({
               <div
                 style={{ display: "flex", gap: "10px", marginBottom: "10px" }}
               >
+                 <Checkbox
+                  title="Trace"
+                  onClick={() => {
+                    if (lvlFilter.includes("trace")) {
+                      setLvlFilter((old) => [
+                        ...old.filter((x) => x !== "trace"),
+                      ]);
+                    } else {
+                      setLvlFilter((old) => [...old, "trace"]);
+                    }
+                  }}
+                  checked={lvlFilter.includes("trace")}
+                ></Checkbox>
+                 <Checkbox
+                  title="Debug"
+                  onClick={() => {
+                    if (lvlFilter.includes("debug")) {
+                      setLvlFilter((old) => [
+                        ...old.filter((x) => x !== "debug"),
+                      ]);
+                    } else {
+                      setLvlFilter((old) => [...old, "debug"]);
+                    }
+                  }}
+                  checked={lvlFilter.includes("debug")}
+                ></Checkbox>
                 <Checkbox
                   title="Info"
                   onClick={() => {

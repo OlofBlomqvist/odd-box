@@ -259,7 +259,7 @@
           "description": "Server supports http2 via clear text by using prior knowledge",
           "type": "string",
           "enum": [
-            "H2PK"
+            "H2CPK"
           ]
         },
         {

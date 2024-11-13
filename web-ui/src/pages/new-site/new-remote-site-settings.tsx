@@ -154,7 +154,7 @@ const NewRemoteSiteSettings = () => {
         </SettingsItem>
       </SettingsSection>
 
-      <SettingsItem title="Hints" subTitle={SettingDescriptions["h2_hint"]} />
+      <SettingsItem title="Hints" subTitle={SettingDescriptions["site_hints"]} />
       <div
         style={{
           display: "flex",
@@ -164,6 +164,17 @@ const NewRemoteSiteSettings = () => {
           marginTop: "10px",
         }}
       >
+        <Checkbox
+          onClick={() => {
+            if (H2hints.includes(Hint.H1)) {
+              setH2Hints((old) => [...old.filter((x) => x !== Hint.H1)]);
+            } else {
+              setH2Hints((old) => [...old, Hint.H1]);
+            }
+          }}
+          checked={H2hints.includes(Hint.H1)}
+          title="H1"
+        />
         <Checkbox
           onClick={() => {
             if (H2hints.includes(Hint.H2)) {
@@ -196,17 +207,6 @@ const NewRemoteSiteSettings = () => {
           }}
           checked={H2hints.includes(Hint.H2CPK)}
           title="H2CPK"
-        />
-        <Checkbox
-          onClick={() => {
-            if (H2hints.includes(Hint.NOH2)) {
-              setH2Hints((old) => [...old.filter((x) => x !== Hint.NOH2)]);
-            } else {
-              setH2Hints((old) => [...old, Hint.NOH2]);
-            }
-          }}
-          checked={H2hints.includes(Hint.NOH2)}
-          title="NOH2"
         />
       </div>
 

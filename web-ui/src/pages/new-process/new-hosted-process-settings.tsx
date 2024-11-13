@@ -214,7 +214,7 @@ const NewHostedProcessSettings = () => {
       </SettingsSection>
 
       <div style={{ marginTop: "20px" }} />
-      <SettingsItem title="Hints" subTitle={SettingDescriptions["h2_hint"]} />
+      <SettingsItem title="Hints" subTitle={SettingDescriptions["site_hints"]} />
       <div
         style={{
           display: "flex",
@@ -225,6 +225,17 @@ const NewHostedProcessSettings = () => {
           marginBottom: "20px",
         }}
       >
+        <Checkbox
+          onClick={() => {
+            if (H2hints.includes(Hint.H1)) {
+              setH2Hints((old) => [...old.filter((x) => x !== Hint.H1)]);
+            } else {
+              setH2Hints((old) => [...old, Hint.H1]);
+            }
+          }}
+          checked={H2hints.includes(Hint.H1)}
+          title="NOH2"
+        />
         <Checkbox
           onClick={() => {
             if (H2hints.includes(Hint.H2)) {
@@ -257,17 +268,6 @@ const NewHostedProcessSettings = () => {
           }}
           checked={H2hints.includes(Hint.H2CPK)}
           title="H2CPK"
-        />
-        <Checkbox
-          onClick={() => {
-            if (H2hints.includes(Hint.NOH2)) {
-              setH2Hints((old) => [...old.filter((x) => x !== Hint.NOH2)]);
-            } else {
-              setH2Hints((old) => [...old, Hint.NOH2]);
-            }
-          }}
-          checked={H2hints.includes(Hint.NOH2)}
-          title="NOH2"
         />
       </div>
 

@@ -3,6 +3,7 @@
   "packages": {
     "caddy@latest": {
       "last_modified": "2024-09-10T15:01:03Z",
+      "plugin_version": "0.0.3",
       "resolved": "github:NixOS/nixpkgs/5ed627539ac84809c78b2dd6d26a5cebeb5ae269#caddy",
       "source": "devbox-search",
       "version": "2.8.4",

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import toast from "react-hot-toast";
 import useSiteMutations from "../../hooks/use-site-mutations";
-import { BasicProcState } from "../../generated-api";
+import { ProcState } from "../../generated-api";
 import { Popover, PopoverContent } from "../popover/popover";
 import { PopoverTrigger } from "@radix-ui/react-popover";
 import { cx } from "class-variance-authority";
@@ -21,7 +21,7 @@ const StatusIcon = ({
   hostname,
   state
 }: {
-  state?: BasicProcState;
+  state?: ProcState;
   hostname: string;
 }) => {
   const [isPopoverOpen, setIsPopoverOpen] = useState(false);
@@ -59,7 +59,7 @@ const StatusIcon = ({
           }}
         >
           <button
-            disabled={state === BasicProcState.Running}
+            disabled={state === ProcState.Running}
             onClick={() => {
               toast.promise(startSite.mutateAsync({ hostname }), {
                 loading: `Starting site.. [${hostname}]`,
@@ -67,7 +67,7 @@ const StatusIcon = ({
                 error: (e) => `Failed to start site: ${e}`,
               });
             }}
-            className={cx("button-dropdown-option", state === BasicProcState.Running && "opacity-50")}
+            className={cx("button-dropdown-option", state === ProcState.Running && "opacity-50")}
             style={{
               width: "100%",
               borderBottom: "1px solid var(--color4)",
@@ -78,7 +78,7 @@ const StatusIcon = ({
           </button>
 
           <button
-            disabled={state !== BasicProcState.Running}
+            disabled={state !== ProcState.Running}
             onClick={() => {
               toast.promise(stopSite.mutateAsync({ hostname }), {
                 loading: `Stopping site.. [${hostname}]`,
@@ -86,7 +86,7 @@ const StatusIcon = ({
                 error: (e) => `Failed to stop site: ${e}`,
               });
             }}
-            className={cx("button-dropdown-option",state !== BasicProcState.Running && "opacity-50")}
+            className={cx("button-dropdown-option",state !== ProcState.Running && "opacity-50")}
             style={{
               width: "100%",
               height: "36px",

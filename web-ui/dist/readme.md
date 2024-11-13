@@ -209,7 +209,7 @@ There are more options than the ones shown here; these are the most commonly use
     bin = "/usr/bin/python3" # variables like $root_dir or $config_dir are allowed here
     args = ["-m", "http.server", "$port"] # variables like $port, $root_dir & $config_dir are allowed here
     auto_start = true 
-    hints = ["NOH2","H2C","H2"] 
+    hints = ["H1","H2","H2C","H2CPK"] 
     https = false 
     env_vars = [
         { key = "some-environment-variable", value = "example-value" }, 

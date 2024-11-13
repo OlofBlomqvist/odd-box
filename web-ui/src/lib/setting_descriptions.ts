@@ -1,5 +1,5 @@
 const SettingDescriptions = {
-    "h2_hint": "Hints are suggestions from the server to the client on how to prioritize resources or manage network behavior.",
+    "site_hints": "Hints are suggestions from the server to the client on how to prioritize resources or manage network behavior.",
     "hostname": "Choose hostname for this site.",
     "hostname_frontend": "Incoming name for binding to (frontend).",
     "port": "Choose port for this site. Leave blank to use port from global settings.",

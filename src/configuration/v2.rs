@@ -178,7 +178,7 @@ pub enum Hint {
     /// Server supports http2 via clear text by using an upgrade header
     H2C,
     /// Server supports http2 via clear text by using prior knowledge
-    H2PK,
+    H2CPK,
     /// Server supports http1.x
     H1,
     /// Server supports http3
@@ -235,7 +235,7 @@ pub enum BackendFilter {
     Any,
     Http2, // implies tls
     Http1,
-    H2PriorKnowledge,
+    H2CPriorKnowledge,
     H2C,
     AnyTLS
 }
@@ -256,8 +256,8 @@ fn filter_backend(backend: &Backend, filter: &BackendFilter) -> bool {
             // if no hints are set, we assume http1 is supported
             hints.len() == 0 || hints.iter().any(|h|**h == Hint::H1) 
         ,
-        BackendFilter::H2PriorKnowledge => 
-            hints.iter().any(|h|**h == Hint::H2PK),
+        BackendFilter::H2CPriorKnowledge => 
+            hints.iter().any(|h|**h == Hint::H2CPK),
         BackendFilter::H2C => 
             hints.iter().any(|h|**h == Hint::H2C),
             

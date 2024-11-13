@@ -3,7 +3,7 @@ import Sleep from "../lib/sleep";
 import { useRouter } from "@tanstack/react-router";
 import {
   Api,
-  BasicProcState,
+  ProcState,
   DirServer,
   InProcessSiteConfig,
   RemoteSiteConfig,
@@ -43,7 +43,7 @@ const useSiteMutations = () => {
         let retryAttempt = 0;
         while (
           retryAttempt < maxRetries &&
-          thisSiteState !== BasicProcState.Running
+          thisSiteState !== ProcState.Running
         ) {
           retryAttempt++;
           await Sleep(1000);
@@ -55,7 +55,7 @@ const useSiteMutations = () => {
         }
 
         queryClient.invalidateQueries({ queryKey: ["site-status"] });
-        if (thisSiteState !== BasicProcState.Running) {
+        if (thisSiteState !== ProcState.Running) {
           throw new Error("Site did not start");
         }
       } else {
@@ -83,7 +83,7 @@ const useSiteMutations = () => {
 
         while (
           retryAttempt < maxRetries &&
-          thisSiteState !== BasicProcState.Stopped
+          thisSiteState !== ProcState.Stopped
         ) {
           retryAttempt++;
           await Sleep(1000);
@@ -95,7 +95,7 @@ const useSiteMutations = () => {
         }
         queryClient.invalidateQueries({ queryKey: ["site-status"] });
 
-        if (thisSiteState !== BasicProcState.Stopped) {
+        if (thisSiteState !== ProcState.Stopped) {
           throw new Error("Site did not stop");
         }
       } else {
