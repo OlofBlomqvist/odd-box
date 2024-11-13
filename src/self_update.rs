@@ -33,6 +33,9 @@ pub async fn update() -> anyhow::Result<()> {
         .expect("failed to deserialize").iter().filter(|x|{
             if let Some(t) = &x.tag_name {
                 t.to_lowercase().contains("-preview") == false
+                && t.to_lowercase().contains("-alpha") == false
+                && t.to_lowercase().contains("-beta") == false
+                && t.to_lowercase().contains("-rc") == false
             } else {
                 false
             }
