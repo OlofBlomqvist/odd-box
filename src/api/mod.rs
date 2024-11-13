@@ -14,7 +14,7 @@ use utoipa_swagger_ui::SwaggerUi;
 pub struct WebSocketGlobalState {
     
 
-    pub broadcast_channel: tokio::sync::broadcast::Sender<String>,
+    pub broadcast_channel_to_all_websocket_clients: tokio::sync::broadcast::Sender<Event>,
 
     pub global_state: Arc<crate::global_state::GlobalState>
 }
@@ -23,6 +23,8 @@ pub struct WebSocketGlobalState {
 mod controllers;
 
 use utoipauto::utoipauto;
+
+use crate::types::odd_box_event::Event;
 
 #[utoipauto]
 #[derive(OpenApi)]
@@ -72,11 +74,11 @@ async fn set_cors(request: axum::extract::Request, next: axum::middleware::Next,
 }
 
 
-pub async fn run(globally_shared_state: Arc<crate::global_state::GlobalState>,port:u16,tracing_broadcaster:tokio::sync::broadcast::Sender::<String>) {
+pub async fn run(globally_shared_state: Arc<crate::global_state::GlobalState>,port:u16,tracing_broadcaster:tokio::sync::broadcast::Sender::<Event>) {
 
     let websocket_state = WebSocketGlobalState {
 
-        broadcast_channel: tokio::sync::broadcast::channel(10).0,
+        broadcast_channel_to_all_websocket_clients: tokio::sync::broadcast::channel(10).0,
         global_state: globally_shared_state.clone()
     };
     
@@ -102,7 +104,7 @@ pub async fn run(globally_shared_state: Arc<crate::global_state::GlobalState>,po
         //.route("/script.js", axum::routing::get(script))
 
         // WEBSOCKET ROUTE FOR LOGS
-        .route("/ws/live_logs", axum::routing::get( move|ws,user_agent,origin,addr,state|
+        .route("/ws/event_stream", axum::routing::get( move|ws,user_agent,origin,addr,state|
             ws_log_messages_handler(ws,user_agent,origin,addr,state, cors_env_var_cloned_for_ws)).with_state(websocket_state.clone()))
 
         // STATIC FILES FOR WEB-UI
@@ -161,10 +163,10 @@ async fn serve_static_file(axum::extract::Path(file): axum::extract::Path<String
 /// Simple websocket interface for log messages.
 /// Warning: The format of messages emitted is not guaranteed to be stable.
 #[utoipa::path(
-    operation_id="live_logs",
+    operation_id="event_stream",
     get,
-    tag = "Logs",
-    path = "/ws/live_logs",
+    tag = "Events",
+    path = "/ws/event_stream",
 )]
 async fn ws_log_messages_handler(
     ws: WebSocketUpgrade,
@@ -204,16 +206,28 @@ async fn ws_log_messages_handler(
                 let possibly_admin_port = state.global_state.config.read().await.admin_api_port;
                 
                 if let Some(p) = possibly_admin_port {
-                    let expected_origin = format!("http://localhost:{p}");
-                    if lower_cased_orgin_from_client != expected_origin {
-                        tracing::warn!("Client origin does not match '{expected_origin}', denying connection");
+                    
+                    if !addr.ip().is_loopback() {
+                        tracing::warn!("Client origin is not localhost, denying connection");
+                        return Response::builder()
+                            .status(StatusCode::FORBIDDEN)
+                            .header("reason", "bad origin")
+                            .body(Body::from("origin not allowed."))
+                            .expect("must be able to create response")
+                    }
+
+                    let expected_origin_name = format!("http://localhost:{p}");
+                    let expected_origin_ip = format!("http://127.0.0.1:{p}");
+                    
+                    if lower_cased_orgin_from_client != expected_origin_name && lower_cased_orgin_from_client != expected_origin_ip {
+                        tracing::warn!("Client origin does not match '{expected_origin_name}', denying connection");
                         return Response::builder()
                             .status(StatusCode::FORBIDDEN)
                             .header("reason", "bad origin")
                             .body(Body::from("origin not allowed."))
                             .expect("must be able to create response")
                     } else {
-                        tracing::debug!("Client origin matches '{expected_origin}', allowing connection");
+                        tracing::debug!("Client origin matches '{expected_origin_name}', allowing connection");
                     }
                 } else {
                     
@@ -250,7 +264,7 @@ async fn ws_log_messages_handler(
 
 async fn handle_socket(client_socket: WebSocket, who: SocketAddr, state: WebSocketGlobalState) {
     let (mut sender, mut receiver) = client_socket.split();
-    let mut broadcast_receiver = state.broadcast_channel.subscribe();
+    let mut broadcast_receiver = state.broadcast_channel_to_all_websocket_clients.subscribe();
 
     loop {
         tokio::select! {
@@ -274,9 +288,13 @@ async fn handle_socket(client_socket: WebSocket, who: SocketAddr, state: WebSock
             broadcast_message = broadcast_receiver.recv() => {
                 match broadcast_message {
                     Ok(msg) => {
-                        if sender.send(Message::Text(msg)).await.is_err() {
-                            tracing::trace!("Failed to send message to client {who}, disconnecting...");
-                            break;
+                        if let Ok(msg_json) = serde_json::to_string(&msg) {
+                            if sender.send(Message::Text(msg_json)).await.is_err() {
+                                tracing::trace!("Failed to send message to client {who}, disconnecting...");
+                                break;
+                            }
+                        } else {
+                            tracing::trace!("Failed to serialize message to json for client {who}");
                         }
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
@@ -296,13 +314,15 @@ async fn handle_socket(client_socket: WebSocket, who: SocketAddr, state: WebSock
 }
 
 
-async fn broadcast_manager(state: WebSocketGlobalState,tracing_broadcaster:tokio::sync::broadcast::Sender::<String>) {
-
-    let mut broadcast_receiver = tracing_broadcaster.subscribe();
-
-    while let Ok(msg) = broadcast_receiver.recv().await {
-        _ = state.broadcast_channel.send(msg);
+async fn broadcast_manager(state: WebSocketGlobalState,tracing_broadcaster:tokio::sync::broadcast::Sender::<Event>) {
+    // need this in a loop as we will drop all senders when log level is changed at runtime
+    // and we dont want to stop sending messages to the websocket clients just because the log level was changed..
+    loop {
+        let mut odd_box_broadcast_channel = tracing_broadcaster.subscribe();
+        while let Ok(msg) = odd_box_broadcast_channel.recv().await {
+            _ = state.broadcast_channel_to_all_websocket_clients.send(msg);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
-    //tracing::warn!("leaving broadcast manager main loop")
 }

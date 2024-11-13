@@ -36,14 +36,14 @@ struct Directory {
 
 
 
-pub struct CertManager {
+pub struct LECertManager {
     client: Client,
     acc_certified_key: rcgen::KeyPair,
     account_url: Option<String>,
     directory: Directory,
     pub needs_to_register: bool
 }
-impl std::fmt::Debug for CertManager {
+impl std::fmt::Debug for LECertManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CertManager")
             .field("account_url", &self.account_url)
@@ -57,7 +57,7 @@ lazy_static::lazy_static! {
     static ref EMAIL_REGEX : regex::Regex = regex::Regex::new( r".*@.*" ).unwrap();
 }
  
-impl CertManager { 
+impl LECertManager { 
 
     // Note: this method is called prior to the tracing being initialized and thus must use println! for logging.
     async fn register_acme_account(account_email:&str,client: &Client, directory: &Directory, account_key_pair: &rcgen::KeyPair) -> anyhow::Result<String> {
@@ -162,7 +162,7 @@ impl CertManager {
             None
         };
 
-        Ok(CertManager {
+        Ok(LECertManager {
             client,
             acc_certified_key: account_key_pair,
             directory,
@@ -719,11 +719,22 @@ pub async fn bg_worker_for_lets_encrypt_certs(state: Arc<GlobalState>) {
             continue;
         }
 
+        let mut lem_guard = state.cert_resolver.lets_encrypt_manager.write().await;
+        if lem_guard.is_none() {
+            let state_guard = state.config.write().await;
+            lem_guard.replace(
+                LECertManager::new(state_guard.lets_encrypt_account_email.as_ref().unwrap()).await.unwrap()
+            );
+        }
+        drop(lem_guard);
+
 
         let active_challenges_count = crate::letsencrypt::DOMAIN_TO_CHALLENGE_TOKEN_MAP.len();
 
-        let mgr = &state.cert_resolver.lets_encrypt_manager;
         
+        
+        // TODO: should filter out local sites so we do not try to create certs for things like test.localhost or test.localtest.me etc.
+        //       but instead write a warning about it.
         let mut all_sites_with_lets_encrypt_enabled = 
             state_guard.remote_target
                 .iter()
@@ -744,25 +755,35 @@ pub async fn bg_worker_for_lets_encrypt_certs(state: Arc<GlobalState>) {
         drop(state_guard);
 
         all_sites_with_lets_encrypt_enabled.sort();
-        all_sites_with_lets_encrypt_enabled.dedup();        
+        all_sites_with_lets_encrypt_enabled.dedup();    
 
-        for domain_name in all_sites_with_lets_encrypt_enabled {
+        let guard = state.cert_resolver.lets_encrypt_manager.read().await;
+
+        if let Some(mgr) = guard.as_ref() {
+            for domain_name in all_sites_with_lets_encrypt_enabled {
             
-            if let Some(_) = state.cert_resolver.get_lets_encrypt_signed_cert_from_mem_cache(&domain_name) {
-                tracing::info!("LE CERT IS OK FOR: {}", domain_name);
-                continue;
-            }
-
-            match mgr.get_or_create_cert(&domain_name).await.context(format!("generating lets-encrypt cert for site {}",domain_name)) {
-                Ok(v) => {
-                    state.cert_resolver.add_lets_encrypt_signed_cert_to_mem_cache(&domain_name, v);  
-                    generated_count += 1;         
+                if let Some(_) = state.cert_resolver.get_lets_encrypt_signed_cert_from_mem_cache(&domain_name) {
+                    tracing::info!("LE CERT IS OK FOR: {}", domain_name);
+                    continue;
                 }
-                Err(e) => {
-                    tracing::error!("Failed to generate certificate for domain: {}. {e:?}", domain_name);
-                } 
+                
+                match mgr.get_or_create_cert(&domain_name).await.context(format!("generating lets-encrypt cert for site {}",domain_name)) {
+                    Ok(v) => {
+                        state.cert_resolver.add_lets_encrypt_signed_cert_to_mem_cache(&domain_name, v);  
+                        generated_count += 1;         
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to generate certificate for domain: {}. {e:?}", domain_name);
+                    } 
+                }
+                    
+              
             }
+        } else {
+            tracing::error!("LE Manager not available.. will retry in 10 seconds.");
         }
+        
+       
 
         crate::BG_WORKER_THREAD_MAP.insert("Lets Encrypt".into(), BgTaskInfo {
             liveness_ptr: Arc::downgrade(&liveness_token),

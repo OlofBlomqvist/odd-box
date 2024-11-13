@@ -18,6 +18,7 @@ pub fn draw(
     area: Rect,
     theme: &Theme,
 ) {
+    
     let size = area.as_size();
     if size.height < 20 || size.width < 50 {
         return;
@@ -28,72 +29,49 @@ pub fn draw(
 
     use std::collections::HashSet;
 
-    let tcp_total_connections = global_state
-        .app_state
-        .statistics
-        .tunnelled_tcp_connections_per_hostname
-        .iter()
-        .map(|x| {
-            let (_, count) = x.pair();
-            count.load(std::sync::atomic::Ordering::SeqCst)
-        })
-        .sum::<usize>();
-
-    let http_total_connections = global_state
-        .app_state
-        .statistics
-        .terminated_http_connections_per_hostname
-        .iter()
-        .map(|x| {
-            let (_, count) = x.pair();
-            count.load(std::sync::atomic::Ordering::SeqCst)
-        })
-        .sum::<usize>();
+    // let total_connections = global_state
+    //     .app_state
+    //     .statistics
+    //     .connections_per_hostname
+    //     .iter()
+    //     .map(|x| {
+    //         let (_, count) = x.pair();
+    //         count.load(std::sync::atomic::Ordering::SeqCst)
+    //     })
+    //     .sum::<usize>();
 
     let mut unique_hostnames = HashSet::new();
 
+
     for x in global_state
         .app_state
         .statistics
-        .tunnelled_tcp_connections_per_hostname
+        .connections_per_hostname
         .iter()
     {
         let (domain_name, _) = x.pair();
         unique_hostnames.insert(domain_name.clone());
     }
 
-    for x in global_state
-        .app_state
-        .statistics
-        .terminated_http_connections_per_hostname
-        .iter()
-    {
-        let (domain_name, _) = x.pair();
-        unique_hostnames.insert(domain_name.clone());
-    }
-
-    let num_unique_hostnames = unique_hostnames.len();
+    //let num_unique_hostnames = unique_hostnames.len();
 
     let style = if is_dark_theme { Style::new().fg(Color::White) } else { Style::new().fg(Color::Black) };
 
 
-    let p1 = Paragraph::new(format!(
-        "Handled TCP tunnels: {}",
-        tcp_total_connections
-    )).style(style);
-    
-    let p2 = Paragraph::new(format!(
-        "Terminated HTTP connections: {}",
-        http_total_connections
-    )).style(style);
+    // let p2 = Paragraph::new(format!(
+    //     "Received TCP connections: {}",
+    //     total_connections // <--- this i no longer just tcp connections , its a mix.. we need to sort this out
+                             // after the rewrite so that we use the correct data from the new implementation
+    // )).style(style);
 
+    let p2 = Paragraph::new(format!("This page is under re-construction..")).style(style);
     
 
-    let p3 = Paragraph::new(format!("Number of unique hostnames seen: {}", num_unique_hostnames)).style(style);
+    // let p3 = Paragraph::new(format!("Number of unique hostnames seen: {}", num_unique_hostnames)).style(style);
 
-    f.render_widget(p1, area.offset(Offset { x: 4, y: 1 }));
-    f.render_widget(p2, area.offset(Offset { x: 4, y: 2 }));
-    f.render_widget(p3, area.offset(Offset { x: 4, y: 3 }));
+    //f.render_widget(p1, area.offset(Offset { x: 4, y: 1 }));
+    f.render_widget(p2, area.offset(Offset { x: 4, y: 1 }));
+    // f.render_widget(p3, area.offset(Offset { x: 4, y: 2 }));
 
 
     // TODO - Use a scrollable table and display all host specific stats

@@ -35,7 +35,7 @@ import { useRemoteSites } from "@/hooks/use-remote-sites";
 import { useRouter } from "@tanstack/react-router";
 import useSiteStatus from "@/hooks/use-site-status";
 import { cn } from "@/lib/cn";
-import { BasicProcState } from "@/generated-api";
+import { ProcState } from "@/generated-api";
 import { SlidingTabBar } from "@/components/ui/sliding_tabs/sliding_tabs";
 import { getUrlFriendlyUrl } from "@/lib/get_url_friendly_url";
 import InfoCard from "./info-card";
@@ -74,7 +74,7 @@ const HomePage = () => {
                 rightData={{
                   label: "Running",
                   value: siteStatus.filter(
-                    (site) => site.state === BasicProcState.Running
+                    (site) => site.state === ProcState.Running
                   ).length,
                 }}
               />
@@ -168,7 +168,7 @@ const HomePage = () => {
                             <Badge
                               variant="secondary"
                               className={cn(
-                                state === BasicProcState.Running &&
+                                state === ProcState.Running &&
                                   "bg-green-800"
                               )}
                             >

@@ -1,4 +1,3 @@
-use chrono::Local;
 use futures_util::FutureExt;
 use http_body::Frame;
 use http_body_util::BodyExt;
@@ -13,7 +12,7 @@ use tungstenite::http;
 use lazy_static::lazy_static;
 
 use crate::{
-    configuration::v2::Hint, global_state::GlobalState, http_proxy::EpicResponse, types::proxy_state::{ ConnectionKey, ProxyActiveConnection, ProxyActiveConnectionType }, CustomError
+    global_state::GlobalState, http_proxy::EpicResponse, CustomError
 };
 lazy_static! {
     static ref TE_HEADER: HeaderName = HeaderName::from_static("te");
@@ -80,42 +79,20 @@ pub async fn proxy(
     backend: crate::configuration::v2::Backend
 ) -> Result<ProxyCallResult, ProxyError> {
 
-    
     let incoming_http_version = req.version();
     let request_upgrade_type = get_upgrade_type(req.headers());
     let request_upgraded = req.extensions_mut().remove::<OnUpgrade>();
 
-
+    
 
     tracing::trace!(
         "Incoming {incoming_http_version:?} request to terminating proxy from {client_ip:?} with target url: {target_url}. original req: {req:#?}"
     );
     
-    
-    let mut backend_supports_prior_knowledge_http2_over_tls = false;
-    let mut backend_supports_http2_over_clear_text_via_h2c_upgrade_header = false;
-    let mut _backend_supports_http2_h2c_using_prior_knowledge = false;
-    let mut use_prior_knowledge_http2 = false;
-    let mut use_h2c_upgrade_header = false;
-    let mut backend_might_support_h2 = true;
-    
-    for x in &backend.hints.iter().flatten().collect::<Vec<&Hint>>() {
-        match x {
-            Hint::H2 => {
-                backend_supports_prior_knowledge_http2_over_tls = true;
-            },
-            Hint::H2C => {
-                backend_supports_http2_over_clear_text_via_h2c_upgrade_header = true;
-            },
-            Hint::H2CPK => {
-                _backend_supports_http2_h2c_using_prior_knowledge = true;
-            },
-            Hint::NOH2 => {
-                backend_might_support_h2 = false
-            }
-        }
-    }
-    
+
+    // These are the defaults, we will update by looking at the backend hints and the request.
+    let mut use_prior_knowledge_h2c = false;
+    let mut incoming_req_used_h2c_upgrade_header = false;
     // Handle upgrade headers
     if let Some(typ) = &request_upgrade_type {
         if typ.to_uppercase()=="H2C" {
@@ -124,7 +101,7 @@ pub async fn proxy(
             // } else {
             //     tracing::trace!("Client used {typ:?} header. The backend has no hint that it supports h2c but we will attempt to upgrade anyway.");
             // }
-            use_h2c_upgrade_header = true;
+            incoming_req_used_h2c_upgrade_header = true;
         } else {
             //tracing::trace!("Client requested upgrade to {typ:?}. We don't know if the backend supports it, but we will try anyway.");
             // note: wont be websocket here as that is handled in another route
@@ -132,68 +109,50 @@ pub async fn proxy(
     }
 
     let mut host_header_to_use = None;
+
     match &target {
         Target::Remote(remote_site_config) => {
             if remote_site_config.keep_original_host_header.unwrap_or_default() {
-                host_header_to_use = Some(req_host_name.to_string());}
+                host_header_to_use = Some(req_host_name.to_string());
+            }
         },
-        Target::Proc(_) => {
+        Target::Proc(_cfg) => {
             host_header_to_use = Some(req_host_name.to_string());
         }
-    }
+    };
 
+
+    let hints = backend.hints.clone().unwrap_or_default();
     
     let mut proxied_request =
         create_proxied_request(&target_url, req, request_upgrade_type.as_ref(), host_header_to_use)?;
     
-    if proxied_request.version() == Version::HTTP_2 {
-        // if client connected to us with http2, we will attempt to do so with the backend as well..
-        // todo: not sure this is what we want to do but this is how the old code worked and i dont want to change it right now.
-        use_prior_knowledge_http2 = true;
-    } else if backend_supports_prior_knowledge_http2_over_tls && use_https_to_backend_target {
-        use_prior_knowledge_http2 = true;
-    } else if backend_supports_http2_over_clear_text_via_h2c_upgrade_header && !use_https_to_backend_target {
-        use_prior_knowledge_http2 = true;
-    } else if backend_supports_http2_over_clear_text_via_h2c_upgrade_header && !use_https_to_backend_target {
-        if use_h2c_upgrade_header {
-            use_prior_knowledge_http2 = false;
-        } else {
-            tracing::warn!("Backend supports h2c but client did not request it. Falling back to http1.1.");
+    // if incoming req is h2c, we will attempt to use h2c prior knowledge to the backend regardless of hints.
+    if proxied_request.version() == Version::HTTP_2 && !original_connection_is_https && !incoming_req_used_h2c_upgrade_header {
+        use_prior_knowledge_h2c = true;
+    }
+
+    // unless we have already decided to use h2cpk lets check the hints to see if we should use it...
+    if use_prior_knowledge_h2c == false && hints.len() > 0 && proxied_request.version() != Version::HTTP_2 {
+
+        // if the incoming request is http1 but the server is set to allow h2cpk but not h1, we will use http2 prior knowledge.
+        if hints.contains(&crate::configuration::v2::Hint::H2CPK) && !hints.contains(&crate::configuration::v2::Hint::H1) && !original_connection_is_https  
+        {
+            use_prior_knowledge_h2c = true;
         }
     }
 
-    // FFR:
-    // ---------------------------------------------------------------------------------------------
-    // H2 THRU ALPN -- SUPPORTS HTTP2 OVER TLS
-    // H2 PRIOR KNOWLEDGE -- SUPPORTS HTTP2 OVER TLS
-    // H2C PRIOR KNOWLEDGE -- SUPPORTS HTTP2 OVER CLEAR TEXT
-    // H2C UPGRADE HEADER -- SUPPORTS HTTP2 OVER CLEAR TEXT VIA UPGRADE HEADER
-    // if backend does not support http2, we should just use http1.1 and act like nothing happened.
-    // ---------------------------------------------------------------------------------------------
-    
 
-    let client = if backend_might_support_h2 && use_prior_knowledge_http2 {
+    
+    let client = if use_prior_knowledge_h2c {
         *proxied_request.version_mut() = Version::HTTP_2;
-        &h2_only_client // this requires the backend to support h2 prior knowledge or h2 selection by alpn 
+        &h2_only_client
     } else {
         *proxied_request.version_mut() = Version::HTTP_11;
         &client // this will use the default http1 client, which will upgrade to h2 if the backend supports it thru upgrade header or alpn
     };
 
     
-    let req_is_https = proxied_request.uri().scheme().is_some_and(|x|*x==http::uri::Scheme::HTTPS);
-    let target_scheme_info_str = if use_https_to_backend_target != req_is_https {
-        if req_is_https {
-            "https<>http"
-        } else {
-            "http<->https"
-        }
-    } else if use_https_to_backend_target {
-        "https" 
-    } else {
-        "http"
-    };
-
     let p = proxied_request.uri().port().map_or(
         if use_https_to_backend_target { 443 as u16 } else { 80  as u16 },
         |x|x.as_u16()
@@ -203,23 +162,9 @@ pub async fn proxy(
     _ = update_port(&mut uri, p,use_https_to_backend_target);
 
 
-    
-    let con: ProxyActiveConnection = create_connection(
-        &proxied_request, 
-        incoming_http_version,
-        target, 
-        &client_ip, 
-        target_scheme_info_str, 
-        proxied_request.version(), 
-        &target_url, 
-        original_connection_is_https,
-        req_host_name.to_string()
-    );
-
 
     tracing::trace!("Sending request:\n{:#?}", proxied_request);
-
-
+    
     // todo - prevent making a connection if client already has too many tcp connections open
     let mut response = {
         client
@@ -277,7 +222,7 @@ pub async fn proxy(
                             
 
                 let response = super::create_simple_response_from_incoming(
-                        WrappedNormalResponse::new(response,state.clone(),con)
+                        WrappedNormalResponse::new(response,state.clone())
                     )
                     .await.map_err(|e|ProxyError::OddBoxError(format!("{e:?}")))?;
 
@@ -296,7 +241,7 @@ pub async fn proxy(
     } else {
         // Got a normal response from the backend, we will just forward it to the client!       
         let proxied_response = create_proxied_response(response);
-        Ok(ProxyCallResult::NormalResponse(WrappedNormalResponse::new(proxied_response,state.clone(),con)))
+        Ok(ProxyCallResult::NormalResponse(WrappedNormalResponse::new(proxied_response,state.clone())))
     }
 }
 
@@ -304,15 +249,14 @@ pub async fn proxy(
 
 
 pub struct  WrappedNormalResponseBody {
-    b : Incoming,
-    on_drop : Option<Box<dyn FnOnce() + Send + 'static>>,
+    b : Incoming
 }
 impl Drop for WrappedNormalResponseBody {
     fn drop(&mut self) {
-        if let Some(on_drop) = self.on_drop.take() {
-            //tracing::trace!("dropping active connection due to body drop");
-            on_drop();
-        }   
+        // if let Some(on_drop) = self.on_drop.take() {
+        //     //tracing::trace!("dropping active connection due to body drop");
+        //     on_drop();
+        // }   
         
     }
 }
@@ -326,25 +270,11 @@ impl WrappedNormalResponse {
     }
 
     
-    pub fn new(res:Response<Incoming>,state: Arc<GlobalState>,con: ProxyActiveConnection) -> Self {
-        tracing::trace!("Adding connection for this WrappedNormalResponse.");
-        let con_key = add_connection(state.clone(), con);
-        let drop_state = state.clone();        
+    pub fn new(res:Response<Incoming>,_state: Arc<GlobalState>) -> Self {
         
-        let on_drop: Box<dyn FnOnce() + Send + 'static> = Box::new(move || {
-            let state = drop_state.clone();
-            let con_key = con_key.clone();
-            tokio::spawn(async move {
-                //tracing::trace!("Dropping connection for this WrappedNormalResponse (with 1s delay for visibility in ui).");
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                del_connection(state, &con_key);
-            });
-
-        });
-
         let (a,b) = res.into_parts();
         Self {
-            a, b: WrappedNormalResponseBody { b,on_drop: Some(on_drop) }
+            a, b: WrappedNormalResponseBody { b }
         }
     }
 }
@@ -559,57 +489,6 @@ pub async fn h2_stream_test(
 }
 
 
-
-
-
-
-
-
-
-fn add_connection(state:Arc<GlobalState>,connection:ProxyActiveConnection) -> ConnectionKey {
-    
-    let id: u64 = crate::generate_unique_id();
-    let app_state = state.app_state.clone();
-    _ = app_state.statistics.active_connections.insert(id, connection);
-    id
-}
-
-fn del_connection(state:Arc<GlobalState>,key:&ConnectionKey) {
-    let app_state = state.app_state.clone();
-    let guard = app_state.statistics.clone();
-    _ = guard.active_connections.remove(key);
-}
-
-fn create_connection(
-    req:&Request<Incoming>,
-    incoming_http_version: Version,
-    _target:Target,
-    client_addr:&SocketAddr,
-    target_scheme: &str,
-    target_http_version: hyper::http::Version,
-    target_addr: &str,
-    incoming_known_tls_only: bool,
-    target_host_name : String
-) -> ProxyActiveConnection {
-    let uri = req.uri();
-    let typ_info = 
-        ProxyActiveConnectionType::TerminatingHttp { 
-            incoming_scheme: uri.scheme_str().unwrap_or(if incoming_known_tls_only { "HTTPS" } else {"HTTP"} ).to_owned(), 
-            incoming_http_version: format!("{:?}",incoming_http_version), 
-            outgoing_http_version: format!("{:?}",target_http_version), 
-            outgoing_scheme: target_scheme.to_owned()
-        };
-
-    ProxyActiveConnection {
-        target_name: target_host_name,
-        source_addr: client_addr.clone(),
-        target_addr: target_addr.to_owned(),
-        //target: ReverseTcpProxyTarget::from_target(target),
-        creation_time: Local::now(),
-        description: None,
-        connection_type: typ_info
-    }
-}
 
 fn update_port(uri: &mut Uri, new_port: u16, use_https: bool) -> Result<(), Box<dyn std::error::Error>> {
     let mut parts = uri.clone().into_parts();

@@ -37,33 +37,30 @@ pub async fn handle(
     use mime_guess::from_path;
 
     let root_dir = Path::new(&target.dir);
-
-    let req_path : String = urlencoding::decode(req.uri().path()).map_err(|e|CustomError(format!("{e:?}")))?.to_string();
+let req_path : String = urlencoding::decode(req.uri().path()).map_err(|e|CustomError(format!("{e:?}")))?.to_string();
         
     let cache_key = req_path.trim_end_matches('/').to_string();
     {
-        tracing::trace!("checking cache for {}", cache_key);
+        //tracing::trace!("checking cache for {}", cache_key);
         let mut expired_in_cache = false;
         if let Some(guard) = RESPONSE_CACHE.get(&cache_key) {
             
             let (_content_type, cache_time,res) = guard.value();
             // todo - configurable cache time
             if cache_time.elapsed() < Duration::from_secs(10) {
-                tracing::trace!("cache hit for {}", cache_key);
+                tracing::trace!("Cache hit for {}", if cache_key.is_empty() {"/"} else {&cache_key});
                 return create_simple_response_from_bytes(res.clone());
             } else {
-                tracing::trace!("cache expired for {}", cache_key);
+                // tracing::trace!("Cache expired for {}", cache_key);
                 expired_in_cache = true;
             }
-        } else {
-            tracing::trace!("cache miss for {}", cache_key);
         }
         if expired_in_cache {
             RESPONSE_CACHE.remove(&cache_key);
         }
     }
 
-    tracing::trace!("fetching cold file");
+    tracing::trace!("Fetching cold file: {}", req_path);
 
     let requested_path = Path::new(&req_path);
     let full_path = root_dir.join(requested_path.strip_prefix("/").unwrap_or(requested_path));
@@ -158,16 +155,15 @@ pub async fn handle(
     } else if full_path.is_dir() {
 
         if req_path.ends_with("/") == false {
-            
             let response = hyper::Response::builder()
                 .status(301)
                 .header("Location", format!("{}/", req_path))
                 .body("".into())
                 .map_err(|e| CustomError(format!("Failed to create response: {}", e).into()))?;
-                
+
             return create_simple_response_from_bytes(response);
         }
-        
+
         // Check for default files before listing the directory
         let default_files = ["index.html", "index.htm", "index.md"];
 

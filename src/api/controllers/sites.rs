@@ -41,17 +41,15 @@ pub struct StatusResponse {
     pub items : Vec<StatusItem>
 }
 
+#[derive(ToSchema,Serialize)]
 
-#[derive(Debug,PartialEq,Clone,serde::Serialize,ToSchema)]
-pub enum BasicProcState {
-    Faulty,
-    Stopped,    
-    Starting,
-    Stopping,
-    Running,
-    Remote,
-    Dynamic
+pub struct StatusItem {
+    pub hostname: String,
+    pub state: BasicProcState
 }
+
+use crate::types::site_status::State as BasicProcState;
+
 impl From<crate::ProcState> for BasicProcState {
     fn from(l: crate::ProcState) -> Self {
         match l {
@@ -66,11 +64,8 @@ impl From<crate::ProcState> for BasicProcState {
         }
     }
 }
-#[derive(ToSchema,Serialize)]
-pub struct StatusItem {
-    pub hostname: String,
-    pub state: BasicProcState
-}
+
+
 
 /// List all configured sites.
 #[utoipa::path(
@@ -373,7 +368,7 @@ pub async fn stop_handler(
     };
 
    // todo - check if site exists and if its already stopped?
-    global_state.broadcaster.send(signal).map_err(|e|
+    global_state.proc_broadcaster.send(signal).map_err(|e|
         SitesError::UnknownError(format!("{e:?}"))    
     )?;
     Ok(())
@@ -413,7 +408,7 @@ pub async fn start_handler(
         crate::http_proxy::ProcMessage::Start(query.hostname)
     };
 
-    global_state.broadcaster.send(signal).map_err(|e|
+    global_state.proc_broadcaster.send(signal).map_err(|e|
         SitesError::UnknownError(format!("{e:?}"))    
     )?;
     Ok(())

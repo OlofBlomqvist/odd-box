@@ -27,7 +27,6 @@ pub fn draw(
 
     let mut buffer = log_buffer.lock().expect("locking shared buffer mutex should always work");
 
-    
     if tui_state.log_tab_stage.scroll_state.vertical_scroll.is_none() && buffer.limit.is_none() {
         let l = buffer.limit.borrow_mut();
         *l = Some(500);
@@ -62,9 +61,12 @@ pub fn draw(
         }   
     };
 
-    let fg_s = if is_dark_theme { Style::default().fg(Color::Gray) } else { Style::default().fg(Color::Black) };
+    let thread_name_style = if is_dark_theme { Style::default().fg(Color::DarkGray) } else { Style::default().fg(Color::Black) };
+    let fg_s = if is_dark_theme { Style::default().fg(Color::White) } else { Style::default().fg(Color::Black) };
 
     
+    let max_site_len = tui_state.site_rects.iter().map(|x|x.1.len()).max().unwrap_or(0);
+
     let items: Vec<Line> = 
             buffer.logs.iter_mut().enumerate().flat_map(|(i, x)| {
 
@@ -75,7 +77,7 @@ pub fn draw(
             let nr_str = format!("{:1$} | ", i + 1, item_count_len);
             let lvl_str = format!("{:>1$} ", x.lvl.as_str(), 5);
             let thread_str = if let Some(n) = &x.thread {
-                format!("{n} ")
+                format!("{n}{}  ", " ".repeat(max_site_len.saturating_sub(n.len())))
             } else {
                 ("").into()
             };
@@ -99,7 +101,7 @@ pub fn draw(
                         Line::from(vec![
                             ratatui::text::Span::styled(nr_str.to_string(), fg_s),
                             level_span,
-                            ratatui::text::Span::styled(thread_str.to_string(), fg_s),
+                            ratatui::text::Span::styled(thread_str.to_string(), thread_name_style),
                             ratatui::text::Span::styled(m.clone(), fg_s),
                         ])
                     }).collect::<Vec<Line>>()
@@ -112,7 +114,7 @@ pub fn draw(
                 vec![Line::from(vec![
                     ratatui::text::Span::styled(nr_str, fg_s),
                     ratatui::text::Span::styled(lvl_str, s(level)),
-                    ratatui::text::Span::styled(thread_str, fg_s),
+                    ratatui::text::Span::styled(thread_str, thread_name_style),
                     message,
                 ])]
             }

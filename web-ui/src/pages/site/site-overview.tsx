@@ -1,7 +1,7 @@
 import toast from "react-hot-toast";
 import useSiteStatus from "../../hooks/use-site-status";
 import useSiteMutations from "../../hooks/use-site-mutations";
-import { BasicProcState, InProcessSiteConfig } from "../../generated-api";
+import { ProcState, InProcessSiteConfig } from "../../generated-api";
 import {
   Card,
   CardContent,
@@ -25,7 +25,7 @@ const SiteOverview = ({
   const siteStatus = useSiteStatus();
   const thisSiteStatus =
     siteStatus.data?.find((x) => x.hostname === hostedProcess.host_name)
-      ?.state ?? BasicProcState.Stopped;
+      ?.state ?? ProcState.Stopped;
 
   return (
     <main
@@ -86,7 +86,7 @@ const SiteOverview = ({
           <CardContent>
             <Badge
               className={cn(
-                thisSiteStatus === BasicProcState.Running &&
+                thisSiteStatus === ProcState.Running &&
                   "bg-green-800 text-white"
               )}
             >
@@ -111,7 +111,7 @@ const SiteOverview = ({
                 disabled={
                   startSite.isPending ||
                   stopSite.isPending ||
-                  thisSiteStatus === BasicProcState.Running
+                  thisSiteStatus === ProcState.Running
                 }
                 onClick={() => {
                   if (!hostedProcess) {
@@ -137,7 +137,7 @@ const SiteOverview = ({
                 disabled={
                   startSite.isPending ||
                   stopSite.isPending ||
-                  thisSiteStatus === BasicProcState.Stopped
+                  thisSiteStatus === ProcState.Stopped
                 }
                 onClick={() => {
                   if (!hostedProcess) {

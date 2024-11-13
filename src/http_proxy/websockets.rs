@@ -1,16 +1,10 @@
-use std::{net::SocketAddr, sync::Arc};
-use chrono::Local;
+use std::sync::Arc;
 use hyper_tungstenite::HyperWebsocket;
 use hyper::{body::Incoming as IncomingBody, Request};
 use tokio_rustls::rustls::ClientConfig;
-use crate::{global_state::GlobalState, CustomError};
+use crate::CustomError;
 use futures_util::{SinkExt,StreamExt};
-use super::{ReverseProxyService, Target};
-use crate::types::proxy_state::{
-    ConnectionKey, 
-    ProxyActiveConnection, 
-    ProxyActiveConnectionType
-};
+use super::ReverseProxyService;
 use hyper_rustls::ConfigBuilderExt;
 
 pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:HyperWebsocket) -> Result<(),CustomError> {
@@ -55,7 +49,7 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
     let (target_host,port,enforce_https) = match &target {
         
         crate::http_proxy::Target::Remote(x) => {
-             let next_backend = x.next_backend(&service.state, crate::configuration::v2::BackendFilter::Any,false).await
+             let next_backend = x.next_backend(&service.state, crate::configuration::v2::BackendFilter::Any).await
                 .ok_or(CustomError(format!("no backend found")))?;
              (
                 next_backend.address.clone(),
@@ -109,13 +103,6 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
         }
     };
     
-    let target_version = upstream_client.1.version();
-    
-    let target_is_tls = match upstream_client.0.get_ref() {
-        tokio_tungstenite::MaybeTlsStream::Rustls(_) => true,
-        _ => false        
-    };
-
     tracing::trace!("Successfully upgraded websocket connection from client");
 
     let (mut ws_up_write,mut ws_up_read) = upstream_client.0.split();
@@ -125,18 +112,6 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
     let (mut websocket_write,mut websocket_read) = ws.await
         .map_err(|e|CustomError(format!("{e:?}")))?.split();
     
-    let con = create_connection(
-        req,
-        target,
-        &service.remote_addr.expect("there must be a client socket.."),
-        target_is_tls,
-        target_version,
-        &ws_url,
-        service.is_https_only
-    );
-
-    let con_key = add_connection(service.state.clone(),  con.clone()).await;
-
     // Forward messages from client to upstream
     let client_to_upstream = async {
         while let Some(message) = websocket_read.next().await {
@@ -165,54 +140,9 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
                 Err(_) => break,
             }
         }
-
-        del_connection(service.state.clone(), &con_key).await;
-
     };
 
     _ = tokio::join!(client_to_upstream, upstream_to_client);
     Ok(())
 
-}
-
-
-async fn add_connection(global_state:Arc<GlobalState>,connection:ProxyActiveConnection) -> ConnectionKey {
-    let key = crate::generate_unique_id();
-    _ = global_state.app_state.statistics.active_connections.insert(key, connection);
-    key
-}
-
-async fn del_connection(global_state:Arc<GlobalState>,key:&ConnectionKey) {
-    _ = global_state.app_state.statistics.active_connections.remove(key);
-}
-
-fn create_connection(
-    req:Request<IncomingBody>,
-    target:Target,
-    client_addr:&SocketAddr,
-    target_is_tls:bool,
-    target_version: hyper::http::Version,
-    target_addr: &str,
-    known_tls_only: bool
-) -> ProxyActiveConnection {
-    
-    let typ_info = 
-        ProxyActiveConnectionType::TerminatingWs { 
-            incoming_scheme: req.uri().scheme_str().unwrap_or(if known_tls_only { "WSS" } else {"WS"} ).to_owned(), 
-            incoming_http_version: format!("{:?}",req.version()), 
-            outgoing_http_version: format!("{:?}",target_version), 
-            outgoing_scheme:(if target_is_tls { "WSS" } else { "WS" }).into()
-        };
-
-    ProxyActiveConnection {
-        target_name: match target {
-            Target::Proc(p) => p.host_name.clone(),
-            Target::Remote(r) => r.host_name.clone()
-        },
-        source_addr: client_addr.clone(),
-        target_addr: target_addr.to_owned(),
-        creation_time: Local::now(),
-        description: Some(format!("websocket connection")),
-        connection_type: typ_info
-    }
 }

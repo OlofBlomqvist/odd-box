@@ -50,6 +50,7 @@ pub fn markdown_to_html(title: &str, text: &str) -> Result<String, markdown::mes
         
         .inner-markdown {{
             max-width: 1400px;
+            width: 100%;
             margin: 0 auto;
             position: relative; /* Position for absolute toggle button */
         }}

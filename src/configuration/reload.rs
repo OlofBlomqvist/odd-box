@@ -2,9 +2,10 @@
 
 use std::{io::Read, sync::Arc, time::Duration};
 use anyhow::{bail, Result};
-use tracing::{info, trace, warn};
+use tracing::{info, level_filters::LevelFilter, trace, warn};
+use tracing_subscriber::EnvFilter;
 
-use crate::{configuration::v2::{DirServer, InProcessSiteConfig, RemoteSiteConfig}, global_state::GlobalState, proc_host, types::app_state::ProcState};
+use crate::{configuration::{v2::{DirServer, InProcessSiteConfig, RemoteSiteConfig}, LogLevel}, global_state::GlobalState, proc_host, types::app_state::ProcState};
 
 use super::{ConfigWrapper, OddBoxConfig};
 
@@ -52,28 +53,29 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
 
     // lets filter out any processes that are already running and have the same configuration..
     // we dont need to restart them..
-    let cloned_modified_procs : Vec<InProcessSiteConfig> = all_cloned_new_procs.iter_mut().filter_map(|x|{
-        let existing = crate::PROC_THREAD_MAP.iter().find(|y|y.config.host_name == x.host_name);
+    let cloned_modified_procs : Vec<InProcessSiteConfig> = all_cloned_new_procs.iter_mut().filter_map(|new_proc_conf|{
+        let existing = crate::PROC_THREAD_MAP.iter().find(|y|y.config.host_name == new_proc_conf.host_name);
         if let Some(existing) = existing {
-            if let Ok(mut r) = new_configuration.resolve_process_configuration(&x) {
-                r.proc_id = existing.config.proc_id.clone();
-                r.active_port = existing.config.active_port;
-                x.set_id(r.proc_id.clone());
-                if existing.config.eq(&r) {
-                    trace!("Process {} has not changed, skipping restart",x.host_name);
+            if let Ok(mut new_resolved_siteproc) = new_configuration.resolve_process_configuration(&new_proc_conf) {
+                new_resolved_siteproc.proc_id = existing.config.proc_id.clone();
+                new_resolved_siteproc.active_port = existing.config.active_port;
+                new_proc_conf.active_port = existing.config.active_port;
+                new_proc_conf.set_id(new_resolved_siteproc.proc_id.clone());
+                if existing.config.eq(&new_resolved_siteproc) {
+                    //trace!("Process {} has not changed, skipping restart",x.host_name);
                     return None;
                 } else {
-                    info!("Process {} has changed, will restart",x.host_name);
-                    return Some(x.clone());
+                    info!("Process {} has changed, will restart",new_proc_conf.host_name);
+                    return Some(new_proc_conf.clone());
                 }
             } else {
 
-                warn!("Failed to resolve process configuration for process {}",x.host_name);
+                warn!("Failed to resolve process configuration for process {}",new_proc_conf.host_name);
                 abort = true;
                 return None;
             }
         }
-        return Some(x.clone());
+        return Some(new_proc_conf.clone());
     }).collect();
 
     new_configuration.hosted_process = Some(all_cloned_new_procs);
@@ -93,7 +95,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
             x.marked_for_removal = true; 
         } else if new_configuration.hosted_process.iter().flatten().any(|p|p.host_name==x.config.host_name) {
             // ok so this process is still in the new configuration, but it has not changed
-            info!("Process {} is still in the new configuration, but has not changed",x.config.host_name);
+            //info!("Process {} is still in the new configuration, but has not changed",x.config.host_name);
         } else {
             info!("Marking process {} for removal as it is no longer in the configuration",x.config.host_name);
             x.marked_for_removal = true;   
@@ -132,7 +134,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
             Ok(x) => {
                 tokio::task::spawn(proc_host::host(
                     x,
-                    global_state.broadcaster.subscribe(),
+                    global_state.proc_broadcaster.subscribe(),
                     global_state.clone(),
                 ));
             }
@@ -140,10 +142,50 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
         }
     }
 
-
+    let new_log_level = new_configuration.log_level.clone();
     let mut guard = global_state.config.write().await;
     *guard = new_configuration;
     drop(guard);
+
+    
+    let log_level : LevelFilter = match new_log_level {
+        Some(LogLevel::Info) => LevelFilter::INFO,
+        Some(LogLevel::Error) => LevelFilter::ERROR,
+        Some(LogLevel::Warn) => LevelFilter::WARN,
+        Some(LogLevel::Trace) => LevelFilter::TRACE,
+        Some(LogLevel::Debug) => LevelFilter::DEBUG,
+        _ => LevelFilter::INFO
+    };
+
+    let what = EnvFilter::from_default_env()
+        .add_directive(format!("odd_box={}", log_level).parse().expect("This directive should always work"))
+        .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"));
+
+    match &global_state.log_handle {
+        crate::OddLogHandle::CLI(rw_lock) => {
+            match rw_lock.write().await.reload(what) {
+                Ok(_) => {
+                    tracing::warn!("LOG LEVEL WAS CHANGED DUE TO CONFIGURATION FILE MODIFIED - NEW VALUE: {log_level:?}")
+                },
+                Err(e) => {
+                    tracing::error!("failed to change log level due to error {e:?}")
+                },
+            }
+        },
+        crate::OddLogHandle::TUI(rw_lock) => {
+            match rw_lock.write().await.reload(what) {
+                Ok(_) => {
+                    tracing::warn!("LOG LEVEL WAS CHANGED DUE TO CONFIGURATION FILE MODIFIED - NEW VALUE: {log_level:?}")
+                },
+                Err(e) => {
+                    tracing::error!("failed to change log level due to error {e:?}")
+                },
+            }
+        },
+        crate::OddLogHandle::None => {
+            tracing::error!("NO LOG HANDLE EXISTS!!")
+        },
+    };
 
 
 

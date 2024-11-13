@@ -1,0 +1,16 @@
+{
+    log {
+        level DEBUG
+        output stdout
+    }
+    auto_https disable_certs
+    servers 127.0.0.1:10000 {
+        protocols h2 h2c h1
+    }
+}
+
+:10000 {
+    bind "127.0.0.1"
+    respond "pong"
+    
+}

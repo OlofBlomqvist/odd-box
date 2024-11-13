@@ -1,4 +1,4 @@
-import useLiveLog, { TLogMessage } from "@/hooks/use-live-log";
+import useEventStream, { TLogMessage } from "@/hooks/use-event-stream";
 import { ReactNode } from "@tanstack/react-router";
 import { createContext, useContext } from "react";
 
@@ -6,8 +6,8 @@ const LiveLogsContext = createContext<{messageHistory:TLogMessage[]}>({
     messageHistory: []
 });
 
-const LiveLogsProvider = ({ children }: { children: ReactNode }) => {
-  let { messageHistory } = useLiveLog();
+const LiveEventStreamProvider = ({ children }: { children: ReactNode }) => {
+  let { messageHistory } = useEventStream();
   return (
     <LiveLogsContext.Provider value={{messageHistory}}>
       {children}
@@ -15,7 +15,7 @@ const LiveLogsProvider = ({ children }: { children: ReactNode }) => {
   );
 };
 
-export default LiveLogsProvider;
+export default LiveEventStreamProvider;
 
 export const useLiveLogsContext = () => {
     const ctx = useContext(LiveLogsContext)

@@ -1,0 +1,492 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OddBoxV2Config",
+  "type": "object",
+  "required": [
+    "version"
+  ],
+  "properties": {
+    "admin_api_port": {
+      "description": "The port for the admin api. If this is not set, the admin api will not be started. This setting also enabled the web-ui on the same port.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint16",
+      "minimum": 0.0
+    },
+    "alpn": {
+      "description": "Defaults to true. Lets you enable/disable h2/http11 tls alpn algs during initial connection phase.",
+      "default": true,
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "auto_start": {
+      "default": true,
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "default_log_format": {
+      "default": "standard",
+      "allOf": [
+        {
+          "$ref": "#/definitions/LogFormat"
+        }
+      ]
+    },
+    "dir_server": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/definitions/DirServer"
+      }
+    },
+    "env_vars": {
+      "description": "Environment variables configured here will be made available to all processes started by odd-box.",
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/EnvVar"
+      }
+    },
+    "hosted_process": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/definitions/InProcessSiteConfig"
+      }
+    },
+    "http_port": {
+      "description": "The port on which to listen for http requests. Defaults to 8080.",
+      "default": 8080,
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint16",
+      "minimum": 0.0
+    },
+    "ip": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "ip"
+    },
+    "lets_encrypt_account_email": {
+      "description": "If you want to use lets-encrypt for generating certificates automatically for your sites",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "log_level": {
+      "description": "Log level of the odd-box application itself. Defaults to Info. For hosted processes, you can instead set the log level for site individually.",
+      "default": "Info",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/LogLevel"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "port_range_start": {
+      "description": "The port range start is used to determine which ports to use for hosted processes.",
+      "default": 4200,
+      "type": "integer",
+      "format": "uint16",
+      "minimum": 0.0
+    },
+    "remote_target": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/definitions/RemoteSiteConfig"
+      }
+    },
+    "root_dir": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tls_port": {
+      "description": "The port on which to listen for https requests. Defaults to 4343.",
+      "default": 4343,
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint16",
+      "minimum": 0.0
+    },
+    "version": {
+      "description": "The schema version - you do not normally need to set this, it is set automatically when you save the configuration.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/OddBoxConfigVersion"
+        }
+      ]
+    }
+  },
+  "definitions": {
+    "Backend": {
+      "type": "object",
+      "required": [
+        "address",
+        "port"
+      ],
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "hints": {
+          "description": "H2C,H2,H2CPK - used to signal use of prior knowledge http2 or http2 over clear text.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/Hint"
+          }
+        },
+        "https": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "port": {
+          "description": "This can be zero in case the backend is a hosted process, in which case we will need to resolve the current active_port",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        }
+      }
+    },
+    "DirServer": {
+      "description": "A directory server configuration allows you to serve files from a directory on the local filesystem. Both unencrypted (http) and encrypted (https) connections are supported, either self-signed or thru lets-encrypt. You can specify rules for how the cache should behave, and you can also specify rules for how the files should be served.",
+      "type": "object",
+      "required": [
+        "dir",
+        "host_name"
+      ],
+      "properties": {
+        "capture_subdomains": {
+          "description": "Instead of only listening to yourdomain.com, you can capture subdomains which means this site will also respond to requests for *.yourdomain.com",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "dir": {
+          "type": "string"
+        },
+        "enable_directory_browsing": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "enable_lets_encrypt": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "host_name": {
+          "description": "This is the hostname that the site will respond to.",
+          "type": "string"
+        },
+        "redirect_to_https": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "render_markdown": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    },
+    "EnvVar": {
+      "type": "object",
+      "required": [
+        "key",
+        "value"
+      ],
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      }
+    },
+    "Hint": {
+      "oneOf": [
+        {
+          "description": "Server supports http2 over tls",
+          "type": "string",
+          "enum": [
+            "H2"
+          ]
+        },
+        {
+          "description": "Server supports http2 via clear text by using an upgrade header",
+          "type": "string",
+          "enum": [
+            "H2C"
+          ]
+        },
+        {
+          "description": "Server supports http2 via clear text by using prior knowledge",
+          "type": "string",
+          "enum": [
+            "H2CPK"
+          ]
+        },
+        {
+          "description": "Server supports http1.x",
+          "type": "string",
+          "enum": [
+            "H1"
+          ]
+        },
+        {
+          "description": "Server supports http3",
+          "type": "string",
+          "enum": [
+            "H3"
+          ]
+        }
+      ]
+    },
+    "InProcessSiteConfig": {
+      "type": "object",
+      "required": [
+        "bin",
+        "host_name"
+      ],
+      "properties": {
+        "args": {
+          "description": "Arguments to pass to the binary when starting it.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "auto_start": {
+          "description": "Set this to false if you do not want this site to start automatically when odd-box starts. This also means that the site is excluded from the start_all command.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "bin": {
+          "description": "The binary to start. This can be a path to a binary or a command that is in the PATH.",
+          "type": "string"
+        },
+        "capture_subdomains": {
+          "description": "If you wish to use wildcard routing for any subdomain under the 'host_name'",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "dir": {
+          "description": "Working directory for the process. If this is not set, the current working directory will be used.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "disable_tcp_tunnel_mode": {
+          "description": "This is mostly useful in case the target uses SNI sniffing/routing",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "enable_lets_encrypt": {
+          "description": "If you want to use lets-encrypt for generating certificates automatically for this site. Defaults to false. This feature will disable tcp tunnel mode.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "env_vars": {
+          "description": "Environment variables to set for the process.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/EnvVar"
+          }
+        },
+        "exclude_from_start_all": {
+          "description": "If you wish to exclude this site from the start_all command. This setting was previously called \"disable\" but has been renamed for clarity",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "forward_subdomains": {
+          "description": "If you wish to use the subdomain from the request in forwarded requests: test.example.com -> internal.site vs test.example.com -> test.internal.site",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "hints": {
+          "description": "H1,H2,H2C,H2CPK,H3 - empty means H1 is expected to work with passthru: everything else will be using terminating mode.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/Hint"
+          }
+        },
+        "host_name": {
+          "type": "string"
+        },
+        "https": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "log_format": {
+          "description": "The log format to use for this site. If this is not set, the default log format will be used. Currently the only supported log formats are \"standard\" and \"dotnet\".",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LogFormat"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "log_level": {
+          "description": "If you wish to set a specific loglevel for this hosted process. Defaults to \"Info\". If this level is lower than the global log_level you will get the message elevated to the global log level instead but tagged with the actual log level.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LogLevel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "port": {
+          "description": "If this is set to None, the next available port will be used. Starting from the global port_range_start",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "minimum": 0.0
+        }
+      }
+    },
+    "LogFormat": {
+      "type": "string",
+      "enum": [
+        "standard",
+        "dotnet"
+      ]
+    },
+    "LogLevel": {
+      "type": "string",
+      "enum": [
+        "Trace",
+        "Debug",
+        "Info",
+        "Warn",
+        "Error"
+      ]
+    },
+    "OddBoxConfigVersion": {
+      "type": "string",
+      "enum": [
+        "Unmarked",
+        "V1",
+        "V2"
+      ]
+    },
+    "RemoteSiteConfig": {
+      "type": "object",
+      "required": [
+        "backends",
+        "host_name"
+      ],
+      "properties": {
+        "backends": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Backend"
+          }
+        },
+        "capture_subdomains": {
+          "description": "If you wish to use wildcard routing for any subdomain under the 'host_name'",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "disable_tcp_tunnel_mode": {
+          "description": "This is mostly useful in case the target uses SNI sniffing/routing",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "enable_lets_encrypt": {
+          "description": "If you want to use lets-encrypt for generating certificates automatically for this site. Defaults to false. This feature will disable tcp tunnel mode.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "forward_subdomains": {
+          "description": "If you wish to use the subdomain from the request in forwarded requests: test.example.com -> internal.site vs test.example.com -> test.internal.site",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "host_name": {
+          "type": "string"
+        },
+        "keep_original_host_header": {
+          "description": "If you wish to pass along the incoming request host header to the backend rather than the host name of the backends. Defaults to false.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

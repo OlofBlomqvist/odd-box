@@ -156,7 +156,7 @@ export const BackendSheet = ({
           <div>
             <SettingsItem
               title="Hints"
-              subTitle={SettingDescriptions["h2_hint"]}
+              subTitle={SettingDescriptions["site_hints"]}
             ></SettingsItem>
             <div
               style={{
@@ -167,6 +167,22 @@ export const BackendSheet = ({
                 marginTop: "4px",
               }}
             >
+              <Checkbox
+                onClick={() => {
+                  saveSettings({
+                    newBackendSettings: {
+                      port: thisBackend.port,
+                      address: thisBackend.address,
+                      hints: thisBackend?.hints?.includes(Hint.H1)
+                        ? thisBackend?.hints.filter((x) => x !== Hint.H1)
+                        : [...(thisBackend?.hints ?? []), Hint.H1],
+                      https: useHttps,
+                    },
+                  });
+                }}
+                checked={Boolean(thisBackend?.hints?.includes(Hint.H1))}
+                title="H1"
+              />
               <Checkbox
                 onClick={() => {
                   saveSettings({
@@ -214,22 +230,6 @@ export const BackendSheet = ({
                 }}
                 checked={Boolean(thisBackend?.hints?.includes(Hint.H2CPK))}
                 title="H2CPK"
-              />
-              <Checkbox
-                onClick={() => {
-                  saveSettings({
-                    newBackendSettings: {
-                      port: thisBackend.port,
-                      address: thisBackend.address,
-                      hints: thisBackend?.hints?.includes(Hint.NOH2)
-                        ? thisBackend?.hints.filter((x) => x !== Hint.NOH2)
-                        : [...(thisBackend?.hints ?? []), Hint.NOH2],
-                      https: useHttps,
-                    },
-                  });
-                }}
-                checked={Boolean(thisBackend?.hints?.includes(Hint.NOH2))}
-                title="NOH2"
               />
             </div>
           </div>

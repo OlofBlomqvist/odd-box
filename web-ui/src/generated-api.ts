@@ -35,16 +35,6 @@ export enum BasicLogLevel {
   Error = "Error",
 }
 
-export enum BasicProcState {
-  Faulty = "Faulty",
-  Stopped = "Stopped",
-  Starting = "Starting",
-  Stopping = "Stopping",
-  Running = "Running",
-  Remote = "Remote",
-  Dynamic = "Dynamic",
-}
-
 export type ConfigItem =
   | {
       RemoteSite: RemoteSiteConfig;
@@ -118,6 +108,7 @@ export interface FullyResolvedInProcessSiteConfig {
   host_name: string;
   https?: boolean | null;
   log_format?: LogFormat | null;
+  log_level?: LogLevel | null;
   /**
    * @format int32
    * @min 0
@@ -135,7 +126,8 @@ export enum Hint {
   H2 = "H2",
   H2C = "H2C",
   H2CPK = "H2CPK",
-  NOH2 = "NOH2",
+  H1 = "H1",
+  H3 = "H3",
 }
 
 export interface InProcessSiteConfig {
@@ -173,11 +165,15 @@ export interface InProcessSiteConfig {
    * test.example.com -> test.internal.site
    */
   forward_subdomains?: boolean | null;
-  /** H2C or H2 - used to signal use of prior knowledge http2 or http2 over clear text. */
+  /**
+   * H1,H2,H2C,H2CPK,H3 - empty means H1 is expected to work with passthru: everything else will be
+   * using terminating mode.
+   */
   hints?: Hint[] | null;
   host_name: string;
   https?: boolean | null;
   log_format?: LogFormat | null;
+  log_level?: LogLevel | null;
   /**
    * If this is set to None, the next available port will be used. Starting from the global port_range_start
    * @format int32
@@ -409,13 +405,29 @@ export interface SaveGlobalConfig {
   tls_port: number;
 }
 
+export interface SiteStatusEvent {
+  host_name: string;
+  id: any;
+  state: State;
+}
+
 export type SitesError = {
   UnknownError: string;
 };
 
+export enum State {
+  Faulty = "Faulty",
+  Stopped = "Stopped",
+  Starting = "Starting",
+  Stopping = "Stopping",
+  Running = "Running",
+  Remote = "Remote",
+  Dynamic = "Dynamic",
+}
+
 export interface StatusItem {
   hostname: string;
-  state: BasicProcState;
+  state: any;
 }
 
 export interface StatusResponse {
@@ -655,7 +667,7 @@ export class HttpClient<SecurityDataType = unknown> {
 
 /**
  * @title ODD-BOX ADMIN-API 🤯
- * @version 0.1.9
+ * @version 0.1.10
  * @license
  * @externalDocs https://github.com/OlofBlomqvist/odd-box
  * @contact Olof Blomqvist <olof@twnet.se>
@@ -828,14 +840,14 @@ export class Api<SecurityDataType extends unknown> extends HttpClient<SecurityDa
     /**
      * @description Warning: The format of messages emitted is not guaranteed to be stable.
      *
-     * @tags Logs
-     * @name LiveLogs
+     * @tags Events
+     * @name EventStream
      * @summary Simple websocket interface for log messages.
-     * @request GET:/ws/live_logs
+     * @request GET:/ws/event_stream
      */
-    liveLogs: (params: RequestParams = {}) =>
+    eventStream: (params: RequestParams = {}) =>
       this.request<any, any>({
-        path: `/ws/live_logs`,
+        path: `/ws/event_stream`,
         method: "GET",
         ...params,
       }),

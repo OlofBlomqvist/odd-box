@@ -9,7 +9,7 @@ use hyper_util::client::legacy::{connect::HttpConnector, Client};
 pub use service::*;
 use tokio::sync::mpsc::Sender;
 pub use utils::*;
-use crate::{global_state::GlobalState, tcp_proxy::ReverseTcpProxyTarget};
+use crate::{global_state::GlobalState, tcp_proxy::ReverseTcpProxyTarget, types::proxy_state::ConnectionKey};
 
 #[derive(Clone,Debug)]
 pub enum ProcMessage {
@@ -31,5 +31,6 @@ pub struct ReverseProxyService {
     pub resolved_target : Option<Arc<ReverseTcpProxyTarget>>,
     /// This is used for performance since we create the RPS on each request and we might need to read from
     /// the configuration multiple times during the request. We do not want to lock the config each time.
-    pub configuration : Arc<crate::configuration::ConfigWrapper>
+    pub configuration : Arc<crate::configuration::ConfigWrapper>,
+    pub connection_key : ConnectionKey,
 }

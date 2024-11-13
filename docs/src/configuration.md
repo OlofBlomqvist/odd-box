@@ -64,7 +64,7 @@ There are more options than the ones shown here; these are the most commonly use
     args = ["-m", "http.server", "$port"] # variables like $port, $root_dir & $config_dir are allowed here
     exclude_from_start_all = false # if you do not wish start this site when pressing the 's' key in tui mode.
     auto_start = true 
-    hints = ["NOH2","H2C","H2"]
+    hints = ["H1","H2","H2C","H2CPK","H3"]
     capture_subdomains = false
     https = false 
     env_vars = [

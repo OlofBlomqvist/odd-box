@@ -4,9 +4,9 @@ use ratatui::widgets::ScrollbarState;
 #[derive(Debug,Default)]
 pub struct ScrollStateWrapper {
     pub vertical_scroll_state: ScrollbarState,
-    pub horizontal_scroll_state: ScrollbarState,
+    pub _horizontal_scroll_state: ScrollbarState,
     pub vertical_scroll: Option<usize>,
-    pub horizontal_scroll: Option<usize>,    
+    pub _horizontal_scroll: Option<usize>,    
     pub total_rows : usize,
     pub visible_rows : usize,
     pub area_height : usize,

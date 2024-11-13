@@ -7,6 +7,8 @@ use utoipa::ToSchema;
 use v1::H2Hint;
 use v2::{DirServer, FullyResolvedInProcessSiteConfig};
 
+use crate::types::proc_info::ProcId;
+
 pub mod legacy;
 pub mod v1;
 pub mod v2;
@@ -400,20 +402,20 @@ impl ConfigWrapper {
     
    
 
-    pub fn busy_ports(&self) -> Vec<(String,u16)> {
+    pub fn busy_ports(&self) -> Vec<(ProcId,u16)> {
         self.hosted_process.iter().flatten().flat_map(|x| {
             
             let mut items = Vec::new();
             
             // manually set ports needs to be marked as busy even if the process is not running
             if let Some(p) = x.port { 
-                items.push((x.host_name.clone(),p))
+                items.push((x.get_id().clone(),p))
             }
 
 
             // active ports means that there is a loop active for this process using that port
             if let Some(p) = x.active_port { 
-                items.push((x.host_name.clone(),p))
+                items.push((x.get_id().clone(),p))
             }
 
             if items.len() > 0 {
@@ -422,7 +424,7 @@ impl ConfigWrapper {
                 None
             }
 
-        }).flatten().collect::<Vec<(String,u16)>>()
+        }).flatten().collect::<Vec<(ProcId,u16)>>()
     }
     
     pub async fn find_and_set_unused_port(selfy : &mut Self, proc:&mut crate::InProcessSiteConfig) -> anyhow::Result<u16> {
@@ -501,12 +503,18 @@ impl ConfigWrapper {
     pub fn set_active_port(&mut self, resolved_proc:&mut FullyResolvedInProcessSiteConfig) -> anyhow::Result<u16> {
       
     
-        let mut selected_port = None;
+        let mut selected_port = resolved_proc.active_port;
 
         // ports in use or configured for use by other sites
         let unavailable_ports = self.busy_ports().into_iter().filter(|x|{
-                x.0 != resolved_proc.host_name 
-        }).collect::<Vec<(String,u16)>>();
+                x.0 != resolved_proc.proc_id 
+        }).collect::<Vec<(ProcId,u16)>>();
+
+        if let Some(currently_selected_port) = selected_port {
+            if !unavailable_ports.iter().any(|x|x.1 == currently_selected_port) {
+                return Ok(currently_selected_port)
+            }
+        }
 
         // decide which port to use (ie. which port to add as the environment variable PORT)
         if let Some(prefered_port) = resolved_proc.port {
@@ -543,7 +551,7 @@ impl ConfigWrapper {
                 }
             }
             
-            tracing::info!("[{}] Using the first available port found (starting from the configured start port: {min_auto_port}) ---> '{}'",&resolved_proc.host_name,inner_selected_port);
+            tracing::trace!("[{}] Using the first available port found (starting from the configured start port: {min_auto_port}) ---> '{}'",&resolved_proc.host_name,inner_selected_port);
             selected_port = Some(inner_selected_port);
         }
 
@@ -551,7 +559,7 @@ impl ConfigWrapper {
         // mark this process as using this port
         if let Some(sp) = selected_port {
             if let Some(hosted_processes) = &mut self.hosted_process {
-                if let Some(mm) = hosted_processes.iter_mut().find(|x| x.host_name == resolved_proc.host_name) {
+                if let Some(mm) = hosted_processes.iter_mut().find(|x| x.get_id() == &resolved_proc.proc_id) {
                     // save the selected port in the globally shared state
                     mm.active_port = Some(sp);
                 } else {
@@ -638,6 +646,7 @@ impl ConfigWrapper {
     pub fn resolve_process_configuration(&mut self,proc:&crate::InProcessSiteConfig) -> anyhow::Result<crate::FullyResolvedInProcessSiteConfig> {
 
         let mut resolved_proc = crate::FullyResolvedInProcessSiteConfig {
+            log_level: proc.log_level.clone(),
             excluded_from_start_all: proc.exclude_from_start_all.unwrap_or(false),
             proc_id: proc.get_id().clone(),
             active_port: proc.active_port,

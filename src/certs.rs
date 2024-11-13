@@ -1,4 +1,3 @@
-use anyhow::Context;
 use dashmap::DashMap;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::rustls::server::{ClientHello, ResolvesServerCert};
@@ -12,7 +11,7 @@ pub struct DynamicCertResolver {
     enable_lets_encrypt: Mutex<bool>,
     self_signed_cert_cache: DashMap<String, std::sync::Arc<tokio_rustls::rustls::sign::CertifiedKey>>,
     lets_encrypt_signed_certs: DashMap<String, std::sync::Arc<tokio_rustls::rustls::sign::CertifiedKey>>,
-    pub lets_encrypt_manager: crate::letsencrypt::CertManager
+    pub lets_encrypt_manager: tokio::sync::RwLock<Option<crate::letsencrypt::LECertManager>>
 }
 
 impl DynamicCertResolver {
@@ -121,16 +120,16 @@ impl DynamicCertResolver {
         
         
     }
-    pub async fn new(enable_lets_encrypt:bool,lets_encrypt_account_email:Option<String>) -> anyhow::Result<Self> {
-        Ok(DynamicCertResolver {
+    
+    pub fn new(enable_lets_encrypt:bool) -> Self {
+        DynamicCertResolver {
             enable_lets_encrypt: Mutex::new(enable_lets_encrypt),
             self_signed_cert_cache: DashMap::new(),
             lets_encrypt_signed_certs: DashMap::new(),            
-            lets_encrypt_manager: 
-                crate::letsencrypt::CertManager::new(&lets_encrypt_account_email.unwrap_or_default()).await
-                    .context("Could not create letsencrypt manager")?
-        })
+            lets_encrypt_manager: tokio::sync::RwLock::new(None)
+        }
     }
+
 }
 
 impl ResolvesServerCert for DynamicCertResolver {
