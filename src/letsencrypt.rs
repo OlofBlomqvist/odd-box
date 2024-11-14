@@ -59,7 +59,7 @@ lazy_static::lazy_static! {
  
 impl LECertManager { 
 
-    // Note: this method is called prior to the tracing being initialized and thus must use println! for logging.
+    // Note: this method is called prior to the tracing being initialized and thus must use tracing::info for logging.
     async fn register_acme_account(account_email:&str,client: &Client, directory: &Directory, account_key_pair: &rcgen::KeyPair) -> anyhow::Result<String> {
         
         let email_is_valid = EMAIL_REGEX.is_match(account_email);
@@ -77,9 +77,9 @@ impl LECertManager {
         let nonce = Self::fetch_nonce(&client, &directory.new_nonce).await.context("fetch nonce")?;
 
         // Sign the request payload (without account URL, uses JWK instead)
-        println!("Signing the registration request payload: {}", payload);
+        tracing::info!("Signing the registration request payload: {}", payload);
         let signed_request = Self::sign_request(account_key_pair, Some(&payload),&nonce, &directory.new_account, None).context("sign request")?;
-        println!("Signed request payload {} to: {}. signed payload: {}", payload, directory.new_account, signed_request);
+        tracing::trace!("Signed request payload {} to: {}. signed payload: {}", payload, directory.new_account, signed_request);
         
         // Send the registration request
         let res = client
@@ -92,10 +92,10 @@ impl LECertManager {
         if res.status().is_success() {
             if let Some(location) = res.headers().get("Location") {
                 let account_url = location.to_str()?.to_string();
-                println!("ACME account registered successfully! Account URL: {}", account_url);
+                tracing::info!("ACME account registered successfully! Account URL: {}", account_url);
 
                 let account_info: serde_json::Value = res.json().await?;
-                println!("ACME account info: {:?}", account_info);
+                tracing::trace!("ACME account info: {:?}", account_info);
 
                 Ok(account_url)
             } else {
@@ -119,7 +119,7 @@ impl LECertManager {
         Ok(s)
     }
 
-    // Note: this method is called prior to the tracing being initialized and thus must use println! for logging.
+    // Note: this method is called prior to the tracing being initialized and thus must use tracing::info for logging.
     pub async fn new(account_email:&str) -> anyhow::Result<Self> {
         
         let client = Client::new();
@@ -151,10 +151,10 @@ impl LECertManager {
         let acc_url_path = "./.odd_box_cache/lets_encrypt_account_url";
         let account_url = if std::path::Path::exists(std::path::Path::new(acc_url_path)) {
             let account_url = std::fs::read_to_string(acc_url_path)?;
-            // println!("Lets-encrypt account already registered: {}", account_url);
+            // tracing::info!("Lets-encrypt account already registered: {}", account_url);
             Some(account_url)
         } else if !account_email.is_empty() {
-            println!("Registering a new ACME account because we did not find path: {}", acc_url_path);
+            tracing::info!("Registering a new ACME account because we did not find path: {}", acc_url_path);
             let url = Self::register_acme_account(&account_email,&client, &directory, &account_key_pair).await.context("register acme account")?;
             std::fs::write(acc_url_path, &url)?;
             Some(url)
@@ -721,7 +721,7 @@ pub async fn bg_worker_for_lets_encrypt_certs(state: Arc<GlobalState>) {
 
         let mut lem_guard = state.cert_resolver.lets_encrypt_manager.write().await;
         if lem_guard.is_none() {
-            let state_guard = state.config.write().await;
+            let state_guard = state.config.read().await;
             lem_guard.replace(
                 LECertManager::new(state_guard.lets_encrypt_account_email.as_ref().unwrap()).await.unwrap()
             );
