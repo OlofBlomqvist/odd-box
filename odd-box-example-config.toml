@@ -1,4 +1,4 @@
-#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.json
+#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.2.json
 
 version = "V2"  # this is the configuration format version, dont change it
 alpn = false # optional - allows alpn negotiation for http/1.0 and h2 on tls connections 
@@ -30,12 +30,8 @@ enable_lets_encrypt = false # optional, false by default
 
 backends = [
 	{ https = true, address="lobste.rs", port=443  },
-	{ 
-    https = true, 
-    address="lobsters.dev", 
-    port=443, 
-    hints = ["H2","H2C","H2CPK"] # - optional: used to decide which protocol to use for the target
-  }
+	{ https = true, address="lobsters.dev", port=443, hints = ["H1","H2","H3","H2C","H2CPK"] } # - hints are optional: used to decide which protocol to use for the target
+
 ]
 
 [[hosted_process]] # hosted processes are those that odd-box is responsible for running

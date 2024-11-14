@@ -61,6 +61,22 @@ host_name = "py.localtest.me"
 bin = "python"
 auto_start = false
 args = ["-m", "http.server", "$port"] 
+
+# Example for running a docker container
+[[hosted_process]]
+host_name = "nginx.localhost"
+bin = "podman"
+args = [ 
+    "run",
+    "--replace",
+    "--quiet", 
+    "-p$port:80", # incoming $port is handled by odd-box
+    "nginx" # <-- image name
+]
+
+# oh and you can ofc also host processes that dont actually listen to a port
+# but you just want to keep running :)
+
 ```
 
 From here, you can either open up the config file in your favorite editor, or just run odd-box and open your browser going to http://localhost:1234 where you can configure odd-box thru its web-interface.
