@@ -931,32 +931,58 @@ fn draw_ui<B: ratatui::backend::Backend>(
 }
 
 fn wrap_string(input: &str, max_length: usize) -> Vec<String> {
-
     let words = input.split_whitespace();
     let mut wrapped_lines = Vec::new();
     let mut current_line = String::new();
 
     for word in words {
-        // Check if adding the next word exceeds the max_length
-        if current_line.len() + word.len() + 1 > max_length {
-            // Add the current line to the vector and start a new line
-            wrapped_lines.push(current_line);
-            current_line = String::new();
+        if word.len() <= max_length {
+            if !current_line.is_empty() {
+                if current_line.len() + 1 + word.len() > max_length {
+                    wrapped_lines.push(current_line);
+                    current_line = String::new();
+                } else {
+                    current_line.push(' ');
+                }
+            }
+            current_line.push_str(word);
+        } else {
+            if !current_line.is_empty() {
+                wrapped_lines.push(current_line);
+                current_line = String::new();
+            }
+            let chunks = split_string_into_chunks(word, max_length);
+            for chunk in chunks {
+                wrapped_lines.push(chunk);
+            }
         }
-
-        // If the line is not empty, add a space before the next word
-        if !current_line.is_empty() {
-            current_line.push(' ');
-        }
-
-        // Add the word to the current line
-        current_line.push_str(word);
     }
 
-    // Add the last line if it's not empty
+    // Add any remaining text
     if !current_line.is_empty() {
         wrapped_lines.push(current_line);
     }
 
     wrapped_lines
+}
+
+fn split_string_into_chunks(s: &str, chunk_size: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+
+    while start < s.len() {
+        let end = if start + chunk_size > s.len() {
+            s.len()
+        } else {
+            let mut end = start + chunk_size;
+            while !s.is_char_boundary(end) {
+                end -= 1;
+            }
+            end
+        };
+        chunks.push(s[start..end].to_string());
+        start = end;
+    }
+
+    chunks
 }

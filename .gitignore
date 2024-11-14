@@ -10,3 +10,4 @@ web-ui/.env.development
 web-ui/.env.production
 odd-box.toml.backup
 .odd-box.toml.swp
+nginx.conf

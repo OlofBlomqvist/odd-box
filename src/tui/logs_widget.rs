@@ -69,29 +69,41 @@ pub fn draw(
 
     let items: Vec<Line> = 
             buffer.logs.iter_mut().enumerate().flat_map(|(i, x)| {
-
+            
             let level = x.lvl;
-        
-
+            
+            // TODO -- long lines get messed up
         
             let nr_str = format!("{:1$} | ", i + 1, item_count_len);
+            let system_message = x.thread.clone().unwrap_or_default().starts_with("odd_box");
             let lvl_str = format!("{:>1$} ", match x.lvl {
+
+                Level::INFO  if system_message => "INF 🧊",
+                Level::TRACE if system_message => "TRC 🧊",
+                Level::DEBUG if system_message => "DBG 🧊",
+                Level::ERROR if system_message => "ERR 🧊",
+                Level::WARN  if system_message => "WRN 🧊",
+
+                Level::INFO => "INF 🥝",
+                Level::TRACE => "TRC 🥸",
+                Level::DEBUG => "DBG 👀",
                 Level::ERROR => "ERR 👺",
-                Level::TRACE => "TRC 🍇",
-                Level::DEBUG => "DBG 🍅",
                 Level::WARN => "WRN 🥦",
-                Level::INFO => "INF 🧊",
+                
             }, 5);
+
             let thread_str = if let Some(n) = &x.thread {
-                format!("{n}{}  ", " ".repeat(max_site_len.saturating_sub(n.len())))
+                format!("{n}{}", " ".repeat(max_site_len.saturating_sub(n.len())))
             } else {
-                ("hmm").into()
+                (" -").into()
             };
-        
+
+            x.msg = x.msg.trim().to_string();
+
             let max_width = (max_msg_width as usize)
                 .saturating_sub(8)
                 .saturating_sub(nr_str.len() + lvl_str.len() + thread_str.len());
-        
+            
             if x.msg.len() > max_width {
                 wrap_string(x.msg.as_str(), max_width)
                     .into_iter().enumerate().map(|(i, m)| {
@@ -99,22 +111,36 @@ pub fn draw(
                             ratatui::text::Span::styled(lvl_str.clone(), s(level))
                         } else {
                             ratatui::text::Span::styled(
-                                Cow::from(" ".repeat(lvl_str.len())),
+                                Cow::from(" ".repeat(lvl_str.len() - 1)),
                                 Style::default(),
                             )
                         };
+
+                        if i == 0 {
+                            Line::from(vec![
+                                ratatui::text::Span::styled(nr_str.to_string(), fg_s),
+                                level_span,
+                                ratatui::text::Span::styled(thread_str.to_string(), thread_name_style),
+                                ratatui::text::Span::styled(m.clone(), s(level)),
+                            ])
+                        } else {
+                            // we add 2 spaces in thread names 
+                            let padding = " ".repeat(lvl_str.len() + thread_str.len() -2);
+                            Line::from(vec![
+                                ratatui::text::Span::styled(nr_str.to_string(), fg_s),
+                                ratatui::text::Span::styled(padding, Style::default()),
+                                ratatui::text::Span::styled("", Style::default()),
+                                ratatui::text::Span::styled("", Style::default()),
+                                ratatui::text::Span::styled(m.clone(), s(level)),
+                            ])
+                        }
             
-                        Line::from(vec![
-                            ratatui::text::Span::styled(nr_str.to_string(), fg_s),
-                            level_span,
-                            ratatui::text::Span::styled(thread_str.to_string(), thread_name_style),
-                            ratatui::text::Span::styled(m.clone(), fg_s),
-                        ])
+                       
                     }).collect::<Vec<Line>>()
             } else {
                 let message = ratatui::text::Span::styled(
-                    format!("{} {}", &x.src, &x.msg),
-                    fg_s,
+                    format!("{}{}", &x.src, &x.msg),
+                    s(level),
                 );
         
                 vec![Line::from(vec![
