@@ -51,8 +51,8 @@ const HomePage = () => {
 
   const slidingTabs = [
     { label: "Processes", value: "processes" },
-    { label: "Sites", value: "sites" },
-    { label: "Servers", value: "servers" },
+    { label: "Remote sites", value: "sites" },
+    { label: "Static sites", value: "servers" },
   ]
 
   return (
@@ -250,7 +250,7 @@ const HomePage = () => {
             <Card>
               <CardHeader className="flex items-center justify-between flex-row">
                 <div>
-                  <CardTitle>Sites</CardTitle>
+                  <CardTitle>Remote sites</CardTitle>
                 <CardDescription>Viewing all remote sites</CardDescription>
                 </div>
                 <Button
@@ -329,8 +329,8 @@ const HomePage = () => {
             <Card>
               <CardHeader className="flex items-center justify-between flex-row">
                 <div>
-                  <CardTitle>Servers</CardTitle>
-                <CardDescription>Viewing all directory servers</CardDescription>
+                  <CardTitle>Static sites</CardTitle>
+                <CardDescription>Viewing all static sites</CardDescription>
                 </div>
                 <Button
                 onClick={() => {
@@ -341,7 +341,7 @@ const HomePage = () => {
                 className="opacity-[.9] flex gap-2 border border-transparent hover:border-white/20 m-0"
                 variant="ghost"
               >
-                <PlusSquareIcon /> New server
+                <PlusSquareIcon /> New site
               </Button>
               </CardHeader>
               <CardContent>

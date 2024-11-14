@@ -1,3 +1,5 @@
+import { InProcessSiteConfig, SiteStatusEvent } from "@/generated-api";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import useWebSocket, { ReadyState } from "react-use-websocket";
 
@@ -8,15 +10,30 @@ export type TLogMessage = {
   timestamp:string
 }
 
+
+export type TTcpEvent = {
+  Update?: {
+    tcp_peer_addr: string
+    connection_key: number
+    client_addr: string
+    target: {
+      remote_target_config: any
+      hosted_target_config: InProcessSiteConfig
+    }
+  }
+  Close?:number
+}
+
 export type EventMessage = {
   Log?: TLogMessage;
-  TcpEvent? : any,
-  SiteStatusChange? : any
+  TcpEvent? : TTcpEvent,
+  SiteStatusChange? : SiteStatusEvent
 }
 
 const useEventStream = () => {
   const [messageHistory, setMessageHistory] = useState<Array<TLogMessage>>([]);
-
+  const [tcpEvents, setTcpEvents] = useState<Array<TTcpEvent>>([]);
+  const queryClient = useQueryClient()
   let hostName = window.location.hostname
   if (window.location.port) {
     hostName = `${hostName}:${window.location.port}`
@@ -39,6 +56,14 @@ const useEventStream = () => {
           msg.Log!,
           ...prev.slice(0,999)
         ]));
+      } else if (msg.SiteStatusChange !== undefined) {
+        console.log("Site status change", JSON.stringify(msg.SiteStatusChange))
+        queryClient.invalidateQueries({ queryKey: ["site-status"] });
+      } else if (msg.TcpEvent) {
+        setTcpEvents((prev) => ([
+          msg.TcpEvent!,
+          ...prev.slice(0,999)
+        ]));
       }
     }
   }, [lastMessage]);
@@ -54,6 +79,7 @@ const useEventStream = () => {
   return {
     messageHistory,
     connectionStatus,
+    tcpEvents
   };
 };
 

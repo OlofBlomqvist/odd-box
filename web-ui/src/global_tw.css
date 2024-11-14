@@ -607,6 +607,10 @@ body {
   pointer-events: none;
 }
 
+.static {
+  position: static;
+}
+
 .fixed {
   position: fixed;
 }
@@ -740,6 +744,10 @@ body {
 
 .mt-4 {
   margin-top: 1rem;
+}
+
+.mb-\[10px\] {
+  margin-bottom: 10px;
 }
 
 .block {
@@ -928,6 +936,10 @@ body {
   max-width: 32rem;
 }
 
+.max-w-\[300px\] {
+  max-width: 300px;
+}
+
 .flex-1 {
   flex: 1 1 0%;
 }
@@ -1022,6 +1034,10 @@ body {
   flex-direction: column-reverse;
 }
 
+.flex-wrap {
+  flex-wrap: wrap;
+}
+
 .place-content-center {
   place-content: center;
 }
@@ -1032,6 +1048,10 @@ body {
 
 .items-center {
   align-items: center;
+}
+
+.justify-end {
+  justify-content: flex-end;
 }
 
 .justify-center {
@@ -1664,14 +1684,6 @@ body {
 
 .opacity-\[\.9\] {
   opacity: .9;
-}
-
-.opacity-\[\.2\] {
-  opacity: .2;
-}
-
-.opacity-\[\.5\] {
-  opacity: .5;
 }
 
 .shadow-lg {

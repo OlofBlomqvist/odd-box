@@ -12,9 +12,9 @@ const NewDirServerPage = () => {
     <main className="grid flex-1 items-start gap-4 md:gap-8 max-w-[900px]">
       <Card>
         <CardHeader>
-          <CardTitle>New directory server</CardTitle>
+          <CardTitle>New static site</CardTitle>
           <CardDescription>
-            A directory server configuration allows you to serve files from a
+            A static site configuration allows you to serve files from a
             directory on the local filesystem.
             <br />
             Both unencrypted (http) and encrypted (https) connections are

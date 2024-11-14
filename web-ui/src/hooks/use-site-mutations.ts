@@ -1,9 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import Sleep from "../lib/sleep";
 import { useRouter } from "@tanstack/react-router";
 import {
   Api,
-  ProcState,
   DirServer,
   InProcessSiteConfig,
   RemoteSiteConfig,
@@ -27,81 +25,12 @@ const useSiteMutations = () => {
 
   const startSite = useMutation({
     mutationKey: ["start-site"],
-    mutationFn: async ({ hostname }: { hostname: string }) => {
-      await apiClient.api.start({ hostname });
-
-      const isAllSitesRequest = hostname === "*";
-
-      await Sleep(isAllSitesRequest ? 3000 : 1000);
-
-      if (!isAllSitesRequest) {
-        let newStates = (await apiClient.api.status()).data;
-        let thisSiteState = newStates.items.find(
-          (x: any) => x.hostname === hostname
-        )?.state;
-        let maxRetries = 5;
-        let retryAttempt = 0;
-        while (
-          retryAttempt < maxRetries &&
-          thisSiteState !== ProcState.Running
-        ) {
-          retryAttempt++;
-          await Sleep(1000);
-          newStates = (await apiClient.api.status()).data;
-
-          thisSiteState = newStates.items.find(
-            (x: any) => x.hostname === hostname
-          )?.state;
-        }
-
-        queryClient.invalidateQueries({ queryKey: ["site-status"] });
-        if (thisSiteState !== ProcState.Running) {
-          throw new Error("Site did not start");
-        }
-      } else {
-        queryClient.invalidateQueries({ queryKey: ["site-status"] });
-      }
-    },
+    mutationFn: apiClient.api.start,
   });
 
   const stopSite = useMutation({
     mutationKey: ["stop-site"],
-    mutationFn: async ({ hostname }: { hostname: string }) => {
-      await apiClient.api.stop({ hostname });
-
-      const isAllSitesRequest = hostname === "*";
-
-      await Sleep(isAllSitesRequest ? 3000 : 1000);
-
-      if (!isAllSitesRequest) {
-        let newStates = (await apiClient.api.status()).data;
-        let thisSiteState = newStates.items.find(
-          (x: any) => x.hostname === hostname
-        )?.state;
-        let maxRetries = 5;
-        let retryAttempt = 0;
-
-        while (
-          retryAttempt < maxRetries &&
-          thisSiteState !== ProcState.Stopped
-        ) {
-          retryAttempt++;
-          await Sleep(1000);
-          newStates = (await apiClient.api.status()).data;
-
-          thisSiteState = newStates.items.find(
-            (x: any) => x.hostname === hostname
-          )?.state;
-        }
-        queryClient.invalidateQueries({ queryKey: ["site-status"] });
-
-        if (thisSiteState !== ProcState.Stopped) {
-          throw new Error("Site did not stop");
-        }
-      } else {
-        queryClient.invalidateQueries({ queryKey: ["site-status"] });
-      }
-    },
+    mutationFn: apiClient.api.stop,
   });
 
   const updateRemoteSite = useMutation({
@@ -193,9 +122,7 @@ const useSiteMutations = () => {
 
   const deleteSite = useMutation({
     mutationKey: ["delete-site"],
-    mutationFn: async ({ hostname }: { hostname: string }) => {
-      await apiClient.api.delete({ hostname });
-    },
+    mutationFn: apiClient.api.delete,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["sites"] });
     },

@@ -91,9 +91,7 @@ const SiteLogs = ({
               title="Filter messages"
               subTitle="Which type of messages do you want to see"
             >
-              <div
-                style={{ display: "flex", gap: "10px", marginBottom: "10px" }}
-              >
+              <div className="flex gap-[10px] mb-[10px] max-w-[300px] justify-end flex-wrap">
                  <Checkbox
                   title="Trace"
                   onClick={() => {

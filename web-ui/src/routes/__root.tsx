@@ -67,7 +67,7 @@ export const Route = createRootRoute({
             <div className="my-4" />
             <ListHeader
               menuActions={<DirectoryServersMenuActions />}
-              label="DIRECTORY SERVERS"
+              label="STATIC SITES"
             />
             <DirServersList />
           </SideDrawer>
