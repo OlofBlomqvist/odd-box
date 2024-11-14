@@ -829,13 +829,13 @@ fn draw_ui<B: ratatui::backend::Backend>(
                     id_style);
 
                 let status = match state {
-                    &ProcState::Running => ratatui::text::Span::styled(format!("{:?}",state),s),
-                    &ProcState::Faulty => ratatui::text::Span::styled(format!("{state:?} (retrying in 5s)"),s),
-                    &ProcState::Starting => ratatui::text::Span::styled(format!("{:?}",state),s),
-                    &ProcState::Stopped => ratatui::text::Span::styled(format!("{:?}",state),s),
-                    &ProcState::Stopping => ratatui::text::Span::styled(format!("{:?}..",state),s),
-                    &ProcState::Remote => ratatui::text::Span::styled(format!("{:?}",state),s),
-                    &ProcState::Dynamic => ratatui::text::Span::styled(format!("{:?}",state),s)
+                    &ProcState::Running => ratatui::text::Span::styled(format!(" {:?}",state),s),
+                    &ProcState::Faulty => ratatui::text::Span::styled(format!(" {state:?} (retrying in 5s)"),s),
+                    &ProcState::Starting => ratatui::text::Span::styled(format!(" {:?}",state),s),
+                    &ProcState::Stopped => ratatui::text::Span::styled(format!(" {:?}",state),s),
+                    &ProcState::Stopping => ratatui::text::Span::styled(format!(" {:?}..",state),s),
+                    &ProcState::Remote => ratatui::text::Span::styled(format!(" {:?}",state),s),
+                    &ProcState::Dynamic => ratatui::text::Span::styled(format!(" {:?} ",state),s)
                     
                 };
 

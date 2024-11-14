@@ -75,11 +75,17 @@ pub fn draw(
 
         
             let nr_str = format!("{:1$} | ", i + 1, item_count_len);
-            let lvl_str = format!("{:>1$} ", x.lvl.as_str(), 5);
+            let lvl_str = format!("{:>1$} ", match x.lvl {
+                Level::ERROR => "ERR 👺",
+                Level::TRACE => "TRC 🍇",
+                Level::DEBUG => "DBG 🍅",
+                Level::WARN => "WRN 🥦",
+                Level::INFO => "INF 🧊",
+            }, 5);
             let thread_str = if let Some(n) = &x.thread {
                 format!("{n}{}  ", " ".repeat(max_site_len.saturating_sub(n.len())))
             } else {
-                ("").into()
+                ("hmm").into()
             };
         
             let max_width = (max_msg_width as usize)

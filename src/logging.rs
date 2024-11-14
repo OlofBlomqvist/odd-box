@@ -175,12 +175,17 @@ impl<S: Subscriber> Layer<S> for TuiLoggerLayer {
         let current_thread = std::thread::current();
         let current_thread_name = current_thread.name().and_then(|x|Some(x.to_string())).unwrap_or(format!("HAH!"));
         let mut skip_src = false;
-        let thread_name = if current_thread_name == "tokio-runtime-worker" { 
+        let mut thread_name = if current_thread_name == "tokio-runtime-worker" { 
             skip_src = true;
             Some(src.to_string()) 
         } else { 
             Some(current_thread_name) 
         };
+
+        if let Some(x) = &thread_name {
+            if x == "" && skip_src {
+                thread_name = Some(metadata.module_path().unwrap_or_default().to_string());
+            }}
 
         let log_message = LogMsg {
             thread: thread_name.clone(),

@@ -23,6 +23,13 @@ fn update_from_github(target_tag:&str,current_version:&str) -> anyhow::Result<()
 }
 
 pub async fn update() -> anyhow::Result<()> {
+
+    let allow_preview = 
+        std::env::vars()
+            .find(|(key,_)| key=="ODDBOX_ALLOW_PREVIEW").map(|x|x.1.to_lowercase())
+            .unwrap_or_default()
+            .eq_ignore_ascii_case("true");
+
     let releases_url = "https://api.github.com/repos/OlofBlomqvist/odd-box/releases";   
     let c = reqwest::Client::new();
     let latest_release: Release = c.get(releases_url).header("user-agent", "odd-box").send()
@@ -32,10 +39,11 @@ pub async fn update() -> anyhow::Result<()> {
         .await
         .expect("failed to deserialize").iter().filter(|x|{
             if let Some(t) = &x.tag_name {
-                t.to_lowercase().contains("-preview") == false
-                && t.to_lowercase().contains("-alpha") == false
-                && t.to_lowercase().contains("-beta") == false
-                && t.to_lowercase().contains("-rc") == false
+                allow_preview ||
+                    t.to_lowercase().contains("-preview") == false
+                    && t.to_lowercase().contains("-alpha") == false
+                    && t.to_lowercase().contains("-beta") == false
+                    && t.to_lowercase().contains("-rc") == false
             } else {
                 false
             }
