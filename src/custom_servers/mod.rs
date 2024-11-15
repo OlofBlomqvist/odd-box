@@ -16,7 +16,9 @@ pub fn markdown_to_html(title: &str, text: &str) -> Result<String, markdown::mes
     mo.compile.allow_dangerous_html = true;
     mo.parse.constructs.code_text = true;
     
-    let html = markdown::to_html_with_options(&text, &mo)?;
+    
+    let txt = text.replace("- [] ", "- [ ] ").replace("* [] ", "* [ ] ");
+    let html = markdown::to_html_with_options(&txt, &mo)?;
 
     Ok(format!(
         r#"<!DOCTYPE html>
@@ -24,6 +26,7 @@ pub fn markdown_to_html(title: &str, text: &str) -> Result<String, markdown::mes
         <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        
         <title>{title}</title>
         
         <!-- Load initial markdown theme and syntax highlighting CSS based on user preference -->
@@ -40,6 +43,7 @@ pub fn markdown_to_html(title: &str, text: &str) -> Result<String, markdown::mes
 
         body {{
             font-family: var(--font-family);
+            font-family: 'Crimson Text', serif;
             font-size: var(--font-size);
             line-height: var(--line-height);
             padding: 2rem;

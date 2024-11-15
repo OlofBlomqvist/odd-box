@@ -93,7 +93,17 @@ let req_path : String = urlencoding::decode(req.uri().path()).map_err(|e|CustomE
         let file_content = fs::read(&full_path)
             .map_err(|e| CustomError(format!("Failed to read file: {}", e).into()))?;
 
-        if target.render_markdown.unwrap_or_default() && full_path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+        if target.render_markdown.unwrap_or_default() && full_path.extension().and_then(|ext| {
+            if let Some(v) = ext.to_str() {
+                if v.eq_ignore_ascii_case("md") {
+                    Some(v)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }).is_some() {
             // Convert Markdown to HTML
             let markdown = String::from_utf8_lossy(&file_content);
             let html = super::markdown_to_html(full_path.file_name().unwrap_or_default().to_str().unwrap_or("unnamed"),&markdown)
