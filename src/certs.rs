@@ -135,7 +135,11 @@ impl DynamicCertResolver {
 impl ResolvesServerCert for DynamicCertResolver {
     fn resolve(&self, client_hello: ClientHello) -> Option<std::sync::Arc<tokio_rustls::rustls::sign::CertifiedKey>> {
         
-        let server_name = client_hello.server_name()?;
+        let mut server_name = client_hello.server_name()?;
+
+        if server_name == "localhost" {
+            server_name = "odd-box.localhost";
+        }
         
         if self.enable_lets_encrypt.lock().unwrap().clone() {
             if let Some(certified_key) = self.get_lets_encrypt_signed_cert_from_mem_cache(server_name) {

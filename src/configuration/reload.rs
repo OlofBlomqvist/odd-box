@@ -5,9 +5,9 @@ use anyhow::{bail, Result};
 use tracing::{info, level_filters::LevelFilter, trace, warn};
 use tracing_subscriber::EnvFilter;
 
-use crate::{configuration::{v2::{DirServer, InProcessSiteConfig, RemoteSiteConfig}, LogLevel}, global_state::GlobalState, proc_host, types::app_state::ProcState};
+use crate::{configuration::{DirServer, InProcessSiteConfig, RemoteSiteConfig, LogLevel}, global_state::GlobalState, proc_host, types::app_state::ProcState};
 
-use super::{ConfigWrapper, OddBoxConfig};
+use super::{ConfigWrapper, AnyOddBoxConfig};
 
 pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
  
@@ -21,7 +21,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
     file.read_to_string(&mut contents)?;    
     drop(file);
     let (mut new_configuration,_original_version) = 
-        match OddBoxConfig::parse(&contents) {
+        match AnyOddBoxConfig::parse(&contents) {
             Ok(configuration) => {
                 let (a,b) = 
                     configuration

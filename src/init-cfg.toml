@@ -1,4 +1,4 @@
-#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.2.json
+#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v3.0.json
 
 # ======================================================================================================
 # This is an initial odd-box configuration file, it was generated using the './odd-box --init' command.
@@ -11,11 +11,12 @@
 # ======================================================================================================
 
 # Global settings
-version = "V2"
-ip = "127.0.0.1" 
-admin_api_port = 1234
+version = "V3"
+ip = "0.0.0.0" 
 http_port = 8080        
-tls_port = 4343        
+tls_port = 4343
+odd_box_url = "odd-box.localhost"
+odd_box_password = "very-secret"        
 
 # ======================================================================================================
 
@@ -43,12 +44,28 @@ args = ["-m", "http.server", "$port"]
 [[hosted_process]]
 host_name = "nginx.localhost"
 bin = "podman"
+auto_start = false
 args = [ 
     "run",
     "--replace",
     "--quiet", 
     "-p$port:80", # incoming $port is handled by odd-box
     "nginx" # <-- image name
+]
+
+# Hosting caddy with a caddyfile
+[[hosted_process]]
+host_name = "caddy.localtest.me"
+port = 9999
+bin = "caddy"
+auto_start = false
+hints = ["H2","H2CPK"]
+args = [
+  "run",
+  "--config",
+  "./CaddyTest1",
+  "--adapter",
+  "caddyfile"
 ]
 
 # oh and you can ofc also host processes that dont actually listen to a port

@@ -54,8 +54,8 @@ pub enum ProxyError {
 
 #[derive(Debug)]
 pub enum Target {
-    Remote(crate::configuration::v2::RemoteSiteConfig),
-    Proc(crate::configuration::v2::InProcessSiteConfig),
+    Remote(crate::configuration::RemoteSiteConfig),
+    Proc(crate::configuration::InProcessSiteConfig),
 }
 
 // We don't care about the original call scheme, version, etc.
@@ -76,19 +76,17 @@ pub async fn proxy(
     h2_only_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
     _fallback_url: &str,
     use_https_to_backend_target: bool,
-    backend: crate::configuration::v2::Backend
+    backend: crate::configuration::Backend
 ) -> Result<ProxyCallResult, ProxyError> {
 
     let incoming_http_version = req.version();
     let request_upgrade_type = get_upgrade_type(req.headers());
     let request_upgraded = req.extensions_mut().remove::<OnUpgrade>();
 
-    
 
     tracing::trace!(
         "Incoming {incoming_http_version:?} request to terminating proxy from {client_ip:?} with target url: {target_url}. original req: {req:#?}"
     );
-    
 
     // These are the defaults, we will update by looking at the backend hints and the request.
     let mut use_prior_knowledge_h2c = false;
@@ -136,7 +134,7 @@ pub async fn proxy(
     if use_prior_knowledge_h2c == false && hints.len() > 0 && proxied_request.version() != Version::HTTP_2 {
 
         // if the incoming request is http1 but the server is set to allow h2cpk but not h1, we will use http2 prior knowledge.
-        if hints.contains(&crate::configuration::v2::Hint::H2CPK) && !hints.contains(&crate::configuration::v2::Hint::H1) && !original_connection_is_https  
+        if hints.contains(&crate::configuration::Hint::H2CPK) && !hints.contains(&crate::configuration::Hint::H1) && !original_connection_is_https  
         {
             use_prior_knowledge_h2c = true;
         }

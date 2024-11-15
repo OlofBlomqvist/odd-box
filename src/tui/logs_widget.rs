@@ -93,7 +93,7 @@ pub fn draw(
             }, 5);
 
             let thread_str = if let Some(n) = &x.thread {
-                format!("{n}{}", " ".repeat(max_site_len.saturating_sub(n.len())))
+                format!("{n}{}  ", " ".repeat(max_site_len.saturating_sub(n.len())))
             } else {
                 (" -").into()
             };

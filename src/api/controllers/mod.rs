@@ -7,7 +7,7 @@ use crate::global_state::GlobalState;
 pub mod sites;
 pub mod settings;
 
-pub async fn routes(state:Arc<GlobalState>) -> Router {
+pub fn routes(state:Arc<GlobalState>) -> Router {
 
     let sites = Router::new()
         .route("/api/sites", axum::routing::post(sites::update_handler)).with_state(state.clone())

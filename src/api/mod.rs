@@ -1,8 +1,11 @@
 use std::{net::SocketAddr, sync::Arc};
+use anyhow::bail;
 use axum::{body::Body, extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::{IntoResponse, Response}, routing::get, Router};
 use futures_util::{SinkExt, StreamExt};
-use hyper::StatusCode;
+use hyper::{body::Incoming, StatusCode};
+use hyper_util::rt::TokioIo;
 use include_dir::Dir;
+use tower::{Service, ServiceExt};
 use tower_http::cors::{Any, CorsLayer};
 use utoipa::{openapi::ExternalDocs, Modify, OpenApi};
 use utoipa_rapidoc::RapiDoc;
@@ -24,7 +27,7 @@ mod controllers;
 
 use utoipauto::utoipauto;
 
-use crate::types::odd_box_event::Event;
+use crate::{tcp_proxy::{GenericManagedStream, ManagedStream, Peekable}, types::odd_box_event::Event};
 
 #[utoipauto]
 #[derive(OpenApi)]
@@ -74,61 +77,6 @@ async fn set_cors(request: axum::extract::Request, next: axum::middleware::Next,
 }
 
 
-pub async fn run(globally_shared_state: Arc<crate::global_state::GlobalState>,port:u16,tracing_broadcaster:tokio::sync::broadcast::Sender::<Event>) {
-
-    let websocket_state = WebSocketGlobalState {
-
-        broadcast_channel_to_all_websocket_clients: tokio::sync::broadcast::channel(10).0,
-        global_state: globally_shared_state.clone()
-    };
-    
-    let socket_address: SocketAddr = format!("127.0.0.1:{port}").parse().expect("failed to parse socket address");
-    let listener = tokio::net::TcpListener::bind(socket_address).await.expect("failed to bind to socket address");
-
-
-    let cors_env_var = std::env::vars().find(|(key,_)| key=="ODDBOX_CORS_ALLOWED_ORIGIN").map(|x|x.1.to_lowercase());
-    let cors_env_var_cloned_for_ws = cors_env_var.clone();
-
-    let mut router = Router::new()
-
-        // API DOCS
-        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
-        .merge(Redoc::with_url("/redoc", ApiDoc::openapi()))
-        .merge(RapiDoc::new("/api-docs/openapi.json").path("/rapidoc"))
-        
-        // API ROUTES
-        .merge(crate::api::controllers::routes(globally_shared_state.clone()).await)
-
-        // STATIC FILES
-        //.route("/", axum::routing::get(root))
-        //.route("/script.js", axum::routing::get(script))
-
-        // WEBSOCKET ROUTE FOR LOGS
-        .route("/ws/event_stream", axum::routing::get( move|ws,user_agent,origin,addr,state|
-            ws_log_messages_handler(ws,user_agent,origin,addr,state, cors_env_var_cloned_for_ws)).with_state(websocket_state.clone()))
-
-        // STATIC FILES FOR WEB-UI
-        .route("/", get(|| async { serve_static_file(axum::extract::Path("index.html".to_string())).await }))
-        .route("/*file", get(serve_static_file));
-
-    // in some cases one might want to allow CORS from a specific origin. this is not currently allowed to do from the config file
-    // so we use an environment variable to set this. might change in the future if it becomes a common use case
-    if let Some(cors_var) = cors_env_var { 
-        router = router.layer(
-            CorsLayer::new()
-                .allow_methods(Any)
-                .allow_headers(Any)
-                .expose_headers(Any))
-        .layer(axum::middleware::from_fn(move |request: axum::extract::Request, next: axum::middleware::Next|set_cors(request,next,cors_var.clone())));
-    }; 
-
-    tokio::spawn(broadcast_manager(websocket_state,tracing_broadcaster));
-
-    axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
-        .await
-        .expect("must be able to serve")
-    
-}
 
 // Define the handler function for the root path
 // async fn root() -> impl IntoResponse {
@@ -188,7 +136,7 @@ async fn ws_log_messages_handler(
             let lower_cased_orgin_from_client = origin_header.to_string().to_lowercase();
 
             if cors_env_var == Some("*".to_string()) {
-                tracing::trace!("CORS variable is '*', allowing connection from host: {lower_cased_orgin_from_client}");
+                tracing::trace!("CORS variable is '*', allowing connection from '{addr:?}' using origin: {lower_cased_orgin_from_client}");
             } else if let Some(lower_cased_cors_var) = cors_env_var {
                 
                 if &lower_cased_orgin_from_client != &lower_cased_cors_var {
@@ -203,42 +151,35 @@ async fn ws_log_messages_handler(
                 }
             } else {
 
-                let possibly_admin_port = state.global_state.config.read().await.admin_api_port;
-                
-                if let Some(p) = possibly_admin_port {
-                    
-                    if !addr.ip().is_loopback() {
-                        tracing::warn!("Client origin is not localhost, denying connection");
-                        return Response::builder()
-                            .status(StatusCode::FORBIDDEN)
-                            .header("reason", "bad origin")
-                            .body(Body::from("origin not allowed."))
-                            .expect("must be able to create response")
-                    }
-
-                    let expected_origin_name = format!("http://localhost:{p}");
-                    let expected_origin_ip = format!("http://127.0.0.1:{p}");
-                    
-                    if lower_cased_orgin_from_client != expected_origin_name && lower_cased_orgin_from_client != expected_origin_ip {
-                        tracing::warn!("Client origin does not match '{expected_origin_name}', denying connection");
-                        return Response::builder()
-                            .status(StatusCode::FORBIDDEN)
-                            .header("reason", "bad origin")
-                            .body(Body::from("origin not allowed."))
-                            .expect("must be able to create response")
+                let mut valid_origins = 
+                    if let Some(p) = state.global_state.config.read().await.tls_port {
+                        vec![
+                            format!("https://localhost:{p}"),
+                            format!("https://odd-box.localhost:{p}"),
+                            format!("https://oddbox.localhost:{p}")
+                        ]
                     } else {
-                        tracing::debug!("Client origin matches '{expected_origin_name}', allowing connection");
-                    }
-                } else {
-                    
-                    tracing::warn!("No admin api port set in config file even though the admin api is clearly active. This could be because the admin api has been disabled at runtime without having restarted; otherwise it is a bug in oddbox.");
-                    
+                        vec![
+                            format!("https://localhost"),
+                            format!("https://odd-box.localhost"),
+                            format!("https://oddbox.localhost")
+                        ]
+                    };
+
+                if let Some(ourl) = state.global_state.config.read().await.odd_box_url.clone() {
+                    valid_origins.push(ourl);
+                }
+
+                if !valid_origins.contains(&lower_cased_orgin_from_client) {
+                    tracing::warn!("Client origin is not in the allowed list of '{valid_origins:?}', denying connection");
                     return Response::builder()
                         .status(StatusCode::FORBIDDEN)
-                        .header("reason", "bad origin or server misconfguration")
-                        .body(Body::from("something went wrong."))
+                        .header("reason", "bad origin")
+                        .body(Body::from("origin not allowed."))
                         .expect("must be able to create response")
+                    
                 }
+                    
 
             
             }
@@ -281,9 +222,10 @@ async fn handle_socket(client_socket: WebSocket, who: SocketAddr, state: WebSock
                     tracing::trace!("Client {who} disconnected");
                     break;
                 },
-                _ => {
-                    // we dont care about incoming messages atm
-                }
+                Some(Ok(Message::Text(text))) => {
+                    tracing::trace!("Received websocket message from client {who}: {text}");
+                },
+                _ => {}
             },
             broadcast_message = broadcast_receiver.recv() => {
                 match broadcast_message {
@@ -323,6 +265,168 @@ async fn broadcast_manager(state: WebSocketGlobalState,tracing_broadcaster:tokio
             _ = state.broadcast_channel_to_all_websocket_clients.send(msg);
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+}
+
+
+#[derive(Debug)]
+pub struct OddBoxAPI {
+    pub service: axum::extract::connect_info::IntoMakeServiceWithConnectInfo<Router, SocketAddr>,
+    pub _state: Arc<crate::global_state::GlobalState>
+}
+
+impl OddBoxAPI {
+
+    async fn validate_request(
+        req: axum::extract::Request<axum::body::Body>, 
+        next: axum::middleware::Next,
+        state: Arc<crate::global_state::GlobalState>
+    ) -> Result<Response, axum::http::StatusCode> {
+        let guard = state.config.read().await;
+        
+        let path = req.uri().path();
+
+        if req.method() == hyper::Method::GET {
+            if path.starts_with("/api-docs/") {
+                return Ok(next.run(req).await);
+            }
+            if path.starts_with("/swagger-ui") {
+                return Ok(next.run(req).await);
+            }
+            if path.starts_with("/rapidoc") {
+                return Ok(next.run(req).await);
+            }
+            if path.starts_with("/redoc") {
+                return Ok(next.run(req).await);
+            }
+        }
+        if let Some(pwd) = &guard.odd_box_password {
+            match req.headers().get("Authorization") {
+                Some(value) if value == pwd => {
+                    Ok(next.run(req).await)
+                }
+                _ => {
+                    tracing::warn!("Invalid password, denying request");
+                    Err(StatusCode::FORBIDDEN)
+                }
+            }
+        } else {
+            tracing::warn!("No password set, allowing all requests");
+            Ok(next.run(req).await)
+        }
+    }
+    
+    /// IT IS VERY IMPORTANT ONLY ONE INSTANCE OF THIS IS EVER INSTANTIATED
+    /// AS IT SPAWNS A BACKGROUND TASK THAT WILL RUN FOREVER
+    pub fn new(state: Arc<crate::global_state::GlobalState>) -> Self {
+        let validation_state = state.clone();
+        let websocket_state = WebSocketGlobalState {
+            broadcast_channel_to_all_websocket_clients: tokio::sync::broadcast::channel(10).0,
+            global_state: state.clone()
+        };
+        let cors_env_var = std::env::vars().find(|(key,_)| key=="ODDBOX_CORS_ALLOWED_ORIGIN").map(|x|x.1.to_lowercase());
+        let cors_env_var_cloned_for_ws = cors_env_var.clone();
+        let mut router = Router::new()
+            .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
+            .merge(Redoc::with_url("/redoc", ApiDoc::openapi()))
+            .merge(RapiDoc::new("/api-docs/openapi.json").path("/rapidoc"))
+            .merge(crate::api::controllers::routes(state.clone()))
+            .layer(axum::middleware::from_fn(
+                    move | req: axum::extract::Request<Body>, next: axum::middleware::Next | {
+                        Self::validate_request(
+                            req,
+                            next,
+                            validation_state.clone()
+                        )
+                    }
+                )
+            )
+            .route("/ws/event_stream", axum::routing::get( move|ws,user_agent,origin,addr,state|
+                ws_log_messages_handler(ws,user_agent,origin,addr,state, cors_env_var_cloned_for_ws)).with_state(websocket_state.clone()))
+            .route("/", get(|| async { serve_static_file(axum::extract::Path("index.html".to_string())).await }))
+            .route("/*file", get(serve_static_file));
+        if let Some(cors_var) = cors_env_var { 
+            router = router.layer(
+                CorsLayer::new()
+                    .allow_methods(Any)
+                    .allow_headers(Any)
+                    .expose_headers(Any))
+            .layer(axum::middleware::from_fn(move |request: axum::extract::Request, next: axum::middleware::Next|
+                set_cors(request,next,cors_var.clone()))
+            );
+        }; 
+
+
+        let svc = router.into_make_service_with_connect_info::<SocketAddr>();
+
+        tokio::spawn(broadcast_manager(websocket_state,state.global_broadcast_channel.clone()));
+        OddBoxAPI {
+            service: svc,
+            _state: state
+        }
+    }
+
+    pub async fn handle_stream(&self,stream: GenericManagedStream,rustls_config: Option<Arc<rustls::ServerConfig>>) -> anyhow::Result<()> {
+        
+        let rustls_config = if let Some(rustls_config) = rustls_config {
+            rustls_config
+        } else {
+            anyhow::bail!("No rustls config provided");
+        };
+
+        let mut svc = self.service.clone();
+        
+        let (generic_stream,peer_addr) = match stream {
+            GenericManagedStream::TCP(mut managed_stream) => {
+                
+                managed_stream.seal();
+
+                let tls_acceptor = tokio_rustls::TlsAcceptor::from(rustls_config);
+                let peer_addr = managed_stream.stream.peer_addr()?;
+                match tls_acceptor.accept(managed_stream).await {
+                    Ok(tls_stream) => {
+                        let mut s = ManagedStream::from_tls_stream(tls_stream);
+                        s.seal();                        
+                        (GenericManagedStream::from_terminated_tls_stream(s),peer_addr)
+                    }
+                    Err(e) => {
+                        anyhow::bail!("Failed to accept TLS connection: {:?}",e);
+                    }
+                }
+            },
+            GenericManagedStream::TerminatedTLS(s) => {
+                let peer_addr = s.stream.get_ref().0.stream.peer_addr()?;
+                (GenericManagedStream::from_terminated_tls_stream(s),peer_addr)
+            }
+        };
+
+        crate::proxy::mutate_tracked_connection(&self._state, &generic_stream.get_id(), |x|{
+            x.is_odd_box_admin_api_req = true;
+            x.outgoing_connection_is_tls = false;
+        });
+
+        let tower_service = svc.call(peer_addr).await.unwrap();
+        let hyper_service = hyper::service::service_fn(move |request: axum::extract::Request<Incoming>| {
+            tower_service.clone().oneshot(request)
+        });
+
+        match generic_stream {
+            GenericManagedStream::TCP(_) => unreachable!(),
+            GenericManagedStream::TerminatedTLS(mut s) => {
+                s.seal();
+                if let Err(err) = hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new())
+                    .serve_connection_with_upgrades(TokioIo::new(s), hyper_service)
+                    .await
+                {
+                    bail!("failed to serve connection: {err:#}");
+                }
+                Ok(())
+            
+            }
+        }
+       
+
     }
 
 }

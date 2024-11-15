@@ -10,7 +10,8 @@ use tokio::net::TcpStream;
 use tokio::sync::Notify;
 use tokio::sync::RwLock;
 use tokio_rustls::TlsAcceptor;
-use crate::configuration::v2::Hint;
+use crate::api::OddBoxAPI;
+use crate::configuration::Hint;
 use crate::configuration::ConfigWrapper;
 use crate::global_state::GlobalState;
 use crate::http_proxy::ProcMessage;
@@ -38,7 +39,7 @@ pub async fn listen(
     initial_bind_addr_tls: SocketAddr, 
     tx: Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
     state: Arc<GlobalState>,
-    shutdown_signal: Arc<Notify>,
+    shutdown_signal: Arc<Notify>
 ) {
     
     let mut previous_bind_addr = initial_bind_addr;
@@ -142,7 +143,7 @@ pub async fn listen(
                 state.clone(),
                 terminating_proxy_service.clone(),
                 shutdown_signal.clone(),
-                new_http_cancel_token.clone(),
+                new_http_cancel_token.clone()
             );
 
             let https_future = listen_https(
@@ -259,7 +260,7 @@ async fn listen_http(
                         let tx = tx.clone();
                         let state = state.clone();
                         tokio::spawn(async move {           
-                            handle_new_tcp_stream(None, service,tcp_stream, source_addr,tx.clone(),state.clone())
+                            handle_new_tcp_stream(None, service,tcp_stream, source_addr,tx.clone(),state.clone(),None)
                                 .await;
                             ACTIVE_TCP_CONNECTIONS_SEMAPHORE.add_permits(1);
                         });
@@ -340,6 +341,10 @@ async fn listen_https(
 
         permit.forget();
 
+        
+    
+        let api = OddBoxAPI::new(state.clone());
+        
         tokio::select! {
             _ = cancel_token.cancelled() => {
                 tracing::info!("Cancellation token triggered, shutting down HTTPS listener.");
@@ -356,7 +361,7 @@ async fn listen_https(
                         let arced_tls_config = Some(arced_tls_config.clone());
                         let state = state.clone();
                         tokio::spawn(async move {               
-                            handle_new_tcp_stream(arced_tls_config,service,tcp_stream, source_addr,tx.clone(),state.clone())
+                            handle_new_tcp_stream(arced_tls_config,service,tcp_stream, source_addr,tx.clone(),state.clone(),Some(api))
                                 .await;
                             ACTIVE_TCP_CONNECTIONS_SEMAPHORE.add_permits(1);
                         });
@@ -384,7 +389,8 @@ async fn handle_new_tcp_stream(
     tcp_stream: TcpStream,
     source_addr:SocketAddr,
     tx: std::sync::Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
-    state: Arc<GlobalState>
+    state: Arc<GlobalState>,
+    api: Option<OddBoxAPI>
 ) {
 
     let mut peekable_tcp_stream = GenericManagedStream::from_tcp_stream(tcp_stream,state.clone());
@@ -402,6 +408,7 @@ async fn handle_new_tcp_stream(
             tracing::trace!("Terminated TLS connection from {source_addr}.");
         },
     }
+
     peekable_tcp_stream.track();
     
     
@@ -418,6 +425,28 @@ async fn handle_new_tcp_stream(
 
 
             let is_tls = typ == DataType::TLS;
+            let ourl = state.config.read().await.odd_box_url.clone().unwrap_or(String::from("!"));
+            match h2_authority_or_h1_host_header.as_ref().map(|x| x.as_str()) {
+                Some("oddbox.localhost") |
+                Some("odd-box.localhost") |
+                Some("localhost") => {
+                    if let Some(api) = api {
+                        _ = api.handle_stream(peekable_tcp_stream,rustls_config).await;
+                        return;
+                    }
+                },
+                Some(x) => {
+                    tracing::trace!("handling incoming request from '{source_addr:?}' to odd-box system services thru odd-box-url: '{x}'.");
+                    if x == &ourl {
+                        if let Some(api) = api {
+                            _ = api.handle_stream(peekable_tcp_stream,rustls_config).await;
+                            return;
+                        }
+                    }
+                }
+                _ => {}
+            }
+
 
             // if is_tls {
             //     tracing::trace!("tls peeked type: {typ:?} - v:{http_version:?} - host: {h2_authority_or_h1_host_header:?}");
@@ -444,7 +473,7 @@ async fn handle_new_tcp_stream(
                 if target.is_hosted {
 
                     if let Some(cfg) = &target.hosted_target_config {
-                        let hints : Vec<&crate::configuration::v2::Hint> = cfg.hints.iter().flatten().collect();
+                        let hints : Vec<&crate::configuration::Hint> = cfg.hints.iter().flatten().collect();
                         if let Some(Version::HTTP_2) = http_version {
                             if hints.iter().any(|h| **h==Hint::H2 ) {
                                 tracing::trace!("Incoming http version is 2.0 and target supports it thru hints. Proceeding with tunnel mode.");
@@ -650,7 +679,7 @@ pub enum FallbackReason {
 async fn use_fallback_mode(
     rustls_config: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>, 
     mut generic_managed_stream: GenericManagedStream, 
-    fresh_service_template_with_source_info: ReverseProxyService,
+    mut fresh_service_template_with_source_info: ReverseProxyService,
     reason: FallbackReason
 ) {
 
@@ -696,6 +725,7 @@ async fn use_fallback_mode(
                     let tls_acceptor = TlsAcceptor::from(tls_cfg.clone());
                     match tls_acceptor.accept(peekable_tcp_stream).await {
                         Ok(tls_stream) => {
+                            fresh_service_template_with_source_info.is_https_only = true;
                             tracing::warn!("falling back to TLS termination combined with legacy http terminating mode");
                             let mut new_peekable = GenericManagedStream::from_terminated_tls_stream(ManagedStream::from_tls_stream(tls_stream));
                             new_peekable.seal();
@@ -714,6 +744,7 @@ async fn use_fallback_mode(
                     }
                 },
                 terminated_stream => {
+                    fresh_service_template_with_source_info.is_https_only = true;
                     terminated_stream.update_tracked_info(|x| {
                         x.http_terminated = true;
                         x.tls_terminated = true;

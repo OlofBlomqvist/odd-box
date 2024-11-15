@@ -7,7 +7,7 @@ use std::{
     net::SocketAddr,
     sync::Arc,
 };
-use crate::configuration::v2::BackendFilter;
+use crate::configuration::BackendFilter;
 use crate::global_state::GlobalState;
 use crate::tcp_proxy::Peekable;
 use crate::types::proc_info::ProcId;
@@ -21,9 +21,9 @@ use super::{ManagedStream, GenericManagedStream};
 /// Achieves TLS passthru by peeking at the ClientHello SNI ext data.
 #[derive(Debug,Eq,PartialEq,Hash,Clone,Serialize)]
 pub struct ReverseTcpProxyTarget {
-    pub remote_target_config: Option<crate::configuration::v2::RemoteSiteConfig>,
-    pub hosted_target_config: Option<crate::configuration::v2::InProcessSiteConfig>,
-    pub backends: Vec<crate::configuration::v2::Backend>,
+    pub remote_target_config: Option<crate::configuration::RemoteSiteConfig>,
+    pub hosted_target_config: Option<crate::configuration::InProcessSiteConfig>,
+    pub backends: Vec<crate::configuration::Backend>,
     pub host_name: String,
     pub is_hosted : bool,
     pub capture_subdomains: bool,

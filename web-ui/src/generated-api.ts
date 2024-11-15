@@ -117,11 +117,6 @@ export interface FullyResolvedInProcessSiteConfig {
   proc_id: any;
 }
 
-export enum H2Hint {
-  H2 = "H2",
-  H2C = "H2C",
-}
-
 export enum Hint {
   H2 = "H2",
   H2C = "H2C",
@@ -205,11 +200,6 @@ export enum LogLevel {
 }
 
 export interface OddBoxConfigGlobalPart {
-  /**
-   * @format int32
-   * @min 0
-   */
-  admin_api_port: number;
   alpn: boolean;
   auto_start: boolean;
   default_log_format: BasicLogFormat;
@@ -222,6 +212,8 @@ export interface OddBoxConfigGlobalPart {
   ip: string;
   lets_encrypt_account_email: string;
   log_level: BasicLogLevel;
+  odd_box_password: string;
+  odd_box_url: string;
   path: string;
   /**
    * @format int32
@@ -240,58 +232,28 @@ export enum OddBoxConfigVersion {
   Unmarked = "Unmarked",
   V1 = "V1",
   V2 = "V2",
+  V3 = "V3",
 }
 
-export interface OddBoxV1Config {
-  /**
-   * @format int32
-   * @min 0
-   */
-  admin_api_port?: number | null;
+export interface OddBoxV3Config {
   /** Defaults to true. Lets you enable/disable h2/http11 tls alpn algs during initial connection phase. */
   alpn?: boolean | null;
+  /**
+   * If this is set to false, odd-box will not start any hosted processes automatically when it starts
+   * unless they are set to auto_start individually. Same with true, it will start all processes that
+   * have not been specifically configured with auto_start=false.
+   */
   auto_start?: boolean | null;
   default_log_format?: LogFormat;
-  env_vars: EnvVar[];
-  hosted_process?: InProcessSiteConfig[] | null;
-  /**
-   * @format int32
-   * @min 0
-   */
-  http_port?: number | null;
-  ip: string;
-  log_level?: LogLevel | null;
-  path?: string | null;
-  /**
-   * @format int32
-   * @min 0
-   */
-  port_range_start: number;
-  remote_target?: RemoteSiteConfig[] | null;
-  root_dir?: string | null;
-  /**
-   * @format int32
-   * @min 0
-   */
-  tls_port?: number | null;
-  version: string;
-}
-
-export interface OddBoxV2Config {
-  /**
-   * The port for the admin api. If this is not set, the admin api will not be started.
-   * This setting also enabled the web-ui on the same port.
-   * @format int32
-   * @min 0
-   */
-  admin_api_port?: number | null;
-  /** Defaults to true. Lets you enable/disable h2/http11 tls alpn algs during initial connection phase. */
-  alpn?: boolean | null;
-  auto_start?: boolean | null;
-  default_log_format?: LogFormat;
+  /** Used for static websites. */
   dir_server?: DirServer[] | null;
   /** Environment variables configured here will be made available to all processes started by odd-box. */
   env_vars?: EnvVar[];
+  /**
+   * Used to set up processes to keep running and serve requests on a specific hostname.
+   * This can be used to run a web server, a proxy, or any other kind of process that can handle http requests.
+   * It can also be used even if the process is not a web server and you just want to keep it running..
+   */
   hosted_process?: InProcessSiteConfig[] | null;
   /**
    * The port on which to listen for http requests. Defaults to 8080.
@@ -303,13 +265,28 @@ export interface OddBoxV2Config {
   /** If you want to use lets-encrypt for generating certificates automatically for your sites */
   lets_encrypt_account_email?: string | null;
   log_level?: LogLevel | null;
+  /** Used for securing the admin api and web-interface. If you do not set this, anyone can access the admin api. */
+  odd_box_password?: string | null;
+  /**
+   * If you want to use a specific odd-box url for the admin api and web-interface you can
+   * configure the host_name to listen on here. This is useful if you want to use a specific domain
+   * for the admin interface and the api. If you do not set this, the admin interface will be available
+   * on https://localhost and https://odd-box.localhost by default.
+   * If you configure this, you should also configure the odd_box_password property.
+   */
+  odd_box_url?: string | null;
   /**
    * The port range start is used to determine which ports to use for hosted processes.
    * @format int32
    * @min 0
    */
   port_range_start?: number;
+  /** Used to configure remote (or local sites not managed by odd-box) as a targets for requests. */
   remote_target?: RemoteSiteConfig[] | null;
+  /**
+   * Optionally configure the $root_dir variable which you can use in environment variables, paths and other settings.
+   * By default $root_dir will be $pwd (dir where odd-box is started).
+   */
   root_dir?: string | null;
   /**
    * The port on which to listen for https requests. Defaults to 4343.
@@ -375,11 +352,6 @@ export interface ReqRule {
 }
 
 export interface SaveGlobalConfig {
-  /**
-   * @format int32
-   * @min 0
-   */
-  admin_api_port: number;
   alpn: boolean;
   auto_start: boolean;
   default_log_format: BasicLogFormat;
@@ -392,6 +364,8 @@ export interface SaveGlobalConfig {
   ip: string;
   lets_encrypt_account_email: string;
   log_level: BasicLogLevel;
+  odd_box_password: string;
+  odd_box_url: string;
   /**
    * @format int32
    * @min 0
@@ -436,6 +410,10 @@ export interface StatusResponse {
 
 export interface UpdateRequest {
   new_configuration: ConfigItem;
+}
+
+export enum V3VersionEnum {
+  V3 = "V3",
 }
 
 export type SettingsData = OddBoxConfigGlobalPart;

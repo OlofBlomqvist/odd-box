@@ -2,14 +2,13 @@ use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use serde::Serialize;
 use serde::Deserialize;
-use utoipa::ToSchema;
 
 use super::EnvVar;
 use super::LogFormat;
 use super::LogLevel;
 
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InProcessSiteConfig{
     /// This is mostly useful in case the target uses SNI sniffing/routing
     pub disable_tcp_tunnel_mode : Option<bool>,
@@ -37,13 +36,13 @@ pub struct InProcessSiteConfig{
     pub disabled: Option<bool>
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum H2Hint {
     H2,
     H2C
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteSiteConfig{
     /// H2C or H2 - used to signal use of prior knowledge http2 or http2 over clear text. 
     pub h2_hint : Option<H2Hint>,
@@ -62,9 +61,8 @@ pub struct RemoteSiteConfig{
     pub forward_subdomains : Option<bool>
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize,ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OddBoxV1Config {
-    #[schema(value_type = String)]
     pub version : super::OddBoxConfigVersion,
     pub root_dir : Option<String>, 
     #[serde(default = "default_log_level")]
@@ -75,7 +73,6 @@ pub struct OddBoxV1Config {
     pub port_range_start : u16,
     #[serde(default = "default_log_format")]
     pub default_log_format : LogFormat,
-    #[schema(value_type = String)]
     pub ip : Option<IpAddr>,
     #[serde(default = "default_http_port_8080")]
     pub http_port : Option<u16>,

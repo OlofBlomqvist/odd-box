@@ -2,7 +2,7 @@ use std::sync::{atomic::AtomicBool, Weak};
 
 use serde::{Deserialize, Serialize};
 
-use crate::configuration::v2::FullyResolvedInProcessSiteConfig;
+use crate::configuration::FullyResolvedInProcessSiteConfig;
 
 
 #[derive(Eq,PartialEq,Debug,Clone,Hash, Serialize, Deserialize)]

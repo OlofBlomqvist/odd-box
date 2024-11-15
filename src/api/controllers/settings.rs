@@ -69,6 +69,8 @@ pub struct KvP {
 #[derive(Debug, Clone, Serialize, Deserialize,ToSchema)]
 pub struct OddBoxConfigGlobalPart {
     pub lets_encrypt_account_email: String,
+    pub odd_box_url: String,
+    pub odd_box_password: String,
     pub root_dir : String, 
     pub log_level : BasicLogLevel,
     pub alpn : bool,
@@ -79,13 +81,14 @@ pub struct OddBoxConfigGlobalPart {
     pub tls_port : u16,
     pub auto_start : bool,
     pub env_vars : Vec<KvP>,
-    pub admin_api_port : u16,
     pub path : String
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize,ToSchema)]
 pub struct SaveGlobalConfig{
     pub lets_encrypt_account_email: String,
+    pub odd_box_url: String,
+    pub odd_box_password: String,
     pub root_dir : String, 
     pub log_level : BasicLogLevel,
     pub alpn : bool,
@@ -96,7 +99,6 @@ pub struct SaveGlobalConfig{
     pub tls_port : u16,
     pub auto_start : bool,
     pub env_vars : Vec<KvP>,
-    pub admin_api_port : u16
 }
 
 /// Get global settings
@@ -116,8 +118,9 @@ pub async fn get_settings_handler(
     let guard = global_state.config.read().await;
     
     let cfg = OddBoxConfigGlobalPart {
+        odd_box_url : guard.odd_box_url.clone().unwrap_or_default(),
+        odd_box_password : guard.odd_box_password.clone().unwrap_or_default(),
         lets_encrypt_account_email : guard.lets_encrypt_account_email.clone().unwrap_or_default(),
-        admin_api_port : guard.admin_api_port.unwrap_or(6789),
         http_port : guard.http_port.unwrap_or(8080),
         tls_port : guard.tls_port.unwrap_or(4343),
         port_range_start: guard.port_range_start,
@@ -168,9 +171,21 @@ pub async fn set_settings_handler(
     } else {
         None
     };
+    let obu = if new_settings.odd_box_url.len() > 0 {
+        Some(new_settings.odd_box_url.clone())
+    } else {
+        None
+    };
+    let obp = if new_settings.odd_box_password.len() > 0 {
+        Some(new_settings.odd_box_password.clone())
+    } else {
+        None
+    };
     
     config.lets_encrypt_account_email = nlea;
-    config.admin_api_port = Some(new_settings.admin_api_port);
+    config.odd_box_url = obu;
+    config.odd_box_password = obp;
+    
     config.http_port = Some(new_settings.http_port);
     config.tls_port = Some(new_settings.tls_port);
     config.port_range_start = new_settings.port_range_start;

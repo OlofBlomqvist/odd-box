@@ -15,12 +15,12 @@ mod proxy;
 use anyhow::bail;
 use anyhow::Context;
 use clap::Parser;
-use configuration::v2::FullyResolvedInProcessSiteConfig;
+use configuration::FullyResolvedInProcessSiteConfig;
 use configuration::OddBoxConfigVersion;
 use dashmap::DashMap;
 use global_state::GlobalState;
-use configuration::v2::InProcessSiteConfig;
-use configuration::v2::RemoteSiteConfig;
+use configuration::InProcessSiteConfig;
+use configuration::RemoteSiteConfig;
 use configuration::OddBoxConfiguration;
 use http_proxy::ProcMessage;
 use notify::RecommendedWatcher;
@@ -181,7 +181,7 @@ pub mod global_state {
                         hosted_target_config: Some(y.clone()),
                         capture_subdomains: y.capture_subdomains.unwrap_or_default(),
                         forward_wildcard: y.forward_subdomains.unwrap_or_default(),
-                        backends: vec![crate::configuration::v2::Backend {
+                        backends: vec![crate::configuration::Backend {
                             hints: y.hints.clone(),
                             
                             // use dns name to avoid issues where hyper uses ipv6 for 127.0.0.1 since tcp tunnel mode uses ipv4.
@@ -344,7 +344,7 @@ async fn thread_cleaner() {
 
 
 
-fn generate_config(file_name:Option<&str>, fill_example:bool) -> anyhow::Result<crate::configuration::v2::OddBoxV2Config> {
+fn generate_config(file_name:Option<&str>, fill_example:bool) -> anyhow::Result<crate::configuration::OddBoxV3Config> {
     let current_working_dir = std::env::current_dir()?;
     if let Some(file_name) = file_name {
         let current_working_dir = std::env::current_dir()?;
@@ -365,11 +365,11 @@ fn generate_config(file_name:Option<&str>, fill_example:bool) -> anyhow::Result<
                 .replace("http_port = 8080","http_port = 80");
         }
           
-        let cfg = configuration::OddBoxConfig::parse(&init_cfg).map_err(|e| {
+        let cfg = configuration::AnyOddBoxConfig::parse(&init_cfg).map_err(|e| {
             anyhow::anyhow!(format!("Failed to parse initial configuration: {e}"))
         })?;
         match cfg {
-            configuration::OddBoxConfig::V2(parsed_config) => {
+            configuration::AnyOddBoxConfig::V3(parsed_config) => {
                 if let Some(file_name) = file_name {
                     let file_path = current_working_dir.join(file_name);
                     std::fs::write(&file_path, init_cfg)?;
@@ -382,7 +382,7 @@ fn generate_config(file_name:Option<&str>, fill_example:bool) -> anyhow::Result<
             }
         }
     }     
-    let cfg = crate::configuration::v2::OddBoxV2Config::example();
+    let cfg = crate::configuration::OddBoxV3Config::example();
     if let Some(file_name) = file_name {
         let serialized = cfg.to_string()?;
         let file_path = current_working_dir.join(file_name);
@@ -415,7 +415,7 @@ fn initialize_configuration(args:&Args) -> anyhow::Result<(ConfigWrapper,OddBoxC
     file.read_to_string(&mut contents).with_context(||format!("failed to read data from configuration file {cfg_path:?}"))?;   
     
     let (mut config,original_version) = 
-        match configuration::OddBoxConfig::parse(&contents) {
+        match configuration::AnyOddBoxConfig::parse(&contents) {
             Ok(configuration) => {
                 let (a,b) = 
                     configuration
@@ -468,7 +468,7 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     
     if args.config_schema {
-        let schema = schemars::schema_for!(crate::configuration::v2::OddBoxV2Config);
+        let schema = schemars::schema_for!(crate::configuration::OddBoxV3Config);
         println!("{}", serde_json::to_string_pretty(&schema).expect("schema should be serializable"));
         return Ok(());
     }
@@ -525,7 +525,7 @@ async fn main() -> anyhow::Result<()> {
     let global_event_broadcaster = tokio::sync::broadcast::Sender::<Event>::new(10);
     let (proc_msg_tx,_) = tokio::sync::broadcast::channel::<ProcMessage>(33);
     let inner_state = AppState::new();  
-    let api_port = config.admin_api_port.clone();
+    
     let inner_state_arc = std::sync::Arc::new(inner_state);
     let srv_port : u16 = if let Some(p) = args.port { p } else { config.http_port.unwrap_or(8080) } ;
     let srv_tls_port : u16 = if let Some(p) = args.tls_port { p } else { config.tls_port.unwrap_or(4343) } ;
@@ -548,7 +548,6 @@ async fn main() -> anyhow::Result<()> {
 
     let arced_tx = std::sync::Arc::new(proc_msg_tx.clone());
     let shutdown_signal = Arc::new(tokio::sync::Notify::new());
-    let event_broadcast_channel = global_event_broadcaster.clone();
     let shared_config = std::sync::Arc::new(tokio::sync::RwLock::new(config));
         
     let mut global_state = crate::global_state::GlobalState::new( 
@@ -559,7 +558,7 @@ async fn main() -> anyhow::Result<()> {
         global_event_broadcaster.clone(),
         OddLogHandle::None
     );
-
+    
   
     let (cli_filter, cli_reload_handle) = 
         tracing_subscriber::reload::Layer::new(EnvFilter::from_default_env()
@@ -601,15 +600,6 @@ async fn main() -> anyhow::Result<()> {
     }
     
     let global_state = Arc::new(global_state);
-
-    
-    // Spawn task for the admin api if enabled
-    if let Some(api_port) = api_port {
-        let api_state = global_state.clone();
-        tokio::spawn(async move {
-            api::run(api_state,api_port, event_broadcast_channel).await
-        });
-    }
 
     tokio::task::spawn(crate::letsencrypt::bg_worker_for_lets_encrypt_certs(global_state.clone()));
     

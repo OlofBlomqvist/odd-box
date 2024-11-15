@@ -1,8 +1,12 @@
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::vec;
+use schemars::JsonSchema;
+use anyhow::bail;
 use serde::Serialize;
 use serde::Deserialize;
+use utoipa::ToSchema;
+use crate::global_state::GlobalState;
 use crate::types::proc_info::ProcId;
 
 use super::EnvVar;
@@ -12,7 +16,7 @@ use super::LogLevel;
 /// A directory server configuration allows you to serve files from a directory on the local filesystem.
 /// Both unencrypted (http) and encrypted (https) connections are supported, either self-signed or thru lets-encrypt.
 /// You can specify rules for how the cache should behave, and you can also specify rules for how the files should be served.
-#[derive(Debug, Clone, Serialize, Deserialize,  Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash, JsonSchema, PartialEq, Eq)]
 pub struct DirServer {
     pub dir : String,
     /// This is the hostname that the site will respond to.
@@ -28,7 +32,7 @@ pub struct DirServer {
 }
 
 // note: there is no implementation using these yet..
-#[derive(Debug, Clone, Serialize, Deserialize,  Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash, JsonSchema, PartialEq, Eq)]
 pub struct ReqRule {
     
     /// The max age in seconds for the cache. If this is set to None, the cache will be disabled.
@@ -41,7 +45,7 @@ pub struct ReqRule {
     pub allow_directory_browsing: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize,  Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash, JsonSchema)]
 pub struct InProcessSiteConfig {
     
     #[serde(skip, default = "crate::types::proc_info::ProcId::new")] 
@@ -53,7 +57,8 @@ pub struct InProcessSiteConfig {
     pub active_port : Option<u16>,
     /// This is mostly useful in case the target uses SNI sniffing/routing
     pub disable_tcp_tunnel_mode : Option<bool>,
-    /// Optional hints to the odd-box proxy to help it determine the best way to communicate with the target
+    /// H1,H2,H2C,H2CPK,H3 - empty means H1 is expected to work with passthru: everything else will be 
+    /// using terminating mode.
     pub hints : Option<Vec<Hint>>,
     pub host_name : String,
     /// Working directory for the process. If this is not set, the current working directory will be used.
@@ -97,7 +102,7 @@ impl InProcessSiteConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize,  Hash,Eq,PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash,Eq,PartialEq)]
 pub struct FullyResolvedInProcessSiteConfig {
     pub excluded_from_start_all: bool,
     pub proc_id : ProcId,
@@ -166,7 +171,7 @@ fn compare_option_log_format(a: &Option<LogFormat>, b: &Option<LogFormat>) -> bo
 }
 
 
-#[derive(Debug, Eq,PartialEq,Hash, Clone, Serialize, Deserialize,  )]
+#[derive(Debug, Eq,PartialEq,Hash, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub enum Hint {
     /// Server supports http2 over tls
     H2,
@@ -174,11 +179,13 @@ pub enum Hint {
     H2C,
     /// Server supports http2 via clear text by using prior knowledge
     H2CPK,
-    /// Not used - Depreciated in v3
-    NOH2
+    /// Server supports http1.x
+    H1,
+    /// Server supports http3
+    H3
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq,PartialEq,Hash, )]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema,Eq,PartialEq,Hash, JsonSchema)]
 pub struct Backend {
     pub address : String,
     /// This can be zero in case the backend is a hosted process, in which case we will need to resolve the current active_port
@@ -188,7 +195,7 @@ pub struct Backend {
     pub hints : Option<Vec<Hint>>,
 }
 
-#[derive(Debug, Hash, Clone, Serialize, Deserialize,  )]
+#[derive(Debug, Hash, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct RemoteSiteConfig{
     pub host_name : String,
     pub backends : Vec<Backend>,
@@ -223,14 +230,141 @@ impl PartialEq for RemoteSiteConfig {
 
 impl Eq for RemoteSiteConfig {}
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, )]
-pub struct OddBoxV2Config {
+#[derive(Debug, Clone,)]
+pub enum BackendFilter {
+    Any,
+    Http2, // implies tls
+    Http1,
+    H2CPriorKnowledge,
+    H2C,
+    AnyTLS
+}
+
+
+fn filter_backend(backend: &Backend, filter: &BackendFilter) -> bool {
+
+    let hints = backend.hints.iter().flatten().collect::<Vec<&Hint>>();
+    
+
+    match filter {
+        BackendFilter::Any => true,
+        BackendFilter::AnyTLS => backend.https.unwrap_or_default(),
+        BackendFilter::Http2 => 
+            // only allow http2 if the backend explicitly supports it
+            hints.iter().any(|h|**h == Hint::H2),
+        BackendFilter::Http1 =>
+            // if no hints are set, we assume http1 is supported
+            hints.len() == 0 || hints.iter().any(|h|**h == Hint::H1) 
+        ,
+        BackendFilter::H2CPriorKnowledge => 
+            hints.iter().any(|h|**h == Hint::H2CPK),
+        BackendFilter::H2C => 
+            hints.iter().any(|h|**h == Hint::H2C),
+            
+        
+    }
+}
+
+impl InProcessSiteConfig {
+
+
+    // TODO - MAJOR:
+
+    // we removed the "tunneled" arg from the other next_backend...
+    // now we dont properly add statistics for the tunnelled connections when we are in remote tunnel mode...
+    // need to add back.
+
+
+    pub async fn next_backend(&self,state:&GlobalState, backend_filter: BackendFilter) -> Option<Backend> {
+        
+        // port needs to be: 
+        // - self.active_port, if it is set.
+        // - otherwise, self.port if it is set.
+        // - otherwise, 443 if https is set.
+        // - otherwise, 80
+        let port = if let Some(p) = self.active_port { p } else {
+            if let Some(p) = self.port { p } else {
+                if self.https.unwrap_or_default() { 443 } else { 80 }
+            }
+        };
+
+        let backends = vec![Backend {
+            address: "localhost".to_string(), // we are always connecting to localhost since we are the ones hosting this process
+            port: port,
+            https: self.https,
+            hints: self.hints.clone(),
+        }];
+
+          
+        let filtered_backends = backends.iter().filter(|x|filter_backend(x,&backend_filter))
+            .collect::<Vec<&Backend>>();
+
+        if filtered_backends.len() == 1 { return Some(filtered_backends[0].clone()) };
+        if filtered_backends.len() == 0 { return None };
+        
+        let current_req_count_for_target_host_name = {
+            state.app_state.statistics.connections_per_hostname
+            .get(&self.host_name).and_then(|x|Some(x.load(std::sync::atomic::Ordering::SeqCst)))
+            .unwrap_or(0)
+        };
+
+        let selected_backend = filtered_backends.get((current_req_count_for_target_host_name % (filtered_backends.len() as usize)) as usize );
+
+        if let Some(b) = selected_backend{
+            Some((*b).clone())
+        } else {
+            tracing::error!("Could not find a backend for host: {:?}",self.host_name);
+            None
+        }
+        
+
+    }
+}
+impl RemoteSiteConfig {
+
+
+    pub async fn next_backend(&self,state:&GlobalState, backend_filter: BackendFilter) -> Option<Backend> {
+            
+        let filtered_backends = self.backends.iter().filter(|x|filter_backend(x,&backend_filter))
+            .collect::<Vec<&Backend>>();
+
+        if filtered_backends.len() == 1 { return Some(filtered_backends[0].clone()) };
+        if filtered_backends.len() == 0 { return None };
+        
+        let current_req_count_for_target_host_name = {
+            state.app_state.statistics.connections_per_hostname
+            .get(&self.host_name).and_then(|x|Some(x.load(std::sync::atomic::Ordering::SeqCst)))
+            .unwrap_or(0)
+        };
+
+        let selected_backend = filtered_backends.get((current_req_count_for_target_host_name % (filtered_backends.len() as usize)) as usize );
+
+        if let Some(b) = selected_backend{
+            Some((*b).clone())
+        } else {
+            tracing::error!("Could not find a backend for host: {:?}",self.host_name);
+            None
+        }
+        
+
+    }
+}
+
+
+#[derive(Debug,Clone,Serialize,Deserialize,Default,ToSchema,PartialEq, Eq, Hash, schemars::JsonSchema)]
+pub enum V3VersionEnum {
+    #[default] V3
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize,ToSchema, PartialEq, Eq, Hash, JsonSchema)]
+pub struct OddBoxV3Config {
     
     #[serde(skip)] // only used internally by odd-box to keep track of where the configuration file is located
     pub path : Option<String>, 
     
     /// The schema version - you do not normally need to set this, it is set automatically when you save the configuration.
-    pub version : super::OddBoxConfigVersion,
+    #[schema(value_type = String)]
+    pub version : V3VersionEnum,
 
     /// Optionally configure the $root_dir variable which you can use in environment variables, paths and other settings.
     /// By default $root_dir will be $pwd (dir where odd-box is started).
@@ -247,7 +381,7 @@ pub struct OddBoxV2Config {
     pub port_range_start : u16,
     #[serde(default = "default_log_format")]
     pub default_log_format : LogFormat,
-    // #[schema(value_type = String)]
+    #[schema(value_type = String)]
     pub ip : Option<IpAddr>,
     /// The port on which to listen for http requests. Defaults to 8080.
     #[serde(default = "default_http_port_8080")]
@@ -271,37 +405,51 @@ pub struct OddBoxV2Config {
     pub hosted_process : Option<Vec<InProcessSiteConfig>>,
     /// Used for static websites.
     pub dir_server : Option<Vec<DirServer>>,
-    /// This enables the odd-box admin api on the specified port. Note that this is NOT required for accessing
-    /// neither the API nor the admin interface. This is only needed if you want to use the odd-box admin api on a specific port.
-    /// You can always reach the admin interface on the same port as the tls port by using localhost or odd-box.localhost, or
-    /// by configuring the odd-box-url property and using that.
-    pub admin_api_port : Option<u16>,
     /// If you want to use lets-encrypt for generating certificates automatically for your sites
     pub lets_encrypt_account_email: Option<String>,
     /// If you want to use a specific odd-box url for the admin api and web-interface you can 
     /// configure the host_name to listen on here. This is useful if you want to use a specific domain
     /// for the admin interface and the api. If you do not set this, the admin interface will be available
     /// on https://localhost and https://odd-box.localhost by default.
-    /// If you configure this, you MUST also configure the odd_box_password property.
+    /// If you configure this, you should also configure the odd_box_password property.
     pub odd_box_url : Option<String>,
-    /// Used for securing the admin api and web-interface. Must be used if you configure the odd_box_url property.
+    /// Used for securing the admin api and web-interface. If you do not set this, anyone can access the admin api.
     pub odd_box_password: Option<String>,
 
 }
+
 
 fn default_port_range_start() -> u16 {
     4200
 }
 
-impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Config {
+impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Config {
 
+
+
+    fn write_to_disk(&self) -> anyhow::Result<()> {
+    
+        let current_path = if let Some(p) = &self.path {p} else {
+            bail!(ConfigurationUpdateError::Bug("No path found to the current configuration".into()))
+        };
+    
+        let formatted_toml = self.to_string()?;
+        
+        if let Err(e) = std::fs::write(current_path, formatted_toml) {
+            bail!("Failed to write config to disk: {e}")
+        } else {
+            Ok(())
+        }
+    }
+    
     // note: this method exists because we want to keep a consistent format for the configuration file
     //       which is not guaranteed by the serde toml serializer.
     //       it unfortunately means that we have to maintain this method manually.
+    // todo: should move to upper abstraction level, not reimplementing the whole thing?
     fn to_string(&self) -> anyhow::Result<String>  {
 
-        if self.version != crate::configuration::OddBoxConfigVersion::V2  {
-            panic!("This is a bug in odd-box. The configuration version is not V2. This should not happen.");
+        if self.version != V3VersionEnum::V3  {
+            panic!("This is a bug in odd-box. The configuration version is not V3. This should not happen.");
         }
 
         let mut formatted_toml = Vec::new();
@@ -320,9 +468,6 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
 
         if let Some(port) = self.http_port {
             formatted_toml.push(format!("http_port = {}", port));
-        }
-        if let Some(port) = self.admin_api_port {
-            formatted_toml.push(format!("admin_api_port = {}", port));
         }
         if let Some(ip) = &self.ip {
             formatted_toml.push(format!("ip = \"{:?}\"", ip));
@@ -345,6 +490,14 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
         }
         if let Some(log_level) = &self.log_level {
             formatted_toml.push(format!("log_level = \"{:?}\"", log_level));
+        }
+        
+        if let Some(odd_box_url) = &self.odd_box_url {
+            formatted_toml.push(format!("odd_box_url = {:?}", odd_box_url));
+        }
+
+        if let Some(odd_box_password) = &self.odd_box_password {
+            formatted_toml.push(format!("odd_box_password = {:?}", odd_box_password));
         }
 
         formatted_toml.push(format!("port_range_start = {}", self.port_range_start));
@@ -502,15 +655,14 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV2Config> for OddBoxV2Confi
         }
         Ok(formatted_toml.join("\n"))
     }
-    fn example() -> OddBoxV2Config {
-        OddBoxV2Config {
+    fn example() -> OddBoxV3Config {
+        OddBoxV3Config {
             odd_box_password: None,
             odd_box_url: None,
             dir_server: None,
             lets_encrypt_account_email: None,
             path: None,
-            admin_api_port: None,
-            version: super::OddBoxConfigVersion::V2,
+            version: V3VersionEnum::V3,
             alpn: Some(false),
             auto_start: Some(true),
             default_log_format: LogFormat::standard,
@@ -608,25 +760,45 @@ fn true_option() -> Option<bool> {
 }
 
 
+#[derive(Debug)]
+enum ConfigurationUpdateError {
+    Bug(String)
+}
+
+
+impl std::fmt::Display for ConfigurationUpdateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // ConfigurationUpdateError::NotFound => {
+            //     f.write_str("No such hosted process found.")
+            // },
+            // ConfigurationUpdateError::FailedToSave(e) => {
+            //     f.write_fmt(format_args!("Failed to save due to error: {}",e))
+            // },
+            ConfigurationUpdateError::Bug(e) => {
+                f.write_fmt(format_args!("Failed to save due to a bug in odd-box: {}",e))
+            }
+        }
+    }
+}
 
 
 
 
 
 // V1 ---> V2
-impl TryFrom<super::v1::OddBoxV1Config> for super::v2::OddBoxV2Config{
+impl TryFrom<super::v2::OddBoxV2Config> for OddBoxV3Config{
 
     type Error = String;
 
-    fn try_from(old_config: super::v1::OddBoxV1Config) -> Result<Self, Self::Error> {
-        let new_config = super::v2::OddBoxV2Config {
+    fn try_from(old_config: super::v2::OddBoxV2Config) -> Result<Self, Self::Error> {
+        let new_config = Self {
             odd_box_password: None,
             odd_box_url: None,
             dir_server: None,
             lets_encrypt_account_email: None,
             path: None,
-            version: super::OddBoxConfigVersion::V2,
-            admin_api_port: None,
+            version: V3VersionEnum::V3,
             alpn: Some(false), // allowing alpn would be a breaking change for h2c when using old configuration format
             auto_start: old_config.auto_start,
             default_log_format: old_config.default_log_format,
@@ -636,53 +808,80 @@ impl TryFrom<super::v1::OddBoxV1Config> for super::v2::OddBoxV2Config{
             http_port: old_config.http_port,
             port_range_start: old_config.port_range_start,
             hosted_process: Some(old_config.hosted_process.unwrap_or_default().into_iter().map(|x|{
-                super::v2::InProcessSiteConfig {
+                let mut new_hints : Vec<Hint> = x.hints.iter().flatten().filter_map(|x| match x {
+                    &crate::configuration::v2::Hint::H2 => Some(Hint::H2),
+                    &crate::configuration::v2::Hint::H2C => Some(Hint::H2C),
+                    &crate::configuration::v2::Hint::H2CPK => Some(Hint::H2CPK),
+                    &crate::configuration::v2::Hint::NOH2 => None, // we dont support this anymore          
+                }).collect();
+
+                // in v3 when we have any hints, we only assume h1 is supported if it is explicitly set
+                // so since this was not the case in v2, we need to add h1 if we have any hints at all..
+                // and then user can remove it if they dont want it.
+                if new_hints.len() > 0 {
+                    new_hints.push(Hint::H1);
+                }
+
+                let new_hints = if new_hints.len() == 0 { None } else { Some(new_hints) };
+
+                InProcessSiteConfig {
                     log_level: None,
                     enable_lets_encrypt: Some(false),
                     proc_id: ProcId::new(),
                     active_port: None,
                     forward_subdomains: x.forward_subdomains,
                     disable_tcp_tunnel_mode: x.disable_tcp_tunnel_mode,
-                    args: if x.args.len() > 0 { Some(x.args) } else { None },
+                    args: x.args,
                     auto_start: x.auto_start,
                     bin: x.bin,
                     capture_subdomains: x.capture_subdomains,
-                    env_vars: if x.env_vars.len() > 0 { Some(x.env_vars) } else { None },
+                    env_vars: x.env_vars,
                     host_name: x.host_name,
                     port: x.port,
                     log_format: x.log_format,
-                    dir: if x.dir.is_empty() { None } else { Some(x.dir) },
+                    dir: x.dir,
                     https: x.https,
-                    hints: match x.h2_hint {
-                        Some(crate::configuration::v1::H2Hint::H2) => Some(vec![crate::configuration::v2::Hint::H2]),
-                        Some(crate::configuration::v1::H2Hint::H2C) => Some(vec![crate::configuration::v2::Hint::H2C]),               
-                        None => None,
-                    },
-                    exclude_from_start_all: x.disabled
+                    hints: new_hints,
+                    exclude_from_start_all: x.exclude_from_start_all
                     
                 }
             }).collect()),
             remote_target: Some(old_config.remote_target.unwrap_or_default().iter().map(|x|{
-                super::v2::RemoteSiteConfig {
+
+                RemoteSiteConfig {
                     keep_original_host_header: None,
                     enable_lets_encrypt: Some(false),
                     disable_tcp_tunnel_mode: x.disable_tcp_tunnel_mode,
                     capture_subdomains: x.capture_subdomains,
                     forward_subdomains: x.forward_subdomains,
-                    backends: vec![
-                        super::v2::Backend {
-                            hints: match x.h2_hint {
-                                Some(crate::configuration::v1::H2Hint::H2) => Some(vec![crate::configuration::v2::Hint::H2]),
-                                Some(crate::configuration::v1::H2Hint::H2C) => Some(vec![crate::configuration::v2::Hint::H2C]),               
-                                None => None,
-                            },
-                            address: x.target_hostname.clone(),
-                            port: if let Some(p) = x.port {p} else {
-                                if x.https.unwrap_or_default() { 443 } else { 80 }
-                            },
-                            https: x.https
+                    backends: x.backends.iter().map(|b| {
+
+                        
+                        let mut new_hints : Vec<Hint> = b.hints.iter().flatten().filter_map(|x| match x {
+                            &crate::configuration::v2::Hint::H2 => Some(Hint::H2),
+                            &crate::configuration::v2::Hint::H2C => Some(Hint::H2C),
+                            &crate::configuration::v2::Hint::H2CPK => Some(Hint::H2CPK),
+                            &crate::configuration::v2::Hint::NOH2 => None, // we dont support this anymore          
+                        }).collect();
+
+                        // in v3 when we have any hints, we only assume h1 is supported if it is explicitly set
+                        // so since this was not the case in v2, we need to add h1 if we have any hints at all..
+                        // and then user can remove it if they dont want it.
+                        if new_hints.len() > 0 {
+                            new_hints.push(Hint::H1);
                         }
-                    ],
+
+                        let new_hints = if new_hints.len() == 0 { None } else { Some(new_hints) };
+
+                        
+                        
+                        Backend {
+                            address: b.address.clone(),
+                            port: b.port,
+                            https: b.https,
+                            hints: new_hints
+                        }
+                    }).collect(),
                     host_name: x.host_name.clone(),                    
                 }
             }).collect()),
@@ -692,6 +891,4 @@ impl TryFrom<super::v1::OddBoxV1Config> for super::v2::OddBoxV2Config{
         };
         Ok(new_config)
     }
-
-    
 }

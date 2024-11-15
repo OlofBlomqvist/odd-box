@@ -30,7 +30,7 @@ pub trait Peekable {
 pub struct ManagedStream<T> where T: AsyncRead + AsyncWrite + Unpin {
     global_state : std::sync::Arc<crate::global_state::GlobalState>,
     enable_inspection: bool,
-    stream: T,
+    pub stream: T,
     buffer: BytesMut,
     sealed: bool,
     h2_observer: h2_parser::H2Observer,

@@ -1,17 +1,32 @@
-use std::sync::Arc;
+// ====================================================================
+/// This is not expected to be used unless you are working on tests
+/// or configuration-file upgrade logic
+pub mod legacy;
+/// This is not expected to be used unless you are working on tests
+/// or configuration-file upgrade logic
+pub mod v1;
+/// This is not expected to be used unless you are working on tests
+/// or configuration-file upgrade logic
+pub mod v2;
+/// This is not expected to be used unless you are working on tests
+/// or configuration-file upgrade logic
+pub mod v3;
+// ====================================================================
 
+use std::sync::Arc;
 use anyhow::bail;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-use v1::H2Hint;
-use v2::{DirServer, FullyResolvedInProcessSiteConfig};
+
+// Re-export the latest config version
+pub use v3::*;
+
+pub use v3::OddBoxV3Config as OddBoxConfig;
 
 use crate::types::proc_info::ProcId;
 
-pub mod legacy;
-pub mod v1;
-pub mod v2;
+
 pub mod reload;
 
 pub trait OddBoxConfiguration<T> { 
@@ -25,10 +40,11 @@ pub trait OddBoxConfiguration<T> {
 }
 
 #[derive(Debug,Clone)]
-pub enum OddBoxConfig {
+pub enum AnyOddBoxConfig {
     #[allow(dead_code)]Legacy(legacy::OddBoxLegacyConfig),
     V1(v1::OddBoxV1Config),
-    V2(v2::OddBoxV2Config)
+    V2(v2::OddBoxV2Config),
+    V3(v3::OddBoxV3Config),
 }
 
 
@@ -92,31 +108,40 @@ impl<'de> Deserialize<'de> for LogLevel {
 pub enum OddBoxConfigVersion {
     #[default] Unmarked,
     V1,
-    V2
+    V2,
+    V3
 }
 
 
 
-impl OddBoxConfig {
+impl AnyOddBoxConfig {
     
-    pub fn parse(content:&str) -> Result<OddBoxConfig,String> {
+    pub fn  parse(content:&str) -> Result<AnyOddBoxConfig,String> {
         
+        let v3_result = toml::from_str::<v3::OddBoxV3Config>(content);
+        if let Ok(v3_config) = v3_result {
+            return Ok(AnyOddBoxConfig::V3(v3_config))
+        };
+
+
         let v2_result = toml::from_str::<v2::OddBoxV2Config>(content);
         if let Ok(v2_config) = v2_result {
-            return Ok(OddBoxConfig::V2(v2_config))
+            return Ok(AnyOddBoxConfig::V2(v2_config))
         };
 
         let v1_result = toml::from_str::<v1::OddBoxV1Config>(content);
         if let Ok(v1_config) = v1_result {
-            return Ok(OddBoxConfig::V1(v1_config))
+            return Ok(AnyOddBoxConfig::V1(v1_config))
         };
 
         let legacy_result = toml::from_str::<legacy::OddBoxLegacyConfig>(&content);
         if let Ok(legacy_config) = legacy_result {
-            return Ok(OddBoxConfig::Legacy(legacy_config))
+            return Ok(AnyOddBoxConfig::Legacy(legacy_config))
         };
 
-        if content.contains("version = \"V2\"") {
+        if content.contains("version = \"V3\"") {
+            Err(format!("invalid v3 configuration file.\n{}", v3_result.unwrap_err().to_string()))
+        } else if content.contains("version = \"V2\"") {
             Err(format!("invalid v2 configuration file.\n{}", v2_result.unwrap_err().to_string()))
         } else if content.contains("version = \"V1\"") {
             Err(format!("invalid v1 configuration file.\n{}", v1_result.unwrap_err().to_string()))
@@ -126,20 +151,26 @@ impl OddBoxConfig {
     }
 
     // Result<(validated_config,original_version),error>
-    pub fn try_upgrade_to_latest_version(&self) -> Result<(v2::OddBoxV2Config,OddBoxConfigVersion),String> {
+    pub fn try_upgrade_to_latest_version(&self) -> Result<(crate::configuration::OddBoxConfig,OddBoxConfigVersion),String> {
         match self {
-            OddBoxConfig::Legacy(legacy_config) => {
+            AnyOddBoxConfig::Legacy(legacy_config) => {
                 let v1 : v1::OddBoxV1Config = legacy_config.to_owned().try_into()?;
                 let v2 : v2::OddBoxV2Config = v1.to_owned().try_into()?;
-                Ok((v2,OddBoxConfigVersion::Unmarked))
+                let v3 : v3::OddBoxV3Config = v2.to_owned().try_into()?;
+                Ok((v3,OddBoxConfigVersion::Unmarked))
             },
-            OddBoxConfig::V1(v1_config) => {
+            AnyOddBoxConfig::V1(v1_config) => {
                 let v2 : v2::OddBoxV2Config = v1_config.to_owned().try_into()?;
-                Ok((v2,OddBoxConfigVersion::V1))
+                let v3 : v3::OddBoxV3Config = v2.to_owned().try_into()?;
+                Ok((v3,OddBoxConfigVersion::V1))
             },
-            OddBoxConfig::V2(v2) => {
-                Ok((v2.clone(),OddBoxConfigVersion::V2))
+            AnyOddBoxConfig::V2(v2) => {
+                let v3 : v3::OddBoxV3Config = v2.to_owned().try_into()?;
+                Ok((v3,OddBoxConfigVersion::V2))
             },
+            AnyOddBoxConfig::V3(v3) => {
+                Ok((v3.clone(),OddBoxConfigVersion::V3))
+            }
         }
     }
 }
@@ -148,16 +179,16 @@ impl OddBoxConfig {
 
 #[derive(Debug,Clone)]
 pub struct ConfigWrapper {
-    internal_configuration : v2::OddBoxV2Config,
-    pub remote_sites: DashMap<String, v2::RemoteSiteConfig>,
-    pub hosted_processes: DashMap<String, v2::InProcessSiteConfig>,
+    internal_configuration : crate::configuration::OddBoxConfig,
+    pub remote_sites: DashMap<String, crate::configuration::RemoteSiteConfig>,
+    pub hosted_processes: DashMap<String, crate::configuration::InProcessSiteConfig>,
     pub wrapper_cache_map_is_dirty: bool,
     pub internal_version: u64
 }
 
 
 impl std::ops::Deref for ConfigWrapper {
-    type Target = v2::OddBoxV2Config;
+    type Target = crate::configuration::OddBoxConfig;
     fn deref(&self) -> &Self::Target {
         &self.internal_configuration
     }
@@ -175,9 +206,9 @@ impl std::ops::DerefMut for ConfigWrapper {
 // work with from code in general..
 impl ConfigWrapper {
 
-    /// Creates a new ConfigWrapper from an OddBoxV2Config,
+    /// Creates a new ConfigWrapper from an the latest version of a configuration file,
     /// initializing the DashMaps from the vectors in the config.
-    pub fn new(config: v2::OddBoxV2Config) -> Self {
+    pub fn new(config: crate::configuration::OddBoxConfig) -> Self {
         let remote_sites = DashMap::new();
         if let Some(remote_targets) = &config.remote_target {
             for site in remote_targets {

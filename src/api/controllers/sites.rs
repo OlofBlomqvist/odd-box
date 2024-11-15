@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::configuration::v2::{DirServer, InProcessSiteConfig, RemoteSiteConfig};
+use crate::configuration::{DirServer, InProcessSiteConfig, RemoteSiteConfig};
 use crate::configuration::OddBoxConfiguration;
 use super::*;
 use axum::extract::{Query, State};

@@ -8,7 +8,7 @@ use std::{
 use hyper::Response;
 use mime_guess::mime;
 use crate::{
-    configuration::v2::DirServer,
+    configuration::DirServer,
     http_proxy::{create_simple_response_from_bytes, EpicResponse},
     CustomError,
 };

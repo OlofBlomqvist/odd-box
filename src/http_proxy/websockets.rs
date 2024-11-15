@@ -49,7 +49,7 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
     let (target_host,port,enforce_https) = match &target {
         
         crate::http_proxy::Target::Remote(x) => {
-             let next_backend = x.next_backend(&service.state, crate::configuration::v2::BackendFilter::Any).await
+             let next_backend = x.next_backend(&service.state, crate::configuration::BackendFilter::Any).await
                 .ok_or(CustomError(format!("no backend found")))?;
              (
                 next_backend.address.clone(),

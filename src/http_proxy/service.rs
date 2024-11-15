@@ -279,47 +279,26 @@ async fn handle_http_request(
             req.uri().authority().ok_or(CustomError(format!("No hostname and no Authority found")))?.host().to_string()
         };
 
-    if req_host_name == "localhost" || req_host_name == "oddbox.localhost" || req_host_name == "odd-box.localhost"  {
-
-        crate::proxy::mutate_tracked_connection(&state, &connection_key, |x|{
-            x.is_odd_box_admin_api_req = true;
-            x.outgoing_connection_is_tls = false; // todo: we should actually place the admin api behind tls.
-                                                  // we could even expose it as an adhoc remote server?
-        });
-
-        if client_ip.ip().is_loopback() {
-            tracing::warn!("Received request to localhost, this is allowed for loopback.");
-            if let Some(p) = configuration.admin_api_port {
-                return Ok(
-                    OddResponse::empty()
-                        .with_headers(vec![
-                            ("Location", &format!("http://localhost:{p}"))
-                        ])
-                        .with_status(StatusCode::TEMPORARY_REDIRECT)
-                        .into()
-                );
-            } else {
-                return Ok(
-                    OddResponse::new(create_epic_string_full_body("odd-box admin ui is disabled in config"))
-                        .with_headers(vec![
-                            ("Content-Type", "text/plain")
-                        ])
-                        .with_status(StatusCode::NOT_FOUND)
-                        .into()
-                    );
-                        
-            }
-           
-        } else {
-            tracing::warn!("Received request to localhost, but not from loopback, this is not allowed and also highly suspicious. client ip was: {client_ip:?}");
+    if peeked_target.is_none() && !is_https { 
+        // if no target was found and the request is for the odd-box ui, it means we have gotten a request to the odd-box ui
+        // over a non-encrypted channel. if so we will just redirect to https.
+        let odd_box_url = configuration.odd_box_url.clone().unwrap_or("!".to_string());
+        if req_host_name == odd_box_url || req_host_name == "localhost" || req_host_name == "oddbox.localhost" || req_host_name == "odd-box.localhost"  {
+            crate::proxy::mutate_tracked_connection(&state, &connection_key, |x|{
+                x.is_odd_box_admin_api_req = true;
+                x.outgoing_connection_is_tls = false;
+            });
+            let p = configuration.tls_port.unwrap_or(4343);
             return Ok(
-                OddResponse::new(create_epic_string_full_body("access to odd-box ui is only allowed from loopback"))
-                    .with_status(StatusCode::NOT_FOUND)
+                OddResponse::empty()
+                    .with_headers(vec![
+                        ("Location", &format!("https://{}:{p}",req_host_name))
+                    ])
+                    .with_status(StatusCode::TEMPORARY_REDIRECT)
                     .into()
-                );
+            ); 
         }
     }
-
     
     tracing::trace!("Handling request from {client_ip:?} on hostname {req_host_name:?}");
     
@@ -528,7 +507,7 @@ async fn handle_http_request(
         let hints = target_cfg.hints.clone();
         let target = crate::http_proxy::Target::Proc(target_cfg.clone());
 
-        let backend = crate::configuration::v2::Backend {
+        let backend = crate::configuration::Backend {
             hints: hints,
             // we are hosting this service so clearly it is local
             address: "localhost".to_string(),
@@ -628,7 +607,7 @@ async fn perform_remote_forwarding(
     _is_https:bool,
     state: Arc<GlobalState>,
     client_ip:std::net::SocketAddr,
-    remote_target_config:&crate::configuration::v2::RemoteSiteConfig,
+    remote_target_config:&crate::configuration::RemoteSiteConfig,
     req:hyper::Request<IncomingBody>,
     client:  Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
     h2_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
@@ -640,7 +619,7 @@ async fn perform_remote_forwarding(
         .and_then(|x| Some(x.as_str())).unwrap_or_default();
     if original_path_and_query == "/" { original_path_and_query = ""}
    
-    let next_backend_target = if let Some(b) = remote_target_config.next_backend(&state, crate::configuration::v2::BackendFilter::Any).await {
+    let next_backend_target = if let Some(b) = remote_target_config.next_backend(&state, crate::configuration::BackendFilter::Any).await {
         b
     } else {
         return Err(CustomError("No backend found".to_string()))

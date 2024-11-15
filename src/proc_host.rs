@@ -15,7 +15,7 @@ use std::time::Duration;
 
 
 pub async fn host(
-    mut resolved_proc: crate::configuration::v2::FullyResolvedInProcessSiteConfig,
+    mut resolved_proc: crate::configuration::FullyResolvedInProcessSiteConfig,
     mut rcv:tokio::sync::broadcast::Receiver<ProcMessage>,
     state: Arc<GlobalState>
 ) {
@@ -582,7 +582,7 @@ fn update_status(previous:&ProcState,x:&str,id:&ProcId,g:&Arc<GlobalState>,s:Pro
                 s
             },
             Err(e) => {
-                tracing::warn!("Failed to broadcast site status change event: {e:?}");
+                tracing::trace!("Failed to broadcast site status change event: {e:?}");
                 previous.clone()
             }
         }

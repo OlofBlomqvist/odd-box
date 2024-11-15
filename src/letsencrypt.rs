@@ -752,7 +752,13 @@ pub async fn bg_worker_for_lets_encrypt_certs(state: Arc<GlobalState>) {
                     .filter(|x|x.enable_lets_encrypt.unwrap_or(false)).map(|x|x.host_name.clone())
             ).collect::<Vec<String>>();
         
+        if let Some(ourl) = state_guard.odd_box_url.as_ref() {
+            all_sites_with_lets_encrypt_enabled.push(ourl.clone());
+        }
+
         drop(state_guard);
+
+        
 
         all_sites_with_lets_encrypt_enabled.sort();
         all_sites_with_lets_encrypt_enabled.dedup();    

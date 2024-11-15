@@ -324,7 +324,7 @@ pub async fn run(
                                                     EnvFilter::from_str("odd_box=debug").unwrap()
                                                     .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
                                                 );
-                                                tracing::info!("Switched log level to DEBUG");
+                                                tracing::debug!("Switched log level to DEBUG");
                                             }
                                             tracing::level_filters::LevelFilter::DEBUG => {
                                                 last_set_log_level_by_tui = tracing::level_filters::LevelFilter::TRACE;
@@ -332,7 +332,7 @@ pub async fn run(
                                                     EnvFilter::from_str("odd_box=trace").unwrap()
                                                     .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
                                                 );
-                                                tracing::info!("Switched log level to TRACE");
+                                                tracing::trace!("Switched log level to TRACE");
                                             }
                                             x => {
                                                 last_set_log_level_by_tui = tracing::level_filters::LevelFilter::INFO;
