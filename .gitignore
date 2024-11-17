@@ -11,3 +11,8 @@ web-ui/.env.production
 odd-box.toml.backup
 .odd-box.toml.swp
 nginx.conf
+.idea/.gitignore
+.idea/modules.xml
+.idea/odd-box.iml
+.idea/vcs.xml
+.idea/inspectionProfiles/Project_Default.xml

@@ -23,7 +23,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
     let (mut new_configuration,_original_version) = 
         match AnyOddBoxConfig::parse(&contents) {
             Ok(configuration) => {
-                let (a,b) = 
+                let (a,b,_) = 
                     configuration
                         .try_upgrade_to_latest_version()
                         .expect("configuration upgrade failed. this is a bug in odd-box");

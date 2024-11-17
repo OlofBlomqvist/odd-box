@@ -119,7 +119,7 @@ pub fn draw(
     tui_state.threads_tab_state.scroll_state.area_height = height_of_threads_area as usize;
     
     if tui_state.threads_tab_state.scroll_state.scroll_bar_hovered {
-        scrollbar = scrollbar.thumb_style(Style::default().fg(Color::Yellow).bg(Color::Red));
+        scrollbar = scrollbar.thumb_style(Style::default().fg(Color::Yellow).bg(Color::LightRed));
     }
 
     let scrollbar_area = Rect::new(area.right() - 1, area.top(), 1, area.height);

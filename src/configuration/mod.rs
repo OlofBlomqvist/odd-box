@@ -150,26 +150,26 @@ impl AnyOddBoxConfig {
         }
     }
 
-    // Result<(validated_config,original_version),error>
-    pub fn try_upgrade_to_latest_version(&self) -> Result<(crate::configuration::OddBoxConfig,OddBoxConfigVersion),String> {
+    // Result<(validated_config,original_version,was_upgraded),error>
+    pub fn try_upgrade_to_latest_version(&self) -> Result<(crate::configuration::OddBoxConfig,OddBoxConfigVersion,bool),String> {
         match self {
             AnyOddBoxConfig::Legacy(legacy_config) => {
                 let v1 : v1::OddBoxV1Config = legacy_config.to_owned().try_into()?;
                 let v2 : v2::OddBoxV2Config = v1.to_owned().try_into()?;
                 let v3 : v3::OddBoxV3Config = v2.to_owned().try_into()?;
-                Ok((v3,OddBoxConfigVersion::Unmarked))
+                Ok((v3,OddBoxConfigVersion::Unmarked,true))
             },
             AnyOddBoxConfig::V1(v1_config) => {
                 let v2 : v2::OddBoxV2Config = v1_config.to_owned().try_into()?;
                 let v3 : v3::OddBoxV3Config = v2.to_owned().try_into()?;
-                Ok((v3,OddBoxConfigVersion::V1))
+                Ok((v3,OddBoxConfigVersion::V1,true))
             },
             AnyOddBoxConfig::V2(v2) => {
                 let v3 : v3::OddBoxV3Config = v2.to_owned().try_into()?;
-                Ok((v3,OddBoxConfigVersion::V2))
+                Ok((v3,OddBoxConfigVersion::V2,true))
             },
             AnyOddBoxConfig::V3(v3) => {
-                Ok((v3.clone(),OddBoxConfigVersion::V3))
+                Ok((v3.clone(),OddBoxConfigVersion::V3,false))
             }
         }
     }

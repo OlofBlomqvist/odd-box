@@ -45,19 +45,19 @@ pub fn draw(
     
     let s = |level|if is_dark_theme { 
         match level {
-            Level::ERROR => Style::default().fg(Color::Red),
-            Level::TRACE => Style::default().fg(Color::Gray),
-            Level::DEBUG => Style::default().fg(Color::Magenta),
+            Level::ERROR => Style::default().fg(Color::LightRed),
+            Level::TRACE => Style::default().fg(Color::LightGreen),
+            Level::DEBUG => Style::default().fg(Color::LightBlue),
             Level::WARN  => Style::default().fg(Color::Yellow),
-            Level::INFO  => Style::default().fg(Color::Blue),
+            Level::INFO  => Style::default().fg(Color::Gray),
         }            
     } else {
         match level {
             Level::ERROR => Style::default().fg(Color::Red),
-            Level::TRACE => Style::default().fg(Color::Black),
-            Level::DEBUG => Style::default().fg(Color::Black),
+            Level::TRACE => Style::default().fg(Color::Blue),
+            Level::DEBUG => Style::default().fg(Color::Green),
             Level::WARN  => Style::default().fg(Color::Magenta),
-            Level::INFO  => Style::default().fg(Color::Blue),
+            Level::INFO  => Style::default().fg(Color::Black),
         }   
     };
 
@@ -71,9 +71,7 @@ pub fn draw(
             buffer.logs.iter_mut().enumerate().flat_map(|(i, x)| {
             
             let level = x.lvl;
-            
-            // TODO -- long lines get messed up
-        
+                    
             let nr_str = format!("{:1$} | ", i + 1, item_count_len);
             let system_message = x.thread.clone().unwrap_or_default().starts_with("odd_box");
             let lvl_str = format!("{:>1$} ", match x.lvl {
@@ -125,7 +123,7 @@ pub fn draw(
                             ])
                         } else {
                             // we add 2 spaces in thread names 
-                            let padding = " ".repeat(lvl_str.len() + thread_str.len() -2);
+                            let padding = " ".repeat(lvl_str.len() + thread_str.len() - 2);
                             Line::from(vec![
                                 ratatui::text::Span::styled(nr_str.to_string(), fg_s),
                                 ratatui::text::Span::styled(padding, Style::default()),
@@ -138,8 +136,14 @@ pub fn draw(
                        
                     }).collect::<Vec<Line>>()
             } else {
+                // ughhh
+                let padding = if x.src.len() > 0 && !x.src.ends_with(' ') {
+                    " "
+                } else {
+                    ""
+                };
                 let message = ratatui::text::Span::styled(
-                    format!("{}{}", &x.src, &x.msg),
+                    format!("{}{padding}{}", &x.src, &x.msg),
                     s(level),
                 );
         
@@ -183,7 +187,7 @@ pub fn draw(
         .end_symbol(Some("↓")).thumb_style(Style::new().fg(Color::LightBlue));
 
     if scrollbar_hovered {
-        scrollbar = scrollbar.thumb_style(Style::default().fg(Color::Yellow).bg(Color::Red));
+        scrollbar = scrollbar.thumb_style(Style::default().fg(Color::Yellow).bg(Color::LightRed));
     }
 
     let mut scrollbar_state = tui_state.log_tab_stage.scroll_state.vertical_scroll_state.borrow_mut();

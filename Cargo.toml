@@ -1,7 +1,7 @@
 [package]
 name = "odd-box"
 description = "a dead simple reverse proxy server and web server"
-version = "0.1.10"
+version = "0.1.10-RC1"
 edition = "2021"
 authors = ["Olof Blomqvist <olof@twnet.se>"]
 repository = "https://github.com/OlofBlomqvist/odd-box"
@@ -60,7 +60,7 @@ webpki = { version = "0.22.4"  }
 anyhow = "1.0.88"
 uuid = { version = "1.10.0", features = ["v4"] }
 tungstenite = "0.24.0"
-dark-light = "1.1.1"
+dark-light = "=1.0.0"
 memchr = "2.7.4"
 dashmap = "6.0.1"
 base64 = "0.22.1"

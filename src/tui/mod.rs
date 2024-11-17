@@ -131,7 +131,7 @@ pub async fn run(
 
                 tui_state.log_level = LevelFilter::current().to_string();
                 
-                if count > 100 {
+                if count > 100 && manually_selected_theme.is_none() {
                     theme = match dark_light::detect() {
                         dark_light::Mode::Dark => Theme::Dark(dark_style),
                         dark_light::Mode::Light => Theme::Light(light_style),
@@ -195,8 +195,8 @@ pub async fn run(
                                     format!("LOGGING RESUMED! PRESS SPACE TO PAUSE.") 
                                 },
                                 lvl: Level::WARN,
-                                src: String::from("odd-box tracing"),
-                                thread: None,
+                                src: String::from(""),
+                                thread: Some(String::from("odd_box::tracing")),
                             });
                         }
                         Event::Key(KeyEvent { 
@@ -658,16 +658,14 @@ fn draw_ui<B: ratatui::backend::Backend>(
     let is_dark_theme = matches!(&theme,Theme::Dark(_));
     
     let app_bg = {
-        Color::Reset
-        // this is used when testing theme changes
-        // if is_dark_theme {
-        //     Color::Black
-        // } else {
-        //     Color::White
-        // }
+        if is_dark_theme {
+            Color::Rgb(11, 11, 11)
+        } else {
+            Color::White
+        }
     };
     let tab_fg_color = if is_dark_theme {
-        Color::Blue
+        Color::LightBlue
     } else {
         Color::DarkGray
     };
@@ -802,7 +800,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
                     ),
                     &ProcState::Remote => Style::default().fg(
                         if is_dark_theme {
-                                Color::Blue
+                                Color::LightBlue
                             } else {
                                 Color::Blue
                             }

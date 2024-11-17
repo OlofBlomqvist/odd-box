@@ -1,3 +1,4 @@
+use anyhow::bail;
 use self_update::cargo_crate_version;
 use serde::Deserialize;
 use std::fmt::Debug;
@@ -24,7 +25,33 @@ fn update_from_github(target_tag:&str,current_version:&str) -> anyhow::Result<()
 
 pub async fn update() -> anyhow::Result<()> {
 
-    let allow_preview = 
+    let current_version = current_version();
+    let latest_tag = find_latest_version(false).await?;
+    if format!("v{current_version}") == latest_tag {
+        println!("already running latest version: {latest_tag}");
+        return Ok(())
+    }
+
+    update_from_github(&latest_tag,&current_version)
+
+}
+
+pub fn current_version() -> &'static str { cargo_crate_version!() }
+
+/// returns Some(newer_version) or None if current is latest.
+pub async fn current_is_latest() -> anyhow::Result<Option<String>> {
+    let current_version = current_version();
+    match find_latest_version(false).await {
+        Ok(v) if current_version != v => Ok(Some(v)),
+        Ok(_) => Ok(None),
+        Err(e) => Err(e)
+    }
+}
+
+
+pub async fn find_latest_version(include_pre:bool) -> anyhow::Result<String> {
+
+    let allow_preview = include_pre ||
         std::env::vars()
             .find(|(key,_)| key=="ODDBOX_ALLOW_PREVIEW").map(|x|x.1.to_lowercase())
             .unwrap_or_default()
@@ -32,12 +59,11 @@ pub async fn update() -> anyhow::Result<()> {
 
     let releases_url = "https://api.github.com/repos/OlofBlomqvist/odd-box/releases";   
     let c = reqwest::Client::new();
-    let latest_release: Release = c.get(releases_url).header("user-agent", "odd-box").send()
-        .await
-        .expect("request failed")
+    let latest_release_tag: Option<String> = c.get(releases_url).header("user-agent", "odd-box").send()
+        .await?
         .json::<Vec<Release>>()
         .await
-        .expect("failed to deserialize").iter().filter(|x|{
+        ?.iter().filter(|x|{
             if let Some(t) = &x.tag_name {
                 allow_preview ||
                     t.to_lowercase().contains("-preview") == false
@@ -47,15 +73,14 @@ pub async fn update() -> anyhow::Result<()> {
             } else {
                 false
             }
-        }).next().expect("failed to read github data").clone();
+        }).next().map(|x|x.tag_name.clone()).unwrap_or(None);
 
-    let current_version = cargo_crate_version!();
-    let latest_tag = latest_release.tag_name.expect("tag name not found");
-    if format!("v{current_version}") == latest_tag {
-        println!("already running latest version: {latest_tag}");
-        return Ok(())
+
+    if let Some(v) = latest_release_tag {
+        Ok(v.clone())
+    } else {
+        bail!("Failed to find latest release version")
     }
-
-    update_from_github(&latest_tag,&current_version)
+   
 
 }

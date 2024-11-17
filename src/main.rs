@@ -332,7 +332,7 @@ async fn thread_cleaner() {
     crate::BG_WORKER_THREAD_MAP.insert("The Janitor".into(), BgTaskInfo {
         liveness_ptr: Arc::downgrade(&liveness_token),
         status: "Managing active tasks..".into()
-    }); 
+    });
     loop {
         {
             PROC_THREAD_MAP.retain(|_k,v| v.liveness_ptr.upgrade().is_some());
@@ -394,7 +394,7 @@ fn generate_config(file_name:Option<&str>, fill_example:bool) -> anyhow::Result<
 }
 
 // (validated_cfg, original_version)
-fn initialize_configuration(args:&Args) -> anyhow::Result<(ConfigWrapper,OddBoxConfigVersion)> {
+fn initialize_configuration(args:&Args) -> anyhow::Result<(ConfigWrapper,OddBoxConfigVersion,bool)> {
 
     let cfg_path = 
         if let Some(cfg) = &args.configuration {
@@ -414,14 +414,14 @@ fn initialize_configuration(args:&Args) -> anyhow::Result<(ConfigWrapper,OddBoxC
     let mut contents = String::new();
     file.read_to_string(&mut contents).with_context(||format!("failed to read data from configuration file {cfg_path:?}"))?;   
     
-    let (mut config,original_version) = 
+    let (mut config,original_version,was_upgraded) = 
         match configuration::AnyOddBoxConfig::parse(&contents) {
             Ok(configuration) => {
-                let (a,b) = 
+                let (a,b,c) = 
                     configuration
                         .try_upgrade_to_latest_version()
                         .expect("configuration upgrade failed. this is a bug in odd-box");
-                (ConfigWrapper::new(a),b)
+                (ConfigWrapper::new(a),b,c)
             },
             Err(e) => anyhow::bail!(e),
         };
@@ -429,8 +429,8 @@ fn initialize_configuration(args:&Args) -> anyhow::Result<(ConfigWrapper,OddBoxC
     config.is_valid()?;
     config.set_disk_path(&cfg_path)?;
 
-    let srv_port : u16 = if let Some(p) = args.port { p } else { config.http_port.unwrap_or(8080) } ;
-    let srv_tls_port : u16 = if let Some(p) = args.tls_port { p } else { config.tls_port.unwrap_or(4343) } ;
+    let srv_port : u16 = config.http_port.unwrap_or(8080)  ;
+    let srv_tls_port : u16 =  config.tls_port.unwrap_or(4343)  ;
 
 
     let socket_addr_http = SocketAddr::new(config.ip.unwrap_or(std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))),srv_port);
@@ -453,11 +453,14 @@ fn initialize_configuration(args:&Args) -> anyhow::Result<(ConfigWrapper,OddBoxC
         }
     }
 
-    Ok((config,original_version))
+    Ok((config,original_version,was_upgraded))
 }
 
 #[tokio::main(flavor="multi_thread")]
+#[tracing::instrument()]
 async fn main() -> anyhow::Result<()> {
+
+
     match rustls::crypto::ring::default_provider().install_default() {
         Ok(_) => {},
         Err(e) => {
@@ -480,31 +483,25 @@ async fn main() -> anyhow::Result<()> {
     
     let tui_flag = args.tui.unwrap_or(true);
 
-    if args.generate_example_cfg {
-        generate_config(Some("odd-box-example-config.toml"),true)?;
-        return Ok(())
-    } else if args.init {
+    if args.init {
         generate_config(Some("odd-box.toml"),false)?;
         return Ok(())
     }
-
-    let (config,original_version) = initialize_configuration(&args)?;
-
-    if args.upgrade_config {
-        match original_version {
-            OddBoxConfigVersion::V2 => {
-                println!("Configuration file is already at the latest version.");
-                return Ok(())
-            },
-            _ => {}
+    
+    let (config,_original_version,was_upgraded) = initialize_configuration(&args)?;
+    
+    if was_upgraded  {
+        println!("Detected outdated configuration file - updating to latest version");
+        let original_path = config.path.clone().expect("original configuration file should exist");
+        let mut i = 1;
+        let mut new_path = format!("{original_path}.backup{i}");
+        while std::fs::exists(&new_path).is_ok_and(|x|x==true) {
+            i += 1;
+            new_path = format!("{original_path}.backup{i}");
         }
+        std::fs::copy(original_path,new_path)?;
         config.write_to_disk()?;
-        println!("Configuration file upgraded successfully!");
-        return Ok(());
-    } else if let OddBoxConfigVersion::V2 = original_version {
-        // do nothing
-    } else {
-        println!("Your configuration file is using an old schema ({:?}), consider upgrading it using the '--upgrade-config' command.",original_version);
+        
     }
 
 
@@ -527,8 +524,8 @@ async fn main() -> anyhow::Result<()> {
     let inner_state = AppState::new();  
     
     let inner_state_arc = std::sync::Arc::new(inner_state);
-    let srv_port : u16 = if let Some(p) = args.port { p } else { config.http_port.unwrap_or(8080) } ;
-    let srv_tls_port : u16 = if let Some(p) = args.tls_port { p } else { config.tls_port.unwrap_or(4343) } ;
+    let srv_port : u16 = config.http_port.unwrap_or(8080);
+    let srv_tls_port : u16 = config.tls_port.unwrap_or(4343);
     
     let mut srv_ip = if let Some(ip) = config.ip { ip.to_string() } else { "127.0.0.1".to_string() };
 
@@ -674,6 +671,25 @@ async fn main() -> anyhow::Result<()> {
 
     drop(config_guard);
 
+
+    match self_update::current_is_latest().await {
+        Err(e) => {
+            tracing::warn!("It was not possible to retrieve information regarding the latest available version of odd-box: {e:?}");
+            std::thread::sleep(Duration::from_secs(5));
+        },
+        Ok(Some(v)) => {
+            tracing::info!("There is a newer version of odd-box available - please consider upgrading to {v:?}. For unmanaged installations you can run 'odd-box --update' otherwise see your package manager for upgrade instructions.");
+            std::thread::sleep(Duration::from_secs(3));
+        },
+        Ok(None) => {
+            tracing::info!("You are running the latest version of odd-box :D");
+            std::thread::sleep(Duration::from_secs(1));
+        }
+
+
+    }
+
+
     // if in tui mode, we can just hang around until the tui thread exits.
     if let Some(tt) = tui_task {        
         _ = tt.await;
@@ -777,3 +793,20 @@ impl fmt::Debug for OddLogHandle {
         f.write_str("OddLogHandle")
     }
 }
+
+// fn get_user_confirmation(prompt: &str) -> bool {
+//     let mut input = String::new();
+//     loop {
+//         print!("{} (y/n)", prompt);
+//         std::io::stdout().flush().unwrap();
+//         input.clear();
+//         std::io::stdin().read_line(&mut input).unwrap();
+//         match input.trim().to_lowercase().as_str() {
+//             "y" => return true,
+//             "n" => return false,
+//             _ => {
+//                 println!("Invalid input. Please enter 'y' or 'n'.");
+//             }
+//         }
+//     }
+// }

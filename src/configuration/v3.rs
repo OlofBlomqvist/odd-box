@@ -455,7 +455,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
         let mut formatted_toml = Vec::new();
 
         // this is to nudge editor plugins to use the correct schema for validation and intellisense
-        formatted_toml.push(format!("#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.2.json"));
+        formatted_toml.push(format!("#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v3.0.json"));
         
         // this is for our own use to know which version of the configuration we are using
         formatted_toml.push(format!("version = \"{:?}\"", self.version));
@@ -465,18 +465,18 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
         } else {
             formatted_toml.push(format!("alpn = {}", "false"));
         }
-
         if let Some(port) = self.http_port {
             formatted_toml.push(format!("http_port = {}", port));
+        }
+        if let Some(tls_port) = self.tls_port {
+            formatted_toml.push(format!("tls_port = {}", tls_port));
         }
         if let Some(ip) = &self.ip {
             formatted_toml.push(format!("ip = \"{:?}\"", ip));
         } else {
             formatted_toml.push(format!("ip = \"127.0.0.1\""));
         }
-        if let Some(tls_port) = self.tls_port {
-            formatted_toml.push(format!("tls_port = {}", tls_port));
-        }
+
         if let Some(auto_start) = self.auto_start {
             formatted_toml.push(format!("auto_start = {}", auto_start));
         } else {
@@ -609,7 +609,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
                 let args = process.args.iter().flatten()
                     .map(|arg| format!("\n  {:?}", arg)).collect::<Vec<_>>().join(", ");
 
-                formatted_toml.push(format!("args = [{}\n]", args));
+                formatted_toml.push(format!("args = [{}]", args));
                 
              
                 if let Some(auto_start) = process.auto_start {

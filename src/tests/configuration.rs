@@ -242,7 +242,7 @@ use crate::configuration::OddBoxConfiguration;
     ]);
     let v2_config_example = crate::configuration::AnyOddBoxConfig::V2(example);
     match v2_config_example.try_upgrade_to_latest_version() {
-        Ok((upgraded_config,_input_version)) => {
+        Ok((upgraded_config,_input_version,_)) => {
             let remote_sites = upgraded_config.remote_target.expect("should have remote sites");
             let test_site = remote_sites.get(0).expect("should have test site");
             let backend = test_site.backends.get(0).expect("should have backend");
@@ -275,7 +275,7 @@ use crate::configuration::OddBoxConfiguration;
     ]);
     let v2_config_example = crate::configuration::AnyOddBoxConfig::V2(example);
     match v2_config_example.try_upgrade_to_latest_version() {
-        Ok((upgraded_config,_input_version)) => {
+        Ok((upgraded_config,_input_version,_)) => {
             let remote_sites = upgraded_config.remote_target.expect("should have remote sites");
             let test_site = remote_sites.get(0).expect("should have test site");
             let backend = test_site.backends.get(0).expect("should have backend");
