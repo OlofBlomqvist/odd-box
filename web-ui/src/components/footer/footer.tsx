@@ -1,6 +1,6 @@
 const Footer = () => {
   return (
-    <footer className="fixed bottom-0 left-0 right-0 h-[180px] z-[-1] text-[hsl(var(--card-foreground))] bg-[hsl(var(--card))] flex justify-between py-5 font-light ml:pl-[320px]">
+    <footer className="fixed bottom-0 left-0 right-0 h-[180px] z-[-1] text-[hsl(var(--card-foreground))] bg-[var(--card)] flex justify-between py-5 font-light ml:pl-[320px]">
       <div className="max-w-[900px] grid gap-2 grid-cols-[1fr_1px_1fr] justify-between w-full px-[20px] justify-items-center">
         <div className="flex flex-col gap-2">
           <div>

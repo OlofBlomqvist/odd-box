@@ -645,7 +645,7 @@ export class HttpClient<SecurityDataType = unknown> {
 
 /**
  * @title ODD-BOX ADMIN-API 🤯
- * @version 0.1.10
+ * @version 0.1.10-RC1
  * @license
  * @externalDocs https://github.com/OlofBlomqvist/odd-box
  * @contact Olof Blomqvist <olof@twnet.se>

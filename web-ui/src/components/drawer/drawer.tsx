@@ -27,10 +27,10 @@ const SideDrawer = ({ children,bottomItem }: { bottomItem?:ReactNode,children?: 
         customIdSuffix="x" 
         style={{
           boxShadow: "unset",
-          background: "hsl(var(--card))",
+          background: "var(--card)",
           backdropFilter: "blur(10px)",
           WebkitBackdropFilter: "blur(10px)",
-          borderRight: "1px solid #242424",
+          borderRight: "1px solid var(--border)",
           display:"flex",
           flexDirection:"column",
           justifyContent:"space-between",
