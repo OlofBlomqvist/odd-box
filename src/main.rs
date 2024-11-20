@@ -675,18 +675,13 @@ async fn main() -> anyhow::Result<()> {
     match self_update::current_is_latest().await {
         Err(e) => {
             tracing::warn!("It was not possible to retrieve information regarding the latest available version of odd-box: {e:?}");
-            std::thread::sleep(Duration::from_secs(5));
         },
         Ok(Some(v)) => {
             tracing::info!("There is a newer version of odd-box available - please consider upgrading to {v:?}. For unmanaged installations you can run 'odd-box --update' otherwise see your package manager for upgrade instructions.");
-            std::thread::sleep(Duration::from_secs(3));
         },
         Ok(None) => {
             tracing::info!("You are running the latest version of odd-box :D");
-            std::thread::sleep(Duration::from_secs(1));
         }
-
-
     }
 
 

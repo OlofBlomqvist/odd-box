@@ -707,97 +707,106 @@ pub async fn bg_worker_for_lets_encrypt_certs(state: Arc<GlobalState>) {
     // NOTE 2: We generate these certificates in a loop and not OTF. This is to avoid concurrent requests to lets-encrypt.
     loop {
 
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        {
+            let mail = {
+                if let Some(e) = state.config.read().await.lets_encrypt_account_email.clone() {
+                    e
+                } else {
+                    
+                    crate::BG_WORKER_THREAD_MAP.insert("Lets Encrypt".into(), BgTaskInfo {
+                        liveness_ptr: Arc::downgrade(&liveness_token),
+                        status: format!("Disabled. lets_encrypt_account_email not set.")
+                    });
+                    continue;
+                    
+                }
 
-        let state_guard = state.config.read().await;
-        if state_guard.lets_encrypt_account_email.is_none() {
+            };
+
+            let mut lem_guard = state.cert_resolver.lets_encrypt_manager.write().await;
+            if lem_guard.is_none() {
+                match LECertManager::new(&mail).await {
+                    Ok(v) => lem_guard.replace(v) ,
+                    Err(e) => {
+                        tracing::warn!("Failed to create lets-encrypt manager: {e:?}");
+                        continue
+                    }
+                };
+            }
+            drop(lem_guard);
+
+            let active_challenges_count = crate::letsencrypt::DOMAIN_TO_CHALLENGE_TOKEN_MAP.len();
+
+            
+            
+            // TODO: should filter out local sites so we do not try to create certs for things like test.localhost or test.localtest.me etc.
+            //       but instead write a warning about it.
+            let state_guard = state.config.read().await;
+            let mut all_sites_with_lets_encrypt_enabled = 
+                state_guard.remote_target
+                    .iter()
+                    .flatten()
+                    .filter(|x|x.enable_lets_encrypt.unwrap_or(false)).map(|x|x.host_name.clone())
+                .chain(
+                    state_guard.hosted_process
+                        .iter()
+                        .flatten()
+                        .filter(|x|x.enable_lets_encrypt.unwrap_or(false)).map(|x|x.host_name.clone())
+                ).chain(
+                    state_guard.dir_server
+                        .iter()
+                        .flatten()
+                        .filter(|x|x.enable_lets_encrypt.unwrap_or(false)).map(|x|x.host_name.clone())
+                ).collect::<Vec<String>>();
+            
+            if let Some(ourl) = state_guard.odd_box_url.as_ref() {
+                all_sites_with_lets_encrypt_enabled.push(ourl.clone());
+            }
+
+            drop(state_guard);
+
+            
+
+            all_sites_with_lets_encrypt_enabled.sort();
+            all_sites_with_lets_encrypt_enabled.dedup();    
+
+            let guard = state.cert_resolver.lets_encrypt_manager.read().await;
+            
+            if let Some(mgr) = guard.as_ref() {
+                for domain_name in all_sites_with_lets_encrypt_enabled {
+                
+                    if let Some(_) = state.cert_resolver.get_lets_encrypt_signed_cert_from_mem_cache(&domain_name) {
+                        tracing::info!("LE CERT IS OK FOR: {}", domain_name);
+                        continue;
+                    }
+                    
+                    match mgr.get_or_create_cert(&domain_name).await.context(format!("generating lets-encrypt cert for site {}",domain_name)) {
+                        Ok(v) => {
+                            state.cert_resolver.add_lets_encrypt_signed_cert_to_mem_cache(&domain_name, v);  
+                            generated_count += 1;         
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to generate certificate for domain: {}. {e:?}", domain_name);
+                        } 
+                    }
+                        
+                
+                }
+            } else {
+                tracing::error!("LE Manager not available.. will retry in 10 seconds.");
+            }
+            
+        
+
             crate::BG_WORKER_THREAD_MAP.insert("Lets Encrypt".into(), BgTaskInfo {
                 liveness_ptr: Arc::downgrade(&liveness_token),
-                status: format!("Disabled. lets_encrypt_account_email not set.")
-            });
-            drop(state_guard);
-            tokio::time::sleep(Duration::from_secs(10)).await;
-            continue;
+                status: format!("Generated: {generated_count} - Pending: {active_challenges_count}.")
+            }); // we dont need to clean this up if we exit, there is a cleanup task that will do it.
+        
+            drop(guard);
         }
-
-        let mut lem_guard = state.cert_resolver.lets_encrypt_manager.write().await;
-        if lem_guard.is_none() {
-            let state_guard = state.config.read().await;
-            lem_guard.replace(
-                LECertManager::new(state_guard.lets_encrypt_account_email.as_ref().unwrap()).await.unwrap()
-            );
-        }
-        drop(lem_guard);
-
-
-        let active_challenges_count = crate::letsencrypt::DOMAIN_TO_CHALLENGE_TOKEN_MAP.len();
-
-        
-        
-        // TODO: should filter out local sites so we do not try to create certs for things like test.localhost or test.localtest.me etc.
-        //       but instead write a warning about it.
-        let mut all_sites_with_lets_encrypt_enabled = 
-            state_guard.remote_target
-                .iter()
-                .flatten()
-                .filter(|x|x.enable_lets_encrypt.unwrap_or(false)).map(|x|x.host_name.clone())
-            .chain(
-                state_guard.hosted_process
-                    .iter()
-                    .flatten()
-                    .filter(|x|x.enable_lets_encrypt.unwrap_or(false)).map(|x|x.host_name.clone())
-            ).chain(
-                state_guard.dir_server
-                    .iter()
-                    .flatten()
-                    .filter(|x|x.enable_lets_encrypt.unwrap_or(false)).map(|x|x.host_name.clone())
-            ).collect::<Vec<String>>();
-        
-        if let Some(ourl) = state_guard.odd_box_url.as_ref() {
-            all_sites_with_lets_encrypt_enabled.push(ourl.clone());
-        }
-
-        drop(state_guard);
-
-        
-
-        all_sites_with_lets_encrypt_enabled.sort();
-        all_sites_with_lets_encrypt_enabled.dedup();    
-
-        let guard = state.cert_resolver.lets_encrypt_manager.read().await;
-
-        if let Some(mgr) = guard.as_ref() {
-            for domain_name in all_sites_with_lets_encrypt_enabled {
-            
-                if let Some(_) = state.cert_resolver.get_lets_encrypt_signed_cert_from_mem_cache(&domain_name) {
-                    tracing::info!("LE CERT IS OK FOR: {}", domain_name);
-                    continue;
-                }
-                
-                match mgr.get_or_create_cert(&domain_name).await.context(format!("generating lets-encrypt cert for site {}",domain_name)) {
-                    Ok(v) => {
-                        state.cert_resolver.add_lets_encrypt_signed_cert_to_mem_cache(&domain_name, v);  
-                        generated_count += 1;         
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to generate certificate for domain: {}. {e:?}", domain_name);
-                    } 
-                }
-                    
-              
-            }
-        } else {
-            tracing::error!("LE Manager not available.. will retry in 10 seconds.");
-        }
-        
-       
-
-        crate::BG_WORKER_THREAD_MAP.insert("Lets Encrypt".into(), BgTaskInfo {
-            liveness_ptr: Arc::downgrade(&liveness_token),
-            status: format!("Generated: {generated_count} - Pending: {active_challenges_count}.")
-        }); // we dont need to clean this up if we exit, there is a cleanup task that will do it.
-    
-
-        tokio::time::sleep(Duration::from_secs(320)).await;
+        tokio::time::sleep(Duration::from_secs(315)).await;
     }
     
 }

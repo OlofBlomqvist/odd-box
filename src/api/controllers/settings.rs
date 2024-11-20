@@ -1,9 +1,10 @@
 use std::time::Duration;
 
+use crate::configuration::OddBoxConfiguration;
+
 use super::*;
 
 use utoipa::ToSchema;
-use crate::configuration::OddBoxConfiguration;
 
 
 #[derive(Debug,Serialize,Deserialize,Clone,ToSchema)]
@@ -157,6 +158,7 @@ pub async fn get_settings_handler(
         (status = 500, description = "When something goes wrong", body = String),
     )
 )]
+
 pub async fn set_settings_handler(
     axum::extract::State(global_state): axum::extract::State<Arc<GlobalState>>,
     Json(new_settings): Json<SaveGlobalConfig>
@@ -166,6 +168,8 @@ pub async fn set_settings_handler(
     // then we write it to disk. the disk update will be picked up by the reload function
     // which will then apply the new settings.
     let mut config = { global_state.config.read().await.clone() };
+    let old_config = config.clone();
+
     let nlea = if new_settings.lets_encrypt_account_email.len() > 0 {
         Some(new_settings.lets_encrypt_account_email.clone())
     } else {
@@ -207,22 +211,25 @@ pub async fn set_settings_handler(
     } else {
         config.root_dir = Some(new_settings.root_dir.clone());
     }
+
+    if config.eq(&old_config) {
+        tracing::warn!("Request to update settings thru api changed nothing.");
+        return Ok::<(),(StatusCode,String)>(())
+    }
     
     config.write_to_disk().map_err(|e|(StatusCode::BAD_REQUEST,format!("{}",e.to_string())))?;
+    
+
 
     let mut i = 0;
     tracing::info!("Configuration updated and written to disk. Waiting for reload to complete.");            
 
-    loop {
-        if i > 1000 { // 10 seconds
-            return Err((StatusCode::INTERNAL_SERVER_ERROR,"Failed to update global settings".to_string()));
+    while i < 1000 {
+        let active_config = global_state.config.read().await;
+        if active_config.internal_version > old_config.internal_version {
+            break;
         }
-        {
-            let active_config = global_state.config.read().await;
-            if active_config.internal_version > config.internal_version {
-                break;
-            }
-        }
+        drop(active_config);
         i+=1;
         tokio::time::sleep(Duration::from_millis(10)).await;
     }

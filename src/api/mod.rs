@@ -283,10 +283,8 @@ impl OddBoxAPI {
         next: axum::middleware::Next,
         state: Arc<crate::global_state::GlobalState>
     ) -> Result<Response, axum::http::StatusCode> {
-        let guard = state.config.read().await;
-        
-        let path = req.uri().path();
 
+        let path = req.uri().path();
         if req.method() == hyper::Method::GET {
             if path.starts_with("/api-docs/") {
                 return Ok(next.run(req).await);
@@ -301,7 +299,10 @@ impl OddBoxAPI {
                 return Ok(next.run(req).await);
             }
         }
-        if let Some(pwd) = &guard.odd_box_password {
+
+        let possibly_password = { state.config.read().await.odd_box_password.clone() };
+        
+        if let Some(pwd) = &possibly_password {
             match req.headers().get("Authorization") {
                 Some(value) if value == pwd => {
                     Ok(next.run(req).await)

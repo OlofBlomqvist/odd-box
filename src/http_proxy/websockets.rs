@@ -26,17 +26,17 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
     
     tracing::trace!("Handling websocket request: {req_host_name:?} --> {req_path}");
     
-    let read_guard = service.state.config.read().await;
+    let cfg = { service.state.config.read().await.clone() };
     
     
     let target = {
 
-        if let Some(proc) = read_guard.hosted_process.iter().flatten().find(|p| { 
+        if let Some(proc) = cfg.hosted_process.iter().flatten().find(|p| { 
             req_host_name == p.host_name 
             || p.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",p.host_name)) 
         }) {
             crate::http_proxy::utils::Target::Proc(proc.clone())
-        } else if let Some(remsite) = read_guard.remote_target.iter().flatten().find(|x| { 
+        } else if let Some(remsite) = cfg.remote_target.iter().flatten().find(|x| { 
             req_host_name == x.host_name 
             || x.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",x.host_name)) 
         }) {
