@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Upgrading - odd-box-dox</title>
+        <title>Web Interface - odd-box-dox</title>
 
 
         <!-- Custom HTML head -->
@@ -98,7 +98,7 @@
                  
                 <h1 style="margin:0px;font-size: 2em;">THE DOCS</h1> 
                </a>
-                <ol class="chapter"><li class="chapter-item expanded affix "><a href="index.html">Read Me First</a></li><li class="chapter-item expanded affix "><li class="spacer"></li><li class="chapter-item expanded "><a href="features.html"><strong aria-hidden="true">1.</strong> Features</a></li><li class="chapter-item expanded "><a href="performance.html"><strong aria-hidden="true">2.</strong> Performance</a></li><li class="chapter-item expanded "><a href="tui.html"><strong aria-hidden="true">3.</strong> Terminal User Interface</a></li><li class="chapter-item expanded "><a href="webui.html"><strong aria-hidden="true">4.</strong> Web Interface</a></li><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">5.</strong> Installation</a></li><li class="chapter-item expanded "><a href="workflow.html"><strong aria-hidden="true">6.</strong> Workflow Tips</a></li><li class="chapter-item expanded "><a href="dns.html"><strong aria-hidden="true">7.</strong> DNS and Routing</a></li><li class="chapter-item expanded "><a href="security.html"><strong aria-hidden="true">8.</strong> Security Tips</a></li><li class="chapter-item expanded "><a href="configuration.html"><strong aria-hidden="true">9.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="getting_started.html"><strong aria-hidden="true">10.</strong> Getting Started</a></li><li class="chapter-item expanded "><a href="lets_encrypt.html"><strong aria-hidden="true">11.</strong> Let’s Encrypt</a></li><li class="chapter-item expanded "><a href="upgrading.html" class="active"><strong aria-hidden="true">12.</strong> Upgrading</a></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="index.html">Read Me First</a></li><li class="chapter-item expanded affix "><li class="spacer"></li><li class="chapter-item expanded "><a href="features.html"><strong aria-hidden="true">1.</strong> Features</a></li><li class="chapter-item expanded "><a href="performance.html"><strong aria-hidden="true">2.</strong> Performance</a></li><li class="chapter-item expanded "><a href="tui.html"><strong aria-hidden="true">3.</strong> Terminal User Interface</a></li><li class="chapter-item expanded "><a href="webui.html" class="active"><strong aria-hidden="true">4.</strong> Web Interface</a></li><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">5.</strong> Installation</a></li><li class="chapter-item expanded "><a href="workflow.html"><strong aria-hidden="true">6.</strong> Workflow Tips</a></li><li class="chapter-item expanded "><a href="dns.html"><strong aria-hidden="true">7.</strong> DNS and Routing</a></li><li class="chapter-item expanded "><a href="security.html"><strong aria-hidden="true">8.</strong> Security Tips</a></li><li class="chapter-item expanded "><a href="configuration.html"><strong aria-hidden="true">9.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="getting_started.html"><strong aria-hidden="true">10.</strong> Getting Started</a></li><li class="chapter-item expanded "><a href="lets_encrypt.html"><strong aria-hidden="true">11.</strong> Let’s Encrypt</a></li><li class="chapter-item expanded "><a href="upgrading.html"><strong aria-hidden="true">12.</strong> Upgrading</a></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -157,7 +157,7 @@
                         <a href="https://github.com/OlofBlomqvist/odd-box" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/OlofBlomqvist/odd-box/edit/main/docs/src/upgrading.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/OlofBlomqvist/odd-box/edit/main/docs/src/webui.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -186,19 +186,22 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h3 id="upgrading"><a class="header" href="#upgrading">Upgrading</a></h3>
-<p>If you are not using a package manager such as homebrew to manage your odd-box installation, you can either manually download new versions from the github release section or use the built in command for doing the same:
-<code>odd-box --update</code></p>
-<p><em>Note: Should you have an older configuration file than V2, you can upgrade it automatically thru the <code>odd-box --upgrade-config ./my-config-file.toml</code>.</em></p>
+                        <h1 id="web-interface"><a class="header" href="#web-interface">Web Interface</a></h1>
+<p>The web-interface provided out of the box makes it easily to configure odd-box without having to remember all of the different options, especially if you are not familiar with the toml format.</p>
+<h3 id="odd-box-web-ui-v018"><a class="header" href="#odd-box-web-ui-v018">odd-box web-ui v0.1.8</a></h3>
+<p><img src="/webui-screenshot.jpg" alt="Screenshot of oddbox v0.1.8" /></p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="lets_encrypt.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="tui.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
+                            <a rel="next prefetch" href="installation.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
 
                         <div style="clear: both"></div>
                     </nav>
@@ -206,10 +209,13 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="lets_encrypt.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="tui.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
+                    <a rel="next prefetch" href="installation.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
             </nav> 
 
         </div>

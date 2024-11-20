@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use anyhow::bail;
 use axum::{body::Body, extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::{IntoResponse, Response}, routing::get, Router};
 use futures_util::{SinkExt, StreamExt};
@@ -321,17 +321,24 @@ impl OddBoxAPI {
     /// IT IS VERY IMPORTANT ONLY ONE INSTANCE OF THIS IS EVER INSTANTIATED
     /// AS IT SPAWNS A BACKGROUND TASK THAT WILL RUN FOREVER
     pub fn new(state: Arc<crate::global_state::GlobalState>) -> Self {
+
         let validation_state = state.clone();
         let websocket_state = WebSocketGlobalState {
             broadcast_channel_to_all_websocket_clients: tokio::sync::broadcast::channel(10).0,
             global_state: state.clone()
         };
+
+
         let cors_env_var = std::env::vars().find(|(key,_)| key=="ODDBOX_CORS_ALLOWED_ORIGIN").map(|x|x.1.to_lowercase());
         let cors_env_var_cloned_for_ws = cors_env_var.clone();
         let mut router = Router::new()
             .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
             .merge(Redoc::with_url("/redoc", ApiDoc::openapi()))
             .merge(RapiDoc::new("/api-docs/openapi.json").path("/rapidoc"))
+            .merge(Router::new()
+                    .route("/STOP", axum::routing::get(stop_handler).with_state(state.clone()))
+                    .route("/START",  axum::routing::get(start_handler).with_state(state.clone()))
+            )
             .merge(crate::api::controllers::routes(state.clone()))
             .layer(axum::middleware::from_fn(
                     move | req: axum::extract::Request<Body>, next: axum::middleware::Next | {
@@ -430,4 +437,77 @@ impl OddBoxAPI {
 
     }
 
+}
+
+
+// note: not sure if we should keep these start/stop handlers around at all..
+// the /START and /STOP commands have always worked like this
+// so it seems irresponsible to just drop them but perhaps 
+// we should opt for redirecting to the api methods instead ?
+
+
+pub async fn stop_handler(
+    axum::extract::State(global_state): axum::extract::State<Arc<crate::GlobalState>>,
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
+) -> impl IntoResponse  {
+    let target = params.get("proc");
+    let s = target.unwrap_or(&String::from("all")).clone();
+    tracing::warn!("Handling order STOP ({})", s);
+    let result = global_state.proc_broadcaster.send(crate::http_proxy::ProcMessage::Stop(s)).map_err(|e| format!("{e:?}"));
+
+    match result {
+        Ok(_) => {
+            let html = r#"
+                <center>
+                    <h2>Stop signal received.</h2>
+                    
+                    <form action="/START">
+                        <input type="submit" value="Resume" />
+                    </form>            
+
+                    <p>The proxy will also resume if you visit any of the stopped sites</p>
+                </center>
+            "#;
+            crate::http_proxy::EpicResponse::new(crate::http_proxy::create_epic_string_full_body(html))
+        }
+        Err(e) => {
+            let mut response = crate::http_proxy::EpicResponse::new(crate::http_proxy::create_epic_string_full_body(&format!("{e:?}")));
+            *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+            response
+        }
+    }
+    // Ok::<(),(StatusCode,String)>(())
+}
+
+pub async fn start_handler(
+    axum::extract::State(global_state): axum::extract::State<Arc<crate::GlobalState>>,
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+
+    // Ok::<(),(StatusCode,String)>(())
+
+    let target = params.get("proc");
+    let s = target.unwrap_or(&String::from("all")).clone();
+    tracing::warn!("Handling order START ({})", s);
+    let result = global_state.proc_broadcaster.send(crate::http_proxy::ProcMessage::Start(s)).map_err(|e| format!("{e:?}"));
+
+    match result {
+        Ok(_) => {
+            let html = r#"
+                <center>
+                    <h2>Start signal received.</h2>
+                    <form action="/STOP">
+                        <input type="submit" value="Stop" />
+                    </form>            
+
+                </center>
+            "#;
+            crate::http_proxy::EpicResponse::new(crate::http_proxy::create_epic_string_full_body(html))
+        }
+        Err(e) => {
+            let mut response = crate::http_proxy::EpicResponse::new(crate::http_proxy::create_epic_string_full_body(&format!("{e:?}")));
+            *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+            response
+        }
+    }
 }

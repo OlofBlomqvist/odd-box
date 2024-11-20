@@ -50,6 +50,8 @@ args = [
     "--replace",
     "--quiet", 
     "-p$port:80", # incoming $port is handled by odd-box
+    "--name",
+    "odd-nginx",
     "nginx" # <-- image name
 ]
 

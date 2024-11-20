@@ -1,6 +1,8 @@
 # What is ODD-BOX?
 
-**ODD-BOX** is a lightweight, cross-platform reverse proxy server designed specifically for developers who need to manage and test local or remote services seamlessly. Unlike traditional web servers that rely on GUI-based configuration, odd-box is built for speed and simplicity, allowing you to set up and manage services using easy-to-edit TOML files.
+**ODD-BOX** is a lightweight, cross-platform reverse proxy-server & web-server, designed specifically for developers who need to manage and test local or remote services seamlessly. Odd-box is built for speed and simplicity, allowing you to set up and manage services using easy-to-edit TOML files as well as providing a web-ui.
+
+It can also function as an ordinary webserver, serving static files; or as a way to just keep some specific set of binaries running regardless of them being websites or not.
 
 With `odd-box`, you can:
 
@@ -18,12 +20,14 @@ Whether you’re running multiple microservices on your local machine, testing s
 
 ## Key Features:
 
-- Automatic Certificate Generation: Generate self-signed certificates for HTTPS connections or integrate with Let’s Encrypt for public-facing services.
+- Automatic Certificate Generation: Generate self-signed certificates for HTTPS connections or integrate with **Let’s Encrypt** for public-facing services.
 
 - Load Balancing: Simple round-robin load balancing for remote targets.
 
 - Flexible and Portable Configuration: All settings are in sharable TOML files, making it easy to replicate setups on other machines.
 
 - Security-Oriented: Avoid the need for root privileges with OS-specific guides for setting up restricted ports.
+
+- Configurable via API, WebUI or directly by editing your config file on disk.
 
 If you're tired of manually configuring proxy servers or need a tool to streamline your local and remote service setup, give odd-box a try.

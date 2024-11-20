@@ -4,7 +4,6 @@ version = "V2"  # this is the configuration format version, dont change it
 alpn = false # optional - allows alpn negotiation for http/1.0 and h2 on tls connections 
 lets_encrypt_account_email = "example@example.com" # optional, must be configured if you wish to use lets encrypt for tls certificates
 http_port = 8080  # optional, 8080 by default
-admin_api_port = 1234  # optional - leave out to disable the admin api
 ip = "127.0.0.1"  # ip for proxy to listen to , can be ipv4/6
 tls_port = 4343# optional, 4343 by default
 auto_start = false # optional, defaults to true - used as default value for configured sites. auto_start false means a site will not start automatically with odd-box,

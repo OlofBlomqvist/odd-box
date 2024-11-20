@@ -12,3 +12,5 @@
 - Basic round-robin load balancing for remote targets.
 - Automatic self-signed certificates for all hosted processes.
 - Lets-Encrypt support for automatic certificate generation.
+- Static website hosting
+- Built in support for rendering markdown files as html for static sites

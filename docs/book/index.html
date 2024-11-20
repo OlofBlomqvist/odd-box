@@ -98,7 +98,7 @@
                  
                 <h1 style="margin:0px;font-size: 2em;">THE DOCS</h1> 
                </a>
-                <ol class="chapter"><li class="chapter-item expanded affix "><a href="index.html" class="active">Read Me First</a></li><li class="chapter-item expanded affix "><li class="spacer"></li><li class="chapter-item expanded "><a href="features.html"><strong aria-hidden="true">1.</strong> Features</a></li><li class="chapter-item expanded "><a href="performance.html"><strong aria-hidden="true">2.</strong> Performance</a></li><li class="chapter-item expanded "><a href="tui.html"><strong aria-hidden="true">3.</strong> Terminal User Interface</a></li><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">4.</strong> Installation</a></li><li class="chapter-item expanded "><a href="workflow.html"><strong aria-hidden="true">5.</strong> Workflow Tips</a></li><li class="chapter-item expanded "><a href="dns.html"><strong aria-hidden="true">6.</strong> DNS and Routing</a></li><li class="chapter-item expanded "><a href="security.html"><strong aria-hidden="true">7.</strong> Security Tips</a></li><li class="chapter-item expanded "><a href="configuration.html"><strong aria-hidden="true">8.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="getting_started.html"><strong aria-hidden="true">9.</strong> Getting Started</a></li><li class="chapter-item expanded "><a href="lets_encrypt.html"><strong aria-hidden="true">10.</strong> Let’s Encrypt</a></li><li class="chapter-item expanded "><a href="upgrading.html"><strong aria-hidden="true">11.</strong> Upgrading</a></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="index.html" class="active">Read Me First</a></li><li class="chapter-item expanded affix "><li class="spacer"></li><li class="chapter-item expanded "><a href="features.html"><strong aria-hidden="true">1.</strong> Features</a></li><li class="chapter-item expanded "><a href="performance.html"><strong aria-hidden="true">2.</strong> Performance</a></li><li class="chapter-item expanded "><a href="tui.html"><strong aria-hidden="true">3.</strong> Terminal User Interface</a></li><li class="chapter-item expanded "><a href="webui.html"><strong aria-hidden="true">4.</strong> Web Interface</a></li><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">5.</strong> Installation</a></li><li class="chapter-item expanded "><a href="workflow.html"><strong aria-hidden="true">6.</strong> Workflow Tips</a></li><li class="chapter-item expanded "><a href="dns.html"><strong aria-hidden="true">7.</strong> DNS and Routing</a></li><li class="chapter-item expanded "><a href="security.html"><strong aria-hidden="true">8.</strong> Security Tips</a></li><li class="chapter-item expanded "><a href="configuration.html"><strong aria-hidden="true">9.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="getting_started.html"><strong aria-hidden="true">10.</strong> Getting Started</a></li><li class="chapter-item expanded "><a href="lets_encrypt.html"><strong aria-hidden="true">11.</strong> Let’s Encrypt</a></li><li class="chapter-item expanded "><a href="upgrading.html"><strong aria-hidden="true">12.</strong> Upgrading</a></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -187,7 +187,8 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="what-is-odd-box"><a class="header" href="#what-is-odd-box">What is ODD-BOX?</a></h1>
-<p><strong>ODD-BOX</strong> is a lightweight, cross-platform reverse proxy server designed specifically for developers who need to manage and test local or remote services seamlessly. Unlike traditional web servers that rely on GUI-based configuration, odd-box is built for speed and simplicity, allowing you to set up and manage services using easy-to-edit TOML files.</p>
+<p><strong>ODD-BOX</strong> is a lightweight, cross-platform reverse proxy-server &amp; web-server, designed specifically for developers who need to manage and test local or remote services seamlessly. Odd-box is built for speed and simplicity, allowing you to set up and manage services using easy-to-edit TOML files as well as providing a web-ui.</p>
+<p>It can also function as an ordinary webserver, serving static files; or as a way to just keep some specific set of binaries running regardless of them being websites or not.</p>
 <p>With <code>odd-box</code>, you can:</p>
 <ul>
 <li>
@@ -210,7 +211,7 @@
 <h2 id="key-features"><a class="header" href="#key-features">Key Features:</a></h2>
 <ul>
 <li>
-<p>Automatic Certificate Generation: Generate self-signed certificates for HTTPS connections or integrate with Let’s Encrypt for public-facing services.</p>
+<p>Automatic Certificate Generation: Generate self-signed certificates for HTTPS connections or integrate with <strong>Let’s Encrypt</strong> for public-facing services.</p>
 </li>
 <li>
 <p>Load Balancing: Simple round-robin load balancing for remote targets.</p>
@@ -220,6 +221,9 @@
 </li>
 <li>
 <p>Security-Oriented: Avoid the need for root privileges with OS-specific guides for setting up restricted ports.</p>
+</li>
+<li>
+<p>Configurable via API, WebUI or directly by editing your config file on disk.</p>
 </li>
 </ul>
 <p>If you’re tired of manually configuring proxy servers or need a tool to streamline your local and remote service setup, give odd-box a try.</p>

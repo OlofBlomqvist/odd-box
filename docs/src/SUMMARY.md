@@ -7,6 +7,7 @@
 - [Features](./features.md)
 - [Performance](./performance.md)
 - [Terminal User Interface](./tui.md)
+- [Web Interface](./webui.md)
 - [Installation](./installation.md)
 - [Workflow Tips](./workflow.md)
 - [DNS and Routing](./dns.md)

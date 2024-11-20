@@ -36,7 +36,6 @@ The resulting file will look something like this:
 # Global settings
 version = "V2"
 ip = "127.0.0.1" 
-admin_api_port = 1234
 http_port = 8080        
 tls_port = 4343        
 

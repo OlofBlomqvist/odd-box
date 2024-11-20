@@ -436,8 +436,8 @@ async fn handle_new_tcp_stream(
                     }
                 },
                 Some(x) => {
-                    tracing::trace!("handling incoming request from '{source_addr:?}' to odd-box system services thru odd-box-url: '{x}'.");
                     if x == &ourl {
+                        tracing::trace!("handling incoming request from '{source_addr:?}' to odd-box system services thru odd-box-url: '{x}'.");
                         if let Some(api) = api {
                             _ = api.handle_stream(peekable_tcp_stream,rustls_config).await;
                             return;

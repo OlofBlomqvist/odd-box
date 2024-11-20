@@ -24,8 +24,8 @@ There are more options than the ones shown here; these are the most commonly use
 1. **Global Settings:** Set the global properties like `http_port`, `tls_port`, `ip`, `log_level`, `port_range_start`, and `env_vars`. These settings control the overall behavior of `odd-box`.
 
    ```toml
-   #:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.json
-   version = "V2"
+   #:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v3.0.json
+   version = "V3"
    http_port = 8080
    tls_port = 4343
    ip = "127.0.0.1"
@@ -90,3 +90,4 @@ There are more options than the ones shown here; these are the most commonly use
     enable_directory_browsing = true
     render_markdown = true
     ```
+    (by default, index.html will be served when browsing to a site, but also index.md (markdown) files can be served as html automatically)  

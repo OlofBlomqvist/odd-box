@@ -279,7 +279,26 @@ async fn handle_http_request(
             req.uri().authority().ok_or(CustomError(format!("No hostname and no Authority found")))?.host().to_string()
         };
 
+
+    let req_path = req.uri().path();
+
+    let params: std::collections::HashMap<String, String> = req
+        .uri()
+        .query()
+        .map(|v| {
+            url::form_urlencoded::parse(v.as_bytes())
+                .into_owned()
+                .collect()
+        })
+        .unwrap_or_else(std::collections::HashMap::new);
+
     if peeked_target.is_none() && !is_https { 
+
+            
+        if let Some(r) = intercept_local_commands(&req_host_name,&params,req_path,tx.clone()).await {
+            return Ok(r)
+        }
+        
         // if no target was found and the request is for the odd-box ui, it means we have gotten a request to the odd-box ui
         // over a non-encrypted channel. if so we will just redirect to https.
         let odd_box_url = configuration.odd_box_url.clone().unwrap_or("!".to_string());
@@ -315,17 +334,6 @@ async fn handle_http_request(
     };
     
 
-    let req_path = req.uri().path();
-    
-    let params: std::collections::HashMap<String, String> = req
-        .uri()
-        .query()
-        .map(|v| {
-            url::form_urlencoded::parse(v.as_bytes())
-                .into_owned()
-                .collect()
-        })
-        .unwrap_or_else(std::collections::HashMap::new);
 
     if let Some(r) = intercept_local_commands(&req_host_name,&params,req_path,tx.clone()).await {
         return Ok(r)
@@ -752,7 +760,7 @@ async fn map_result(target_url:&str,result:Result<crate::http_proxy::ProxyCallRe
 //        make this it opt-in with cfg v2.
 //        make it true when coming from legacy or v1 to have backward compatibility
 //        (we have admin-api for this now and so it is bad for performance to use this instead)
-async fn intercept_local_commands(
+pub async fn intercept_local_commands(
     req_host_name:&str,
     params:&std::collections::HashMap<String, String>,
     req_path:&str,
@@ -778,7 +786,7 @@ async fn intercept_local_commands(
 
         let html = r#"
             <center>
-                <h2>Stop signal received.</h2>
+                <h2>Stop signal received!</h2>
                 
                 <form action="/START">
                     <input type="submit" value="Resume" />
