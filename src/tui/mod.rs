@@ -665,7 +665,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
         }
     };
     let tab_fg_color = if is_dark_theme {
-        Color::LightBlue
+        Color::Cyan
     } else {
         Color::DarkGray
     };
@@ -800,7 +800,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
                     ),
                     &ProcState::Remote => Style::default().fg(
                         if is_dark_theme {
-                                Color::LightBlue
+                                Color::Cyan
                             } else {
                                 Color::Blue
                             }
