@@ -659,7 +659,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
     
     let app_bg = {
         if is_dark_theme {
-            Color::Rgb(11, 11, 11)
+            Color::Black
         } else {
             Color::White
         }

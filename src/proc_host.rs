@@ -93,17 +93,16 @@ pub async fn host(
         let exit = state.app_state.exit.load(std::sync::atomic::Ordering::SeqCst) == true;
         
         if exit {
-            _ = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopped);
+            _ = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopped,"stop due to exit");
             tracing::debug!("exiting host for {}",&resolved_proc.host_name);
             break
         }
 
         if initialized == false {
-            previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopped);
+            previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopped,"stopping due to init false");
             initialized = true;
         } else {
-            previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopped);
-            
+            previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopped,"stopped due to init true");
         }
         
         let is_enabled_before = enabled == true;
@@ -146,7 +145,7 @@ pub async fn host(
             if enabled != is_enabled_before {
                 tracing::info!("[{}] Disabled via command from proxy service",&resolved_proc.host_name);
                 {
-                    previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopped);
+                    previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopped,"stopped due to enabled != is_enabled_before");
                 }
             }
             continue;
@@ -197,7 +196,7 @@ pub async fn host(
             p
         } else {
             tracing::error!("Failed to resolve path of binary for site: '{}' - workdir: {}, bin: {}",&resolved_proc.host_name,workdir,resolved_proc.bin);
-            previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Faulty);
+            previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Faulty,"faulty since we could not resolve bin path");
             missing_bin = true;
             continue
         };
@@ -236,7 +235,7 @@ pub async fn host(
         }
 
     
-        previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Starting);
+        previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Starting,"starting!");
 
         const _CREATE_NO_WINDOW: u32 = 0x08000000;
         
@@ -271,7 +270,7 @@ pub async fn host(
             Ok(mut child) => {
 
                 
-                previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Running);
+                previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Running,"running!");
 
                 {
                     let entry = crate::PROC_THREAD_MAP.get_mut(&resolved_proc.proc_id);
@@ -395,7 +394,7 @@ pub async fn host(
                     let exit = state.app_state.exit.load(std::sync::atomic::Ordering::SeqCst) == true;
                     if exit {
                         tracing::info!("[{}] Stopping due to app exit", resolved_proc.host_name);
-                        previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopping);
+                        previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopping,"stopping..exiting");
                         _ = child.kill();
                         break
                     }
@@ -413,7 +412,7 @@ pub async fn host(
                     if let Some(live_proc_config) = live_proc_config {
                         if live_proc_config.get_id() != &resolved_proc.proc_id {
                             tracing::warn!("[{}] Stopping due to having been replaced by a new process with the same name", resolved_proc.host_name);
-                            previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopping);
+                            previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopping,"stopping due to being replaced");
                             _ = child.kill();
                             break
                         }
@@ -421,7 +420,7 @@ pub async fn host(
                         resolved_proc.log_level = live_proc_config.log_level;
                     }
                     
-                    previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Running);
+                    previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Running,"running!!");
                     
                 
                     while let Ok(msg) = rcv.try_recv() {
@@ -467,7 +466,7 @@ pub async fn host(
                             Some(item) => {
                                 if item.marked_for_removal {               
                                     tracing::warn!("Detected mark of removal, leaving main loop for {}",resolved_proc.host_name);                     
-                                    _ = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopping);
+                                    _ = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopping,"stopping due to marked for removal");
                                     if let Some(mut stdin) = child.stdin.take() {
                                         _ = stdin.write_all(b"q");
                                     } 
@@ -486,7 +485,7 @@ pub async fn host(
                         tracing::warn!("[{}] Stopping due to having been disabled by proxy.", resolved_proc.host_name);
                         // note: we just send q here because some apps like iisexpress requires it
                         
-                        previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopping);
+                        previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopping,"stopping because not enabled");
                         
                         if let Some(mut stdin) = child.stdin.take() {
                             _ = stdin.write_all(b"q");
@@ -497,12 +496,12 @@ pub async fn host(
                     
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
-                previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopped);
+                previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopped,"stopped!!");
                 
             },
             Err(e) => {
                 tracing::info!("[{}] Failed to start! {e:?}",resolved_proc.host_name);
-                previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Faulty);    
+                previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Faulty,"something is wrong");    
 
                             
             },
@@ -511,7 +510,7 @@ pub async fn host(
         if enabled {
             if !state.app_state.exit.load(std::sync::atomic::Ordering::SeqCst) {
                 tracing::warn!("[{}] Stopped unexpectedly.. Will automatically restart the process in 5 seconds unless stopped.",resolved_proc.host_name);
-                previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Faulty);
+                previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Faulty,"something is wrong with the process..");
                 time_to_sleep_ms_after_each_iteration = 5000; // wait 5 seconds before restarting but NOT in here as we have a lock
             } else {
                 tracing::info!("[{}] Stopped due to exit signal. Bye!",resolved_proc.host_name);
@@ -552,16 +551,18 @@ fn resolve_bin_path(workdir: &str, bin: &str) -> Option<PathBuf> {
 }
 
 
-fn update_status(previous:&ProcState,x:&str,id:&ProcId,g:&Arc<GlobalState>,s:ProcState,) -> ProcState {
+fn update_status(previous:&ProcState,x:&str,id:&ProcId,g:&Arc<GlobalState>,s:ProcState,from_msg:&str) -> ProcState {
   
     let emit = 
         if let Some(old_status) = g.app_state.site_status_map.insert(x.to_owned(),s.clone()) {
             if old_status != s {
+                //tracing::warn!("emitting for {x:?} because {:?} != {:?}",old_status,s);
                 true
             } else {
                 return s
             }
         } else { 
+            //tracing::warn!("emitting for {x:?} because there was no previous item in the site status map");
             true
         };
 
@@ -579,10 +580,11 @@ fn update_status(previous:&ProcState,x:&str,id:&ProcId,g:&Arc<GlobalState>,s:Pro
             id: id.clone()
         })) {
             Ok(_) => {
+                //tracing::warn!("update status was called for {x:?} with message {from_msg} - old: {previous:?} new status: {s:?}");
                 s
             },
             Err(e) => {
-                tracing::trace!("Failed to broadcast site status change event: {e:?}");
+                //tracing::trace!("Failed to broadcast site status change event for {x:?}: {e:?}");
                 previous.clone()
             }
         }

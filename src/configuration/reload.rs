@@ -61,6 +61,9 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
                 new_resolved_siteproc.active_port = existing.config.active_port;
                 new_proc_conf.active_port = existing.config.active_port;
                 new_proc_conf.set_id(new_resolved_siteproc.proc_id.clone());
+
+                // todo - could have better checks here.. in some cases we do not actually need to restart the proc host
+
                 if existing.config.eq(&new_resolved_siteproc) {
                     //trace!("Process {} has not changed, skipping restart",x.host_name);
                     return None;
@@ -106,7 +109,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
     loop {
         {
             if crate::PROC_THREAD_MAP.iter().any(|x|x.marked_for_removal) {
-                info!("Waiting for all processes to exit before starting new ones");
+                info!("Waiting for all marked processes to exit before starting new ones");
                 tokio::time::sleep(Duration::from_millis(500)).await;
                 continue;
             }
@@ -115,20 +118,37 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
     }
 
    
-    global_state.app_state.site_status_map.clear();
+    // note - we must not clear here as it would cause update event to be sent for unchanged processes
+    global_state.app_state.site_status_map.retain(|k,v|{
+        match v {
+            // keep remotes that exist in the new config
+            ProcState::Remote => cloned_rems.iter().find(|y|y.host_name==*k).is_some(),
+            // keep dir servers and such that exist in the new config
+            ProcState::Dynamic => cloned_dirs.iter().find(|y|y.host_name==*k).is_some(),
+            // keep procs -
+            // all other statuses can only mean they are hosted processes
+            _ => if new_configuration.hosted_processes.contains_key(k) {
+                tracing::warn!("retaining proc : {k:?}");
+                true
+            } else {
+                tracing::warn!("removing proc from site status map: {k:?}");
+                false
+            }
+        }
+    });
 
-    // Add any remotes to the site list
+    // Add any remotes to the site list (doesnt matter if the already exist, they just get replaced)
     for x in cloned_rems {
         global_state.app_state.site_status_map.insert(x.host_name.to_owned(), ProcState::Remote);
     }
 
-    // Add any hosted dirs to site list
+    // Add any hosted dirs to site list (doesnt matter if the already exist, they just get replaced)
     for x in cloned_dirs {
         global_state.app_state.site_status_map.insert(x.host_name.to_owned(), ProcState::Dynamic);
     }
 
    
-    // And spawn the hosted process worker loops
+    // And spawn the hosted process worker loops - this will also update/re-add the site to site_status_map
     for x in cloned_modified_procs {
         match new_configuration.resolve_process_configuration(&x) {
             Ok(x) => {
