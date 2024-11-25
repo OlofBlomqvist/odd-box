@@ -474,6 +474,9 @@ async fn handle_new_tcp_stream(
 
                     if let Some(cfg) = &target.hosted_target_config {
                         let hints : Vec<&crate::configuration::Hint> = cfg.hints.iter().flatten().collect();
+                        if cfg.disable_tcp_tunnel_mode.unwrap_or_default() {
+                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, FallbackReason::TunnelModeDisabled).await;
+                        }
                         if let Some(Version::HTTP_2) = http_version {
                             if hints.iter().any(|h| **h==Hint::H2 ) {
                                 tracing::trace!("Incoming http version is 2.0 and target supports it thru hints. Proceeding with tunnel mode.");
@@ -592,7 +595,9 @@ async fn handle_new_tcp_stream(
                 } else {
                     
                     if let Some(cfg) = &target.remote_target_config {
-                        
+                        if cfg.disable_tcp_tunnel_mode.unwrap_or_default() {
+                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, FallbackReason::TunnelModeDisabled).await;
+                        }
                         if let Some(Version::HTTP_2) = http_version {
                             let mut hints = cfg.backends.iter()
                                 .flat_map(|b| b.hints.clone().unwrap_or_default());
@@ -665,6 +670,7 @@ async fn handle_new_tcp_stream(
 
 #[derive(Debug)]
 pub enum FallbackReason {
+    TunnelModeDisabled,
     IncomingHttp2ButTargetDoesNotSupportIt,
     H2CPriorKnowledge, // when a clear text connection comes in with http2 prior knowledge and client did not pass a host/authority header
                        // we have to engage in the http2 session negotiation dance.. this can be handled by the terminating proxy service.
@@ -705,6 +711,9 @@ async fn use_fallback_mode(
         FallbackReason::NoBackendFound => {
             tracing::trace!("Falling back to terminating proxy mode because no backend exists that can handle the incoming requests as is.");
         },
+        FallbackReason::TunnelModeDisabled => {
+            tracing::trace!("Using http termination as the target is configured to disallow tunnel mode")
+        }
     }
     
 
