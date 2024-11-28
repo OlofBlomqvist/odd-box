@@ -305,7 +305,8 @@ export enum ProcState {
   Stopping = "Stopping",
   Running = "Running",
   Remote = "Remote",
-  Dynamic = "Dynamic",
+  DirServer = "DirServer",
+  Docker = "Docker",
 }
 
 export interface RemoteSiteConfig {
@@ -396,7 +397,8 @@ export enum State {
   Stopping = "Stopping",
   Running = "Running",
   Remote = "Remote",
-  Dynamic = "Dynamic",
+  DirServer = "DirServer",
+  Docker = "Docker",
 }
 
 export interface StatusItem {
@@ -645,7 +647,7 @@ export class HttpClient<SecurityDataType = unknown> {
 
 /**
  * @title ODD-BOX ADMIN-API 🤯
- * @version 0.1.10-RC1
+ * @version 0.1.10
  * @license
  * @externalDocs https://github.com/OlofBlomqvist/odd-box
  * @contact Olof Blomqvist <olof@twnet.se>

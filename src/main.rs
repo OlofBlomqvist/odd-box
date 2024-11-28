@@ -60,6 +60,7 @@ use types::app_state::AppState;
 use lazy_static::lazy_static;
 mod letsencrypt;
 mod custom_servers;
+mod docker;
 
 lazy_static! {
     static ref PROC_THREAD_MAP: Arc<DashMap<ProcId, ProcInfo>> = Arc::new(DashMap::new());
@@ -76,7 +77,7 @@ pub mod global_state {
     use std::sync::{atomic::AtomicU64, Arc};
 
 
-    use crate::{certs::DynamicCertResolver, tcp_proxy::{ReverseTcpProxy, ReverseTcpProxyTarget}, types::odd_box_event::Event};
+    use crate::{certs::DynamicCertResolver, configuration::Backend, tcp_proxy::{ReverseTcpProxy, ReverseTcpProxyTarget}, types::odd_box_event::Event};
     #[derive(Debug)]
     pub struct GlobalState {
         pub log_handle : crate::OddLogHandle,
@@ -156,13 +157,40 @@ pub mod global_state {
                         tracing::trace!("Cache miss for {pre_filter_hostname} due to missing proc info");
                     }
                 }
-                
             } else {
                 tracing::trace!("Cache miss for {pre_filter_hostname}");
             }
 
             let mut result = None;
             let cfg = self.config.read().await;
+
+            for guard in &cfg.docker_containers {
+                let (host_name,x) = guard.pair();
+                //let host_name = x.host_name_label.unwrap_or(format!("{}.odd-box.localhost",x.container_name));
+                let filter_result = Self::filter_fun(pre_filter_hostname, &host_name, true);
+                if filter_result.is_none() { 
+                    continue
+                };
+                
+                let sub_domain = filter_result.and_then(|x|x);
+                let rsc = x.generate_remote_config();
+                let t = ReverseTcpProxyTarget { 
+                    proc_id : None,
+                    disable_tcp_tunnel_mode: false,
+                    hosted_target_config: None,                        
+                    capture_subdomains: true,
+                    forward_wildcard: true,
+                    backends: rsc.backends.clone(),
+                    remote_target_config: Some(rsc),
+                    host_name: host_name.to_string(),
+                    is_hosted: false,
+                    sub_domain: sub_domain
+                };
+                let shared_result = Arc::new(t);
+                self.reverse_tcp_proxy_target_cache.insert(pre_filter_hostname.into(), shared_result.clone());
+                result = Some(shared_result);
+                break;
+            }
 
             for y in cfg.hosted_process.iter().flatten() {
                 
@@ -652,7 +680,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Add any hosted dirs to site list
     for x in cloned_custom_dir.iter().flatten() {
-        inner_state_arc.site_status_map.insert(x.host_name.to_owned(), ProcState::Dynamic);
+        inner_state_arc.site_status_map.insert(x.host_name.to_owned(), ProcState::DirServer);
     }
 
     // And spawn the hosted process worker loops
@@ -671,16 +699,23 @@ async fn main() -> anyhow::Result<()> {
 
     drop(config_guard);
 
+    tokio::task::spawn(docker_thread(global_state.clone()));
 
-    match self_update::current_is_latest().await {
-        Err(e) => {
-            tracing::warn!("It was not possible to retrieve information regarding the latest available version of odd-box: {e:?}");
-        },
-        Ok(Some(v)) => {
-            tracing::info!("There is a newer version of odd-box available - please consider upgrading to {v:?}. For unmanaged installations you can run 'odd-box --update' otherwise see your package manager for upgrade instructions.");
-        },
-        Ok(None) => {
-            tracing::info!("You are running the latest version of odd-box :D");
+    
+    // if on a released/stable version, we notify the user when there is a later stable version
+    // available for them to update to. current_is_latest will not include any -rc,-pre or -dev releases
+    // and so we wont run this unless user is also on stable.
+    if !self_update::current_version().contains("-") {
+        match self_update::current_is_latest().await {
+            Err(e) => {
+                tracing::warn!("It was not possible to retrieve information regarding the latest available version of odd-box: {e:?}");
+            },
+            Ok(Some(v)) => {
+                tracing::info!("There is a newer version of odd-box available - please consider upgrading to {v:?}. For unmanaged installations you can run 'odd-box --update' otherwise see your package manager for upgrade instructions.");
+            },
+            Ok(None) => {
+                tracing::info!("You are running the latest version of odd-box :D");
+            }
         }
     }
 
@@ -805,3 +840,28 @@ impl fmt::Debug for OddLogHandle {
 //         }
 //     }
 // }
+
+
+// we could probably subscribe to the docker socket instead of having this stupid loop..
+// this does however seem to work fine and is rather simple, so keeping it for now :)
+pub async fn docker_thread(state:Arc<GlobalState>) {    
+    loop {
+        if let Ok(docker) = bollard::Docker::connect_with_local_defaults() {
+            let running_container_targets = docker::get_container_proxy_targets(&docker).await.unwrap_or_default();
+            let running_container_targets_dash_map = DashMap::new();
+            for x in running_container_targets {
+                running_container_targets_dash_map.insert(x.generate_host_name(),x);
+            }
+            state.app_state.site_status_map.retain(|a,b|
+                b != &ProcState::Docker || running_container_targets_dash_map.contains_key(a)
+            );
+            for guard in &running_container_targets_dash_map {
+                let (host_name,_) = guard.pair();
+                state.app_state.site_status_map.insert(host_name.to_string(), ProcState::Docker);
+            }
+            let mut guard = state.config.write().await;            
+            guard.docker_containers = running_container_targets_dash_map;
+        }
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    }
+}

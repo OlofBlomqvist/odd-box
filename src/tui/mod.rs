@@ -805,11 +805,18 @@ fn draw_ui<B: ratatui::backend::Backend>(
                                 Color::Blue
                             }
                     ),
-                    &ProcState::Dynamic => Style::default().fg(
+                    &ProcState::DirServer => Style::default().fg(
                         if is_dark_theme {
                                 Color::Cyan
                             } else {
                                 Color::Cyan
+                            }
+                    ),
+                    &ProcState::Docker => Style::default().fg(
+                        if is_dark_theme {
+                                Color::LightMagenta
+                            } else {
+                                Color::Magenta
                             }
                     ),
                 };
@@ -833,7 +840,9 @@ fn draw_ui<B: ratatui::backend::Backend>(
                     &ProcState::Stopped => ratatui::text::Span::styled(format!(" {:?}",state),s),
                     &ProcState::Stopping => ratatui::text::Span::styled(format!(" {:?}..",state),s),
                     &ProcState::Remote => ratatui::text::Span::styled(format!(" {:?}",state),s),
-                    &ProcState::Dynamic => ratatui::text::Span::styled(format!(" {:?} ",state),s)
+                    &ProcState::DirServer => ratatui::text::Span::styled(format!(" {:?}",state),s),
+                    &ProcState::Docker => ratatui::text::Span::styled(format!(" {:?}",state),s)
+                    
                     
                 };
 

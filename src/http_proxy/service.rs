@@ -340,7 +340,7 @@ async fn handle_http_request(
     }
     
     // todo - cache this?
-    let dir_target = configuration.dir_server.iter().flatten().find_map(|x| {
+    let dir_target = if peeked_target.is_some() { None } else { configuration.dir_server.iter().flatten().find_map(|x| {
         if x.host_name == req_host_name {
             match configuration.resolve_dir_server_configuration(x) {
                 Ok(r) => {
@@ -358,7 +358,7 @@ async fn handle_http_request(
         } else {
             None
         }
-    });
+    })};
 
     if let Some(t) = dir_target {
         if let Some(true) = t.redirect_to_https {
@@ -378,6 +378,21 @@ async fn handle_http_request(
                 return Ok(rr)
             },
         }
+    }
+
+    if peeked_target.is_none() && dir_target.is_none() {
+        let fresh_container_info = { state.config.read().await.docker_containers.clone()} ;
+        if let Some(rc) = fresh_container_info.get(&req_host_name).and_then(|x|Some(x.generate_remote_config())) {
+            return perform_remote_forwarding(
+                req_host_name,is_https,
+                state.clone(),
+                client_ip,
+                &rc,
+                req,client.clone(),
+                h2_client.clone(),
+                connection_key
+            ).await
+        }        
     }
 
     let found_hosted_target = 
@@ -586,7 +601,7 @@ async fn handle_http_request(
                 h2_client.clone(),
                 connection_key
             ).await
-        }
+        };
 
         tracing::warn!("Received request that does not match any known target: {:?}", req_host_name);
         let body_str = format!("Sorry, I don't know how to proxy this request.. {:?}", req);

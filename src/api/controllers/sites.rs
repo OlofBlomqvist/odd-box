@@ -59,7 +59,9 @@ impl From<crate::ProcState> for BasicProcState {
             crate::types::app_state::ProcState::Stopping => BasicProcState::Stopping,
             crate::types::app_state::ProcState::Running => BasicProcState::Running,
             crate::types::app_state::ProcState::Remote => BasicProcState::Remote,
-            crate::types::app_state::ProcState::Dynamic => BasicProcState::Dynamic,
+            crate::types::app_state::ProcState::DirServer => BasicProcState::DirServer,
+            crate::types::app_state::ProcState::Docker => BasicProcState::Docker,
+            
             
         }
     }

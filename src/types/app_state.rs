@@ -12,7 +12,8 @@ pub enum ProcState {
     Stopping,
     Running,
     Remote,
-    Dynamic
+    DirServer,
+    Docker
 }
 
 #[derive(Debug)]

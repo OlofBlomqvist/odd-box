@@ -19,7 +19,8 @@ pub enum State {
     Stopping,
     Running,
     Remote,
-    Dynamic
+    DirServer,
+    Docker
 }
 
 
@@ -32,7 +33,8 @@ impl State {
             ProcState::Stopping => State::Stopping,
             ProcState::Running => State::Running,
             ProcState::Remote => State::Remote,
-            ProcState::Dynamic => State::Dynamic
+            ProcState::DirServer => State::DirServer,
+            ProcState::Docker => State::Docker
         }
     }
 }

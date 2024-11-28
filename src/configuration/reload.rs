@@ -124,7 +124,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
             // keep remotes that exist in the new config
             ProcState::Remote => cloned_rems.iter().find(|y|y.host_name==*k).is_some(),
             // keep dir servers and such that exist in the new config
-            ProcState::Dynamic => cloned_dirs.iter().find(|y|y.host_name==*k).is_some(),
+            ProcState::DirServer => cloned_dirs.iter().find(|y|y.host_name==*k).is_some(),
             // keep procs -
             // all other statuses can only mean they are hosted processes
             _ => if new_configuration.hosted_processes.contains_key(k) {
@@ -144,7 +144,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
 
     // Add any hosted dirs to site list (doesnt matter if the already exist, they just get replaced)
     for x in cloned_dirs {
-        global_state.app_state.site_status_map.insert(x.host_name.to_owned(), ProcState::Dynamic);
+        global_state.app_state.site_status_map.insert(x.host_name.to_owned(), ProcState::DirServer);
     }
 
    

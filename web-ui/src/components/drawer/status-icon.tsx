@@ -14,7 +14,8 @@ const statusColors = {
   Starting: "yellow",
   Remote: "white",
   Faulty: "yellow",
-  Dynamic: "white",
+  DirServer: "white",
+  Docker: "white"
 };
 
 const StatusIcon = ({

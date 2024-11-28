@@ -182,6 +182,7 @@ pub struct ConfigWrapper {
     internal_configuration : crate::configuration::OddBoxConfig,
     pub remote_sites: DashMap<String, crate::configuration::RemoteSiteConfig>,
     pub hosted_processes: DashMap<String, crate::configuration::InProcessSiteConfig>,
+    pub docker_containers: DashMap<String, crate::docker::ContainerProxyTarget>,
     pub wrapper_cache_map_is_dirty: bool,
     pub internal_version: u64
 }
@@ -228,7 +229,8 @@ impl ConfigWrapper {
             internal_configuration: config,
             remote_sites,
             hosted_processes,
-            wrapper_cache_map_is_dirty: false
+            wrapper_cache_map_is_dirty: false,
+            docker_containers: DashMap::new()
         }
     }
 
