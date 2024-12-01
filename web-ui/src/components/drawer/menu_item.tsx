@@ -19,7 +19,7 @@ const MenuItem = ({
 }: {
   animateIn?:boolean
   searchParams?:LinkProps['search'],
-  to:LinkProps['to'],
+  to?:LinkProps['to'],
   onClick?: () => void,
   rightPadding?: string;
   disabled?:boolean

@@ -39,7 +39,7 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
 
   const updateSetting = (key: string, value: any) => {
     let val =
-      Array.isArray(value) || isNaN(value) === false ? value : `${value}`;
+      value === undefined || Array.isArray(value) || isNaN(value) === false ? value : `${value}`;
 
     toast.promise(
       updateSite.mutateAsync({
@@ -384,7 +384,7 @@ const HostedProcessSettings = ({ site }: { site: InProcessSiteConfig }) => {
                 originalValue={(site.args ?? []).join(";")}
                 value={newArgs}
                 onSave={() => {
-                  updateSetting("args", newArgs.split(";"));
+                  updateSetting("args", newArgs === "" ? undefined : newArgs.split(";"));
                 }}
                 onChange={(e) => {
                   setNewArgs(e.target.value);

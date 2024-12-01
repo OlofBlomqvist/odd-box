@@ -3,7 +3,7 @@ export function envVarsToString(arr: Array<{ key: string; value: string }>) {
 }
 
 export function envVarsStringToArray(str: string) {
-  return str.split(";").map((pair) => {
+  return str === "" ? undefined : str.split(";").map((pair) => {
     const [key, value] = pair.split("=");
     return { key, value };
   });

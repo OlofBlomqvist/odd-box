@@ -69,7 +69,7 @@ const HomePage = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
               <InfoCard
                 title="Processes"
-                icon={<ActivityIcon className="h-4 w-4" />}
+                icon={<ActivityIcon className="h-4 w-4 self-start" />}
                 leftData={{ label: "Total", value: hostedProcesses.length }}
                 rightData={{
                   label: "Running",
@@ -80,12 +80,12 @@ const HomePage = () => {
               />
               <InfoCard
                 title="Sites"
-                icon={<GlobeIcon className="h-4 w-4" />}
+                icon={<GlobeIcon className="h-4 w-4 self-start" />}
                 leftData={{ label: "Total", value: remoteSites.length }}
               />
               <InfoCard
                 title="Directory Servers"
-                icon={<Server className="h-4 w-4" />}
+                icon={<Server className="h-4 w-4 self-start" />}
                 leftData={{ label: "Total", value: dirServers.length }}
               />
             </div>
