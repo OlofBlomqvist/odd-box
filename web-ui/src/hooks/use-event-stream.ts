@@ -41,7 +41,7 @@ const useEventStream = () => {
 
   const baseUrl =
     import.meta.env.MODE === "development"
-      ? `${import.meta.env.VITE_ODDBOX_LOGS_URL}:${import.meta.env.VITE_ODDBOX_LOGS_PORT}`
+      ? `${import.meta.env.VITE_ODDBOX_LOGS_URL}:${import.meta.env.VITE_ODDBOX_API_PORT}`
       : `wss://${hostName}`;
 
   const socketUrl = `${baseUrl}/ws/event_stream`;

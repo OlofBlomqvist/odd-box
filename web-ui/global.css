@@ -100,6 +100,35 @@ body.light {
   --modal-bg: #fff;
 }
 
+
+
+
+
+.flip-box {
+  background-color: transparent;
+  perspective: 1000px;
+}
+.flip-box-inner {
+  transition: transform 0.8s;
+  transform-style: preserve-3d;
+}
+.flip-box.flipped .flip-box-inner {
+  transform: rotateY(180deg);
+}
+.flip-box-front, .flip-box-back {
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+.flip-box-back {
+  transform: rotateY(180deg);
+}
+
+
+
+
+
 .inner-content {
   background-color: var(--bg-color);
   margin-bottom:200px;
