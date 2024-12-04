@@ -21,27 +21,22 @@ jobs:
         include:
         
           - os: ubuntu-latest
-            artifact_path: target/release/odd-box
+            artifact_path: target/x86_64-unknown-linux-gnu/release/odd-box
             artifact_name: odd-box-x86_64-unknown-linux-gnu
             target: x86_64-unknown-linux-gnu
 
           - os: ubuntu-latest
-            artifact_path: target/release/odd-box
+            artifact_path: target/x86_64-unknown-linux-musl/release/odd-box
             artifact_name: odd-box-x86_64-unknown-linux-musl
             target: x86_64-unknown-linux-musl
             
           - os: windows-latest
-            artifact_path: target/release/odd-box.exe
+            artifact_path: target/x86_64-pc-windows-msvc/release/odd-box.exe
             artifact_name: odd-box-x86_64-pc-windows-msvc.exe
             target: x86_64-pc-windows-msvc
             
           - os: macos-latest
-            artifact_path: target/release/odd-box
-            artifact_name: odd-box-x86_64-apple-darwin
-            target: x86_64-apple-darwin
-            
-          - os: macos-latest
-            artifact_path: target/release/odd-box
+            artifact_path: target/aarch64-apple-darwin/release/odd-box
             artifact_name: odd-box-aarch64-apple-darwin
             target: aarch64-apple-darwin
 
@@ -54,7 +49,14 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly
-                
+          
+      - name: Install target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install musl-tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+        
       - name: Install NASM
         if: startsWith(matrix.os, 'windows')
         uses: ilammy/setup-nasm@v1
