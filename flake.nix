@@ -24,19 +24,19 @@
         packages.default = pkgs.rustPlatform.buildRustPackage rec {
 
             pname = "odd-box";
-            version = "0.1.8";
+            # version = "0.1.10";
             src = ./.;
 
             cargoLock = {
                 lockFile = ./Cargo.lock;
             };
 
-            meta = with pkgs.lib; {
-                description = "dead simple reverse-proxy";
-                homepage = "https://github.com/OlofBlomqvist/odd-box";
-                license = licenses.mit;
-                maintainers = ["olof@twnet.se"];
-            };
+            # meta = with pkgs.lib; {
+            #     description = "dead simple reverse-proxy";
+            #     homepage = "https://github.com/OlofBlomqvist/odd-box";
+            #     license = licenses.mit;
+            #     maintainers = ["olof@twnet.se"];
+            # };
 
             buildType = "release";
             buildInputs = [

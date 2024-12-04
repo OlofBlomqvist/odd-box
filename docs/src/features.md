@@ -14,3 +14,4 @@
 - Lets-Encrypt support for automatic certificate generation.
 - Static website hosting
 - Built in support for rendering markdown files as html for static sites
+- Docker integration

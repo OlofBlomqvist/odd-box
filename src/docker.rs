@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bollard::secret::{ContainerSummary, PortTypeEnum};
+use bollard::secret::ContainerSummary;
 use bollard::Docker;
 use bollard::errors::Error;
 use serde::Serialize;
@@ -13,12 +13,6 @@ pub async fn docker_sites()  {
     for x in get_container_proxy_targets(&docker).await.unwrap() {
         println!("{:#?}",x);
     }
-}
-
-pub async fn get_all_routable_docker_containers() -> Vec<ContainerProxyTarget> {
-    get_container_proxy_targets(
-        &Docker::connect_with_local_defaults().unwrap()
-    ).await.unwrap()
 }
 
 impl ContainerProxyTarget {

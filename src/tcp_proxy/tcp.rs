@@ -359,7 +359,7 @@ async fn run_managed_bidirectional_tunnel(
                 }
                 peekable_tls_stream.inspect().await;
             },
-            GenericManagedStream::TCP(ref mut peekable_tcp_stream) => {
+            GenericManagedStream::TCP(peekable_tcp_stream) => {
                 tracing::trace!("Tunneling from cleartext to tls");
                 match tokio::io::copy_bidirectional(peekable_tcp_stream, &mut backend_tls_stream).await {
                     Ok((_bytes_from_client, _bytes_from_backend)) => {}
@@ -392,7 +392,7 @@ async fn run_managed_bidirectional_tunnel(
                 }
                 peekable_tls_stream.inspect().await;
             }
-            GenericManagedStream::TCP(ref mut peekable_tcp_stream) => {
+            GenericManagedStream::TCP(peekable_tcp_stream) => {
 
                 if incoming_traffic_is_tls {
                     tracing::trace!("Raw TCP tunnel established: tls");

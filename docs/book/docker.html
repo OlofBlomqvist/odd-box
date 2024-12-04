@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Getting Started - odd-box-dox</title>
+        <title>Docker Integration - odd-box-dox</title>
 
 
         <!-- Custom HTML head -->
@@ -98,7 +98,7 @@
                  
                 <h1 style="margin:0px;font-size: 2em;">THE DOCS</h1> 
                </a>
-                <ol class="chapter"><li class="chapter-item expanded affix "><a href="index.html">Read Me First</a></li><li class="chapter-item expanded affix "><li class="spacer"></li><li class="chapter-item expanded "><a href="features.html"><strong aria-hidden="true">1.</strong> Features</a></li><li class="chapter-item expanded "><a href="performance.html"><strong aria-hidden="true">2.</strong> Performance</a></li><li class="chapter-item expanded "><a href="tui.html"><strong aria-hidden="true">3.</strong> Terminal User Interface</a></li><li class="chapter-item expanded "><a href="webui.html"><strong aria-hidden="true">4.</strong> Web Interface</a></li><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">5.</strong> Installation</a></li><li class="chapter-item expanded "><a href="workflow.html"><strong aria-hidden="true">6.</strong> Workflow Tips</a></li><li class="chapter-item expanded "><a href="dns.html"><strong aria-hidden="true">7.</strong> DNS and Routing</a></li><li class="chapter-item expanded "><a href="security.html"><strong aria-hidden="true">8.</strong> Security Tips</a></li><li class="chapter-item expanded "><a href="configuration.html"><strong aria-hidden="true">9.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="getting_started.html" class="active"><strong aria-hidden="true">10.</strong> Getting Started</a></li><li class="chapter-item expanded "><a href="lets_encrypt.html"><strong aria-hidden="true">11.</strong> Let’s Encrypt</a></li><li class="chapter-item expanded "><a href="docker.html"><strong aria-hidden="true">12.</strong> Docker Integration</a></li><li class="chapter-item expanded "><a href="upgrading.html"><strong aria-hidden="true">13.</strong> Upgrading</a></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="index.html">Read Me First</a></li><li class="chapter-item expanded affix "><li class="spacer"></li><li class="chapter-item expanded "><a href="features.html"><strong aria-hidden="true">1.</strong> Features</a></li><li class="chapter-item expanded "><a href="performance.html"><strong aria-hidden="true">2.</strong> Performance</a></li><li class="chapter-item expanded "><a href="tui.html"><strong aria-hidden="true">3.</strong> Terminal User Interface</a></li><li class="chapter-item expanded "><a href="webui.html"><strong aria-hidden="true">4.</strong> Web Interface</a></li><li class="chapter-item expanded "><a href="installation.html"><strong aria-hidden="true">5.</strong> Installation</a></li><li class="chapter-item expanded "><a href="workflow.html"><strong aria-hidden="true">6.</strong> Workflow Tips</a></li><li class="chapter-item expanded "><a href="dns.html"><strong aria-hidden="true">7.</strong> DNS and Routing</a></li><li class="chapter-item expanded "><a href="security.html"><strong aria-hidden="true">8.</strong> Security Tips</a></li><li class="chapter-item expanded "><a href="configuration.html"><strong aria-hidden="true">9.</strong> Configuration</a></li><li class="chapter-item expanded "><a href="getting_started.html"><strong aria-hidden="true">10.</strong> Getting Started</a></li><li class="chapter-item expanded "><a href="lets_encrypt.html"><strong aria-hidden="true">11.</strong> Let’s Encrypt</a></li><li class="chapter-item expanded "><a href="docker.html" class="active"><strong aria-hidden="true">12.</strong> Docker Integration</a></li><li class="chapter-item expanded "><a href="upgrading.html"><strong aria-hidden="true">13.</strong> Upgrading</a></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle">
                 <div class="sidebar-resize-indicator"></div>
@@ -157,7 +157,7 @@
                         <a href="https://github.com/OlofBlomqvist/odd-box" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
-                        <a href="https://github.com/OlofBlomqvist/odd-box/edit/main/docs/src/getting_started.md" title="Suggest an edit" aria-label="Suggest an edit">
+                        <a href="https://github.com/OlofBlomqvist/odd-box/edit/main/docs/src/docker.md" title="Suggest an edit" aria-label="Suggest an edit">
                             <i id="git-edit-button" class="fa fa-edit"></i>
                         </a>
 
@@ -186,22 +186,21 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h2 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h2>
-<h3 id="creating-a-config-file"><a class="header" href="#creating-a-config-file">Creating a config file</a></h3>
-<p>You can generate a basic “odd-box.toml” config file to get started:</p>
-<pre><code>odd-box --init 
-</code></pre>
-<p>From here, you can either open up the config file in your favorite editor, or just run odd-box and open your browser going to http://localhost:1234 where you can configure odd-box thru its web-interface.</p>
+                        <h1 id="docker"><a class="header" href="#docker">Docker</a></h1>
+<p>As of version 0.1.10, odd-box can find and route traffic to your locally running docker containers!</p>
+<p>In order for this to work, you need to add the label <code>odd_box_port</code>, specifying the <strong>private/internal</strong> port to forward traffic to.</p>
+<p>You can also set the <code>odd_box_host_name</code> label to whichever dns name you want to use for this container.
+If the <code>odd_box_host_name</code> is not set, odd-box will default to use <code>&lt;container-name&gt;.odd-box.localhost</code>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="configuration.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="lets_encrypt.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="lets_encrypt.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="upgrading.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
 
@@ -211,11 +210,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="configuration.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="lets_encrypt.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="lets_encrypt.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="upgrading.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
             </nav> 

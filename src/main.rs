@@ -77,7 +77,7 @@ pub mod global_state {
     use std::sync::{atomic::AtomicU64, Arc};
 
 
-    use crate::{certs::DynamicCertResolver, configuration::Backend, tcp_proxy::{ReverseTcpProxy, ReverseTcpProxyTarget}, types::odd_box_event::Event};
+    use crate::{certs::DynamicCertResolver, tcp_proxy::{ReverseTcpProxy, ReverseTcpProxyTarget}, types::odd_box_event::Event};
     #[derive(Debug)]
     pub struct GlobalState {
         pub log_handle : crate::OddLogHandle,

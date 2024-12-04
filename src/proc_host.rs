@@ -551,7 +551,7 @@ fn resolve_bin_path(workdir: &str, bin: &str) -> Option<PathBuf> {
 }
 
 
-fn update_status(previous:&ProcState,x:&str,id:&ProcId,g:&Arc<GlobalState>,s:ProcState,from_msg:&str) -> ProcState {
+fn update_status(previous:&ProcState,x:&str,id:&ProcId,g:&Arc<GlobalState>,s:ProcState,_from_msg:&str) -> ProcState {
   
     let emit = 
         if let Some(old_status) = g.app_state.site_status_map.insert(x.to_owned(),s.clone()) {
@@ -583,7 +583,7 @@ fn update_status(previous:&ProcState,x:&str,id:&ProcId,g:&Arc<GlobalState>,s:Pro
                 //tracing::warn!("update status was called for {x:?} with message {from_msg} - old: {previous:?} new status: {s:?}");
                 s
             },
-            Err(e) => {
+            Err(_e) => {
                 //tracing::trace!("Failed to broadcast site status change event for {x:?}: {e:?}");
                 previous.clone()
             }

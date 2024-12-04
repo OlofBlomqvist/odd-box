@@ -15,5 +15,6 @@
 - [Configuration](./configuration.md)
 - [Getting Started](./getting_started.md)
 - [Let’s Encrypt](./lets_encrypt.md)
+- [Docker Integration](./docker.md)
 - [Upgrading](./upgrading.md)
 
