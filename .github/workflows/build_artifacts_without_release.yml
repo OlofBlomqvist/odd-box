@@ -27,9 +27,8 @@ jobs:
 
           - os: ubuntu-latest
             artifact_path: target/release/odd-box
-            artifact_name: odd-box-no-default-features-x86_64-unknown-linux-gnu
-            target: x86_64-unknown-linux-gnu
-            no_default_features: true
+            artifact_name: odd-box-x86_64-unknown-linux-musl
+            target: x86_64-unknown-linux-musl
             
           - os: windows-latest
             artifact_path: target/release/odd-box.exe
