@@ -67,9 +67,9 @@ jobs:
       - name: Build
         run: |
           if ("${{ matrix.no_default_features }}" -eq "true") {
-            cargo build --release --verbose --no-default-features
+            cargo build --release --verbose --no-default-features --target ${{ matrix.target }}
           } else {
-            cargo build --release --verbose
+            cargo build --release --verbose --target ${{ matrix.target }}
           }
         shell: pwsh
 
