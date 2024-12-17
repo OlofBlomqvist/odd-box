@@ -94,7 +94,11 @@ pub struct InProcessSiteConfig {
     /// If you wish to set a specific loglevel for this hosted process.
     /// Defaults to "Info".
     /// If this level is lower than the global log_level you will get the message elevated to the global log level instead but tagged with the actual log level.
-    pub log_level: Option<LogLevel>
+    pub log_level: Option<LogLevel>,
+
+    #[serde(default = "true_option")]
+    /// Defaults to true.
+    pub keep_original_host_header: Option<bool>
 }
 impl InProcessSiteConfig {
     pub fn set_id(&mut self,id:ProcId){
@@ -420,6 +424,9 @@ pub struct OddBoxV3Config {
     /// Used for securing the admin api and web-interface. If you do not set this, anyone can access the admin api.
     pub odd_box_password: Option<String>,
 
+    /// Uses 127.0.0.1 instead of localhost when proxying to locally hosted processes. 
+    pub use_loopback_ip_for_procs: Option<bool>
+
 }
 
 
@@ -661,6 +668,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
     }
     fn example() -> OddBoxV3Config {
         OddBoxV3Config {
+            use_loopback_ip_for_procs: None,
             odd_box_password: None,
             odd_box_url: None,
             dir_server: None,
@@ -680,6 +688,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
             port_range_start: 4200,
             hosted_process: Some(vec![
                 InProcessSiteConfig {
+                    keep_original_host_header: None,
                     log_level: None,
                     enable_lets_encrypt: Some(false),
                     proc_id: ProcId::new(),
@@ -797,6 +806,7 @@ impl TryFrom<super::v2::OddBoxV2Config> for OddBoxV3Config{
 
     fn try_from(old_config: super::v2::OddBoxV2Config) -> Result<Self, Self::Error> {
         let new_config = Self {
+            use_loopback_ip_for_procs: None,
             odd_box_password: None,
             odd_box_url: None,
             dir_server: None,
@@ -829,6 +839,7 @@ impl TryFrom<super::v2::OddBoxV2Config> for OddBoxV3Config{
                 let new_hints = if new_hints.len() == 0 { None } else { Some(new_hints) };
 
                 InProcessSiteConfig {
+                    keep_original_host_header: None,
                     log_level: None,
                     enable_lets_encrypt: Some(false),
                     proc_id: ProcId::new(),

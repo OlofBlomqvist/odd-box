@@ -114,11 +114,12 @@ pub async fn proxy(
                 host_header_to_use = Some(req_host_name.to_string());
             }
         },
-        Target::Proc(_cfg) => {
-            host_header_to_use = Some(req_host_name.to_string());
+        Target::Proc(cfg) => {
+            if cfg.keep_original_host_header.unwrap_or_default() {
+                host_header_to_use = Some(req_host_name.to_string());
+            }            
         }
     };
-
 
     let hints = backend.hints.clone().unwrap_or_default();
     
@@ -327,7 +328,7 @@ fn create_proxied_request<B>(
     let target_uri = target_url.parse::<http::Uri>()
         .map_err(|e| ProxyError::InvalidUri(e))?;
     *request.uri_mut() = target_uri;
-    
+
     
     // we want to pass the original host header to the backend (the one that the client requested)
     // and not the one we are connecting to as that might as well just be an internal name or IP.

@@ -702,22 +702,22 @@ async fn main() -> anyhow::Result<()> {
     tokio::task::spawn(docker_thread(global_state.clone()));
 
     
-    // if on a released/stable version, we notify the user when there is a later stable version
-    // available for them to update to. current_is_latest will not include any -rc,-pre or -dev releases
-    // and so we wont run this unless user is also on stable.
-    if !self_update::current_version().contains("-") {
-        match self_update::current_is_latest().await {
-            Err(e) => {
-                tracing::warn!("It was not possible to retrieve information regarding the latest available version of odd-box: {e:?}");
-            },
-            Ok(Some(v)) => {
-                tracing::info!("There is a newer version of odd-box available - please consider upgrading to {v:?}. For unmanaged installations you can run 'odd-box --update' otherwise see your package manager for upgrade instructions.");
-            },
-            Ok(None) => {
-                tracing::info!("You are running the latest version of odd-box :D");
-            }
-        }
-    }
+    // // if on a released/stable version, we notify the user when there is a later stable version
+    // // available for them to update to. current_is_latest will not include any -rc,-pre or -dev releases
+    // // and so we wont run this unless user is also on stable.
+    // if !self_update::current_version().contains("-") {
+    //     match self_update::current_is_latest().await {
+    //         Err(e) => {
+    //             tracing::warn!("It was not possible to retrieve information regarding the latest available version of odd-box: {e:?}");
+    //         },
+    //         Ok(Some(v)) => {
+    //             tracing::info!("There is a newer version of odd-box available - please consider upgrading to {v:?}. For unmanaged installations you can run 'odd-box --update' otherwise see your package manager for upgrade instructions.");
+    //         },
+    //         Ok(None) => {
+    //             tracing::info!("You are running the latest version of odd-box :D");
+    //         }
+    //     }
+    // }
 
 
     // if in tui mode, we can just hang around until the tui thread exits.
