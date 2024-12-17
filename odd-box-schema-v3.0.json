@@ -95,8 +95,7 @@
       ]
     },
     "odd_box_password": {
-      "description": "Used for securing the admin api and web-interface. If you do not set this, the default password is \"passw0rd\".",
-      "default": "passw0rd",
+      "description": "Used for securing the admin api and web-interface. If you do not set this, anyone can access the admin api.",
       "type": [
         "string",
         "null"

@@ -1,4 +1,5 @@
 {
     "rust-analyzer.showUnlinkedFileNotification": false,
-    "nixEnvSelector.suggestion": false
+    "nixEnvSelector.suggestion": false,
+    "nixEnvSelector.nixFile": "${workspaceFolder}/shell.nix"
 }

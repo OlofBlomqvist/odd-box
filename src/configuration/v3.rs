@@ -233,6 +233,7 @@ impl Eq for RemoteSiteConfig {}
 #[derive(Debug, Clone,)]
 pub enum BackendFilter {
     Any,
+    H2OrH2cpk,
     Http2, // implies tls
     Http1,
     H2CPriorKnowledge,
@@ -249,6 +250,9 @@ fn filter_backend(backend: &Backend, filter: &BackendFilter) -> bool {
     match filter {
         BackendFilter::Any => true,
         BackendFilter::AnyTLS => backend.https.unwrap_or_default(),
+        BackendFilter::H2OrH2cpk => 
+            // only allow http2 if the backend explicitly supports it
+            hints.iter().any(|h|**h == Hint::H2||**h == Hint::H2CPK),
         BackendFilter::Http2 => 
             // only allow http2 if the backend explicitly supports it
             hints.iter().any(|h|**h == Hint::H2),

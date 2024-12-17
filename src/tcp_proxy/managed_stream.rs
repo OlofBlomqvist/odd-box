@@ -220,7 +220,6 @@ impl GenericManagedStream {
     ) -> Result<PeekResult, PeekError> {
         
         let mut attempts = 0;
-        let is_tls = false;
 
         loop {
 
@@ -321,9 +320,6 @@ impl GenericManagedStream {
                 observer.write_incoming(&buf);
 
                 let items  = observer.get_all_events();
-                
-                
-
 
                 if items.len() < 2 {
                     tracing::info!("not enough http2 frames found (yet)...");
@@ -358,15 +354,30 @@ impl GenericManagedStream {
                             _ => {}
                         }
                     }
-                        
-                    if is_tls {
-                        return Err(PeekError::Unknown("this is a valid http2 request over tls, but we found no authority.. will attempt to find sni from tls and otherwise use http terminating proxy mode.".into())); 
-                    } else {
-                        // http2 over clear text must be terminated as client wont send the http headers before
-                        // receiving a http2 settings response back , which it wont get if we dont terminate the connection.
-                        // (we wont know where to forward the request to otherwise)
-                        return Err(PeekError::H2PriorKnowledgeNeedsToBeTerminated); 
+                                    
+
+                    let (outer_is_tls,sni_server_name) = match &self {
+                        GenericManagedStream::TCP(_) =>  (false,None),
+                        GenericManagedStream::TerminatedTLS(ref managed_stream) => {
+                            (true, managed_stream.stream.get_ref().1.server_name().clone())
+                        }
+                    };
+
+                    if outer_is_tls {
+                        let sni = sni_server_name.map(|v|v.to_string());
+                        tracing::trace!("Using SNI for target host {sni:?} as no authority was found in the http2 request");
+                        return Ok(PeekResult { 
+                            typ: DataType::ClearText, 
+                            http_version: Some(Version::HTTP_2), 
+                            target_host: sni,
+                            is_h2c_upgrade: false
+                        });
                     }
+                    // http2 over clear text must be terminated as client wont send the http headers before
+                    // receiving a http2 settings response back , which it wont get if we dont terminate the connection.
+                    // (we wont know where to forward the request to otherwise)
+                    return Err(PeekError::H2PriorKnowledgeNeedsToBeTerminated); 
+                
                     
                     
                    

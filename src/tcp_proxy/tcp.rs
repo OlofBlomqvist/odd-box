@@ -217,16 +217,16 @@ impl ReverseTcpProxy {
         let backend = 
             match (&target.remote_target_config,&target.hosted_target_config) {
                 (Some(rem_conf),None) => {
-                    rem_conf.next_backend(&state, backend_filter).await
+                    rem_conf.next_backend(&state, backend_filter.clone()).await
                 },
                 (None,Some(proc_conf)) => {
-                    proc_conf.next_backend(&state, backend_filter).await
+                    proc_conf.next_backend(&state, backend_filter.clone()).await
                 },
                 _ => None
             };
         
         let backend = if backend == None {
-            tracing::warn!("No backend found for target {}.. falling back to http termination",target.host_name);
+            tracing::warn!("No backend found for target {} using filter {backend_filter:?}.. falling back to http termination",target.host_name);
             return Err(TunnelError::NoUsableBackendFound(possibly_terminated_stream))
         } else {
             backend.unwrap()
@@ -462,7 +462,7 @@ fn peekresult_to_backend_filter(
         (Some(Version::HTTP_2), ClearText, true, false) => {
             // this means the incoming connection was made over tls, but we terminated it.
             // we should be able to connect to any backend that speaks http2 (creating a new tls connection if needed)
-            Some(BackendFilter::Http2)
+            Some(BackendFilter::H2OrH2cpk)
         },
 
         // If we cannot determine the HTTP version, we cannot make a decision, meaning we will terminate both tls and http

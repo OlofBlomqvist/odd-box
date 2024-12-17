@@ -627,7 +627,7 @@ fn get_subdomain(requested_hostname: &str, backend_hostname: &str) -> Option<Str
 
 async fn perform_remote_forwarding(
     req_host_name:String,
-    _is_https:bool,
+    is_https:bool,
     state: Arc<GlobalState>,
     client_ip:std::net::SocketAddr,
     remote_target_config:&crate::configuration::RemoteSiteConfig,
@@ -696,7 +696,7 @@ async fn perform_remote_forwarding(
     let result = 
         proxy(
             &req_host_name,
-            next_backend_target.https.unwrap_or_default(),
+            is_https,
             state.clone(),
             req,
             &target_url,

@@ -471,20 +471,34 @@ async fn handle_new_tcp_stream(
                 fresh_service_template_with_source_info.resolved_target = Some(cloned_target.clone());
                 
                 if target.is_hosted {
-
+                    
                     if let Some(cfg) = &target.hosted_target_config {
                         let hints : Vec<&crate::configuration::Hint> = cfg.hints.iter().flatten().collect();
                         if cfg.disable_tcp_tunnel_mode.unwrap_or_default() {
                             return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, FallbackReason::TunnelModeDisabled).await;
                         }
                         if let Some(Version::HTTP_2) = http_version {
-                            if hints.iter().any(|h| **h==Hint::H2 ) {
+                            if hints.iter().any(|h| {
+                                **h==Hint::H2 // we can establsh a new https session should we need to
+                                || !is_tls && !is_h2c_upgrade && **h==Hint::H2CPK // backend needs to support prior knowledge h2 cleartext
+                            }) {
                                 tracing::trace!("Incoming http version is 2.0 and target supports it thru hints. Proceeding with tunnel mode.");
                             } else {
                                 tracing::trace!("Incoming http version is 2.0 but no hints are provided for the target to support it. Falling back to terminating mode.");
                                 return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info,
                                     FallbackReason::IncomingHttp2ButTargetDoesNotSupportIt
                                 ).await;
+                            }
+                        } else {
+                            if is_h2c_upgrade {
+                                if hints.iter().any(|h|**h==Hint::H2C) {
+                                    tracing::trace!("Incoming H2C request and target supports it thru hints. Proceeding with tunnel mode.");
+                                } else {
+                                    tracing::trace!("Incoming H2C request to target that does not have the H2C hint - falling back to http terminating");
+                                    return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info,
+                                        FallbackReason::NoBackendFound
+                                    ).await;
+                                }
                             }
                         }
                     }
@@ -595,19 +609,32 @@ async fn handle_new_tcp_stream(
                 } else {
                     
                     if let Some(cfg) = &target.remote_target_config {
+                        let hints : Vec<Hint> = cfg.backends.iter().flat_map(|b| b.hints.clone().unwrap_or_default()).collect();
                         if cfg.disable_tcp_tunnel_mode.unwrap_or_default() {
                             return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, FallbackReason::TunnelModeDisabled).await;
                         }
                         if let Some(Version::HTTP_2) = http_version {
-                            let mut hints = cfg.backends.iter()
-                                .flat_map(|b| b.hints.clone().unwrap_or_default());
-                            if hints.any(|x|x==Hint::H2) {
+                            if hints.iter().any(|h|
+                                    h==&Hint::H2 // we can establsh a new https session should we need to
+                                    || !is_tls && !is_h2c_upgrade && h==&Hint::H2CPK // backend needs to support prior knowledge h2 cleartext
+                            ) {
                                 tracing::trace!("Incoming http version is 2.0 and target supports it thru hints. Proceeding with tunnel mode.");
                             } else {
                                 tracing::trace!("Incoming http version is 2.0, but all backends explicitly disallow H2, falling back to terminating mode.");
                                 return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info,
                                     FallbackReason::NoBackendFound
                                 ).await;
+                            }
+                        } else {
+                            if is_h2c_upgrade {
+                                if hints.iter().any(|h|h==&Hint::H2C) {
+                                    tracing::trace!("Incoming H2C request and target supports it thru hints. Proceeding with tunnel mode.");
+                                } else {
+                                    tracing::trace!("Incoming H2C request to target that does not have the H2C hint - falling back to http terminating");
+                                    return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info,
+                                        FallbackReason::NoBackendFound
+                                    ).await;
+                                }
                             }
                         }
                     }

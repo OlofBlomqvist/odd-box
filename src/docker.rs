@@ -6,6 +6,8 @@ use bollard::errors::Error;
 use serde::Serialize;
 use tokio;
 
+use crate::configuration::Hint;
+
 
 #[tokio::test]
 pub async fn docker_sites()  {
@@ -20,6 +22,7 @@ impl ContainerProxyTarget {
         self.host_name_label.as_ref().unwrap_or(&format!("{}.odd-box.localhost",self.container_name)).to_owned()
     }
     pub fn generate_remote_config(&self) -> crate::configuration::RemoteSiteConfig  {
+        let hints = if self.hints.is_empty() { None } else { Some(self.hints.clone()) };
         crate::configuration::RemoteSiteConfig {
             host_name: self.generate_host_name(),
             backends: vec![
@@ -27,14 +30,14 @@ impl ContainerProxyTarget {
                     address: self.target_addr.clone(), 
                     port: self.port, 
                     https: Some(self.tls), 
-                    hints: None 
+                    hints: hints 
                 }
             ],
-            capture_subdomains: None,
-            disable_tcp_tunnel_mode: None,
-            forward_subdomains: None,
-            enable_lets_encrypt: None,
-            keep_original_host_header: None,
+            capture_subdomains: self.capture_subdomains,
+            disable_tcp_tunnel_mode: self.disable_tcp_tunnel_mode,
+            forward_subdomains: self.forward_subdomains,
+            enable_lets_encrypt: self.enable_lets_encrypt,
+            keep_original_host_header: self.keep_original_host_header,
         }
     }
 }
@@ -47,7 +50,15 @@ pub struct ContainerProxyTarget {
     pub running: bool,
     pub target_addr: String,
     pub tls: bool,
-    pub port: u16, // port to proxy to
+    pub hints : Vec<Hint>,
+    pub port: u16, // port to proxy to,
+
+    pub capture_subdomains : Option<bool>,
+    pub disable_tcp_tunnel_mode : Option<bool>,
+    pub forward_subdomains : Option<bool>,
+    pub enable_lets_encrypt : Option<bool>,
+    pub keep_original_host_header : Option<bool>,
+
 }
 
 // Function to list all containers
@@ -93,10 +104,8 @@ pub async fn get_container_proxy_targets(
 
         let labels = container.labels.unwrap_or_default();
         let label_host_name =  labels.get("odd_box_host_name");
+        let label_hints =  labels.get("odd_box_hints");
 
-        let label_is_tls =  labels.get("odd_box_is_tls")
-            .and_then(|x|Some(x.parse::<bool>().unwrap_or_default()))
-            .unwrap_or_default();
         
         let container_ip = if let Some(ip) = container.network_settings
             .and_then(|net| net.networks)
@@ -121,9 +130,28 @@ pub async fn get_container_proxy_targets(
             continue
         };
 
+        let mut hints = vec![];
+        if let Some(h) = label_hints {
+            for x in h.to_lowercase().split(",") {
+                match x {
+                    "h2" => hints.push(Hint::H2),
+                    "h2c" => hints.push(Hint::H2C),
+                    "h2cpk" => hints.push(Hint::H2CPK),
+                    invalid_hint => {
+                        tracing::warn!("invalid docker hint set on container {container_name}: {invalid_hint}",)
+                    }
+                }
+            }
+        }
         proxy_targets.push(ContainerProxyTarget {
+            hints,
             target_addr: container_ip,
-            tls: label_is_tls,
+            capture_subdomains: labels.get("odd_box_capture_subdomains").map(|x|x.to_lowercase()=="true"),
+            disable_tcp_tunnel_mode: labels.get("odd_box_disable_tcp_tunnel_mode").map(|x|x.to_lowercase()=="true"),
+            forward_subdomains: labels.get("odd_box_forward_subdomains").map(|x|x.to_lowercase()=="true"),
+            keep_original_host_header: labels.get("odd_box_keep_original_host_header").map(|x|x.to_lowercase()=="true"),
+            enable_lets_encrypt: labels.get("odd_box_enable_lets_encrypt").map(|x|x.to_lowercase()=="true"),
+            tls: labels.get("odd_box_is_tls") .and_then(|x|Some(x.parse::<bool>().unwrap_or_default())).unwrap_or_default(),
             container_name: container_name.clone(),
             image_name: image_name.clone(),
             host_name_label: label_host_name.cloned(),
