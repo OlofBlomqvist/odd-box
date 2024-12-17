@@ -296,8 +296,17 @@ impl InProcessSiteConfig {
             }
         };
 
+
+        let local_addr = {
+            if state.config.read().await.use_loopback_ip_for_procs.unwrap_or_default() {
+                "127.0.0.1"
+            } else {
+                "localhost"
+            }
+        };
+
         let backends = vec![Backend {
-            address: "localhost".to_string(), // we are always connecting to localhost since we are the ones hosting this process
+            address: local_addr.to_string(), // we are always connecting to localhost since we are the ones hosting this process
             port: port,
             https: self.https,
             hints: self.hints.clone(),
