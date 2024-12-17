@@ -39,14 +39,14 @@ pub async fn update() -> anyhow::Result<()> {
 pub fn current_version() -> &'static str { cargo_crate_version!() }
 
 /// returns Some(newer_version) or None if current is latest.
-pub async fn current_is_latest() -> anyhow::Result<Option<String>> {
-    let current_version = current_version();
-    match find_latest_version(false).await {
-        Ok(v) if current_version != v => Ok(Some(v)),
-        Ok(_) => Ok(None),
-        Err(e) => Err(e)
-    }
-}
+// pub async fn current_is_latest() -> anyhow::Result<Option<String>> {
+//     let current_version = current_version();
+//     match find_latest_version(false).await {
+//         Ok(v) if current_version != v => Ok(Some(v)),
+//         Ok(_) => Ok(None),
+//         Err(e) => Err(e)
+//     }
+// }
 
 
 pub async fn find_latest_version(include_pre:bool) -> anyhow::Result<String> {

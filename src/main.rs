@@ -163,7 +163,11 @@ pub mod global_state {
 
             let mut result = None;
             let cfg = self.config.read().await;
-
+            let local_addr = if cfg.use_loopback_ip_for_procs.unwrap_or_default() {
+                "127.0.0.1"
+            } else {
+                "localhost"
+            };
             for guard in &cfg.docker_containers {
                 let (host_name,x) = guard.pair();
                 //let host_name = x.host_name_label.unwrap_or(format!("{}.odd-box.localhost",x.container_name));
@@ -215,7 +219,7 @@ pub mod global_state {
                             // use dns name to avoid issues where hyper uses ipv6 for 127.0.0.1 since tcp tunnel mode uses ipv4.
                             // not keeping them the same means the target backend will see different ip's for the same client
                             // and possibly invalidate sessions in some cases.
-                            address: "localhost".to_string(), //y.host_name.to_owned(), // --- configurable
+                            address:  local_addr.to_string(), //y.host_name.to_owned(), // --- configurable
                             https: y.https,
                             port: y.active_port.unwrap_or_default()
                         }],
@@ -702,22 +706,22 @@ async fn main() -> anyhow::Result<()> {
     tokio::task::spawn(docker_thread(global_state.clone()));
 
     
-    // if on a released/stable version, we notify the user when there is a later stable version
-    // available for them to update to. current_is_latest will not include any -rc,-pre or -dev releases
-    // and so we wont run this unless user is also on stable.
-    if !self_update::current_version().contains("-") {
-        match self_update::current_is_latest().await {
-            Err(e) => {
-                tracing::warn!("It was not possible to retrieve information regarding the latest available version of odd-box: {e:?}");
-            },
-            Ok(Some(v)) => {
-                tracing::info!("There is a newer version of odd-box available - please consider upgrading to {v:?}. For unmanaged installations you can run 'odd-box --update' otherwise see your package manager for upgrade instructions.");
-            },
-            Ok(None) => {
-                tracing::info!("You are running the latest version of odd-box :D");
-            }
-        }
-    }
+    // // if on a released/stable version, we notify the user when there is a later stable version
+    // // available for them to update to. current_is_latest will not include any -rc,-pre or -dev releases
+    // // and so we wont run this unless user is also on stable.
+    // if !self_update::current_version().contains("-") {
+    //     match self_update::current_is_latest().await {
+    //         Err(e) => {
+    //             tracing::warn!("It was not possible to retrieve information regarding the latest available version of odd-box: {e:?}");
+    //         },
+    //         Ok(Some(v)) => {
+    //             tracing::info!("There is a newer version of odd-box available - please consider upgrading to {v:?}. For unmanaged installations you can run 'odd-box --update' otherwise see your package manager for upgrade instructions.");
+    //         },
+    //         Ok(None) => {
+    //             tracing::info!("You are running the latest version of odd-box :D");
+    //         }
+    //     }
+    // }
 
 
     // if in tui mode, we can just hang around until the tui thread exits.

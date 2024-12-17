@@ -517,11 +517,17 @@ async fn handle_http_request(
             port,
             original_path_and_query
         );
+
+        let local_addr = if configuration.use_loopback_ip_for_procs.unwrap_or_default() {
+            "127.0.0.1"
+        } else {
+            "localhost"
+        };
         
         // we add the host flag manually in proxy method, this is only to avoid dns lookup for local targets.
         // todo: opt in/out via cfg (?)
         let skip_dns_for_local_target_url = format!("{scheme}://{}:{}{}",
-            "localhost",
+            local_addr,
             port,
             original_path_and_query
         );
@@ -533,7 +539,7 @@ async fn handle_http_request(
         let backend = crate::configuration::Backend {
             hints: hints,
             // we are hosting this service so clearly it is local
-            address: "localhost".to_string(),
+            address: local_addr.to_string(),
             port: port,
             https: Some(enforce_https)
         };
