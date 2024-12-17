@@ -163,7 +163,11 @@ pub mod global_state {
 
             let mut result = None;
             let cfg = self.config.read().await;
-
+            let local_addr = if cfg.use_loopback_ip_for_procs.unwrap_or_default() {
+                "127.0.0.1"
+            } else {
+                "localhost"
+            };
             for guard in &cfg.docker_containers {
                 let (host_name,x) = guard.pair();
                 //let host_name = x.host_name_label.unwrap_or(format!("{}.odd-box.localhost",x.container_name));
@@ -215,7 +219,7 @@ pub mod global_state {
                             // use dns name to avoid issues where hyper uses ipv6 for 127.0.0.1 since tcp tunnel mode uses ipv4.
                             // not keeping them the same means the target backend will see different ip's for the same client
                             // and possibly invalidate sessions in some cases.
-                            address: "localhost".to_string(), //y.host_name.to_owned(), // --- configurable
+                            address:  local_addr.to_string(), //y.host_name.to_owned(), // --- configurable
                             https: y.https,
                             port: y.active_port.unwrap_or_default()
                         }],

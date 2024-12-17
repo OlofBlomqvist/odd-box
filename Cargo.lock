@@ -2332,7 +2332,7 @@ dependencies = [
 
 [[package]]
 name = "odd-box"
-version = "0.1.10"
+version = "0.1.10-Anders1"
 dependencies = [
  "anyhow",
  "axum",
