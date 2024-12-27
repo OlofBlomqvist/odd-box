@@ -23,6 +23,7 @@ pub async fn host(
     let my_arc = std::sync::Arc::new(AtomicBool::new(true));
 
     crate::PROC_THREAD_MAP.insert(resolved_proc.proc_id.clone(), crate::types::proc_info::ProcInfo { 
+        started_at_time_stamp: std::time::SystemTime::now(),
         marked_for_removal: false,
         config: resolved_proc.clone(),
         pid: None,
@@ -277,7 +278,7 @@ pub async fn host(
                     match entry {
                         Some(mut item) => {
                             item.pid = Some(child.id().to_string());
-                            // this is the only thing that is supposed to change during the lifetime of a proc loop
+                            item.started_at_time_stamp = std::time::SystemTime::now();
                             item.config.active_port = resolved_proc.active_port;
                         },
                         None => {

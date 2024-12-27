@@ -605,12 +605,12 @@ fn draw_ui<B: ratatui::backend::Backend>(
     theme: &Theme,
 ) {
 
-
     let size = f.area();
 
     if size.height < 10 || size.width < 10 {
         return
     }
+
 
     let help_bar_height = 3 as u16;
 
@@ -648,13 +648,6 @@ fn draw_ui<B: ratatui::backend::Backend>(
     let vertical = Layout::vertical(constraints);
     let [top_area, mid_area, bot_area] = vertical.areas(size);
 
-    let main_area = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(100) 
-        ])
-        .split(top_area.clone()); 
-
     let is_dark_theme = matches!(&theme,Theme::Dark(_));
     
     let app_bg = {
@@ -664,11 +657,22 @@ fn draw_ui<B: ratatui::backend::Backend>(
             Color::White
         }
     };
+
     let tab_fg_color = if is_dark_theme {
         Color::Cyan
     } else {
         Color::DarkGray
     };
+
+    let main_area = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(100) 
+        ])
+        .split(top_area.clone());
+
+
+    f.render_widget(Block::new().bg(app_bg), f.area());
 
     let tabs =  ratatui::widgets::Tabs::new(
         vec![
@@ -716,11 +720,11 @@ fn draw_ui<B: ratatui::backend::Backend>(
         .border_type(BorderType::Rounded)
         .borders(Borders::ALL);
 
-    f.render_widget(frame.bg(app_bg), main_area[0]);
+    f.render_widget(frame, main_area[0]);
     
 
     // render the tab bar on top of the tab content
-    f.render_widget(tabs.bg(app_bg), main_area[0].inner(Margin { horizontal: 2, vertical: 0 }));
+    f.render_widget(tabs, main_area[0].inner(Margin { horizontal: 2, vertical: 0 }));
 
     if size.height >= 15 && TuiSiteWindowState::Hide != tui_state.app_window_state {
 
@@ -856,7 +860,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
             let sites_list = List::new(items)
                 .block( 
                     Block::new()
-                        .border_style(Style::default().fg(Color::DarkGray))
+                        .border_style(Style::default().fg(Color::DarkGray).bg(app_bg))
                         .border_type(BorderType::Rounded)
                         .borders(Borders::ALL)
                         .title(" Sites ").title_alignment(Alignment::Left)
@@ -869,7 +873,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
                         )
                 );
             
-            f.render_widget(sites_list.bg(app_bg), *col);
+            f.render_widget(sites_list, *col);
             
         }
 
@@ -924,7 +928,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
     };
     let current_version = self_update::cargo_crate_version!();
     let help_bar = Paragraph::new(Line::from(help_bar_text))
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(Color::DarkGray).bg(app_bg))
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -937,7 +941,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
             }
         ));
 
-    f.render_widget(help_bar.bg(app_bg), help_bar_chunk[1]);
+    f.render_widget(help_bar, help_bar_chunk[1]);
 
 
 }

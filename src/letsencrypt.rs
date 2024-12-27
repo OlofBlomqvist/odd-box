@@ -716,7 +716,7 @@ pub async fn bg_worker_for_lets_encrypt_certs(state: Arc<GlobalState>) {
                     
                     crate::BG_WORKER_THREAD_MAP.insert("Lets Encrypt".into(), BgTaskInfo {
                         liveness_ptr: Arc::downgrade(&liveness_token),
-                        status: format!("Disabled. lets_encrypt_account_email not set.")
+                        status: format!("Disabled")
                     });
                     continue;
                     

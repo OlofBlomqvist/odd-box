@@ -1,11 +1,30 @@
 use std::sync::Arc;
 use ratatui::layout::{ Constraint, Flex, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style, Styled, Stylize};
+use ratatui::text::Line;
 use ratatui::widgets::{ Cell, Row, Scrollbar, ScrollbarOrientation, Table};
 use crate::global_state::GlobalState;
 use crate::types::tui_state::TuiState;
 use super::Theme;
 
+fn format_duration(d: std::time::Duration) -> String {
+    let total_secs = d.as_secs();
+
+    let days = total_secs / 86400;          // 1 day = 86_400 seconds
+    let hours = (total_secs % 86400) / 3600; 
+    let minutes = (total_secs % 3600) / 60;
+    let seconds = total_secs % 60;
+    
+    if days > 0 {
+        format!("{} days, {} hours, {} minutes", days, hours, minutes)
+    } else if hours > 0 {
+        format!("{} hours, {} minutes", hours, minutes)
+    } else if minutes > 0 {
+        format!("{} minutes, {} seconds", minutes,seconds)
+    } else {
+        format!("{} seconds", seconds)
+    }
+}
 
 pub fn draw(
     f: &mut ratatui::Frame,
@@ -20,13 +39,23 @@ pub fn draw(
         return
     }
 
-    let headers = [ "Task","#Id","Child PID", "Current Status"];
+    let headers = [ "Task","Uptime","Child PID", "Current Status"];
     
     let mut rows : Vec<Vec<String>> =  crate::PROC_THREAD_MAP.iter().map(|guard| {
         let (_thread_id, thread_info) = guard.pair();
+        let uptime = 
+            if thread_info.pid.is_some() {
+                if let Ok(d) = thread_info.started_at_time_stamp.elapsed() {
+                    format_duration(d)
+                } else {
+                    format!("-")
+                }
+            } else {
+                format!("-")
+            };
         vec![
             format!("[PROC_HOST] {}",thread_info.config.host_name),
-            format!("{}",thread_info.config.proc_id.id),
+            uptime,
             format!("{}",thread_info.pid.as_ref().map_or(String::new(),|x|x.to_string())),
             format!("selected port: {:?}", thread_info.config.active_port)
         ]
@@ -36,7 +65,8 @@ pub fn draw(
         vec![
             format!("[BG_WORKER] {}",thread_id),
             format!("-"),
-            if is_dead {"This task has exited.".into()} else { format!("Status: {}", thread_info.status) }
+            if is_dead {"This task has exited.".into()} else { format!("Status: {}", thread_info.status) },
+            format!("-"),
         ]
     })).collect();
     rows.sort_by_key(|x|x[0].to_string());

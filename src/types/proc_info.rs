@@ -21,7 +21,8 @@ pub struct ProcInfo {
     pub liveness_ptr : Weak<AtomicBool>,
     pub config : FullyResolvedInProcessSiteConfig,
     pub pid : Option<String>,
-    pub marked_for_removal : bool
+    pub marked_for_removal : bool,
+    pub started_at_time_stamp : std::time::SystemTime
 }
 
 #[derive(Debug)]
