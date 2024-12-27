@@ -34,6 +34,9 @@ use crate::types::proxy_state::ProxyActiveTCPConnection;
 use tokio_util::sync::CancellationToken;
 use tokio::task::JoinHandle;
 
+// This is the main entrypoint of the reverse proxy listener...
+// It sets up the two tcp sockets and routes traffic either to the terminating proxy service (hyper)
+// or thru the managed tunnel mode where we do not terminate http traffic (but possibly do terminate tls depending on config).
 pub async fn listen(
     cfg: Arc<RwLock<ConfigWrapper>>, 
     initial_bind_addr: SocketAddr,
@@ -209,6 +212,11 @@ async fn listen_http(
         Ok(_) => {},
         Err(e) => tracing::trace!("Failed to set_only_vs: {e:?}")
     };
+
+    // note: we reuse here as we want to be able to run multiple instances of odd-box at the same time.
+    // if nothing else it lets us launch a newer version of the server without stopping the old, so that we can upgrade
+    // to a later version without downtime.
+
     match socket.set_reuse_port(true) {
         Ok(_) => {},
         Err(e) => {
@@ -301,6 +309,11 @@ async fn listen_https(
         Ok(_) => {},
         Err(e) => tracing::trace!("Failed to set_only_vs: {e:?}")
     };
+    
+    // note: we reuse here as we want to be able to run multiple instances of odd-box at the same time.
+    // if nothing else it lets us launch a newer version of the server without stopping the old, so that we can upgrade
+    // to a later version without downtime.
+    
     match socket.set_reuse_address(true) { // annoying as hell otherwise for quick resets
         Ok(_) => {},
         Err(e) => tracing::warn!("Failed to set_reuse_address: {e:?}")

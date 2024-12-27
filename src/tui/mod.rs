@@ -917,6 +917,11 @@ fn draw_ui<B: ratatui::backend::Backend>(
     // help_bar_text.push(ratatui::text::Span::raw(format!("| DBG: {}", 
     //     app_state.dbg
     // )));
+    let uptime = if let Ok(d) = global_state.uptime() {
+        format_duration(d)
+    } else {
+        String::new()
+    };
     let current_version = self_update::cargo_crate_version!();
     let help_bar = Paragraph::new(Line::from(help_bar_text))
         .style(Style::default().fg(Color::DarkGray))
@@ -924,7 +929,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
         .block(Block::default().borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray))
-        .title(format!(" ODD-BOX v{current_version}")).title_style(
+        .title(format!(" ODD-BOX v{current_version} {uptime} ")).title_style(
             if is_dark_theme {
                 Style::default().fg(Color::LightYellow)
             } else {
@@ -936,7 +941,24 @@ fn draw_ui<B: ratatui::backend::Backend>(
 
 
 }
+fn format_duration(d: std::time::Duration) -> String {
+    let total_secs = d.as_secs();
 
+    let days = total_secs / 86400;          // 1 day = 86_400 seconds
+    let hours = (total_secs % 86400) / 3600; 
+    let minutes = (total_secs % 3600) / 60;
+    let seconds = total_secs % 60;
+    
+    if days > 0 {
+        format!(" - uptime: {} days, {} hours, {} minutes", days, hours, minutes)
+    } else if hours > 0 {
+        format!(" - uptime: {} hours, {} minutes", hours, minutes)
+    } else if minutes > 0 {
+        format!(" - uptime: {} minutes, {} seconds", minutes,seconds)
+    } else {
+        format!(" - uptime: {} seconds", seconds)
+    }
+}
 fn wrap_string(input: &str, max_length: usize) -> Vec<String> {
     let words = input.split_whitespace();
     let mut wrapped_lines = Vec::new();

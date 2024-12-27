@@ -72,12 +72,12 @@ pub fn generate_unique_id() -> u64 {
 }
 
 pub mod global_state {
-    use std::sync::{atomic::AtomicU64, Arc};
-
+    use std::{sync::{atomic::AtomicU64, Arc}, time::SystemTimeError};
 
     use crate::{certs::DynamicCertResolver, tcp_proxy::{ReverseTcpProxy, ReverseTcpProxyTarget}, types::odd_box_event::Event};
     #[derive(Debug)]
     pub struct GlobalState {
+        pub started_at_time_stamp : std::time::SystemTime,
         pub log_handle : crate::OddLogHandle,
         pub app_state: std::sync::Arc<crate::types::app_state::AppState>,
         pub config: std::sync::Arc<tokio::sync::RwLock<crate::configuration::ConfigWrapper>>,
@@ -88,7 +88,9 @@ pub mod global_state {
         pub global_broadcast_channel: tokio::sync::broadcast::Sender<Event>
     }
     impl GlobalState {
-        
+        pub fn uptime(&self) -> Result<std::time::Duration,SystemTimeError> {
+            self.started_at_time_stamp.elapsed()
+        }
         pub fn new(
             app_state: std::sync::Arc<crate::types::app_state::AppState>,
             config: std::sync::Arc<tokio::sync::RwLock<crate::configuration::ConfigWrapper>>,
@@ -99,6 +101,7 @@ pub mod global_state {
         ) -> Self {
 
             Self {
+                started_at_time_stamp: std::time::SystemTime::now(),
                 log_handle,
                 app_state,
                 config,
