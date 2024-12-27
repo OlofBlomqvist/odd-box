@@ -532,6 +532,33 @@ impl ConfigWrapper {
     
     }
 
+    pub fn port_is_free(port: u16) -> bool {
+        match std::net::TcpListener::bind(("127.0.0.1", port)) {
+            Ok(listener) => {
+                drop(listener);
+                true
+            },
+            Err(_) => {
+                false
+            },
+        }
+    }
+
+    pub fn get_random_free_port() -> Option<u16> {
+        match std::net::TcpListener::bind(("127.0.0.1", 0)) {
+            Ok(listener) => {
+                match listener.local_addr() {
+                    Ok(l) => Some(l.port()),
+                    _ => None
+                }
+            },
+            Err(e) => {
+                tracing::warn!("{:?}",e);
+                None
+            },
+        }
+    }
+
     // todo: work with the wrapper dashmap instead
     pub fn set_active_port(&mut self, resolved_proc:&mut FullyResolvedInProcessSiteConfig) -> anyhow::Result<u16> {
       
@@ -545,17 +572,26 @@ impl ConfigWrapper {
 
         if let Some(currently_selected_port) = selected_port {
             if !unavailable_ports.iter().any(|x|x.1 == currently_selected_port) {
-                return Ok(currently_selected_port)
+                if Self::port_is_free(currently_selected_port) {
+                    return Ok(currently_selected_port)
+                } else {
+                    selected_port = None;
+                }
             }
         }
 
         // decide which port to use (ie. which port to add as the environment variable PORT)
         if let Some(prefered_port) = resolved_proc.port {
-            if let Some(taken_by) = unavailable_ports.iter().find(|x|x.1 == prefered_port) {
-                tracing::warn!("[{}] The configured port '{}' is unavailable (configured for another site: '{}').. ",&resolved_proc.host_name,prefered_port,taken_by.1);
+
+            if prefered_port == 0 {
+                selected_port = Self::get_random_free_port() 
             } else {
-                tracing::info!("[{}] Starting on port '{}' as configured for the process!",&resolved_proc.host_name,prefered_port);
-                selected_port = Some(prefered_port);
+                if let Some(taken_by) = unavailable_ports.iter().find(|x|x.1 == prefered_port) {
+                    tracing::warn!("[{}] The configured port '{}' is unavailable (configured for another site: '{}').. ",&resolved_proc.host_name,prefered_port,taken_by.1);
+                } else {
+                    tracing::info!("[{}] Starting on port '{}' as configured for the process!",&resolved_proc.host_name,prefered_port);
+                    selected_port = Some(prefered_port);
+                }
             }
         } else if let Some(EnvVar { key: _, value }) = resolved_proc.env_vars.iter().flatten().find(|x|x.key.to_lowercase()=="port") { 
             if let Some(taken_by) = unavailable_ports.iter().find(|x|x.1.to_string() == *value) {
@@ -580,13 +616,16 @@ impl ConfigWrapper {
                 if unavailable.contains(&inner_selected_port) {
                     inner_selected_port += 1;
                 } else {
-                    break
+                    if Self::port_is_free(inner_selected_port) {
+                        break
+                    } else {
+                        inner_selected_port += 1;
+                    }
                 }
-            }
-            
+            }            
             tracing::trace!("[{}] Using the first available port found (starting from the configured start port: {min_auto_port}) ---> '{}'",&resolved_proc.host_name,inner_selected_port);
             selected_port = Some(inner_selected_port);
-        }
+        } 
 
         // make sure nobody else is using this port before returning it to caller.
         // mark this process as using this port
