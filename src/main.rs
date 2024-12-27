@@ -36,8 +36,6 @@ use types::proc_info::ProcId;
 use types::proc_info::ProcInfo;
 use configuration::{ConfigWrapper, LogLevel};
 use core::fmt;
-use std::net::Ipv4Addr;
-use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
@@ -460,30 +458,6 @@ fn initialize_configuration(args:&Args) -> anyhow::Result<(ConfigWrapper,OddBoxC
     
     config.is_valid()?;
     config.set_disk_path(&cfg_path)?;
-
-    let srv_port : u16 = config.http_port.unwrap_or(8080)  ;
-    let srv_tls_port : u16 =  config.tls_port.unwrap_or(4343)  ;
-
-
-    let socket_addr_http = SocketAddr::new(config.ip.unwrap_or(std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))),srv_port);
-    let socket_addr_https = SocketAddr::new(config.ip.unwrap_or(std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))),srv_tls_port);
-
-    match std::net::TcpListener::bind(socket_addr_http) {
-        Err(e) => {
-            anyhow::bail!("TCP Bind port for http {socket_addr_http:?} failed. It could be taken by another service like iis,apache,nginx etc, or perhaps you do not have permission to bind. The specific error was: {e:?}")
-        },
-        Ok(_listener) => {
-            tracing::debug!("TCP Port for http {srv_port} is available for binding.");
-        }
-    }
-    match std::net::TcpListener::bind(socket_addr_https) {
-        Err(e) => {
-            anyhow::bail!("TCP Bind port for https {socket_addr_https:?} failed. It could be taken by another service like iis,apache,nginx etc, or perhaps you do not have permission to bind. The specific error was: {e:?}")
-        },
-        Ok(_listener) => {
-            tracing::debug!("TCP Port for https {srv_tls_port} is available for binding.");
-        }
-    }
 
     Ok((config,original_version,was_upgraded))
 }

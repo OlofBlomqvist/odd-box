@@ -5,6 +5,7 @@ use std::time::Duration;
 use hyper::Version;
 use hyper_rustls::ConfigBuilderExt;
 use lazy_static::lazy_static;
+use socket2::Protocol;
 use socket2::Socket;
 use tokio::net::TcpStream;
 use tokio::sync::Notify;
@@ -202,13 +203,18 @@ async fn listen_http(
 ) {
     
     use socket2::{Domain,Type};
-
-
-    let socket = Socket::new(Domain::for_address(bind_addr), Type::STREAM, None).expect("should always be possible to create a tcp socket for tls");
+    
+    let socket = Socket::new(Domain::for_address(bind_addr), Type::STREAM, Some(Protocol::TCP)).expect("should always be possible to create a tcp socket for tls");
     match socket.set_only_v6(false) {
         Ok(_) => {},
         Err(e) => tracing::trace!("Failed to set_only_vs: {e:?}")
     };
+    match socket.set_reuse_port(true) {
+        Ok(_) => {},
+        Err(e) => {
+            tracing::warn!("Not able to reuse port. This means odd-box cannot be updated in place with zero-downtime. {e:?}")
+        }
+    }
     match socket.set_reuse_address(true) { // annoying as hell otherwise for quick resets
         Ok(_) => {},
         Err(e) => tracing::warn!("Failed to set_reuse_address: {e:?}")
@@ -218,8 +224,6 @@ async fn listen_http(
     let listener: std::net::TcpListener = socket.into();
     listener.set_nonblocking(true).expect("must be able to set_nonblocking on http listener");
     let tokio_listener = tokio::net::TcpListener::from_std(listener).expect("we must be able to listen to https port..");
-
-
     
     loop {
 
@@ -292,7 +296,7 @@ async fn listen_https(
 
     use socket2::{Domain,Type};
 
-    let socket = Socket::new(Domain::for_address(bind_addr), Type::STREAM, None).expect("should always be possible to create a tcp socket for tls");
+    let socket = Socket::new(Domain::for_address(bind_addr), Type::STREAM, Some(Protocol::TCP)).expect("should always be possible to create a tcp socket for tls");
     match socket.set_only_v6(false) {
         Ok(_) => {},
         Err(e) => tracing::trace!("Failed to set_only_vs: {e:?}")
@@ -301,8 +305,15 @@ async fn listen_https(
         Ok(_) => {},
         Err(e) => tracing::warn!("Failed to set_reuse_address: {e:?}")
     }
+    match socket.set_reuse_port(true) {
+        Ok(_) => {},
+        Err(e) => {
+            tracing::warn!("Not able to reuse port. This means odd-box cannot be updated in place with zero-downtime. {e:?}")
+        }
+    }
     socket.bind(&bind_addr.into()).expect("we must be able to bind to https addr socket..");
     socket.listen(1024).expect("we must be able to listen to https addr socket..");
+
     let listener: std::net::TcpListener = socket.into();
     listener.set_nonblocking(true).expect("must be able to set_nonblocking on https listener");
     let tokio_listener = tokio::net::TcpListener::from_std(listener).expect("we must be able to listen to https port..");

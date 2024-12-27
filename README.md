@@ -31,10 +31,10 @@ odd-box --init
 
 The resulting file will look something like this:
 ```toml
-#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v2.2.json
+#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v3.0.json
 
 # Global settings
-version = "V2"
+version = "V3"
 ip = "127.0.0.1" 
 http_port = 8080        
 tls_port = 4343        
@@ -78,7 +78,7 @@ args = [
 
 ```
 
-From here, you can either open up the config file in your favorite editor, or just run odd-box and open your browser going to http://localhost:1234 where you can configure odd-box thru its web-interface.
+From here, you can either open up the config file in your favorite editor, or just run odd-box and open your browser going to https://localhost:4343 where you can configure odd-box thru its web-interface.
 
 ## Documentation
 
