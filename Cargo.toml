@@ -78,6 +78,8 @@ include_dir = "0.7.4"
 mime_guess = "2.0.5"
 tokio-util = "0.7.12"
 urlencoding = "2.1"
+
+[target.'cfg(linux)'.dependencies]
 procfs = "0.17.0"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
@@ -93,8 +95,11 @@ serde_with = "3.12.0"
 #rsa = "0.9.6"
 # ===============================================================
 
+
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58.0", features = ["Win32","Win32_Foundation","Win32_System","Win32_System_Console","Win32_NetworkManagement_IpHelper"] }
+
 
 [profile.release]
 opt-level = 'z'     # Optimize for size
