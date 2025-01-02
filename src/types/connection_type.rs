@@ -1,44 +1,44 @@
 use serde::Serialize;
 
+use crate::{configuration::Backend, tcp_proxy::ReverseTcpProxyTarget};
 
-#[derive(Debug,Clone,Serialize)]
+
+#[derive(Debug,Clone,Serialize,Eq,PartialEq)]
 pub enum ConnectionType {
-    /// Full-TLS Terminated Proxy: The incoming connection uses TLS and is terminated. HTTP processing occurs,
-    /// and a new outgoing connection is established with re-encrypted TLS.
-    FullTlsTerminatedWithHttpReEncryptedOutgoingTls,
+    
+    /// Incoming connection is TLS and we terminated it, then established a clear text tunnel towards a specific backend
+    /// in which we just tunnel the original data to and from the client.
+    /// We can see all data going back and forth in unencrypted form.
+    TlsTerminatedWithOutgoingClearText(ReverseTcpProxyTarget,Backend),
 
-    /// Mixed Termination: The incoming connection uses TLS, is terminated, HTTP processing occurs,
-    /// and a plain (unencrypted) outgoing connection is established.
-    MixedTerminationWithPlainOutgoing,
+    /// Incoming connection is TLS and we terminated it, then established a new TLS connection towards a specific backend.
+    /// We can see all data going back and forth in unencrypted form.
+    TlsTerminatedWithOutgoingTLS(ReverseTcpProxyTarget,Backend),
 
-    /// TLS Terminated Proxy with End-to-End TLS: Incoming connection uses TLS and is terminated,
-    /// and a new TLS connection is established with the outgoing target.
-    TlsTerminatedWithReEncryptedOutgoingTls,
+    /// Incoming is tls which we terminated, and we also terminate http requests. as such, we do not have a specific tcp tunnel 
+    /// set up, but instead handle each http request in this tcp session separately. 
+    TlsTermination,
 
-    /// TLS Terminated Proxy: Incoming connection uses TLS, is terminated, and the outgoing connection is plain (unencrypted).
-    TlsTerminatedWithPlainOutgoing,
+    /// Incoming is TLS and we just looked at the SNI then established a raw TCP connection to some backend, blindly
+    /// forwarding the traffic between the client and backend.
+    /// We are unable to see any of the data in clear text.
+    TlsPassthru(ReverseTcpProxyTarget,Backend),
 
-    /// Opaque HTTP with TLS: The incoming connection is plaintext, HTTP is processed, and the outgoing
-    /// connection is encrypted with TLS.
-    HttpTerminatedWithOutgoingTls,
+    /// Incoming is clear text and we just established a raw TCP connection to some backend, forwarding data 
+    /// between client and backend without modifying it in any way.
+    HttpPassthru(ReverseTcpProxyTarget,Backend),
 
-    /// Plain HTTP Proxy: The incoming connection is plaintext, HTTP is processed, and the outgoing connection
-    /// is also plaintext.
-    HttpTerminatedWithPlainOutgoing,
+    /// Incoming is clear text. We terminate http requests here: no tcp tunnel is established to any backend for this connection;
+    /// that is handled per http requests received in the hyper/terminating proxy service.
+    HttpTermination,
 
-    /// Opaque TLS Forwarding: Incoming TLS traffic is not terminated. Data is forwarded as-is to the outgoing
-    /// target, preserving end-to-end encryption without decryption or re-encryption.
-    OpaqueTlsForwarding,
+    /// Incoming is clear text but we have set up a TLS tunnel towards a specific backend and just forward data between
+    /// client and backend. No per-http request routing-logic happening in here.
+    HttpWithOutgoingTLS(ReverseTcpProxyTarget,Backend),
 
-    /// Plain End-to-End Forwarding: No TLS or HTTP termination occurs. Data is forwarded in plaintext
-    /// from incoming to outgoing without modification.
-    PlainEndToEndForwarding,
+    /// Before we have detected enough information about the incoming tcp connection
+    PendingInit,
 
-    /// Opaque Incoming TLS Passthrough with Plain Outgoing: Incoming connection uses TLS but is not terminated,
-    /// and data is forwarded as plaintext to the outgoing connection.
-    OpaqueIncomingTlsPassthroughWithPlainOutgoing,
-
-    /// Opaque Incoming TLS Passthrough with Re-encrypted TLS: Incoming connection uses TLS but is not terminated,
-    /// and data is forwarded as opaque to an outgoing TLS connection.
-    OpaqueIncomingTlsPassthroughWithOutgoingTls,
+    /// Something is fishy
+    Invalid(String)
 }

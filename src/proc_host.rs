@@ -2,7 +2,7 @@ use crate::configuration::{LogFormat, LogLevel};
 use crate::global_state::GlobalState;
 use crate::http_proxy::ProcMessage;
 use crate::types::app_state::ProcState;
-use crate::types::odd_box_event::Event;
+use crate::types::odd_box_event::EventForWebsocketClients;
 use crate::types::proc_info::ProcId;
 use crate::types::site_status::{SiteStatusEvent, State};
 use std::collections::HashMap;
@@ -575,7 +575,7 @@ fn update_status(previous:&ProcState,x:&str,id:&ProcId,g:&Arc<GlobalState>,s:Pro
 
     if emit {
        
-        match g.global_broadcast_channel.send(Event::SiteStatusChange(SiteStatusEvent { 
+        match g.websockets_broadcast_channel.send(EventForWebsocketClients::SiteStatusChange(SiteStatusEvent { 
             host_name: x.to_string(), 
             state: State::from_procstate(&s),
             id: id.clone()

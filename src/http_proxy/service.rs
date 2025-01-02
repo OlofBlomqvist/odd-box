@@ -303,10 +303,6 @@ async fn handle_http_request(
         // over a non-encrypted channel. if so we will just redirect to https.
         let odd_box_url = configuration.odd_box_url.clone().unwrap_or("!".to_string());
         if req_host_name == odd_box_url || req_host_name == "localhost" || req_host_name == "oddbox.localhost" || req_host_name == "odd-box.localhost"  {
-            crate::proxy::mutate_tracked_connection(&state, &connection_key, |x|{
-                x.is_odd_box_admin_api_req = true;
-                x.outgoing_connection_is_tls = false;
-            });
             let p = configuration.tls_port.unwrap_or(4343);
             return Ok(
                 OddResponse::empty()
@@ -319,16 +315,16 @@ async fn handle_http_request(
         }
     }
     
-    tracing::trace!("Handling request from {client_ip:?} on hostname {req_host_name:?}");
+    //tracing::trace!("Handling request from {client_ip:?} on hostname {req_host_name:?}");
     
     // THIS SHOULD BE THE ONLY PLACE WE INCREMENT THE TERMINATION COUNTER
-    match state.app_state.statistics.connections_per_hostname.get_mut(&req_host_name) {
+    match state.app_state.statistics.lb_access_count_per_hostname.get_mut(&req_host_name) {
         Some(mut guard) => {
             let (_k,v) = guard.pair_mut();
             1 + v.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
         },
         None => {
-            state.app_state.statistics.connections_per_hostname.insert(req_host_name.clone(), std::sync::atomic::AtomicUsize::new(1));
+            state.app_state.statistics.lb_access_count_per_hostname.insert(req_host_name.clone(), std::sync::atomic::AtomicUsize::new(1));
             1
         }
     };
@@ -343,13 +339,7 @@ async fn handle_http_request(
     let dir_target = if peeked_target.is_some() { None } else { configuration.dir_server.iter().flatten().find_map(|x| {
         if x.host_name == req_host_name {
             match configuration.resolve_dir_server_configuration(x) {
-                Ok(r) => {
-                    crate::proxy::mutate_tracked_connection(&state, &connection_key, |x|{
-                        x.dir_server = Some(r.clone());
-                        x.outgoing_connection_is_tls = x.incoming_connection_uses_tls;
-                    });            
-                    Some(r)
-                },
+                Ok(r) => Some(r),
                 Err(e) => {
                     tracing::warn!("Failed to resolve dir server configuration: {e:?}");
                     None
@@ -397,7 +387,7 @@ async fn handle_http_request(
 
     let found_hosted_target = 
         if let Some(p) = peeked_target.as_ref().and_then(|x| x.hosted_target_config.clone()) {
-            tracing::trace!("Found peeked target for {req_host_name}");
+            //tracing::trace!("Found peeked target for {req_host_name}");
             Some(p)
         } else {
             if let Some(processes) = &configuration.hosted_process {
@@ -406,7 +396,7 @@ async fn handle_http_request(
                     || p.capture_subdomains.unwrap_or_default() 
                     && req_host_name.ends_with(&format!(".{}",p.host_name))
                 }) {
-                    tracing::trace!("Found hosted target for {req_host_name}");
+                    //tracing::trace!("Found hosted target for {req_host_name}");
                     Some(pp.clone())
                 } else {
                     None
@@ -469,9 +459,9 @@ async fn handle_http_request(
             if wait_count > 10 {
                 return Err(CustomError(format!("No active port found for {req_host_name}.")))
             } else {
-                let id: &crate::types::proc_info::ProcId = target_proc_cfg.get_id();
-                let name = target_proc_cfg.host_name.clone();
-                tracing::trace!("Attempting to find active port found for {req_host_name}... id: {id:?} - name: {name:?}");
+                // let id: &crate::types::proc_info::ProcId = target_proc_cfg.get_id();
+                // let name = target_proc_cfg.host_name.clone();
+                //tracing::trace!("Attempting to find active port found for {req_host_name}... id: {id:?} - name: {name:?}");
             }
             if let Some(info) = crate::PROC_THREAD_MAP.get(target_proc_cfg.get_id()) {
                 if info.pid.is_some() {
@@ -498,7 +488,8 @@ async fn handle_http_request(
         if original_path_and_query == "/" { original_path_and_query = ""}
 
 
-        let (parsed_host_name,subdomain) = {
+        // todo: we dont really handle subdomain passing here anymore
+        let (parsed_host_name,_subdomain) = {
             let forward_subdomains = target_proc_cfg.forward_subdomains.unwrap_or_default();
             let sub = get_subdomain(&req_host_name, &target_proc_cfg.host_name);
             if forward_subdomains {
@@ -511,12 +502,6 @@ async fn handle_http_request(
                 (Cow::Borrowed(&target_proc_cfg.host_name),sub)
             }
         };
-
-        let target_url = format!("{scheme}://{}:{}{}",
-            parsed_host_name,
-            port,
-            original_path_and_query
-        );
 
         let local_addr = if configuration.use_loopback_ip_for_procs.unwrap_or_default() {
             "127.0.0.1"
@@ -535,6 +520,9 @@ async fn handle_http_request(
         let target_cfg = target_proc_cfg.clone();
         let hints = target_cfg.hints.clone();
         let target = crate::http_proxy::Target::Proc(target_cfg.clone());
+        
+        // we do this just to increment the statistics counter
+        _ = target_cfg.next_backend(&state, crate::configuration::BackendFilter::Any).await;
 
         let backend = crate::configuration::Backend {
             hints: hints,
@@ -544,25 +532,9 @@ async fn handle_http_request(
             https: Some(enforce_https)
         };
 
-        crate::proxy::mutate_tracked_connection(&state, &connection_key, |x| {
-            x.backend = Some(backend.clone());
-            x.outgoing_connection_is_tls = enforce_https;
-            x.target = Some(ReverseTcpProxyTarget { 
-                proc_id : Some(target_cfg.get_id().clone()),
-                disable_tcp_tunnel_mode: false,
-                host_name: target_cfg.host_name.to_owned(),
-                capture_subdomains: target_cfg.capture_subdomains.unwrap_or_default(),
-                forward_wildcard: target_cfg.forward_subdomains.unwrap_or_default(),
-                hosted_target_config: Some(target_cfg),
-                remote_target_config: None,
-                backends: vec![backend.clone()],
-                is_hosted: true,
-                sub_domain: subdomain
-            });
-        });
-
         let result = 
             proxy(
+                &req_host_name,
                 &parsed_host_name,
                 is_https,
                 state.clone(),
@@ -572,12 +544,12 @@ async fn handle_http_request(
                 client_ip,
                 client,
                 h2_client,
-                &target_url,
                 enforce_https,
-                backend
+                backend,
+                &connection_key
             ).await;
 
-        map_result(&target_url,result).await
+        map_result(&skip_dns_for_local_target_url,result).await
     }
 
     else {
@@ -659,7 +631,8 @@ async fn perform_remote_forwarding(
    
     let scheme = if enforce_https { "https" } else { "http" }; 
     
-    let (resolved_host_name,subdomain) = {
+    // todo - we dont handle subdomain passing correctly here
+    let (resolved_host_name,_subdomain) = {
         let sub = get_subdomain(&req_host_name, &remote_target_config.host_name);
         if remote_target_config.forward_subdomains.unwrap_or_default() {
             if let Some(subdomain) = sub {
@@ -679,28 +652,12 @@ async fn perform_remote_forwarding(
         original_path_and_query
     );
 
-    crate::proxy::mutate_tracked_connection(&state, &connection_key, |x| {
-        
-        x.backend = Some(next_backend_target.clone());
-        x.outgoing_connection_is_tls = enforce_https;
-
-        x.target = Some(ReverseTcpProxyTarget { 
-            proc_id : None,
-            disable_tcp_tunnel_mode: false,
-            host_name: remote_target_config.host_name.to_owned(),
-            capture_subdomains: remote_target_config.capture_subdomains.unwrap_or_default(),
-            forward_wildcard: remote_target_config.forward_subdomains.unwrap_or_default(),
-            hosted_target_config: None,
-            remote_target_config: Some(remote_target_config.clone()),
-            backends: remote_target_config.backends.clone(),
-            is_hosted: true,
-            sub_domain: subdomain
-        });
-    });
+    //map_result(&target_url,Err(super::ProxyError::OddBoxError(String::from("meh")))).await
 
     //tracing::info!("Incoming request to '{}' for remote proxy target {target_url}",next_backend_target.address);
     let result = 
         proxy(
+            &req_host_name,
             &req_host_name,
             is_https,
             state.clone(),
@@ -710,9 +667,9 @@ async fn perform_remote_forwarding(
             client_ip,
             client,
             h2_client,
-            &target_url,
             next_backend_target.https.unwrap_or_default(),
-            next_backend_target
+            next_backend_target,
+            &connection_key
         ).await;
 
     map_result(&target_url,result).await

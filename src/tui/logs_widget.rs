@@ -11,6 +11,22 @@ use crate::types::tui_state::TuiState;
 use super::{wrap_string, Theme};
 
 
+fn trim_to_max_chars(s: &str, max_chars: usize) -> String {
+    let mut end = s.len(); 
+    for (idx, _) in s.char_indices().take(max_chars) {
+        end = idx;
+    }
+
+    // note : we CANNOT just do this directly without the indices 
+    // as we might end up on non-valid utf8 positions like being inside of 'å'
+    // which will then PANIC ...
+    if s.chars().count() > max_chars {
+        format!("{}..", &s[..end]) // <-- ie. this right here, CAN PANIC if using bad index even if inside of the string
+    } else {
+        s.to_string()
+    }
+}
+
 pub fn draw(
     f: &mut ratatui::Frame, 
     _global_state: Arc<GlobalState>,
@@ -21,7 +37,8 @@ pub fn draw(
 ) {
     
     let size = area.as_size();
-    if size.height < 10 || size.width < 10 {
+    if size.height < 10 || size.width < 80 {
+        f.render_widget(Paragraph::new("Please stop squeezing me.."),area);
         return
     }
 
@@ -61,11 +78,29 @@ pub fn draw(
         }   
     };
 
-    let thread_name_style = if is_dark_theme { Style::default().fg(Color::DarkGray) } else { Style::default().fg(Color::Black) };
-    let fg_s = if is_dark_theme { Style::default().fg(Color::White) } else { Style::default().fg(Color::Black) };
+    let thread_name_style = if is_dark_theme { 
+        Style::default().fg(Color::DarkGray) 
+    } else { 
+        Style::default().fg(Color::Black) 
+    };
+    let fg_s = if is_dark_theme { 
+        Style::default().fg(Color::White) 
+    } else { 
+        Style::default().fg(Color::Black) 
+    };
 
     
     let max_site_len = tui_state.site_rects.iter().map(|x|x.1.len()).max().unwrap_or(0);
+
+    //let mut odd = false;
+    
+    // let odd_row_bg = if is_dark_theme { Color::from_hsl(15.0, 10.0, 10.0) } else {
+    //     Color::Rgb(250,250,250)
+    // };
+
+    // let row_bg =  if is_dark_theme { Color::from_hsl(10.0, 10.0, 5.0) } else {
+    //     Color::Rgb(235,235,255)
+    // };
 
     let items: Vec<Line> = 
             buffer.logs.iter_mut().enumerate().flat_map(|(i, x)| {
@@ -96,64 +131,59 @@ pub fn draw(
                 (" -").into()
             };
 
-            x.msg = x.msg.trim().to_string();
+            x.msg = trim_to_max_chars(x.msg.trim(),2000);
 
-            let max_width = (max_msg_width as usize)
-                .saturating_sub(8)
+            let max_width = ((max_msg_width + 2) as usize)
                 .saturating_sub(nr_str.len() + lvl_str.len() + thread_str.len());
+            //odd = !odd;
             
-            if x.msg.len() > max_width {
-                wrap_string(x.msg.as_str(), max_width)
-                    .into_iter().enumerate().map(|(i, m)| {
-                        let level_span = if i == 0 {
-                            ratatui::text::Span::styled(lvl_str.clone(), s(level))
-                        } else {
-                            ratatui::text::Span::styled(
-                                Cow::from(" ".repeat(lvl_str.len() - 1)),
-                                Style::default(),
-                            )
-                        };
+            // let bg = if odd {
+            //     odd_row_bg
+            // } else {
+            //     row_bg
+            // };
 
-                        if i == 0 {
-                            Line::from(vec![
-                                ratatui::text::Span::styled(nr_str.to_string(), fg_s),
-                                level_span,
-                                ratatui::text::Span::styled(thread_str.to_string(), thread_name_style),
-                                ratatui::text::Span::styled(m.clone(), s(level)),
-                            ])
-                        } else {
-                            // we add 2 spaces in thread names 
-                            let padding = " ".repeat(lvl_str.len() + thread_str.len() - 2);
-                            Line::from(vec![
-                                ratatui::text::Span::styled(nr_str.to_string(), fg_s),
-                                ratatui::text::Span::styled(padding, Style::default()),
-                                ratatui::text::Span::styled("", Style::default()),
-                                ratatui::text::Span::styled("", Style::default()),
-                                ratatui::text::Span::styled(m.clone(), s(level)),
-                            ])
-                        }
             
-                       
-                    }).collect::<Vec<Line>>()
-            } else {
-                // ughhh
-                let padding = if x.src.len() > 0 && !x.src.ends_with(' ') {
-                    " "
-                } else {
-                    ""
-                };
-                let message = ratatui::text::Span::styled(
-                    format!("{}{padding}{}", &x.src, &x.msg),
-                    s(level),
-                );
+            let wrapped = wrap_string(&x.msg, max_width);
+    
+    
+            wrapped.into_iter().enumerate().map(|(i, m)| {
+
+                    let m = format!("{m}{}"," ".repeat(max_width-m.len()));
+
+                    let level_span = if i == 0 {
+                        ratatui::text::Span::styled(lvl_str.clone(), s(level))
+                    } else {
+                        ratatui::text::Span::styled(
+                            Cow::from(" ".repeat(lvl_str.len() - 1)),
+                            Style::default(),
+                        )
+                    };
+                    
+
+                    if i == 0 {
+                        Line::from(vec![
+                            ratatui::text::Span::styled(nr_str.to_string(), fg_s),
+                            level_span,
+                            ratatui::text::Span::styled(thread_str.to_string(), thread_name_style),
+                            ratatui::text::Span::styled(m.clone(), s(level)),
+                        ]) // .bg(bg) **looks a bit strange tbh
+                    } else {
+                        // we add 2 spaces in thread names 
+                        let padding = " ".repeat(lvl_str.len() + thread_str.len() - 2);
+                        Line::from(vec![
+                            ratatui::text::Span::styled(nr_str.to_string(), fg_s),
+                            ratatui::text::Span::styled(padding, Style::default()),
+                            ratatui::text::Span::styled("", Style::default()),
+                            ratatui::text::Span::styled("", Style::default()),
+                            ratatui::text::Span::styled(m.clone(), s(level)),
+                        ]) //.bg(bg) **looks a bit strange tbh
+                    }
+
+                    
         
-                vec![Line::from(vec![
-                    ratatui::text::Span::styled(nr_str, fg_s),
-                    ratatui::text::Span::styled(lvl_str, s(level)),
-                    ratatui::text::Span::styled(thread_str, thread_name_style),
-                    message,
-                ])]
-            }
+                    
+                }).collect::<Vec<Line>>()
         }).collect();
 
     let wrapped_line_count = items.len();
@@ -171,12 +201,7 @@ pub fn draw(
         return
     }
 
-    let display_rows = &items[start..end];
-
-
-    let clamped_items : Vec<Line> = display_rows.iter().map(|x| {
-        x.clone()
-    }).collect();
+    let clamped_items : Vec<Line> = items[start..end].to_vec();
 
     let paragraph = Paragraph::new(clamped_items);
 

@@ -320,7 +320,7 @@ impl ConfigWrapper {
                 .or_insert(1);
 
             if target.enable_lets_encrypt.unwrap_or(false) {
-                if !target.disable_tcp_tunnel_mode.unwrap_or(false) {
+                if !target.terminate_tls.unwrap_or(false) {
                     anyhow::bail!(format!("Invalid configuration for remote target '{}'. LetsEncrypt cannot be enabled when TCP tunnel mode is enabled.", target.host_name));
                 }
                 if target.capture_subdomains.unwrap_or_default() {
@@ -344,7 +344,7 @@ impl ConfigWrapper {
             }
 
             if process.enable_lets_encrypt.unwrap_or(false) {
-                if !process.disable_tcp_tunnel_mode.unwrap_or(false) {
+                if !process.terminate_tls.unwrap_or(false) {
                     anyhow::bail!(format!("Invalid configuration for hosted process '{}'. LetsEncrypt cannot be enabled when TCP tunnel mode is enabled.", process.host_name));
                 }
                 if process.capture_subdomains.unwrap_or_default() {
@@ -722,7 +722,7 @@ impl ConfigWrapper {
             excluded_from_start_all: proc.exclude_from_start_all.unwrap_or(false),
             proc_id: proc.get_id().clone(),
             active_port: proc.active_port,
-            disable_tcp_tunnel_mode: proc.disable_tcp_tunnel_mode,
+            terminate_tls: proc.terminate_tls,
             hints: proc.hints.clone(),
             host_name: proc.host_name.clone(),
             dir: proc.dir.clone(),

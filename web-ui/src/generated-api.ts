@@ -100,7 +100,6 @@ export interface FullyResolvedInProcessSiteConfig {
   bin: string;
   capture_subdomains?: boolean | null;
   dir?: string | null;
-  disable_tcp_tunnel_mode?: boolean | null;
   env_vars?: EnvVar[] | null;
   excluded_from_start_all: boolean;
   forward_subdomains?: boolean | null;
@@ -115,6 +114,7 @@ export interface FullyResolvedInProcessSiteConfig {
    */
   port?: number | null;
   proc_id: any;
+  terminate_tls?: boolean | null;
 }
 
 export enum Hint {
@@ -139,8 +139,6 @@ export interface InProcessSiteConfig {
   capture_subdomains?: boolean | null;
   /** Working directory for the process. If this is not set, the current working directory will be used. */
   dir?: string | null;
-  /** This is mostly useful in case the target uses SNI sniffing/routing */
-  disable_tcp_tunnel_mode?: boolean | null;
   /**
    * If you want to use lets-encrypt for generating certificates automatically for this site.
    * Defaults to false. This feature will disable tcp tunnel mode.
@@ -167,6 +165,8 @@ export interface InProcessSiteConfig {
   hints?: Hint[] | null;
   host_name: string;
   https?: boolean | null;
+  /** Defaults to true. */
+  keep_original_host_header?: boolean | null;
   log_format?: LogFormat | null;
   log_level?: LogLevel | null;
   /**
@@ -175,6 +175,13 @@ export interface InProcessSiteConfig {
    * @min 0
    */
   port?: number | null;
+  terminate_http?: boolean | null;
+  /**
+   * This is mostly useful in case the target uses SNI sniffing/routing.
+   * It means you want to use level 7 mode instead of level 4, thus always terminating connections.
+   * Previously this setting was called 'disable_tcp_tunnel_mode'
+   */
+  terminate_tls?: boolean | null;
 }
 
 export interface KvP {
@@ -294,6 +301,8 @@ export interface OddBoxV3Config {
    * @min 0
    */
   tls_port?: number | null;
+  /** Uses 127.0.0.1 instead of localhost when proxying to locally hosted processes. */
+  use_loopback_ip_for_procs?: boolean | null;
   /** The schema version - you do not normally need to set this, it is set automatically when you save the configuration. */
   version: string;
 }
@@ -313,8 +322,6 @@ export interface RemoteSiteConfig {
   backends: Backend[];
   /** If you wish to use wildcard routing for any subdomain under the 'host_name' */
   capture_subdomains?: boolean | null;
-  /** This is mostly useful in case the target uses SNI sniffing/routing */
-  disable_tcp_tunnel_mode?: boolean | null;
   /**
    * If you want to use lets-encrypt for generating certificates automatically for this site.
    * Defaults to false. This feature will disable tcp tunnel mode.
@@ -333,6 +340,17 @@ export interface RemoteSiteConfig {
    * rather than the host name of the backends. Defaults to false.
    */
   keep_original_host_header?: boolean | null;
+  /**
+   * Enforce the termination of http requests.
+   * Only enable if you know exactly why you want this as it can negatively affect performance.
+   */
+  terminate_http?: boolean | null;
+  /**
+   * This is mostly useful in case the target uses SNI sniffing/routing.
+   * It means you want to use level 7 mode instead of level 4, thus always terminating connections.
+   * Previously this setting was called 'disable_tcp_tunnel_mode'
+   */
+  terminate_tls?: boolean | null;
 }
 
 export interface ReqRule {
@@ -647,7 +665,7 @@ export class HttpClient<SecurityDataType = unknown> {
 
 /**
  * @title ODD-BOX ADMIN-API 🤯
- * @version 0.1.10
+ * @version 0.1.11-alpha2
  * @license
  * @externalDocs https://github.com/OlofBlomqvist/odd-box
  * @contact Olof Blomqvist <olof@twnet.se>

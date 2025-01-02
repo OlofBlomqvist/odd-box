@@ -176,7 +176,6 @@ fn true_option() -> Option<bool> {
     Some(true)
 }
 
-
 // LEGACY ---> V1
 impl TryFrom<crate::configuration::legacy::OddBoxLegacyConfig> for crate::configuration::v1::OddBoxV1Config {
     

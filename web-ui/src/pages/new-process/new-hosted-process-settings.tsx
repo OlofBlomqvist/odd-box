@@ -19,7 +19,7 @@ const NewHostedProcessSettings = () => {
   const [https, setHttps] = useState(true);
   const [autoStart, setAutoStart] = useState(false);
   const [captureSubdomains, setCaptureSubdomains] = useState(false);
-  const [disableTcpTunnelMode, setDisableTcpTunnelMode] = useState(false);
+  const [terminateTLS, setTerminateTLS] = useState(false);
   const [forwardSubdomains, setForwardSubdomains] = useState(false);
   const [H2hints, setH2Hints] = useState<Array<Hint>>([]);
   const [logFormat, setLogFormat] = useState<LogFormat>(LogFormat.Dotnet);
@@ -37,7 +37,7 @@ const NewHostedProcessSettings = () => {
         https,
         auto_start: autoStart,
         capture_subdomains: captureSubdomains,
-        disable_tcp_tunnel_mode: disableTcpTunnelMode,
+        terminate_tls: terminateTLS,
         forward_subdomains: forwardSubdomains,
         hints: H2hints,
         log_format: logFormat,
@@ -158,18 +158,18 @@ const NewHostedProcessSettings = () => {
 
         <SettingsItem
           rowOnly
-          labelFor="disable_tcp_tunnel"
-          title="Disable TCP tunnel mode"
-          subTitle={SettingDescriptions["disable_tcp_tunnel"]}
+          labelFor="terminate_tls"
+          title="Always terminate TLS"
+          subTitle={SettingDescriptions["terminate_tls"]}
         >
           <Input
             type="checkbox"
-            checked={disableTcpTunnelMode}
+            checked={terminateTLS}
             onChange={(e) => {
-              setDisableTcpTunnelMode(e.target.checked);
+              setTerminateTLS(e.target.checked);
             }}
-            id="disable_tcp_tunnel"
-            name="disable_tcp_tunnel"
+            id="terminate_tls"
+            name="terminate_tls"
             style={{ width: "20px", height: "20px" }}
           />
         </SettingsItem>

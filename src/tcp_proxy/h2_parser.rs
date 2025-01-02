@@ -1,479 +1,292 @@
-use bytes::{BytesMut, Buf};
+/*
+
+    TODO: Might want to move this to a separate crate at some point... its getting out of hand..
+
+*/
+
+use bytes::{Buf, BytesMut};
 use futures::stream::Stream;
-use std::collections::HashMap;
-use std::task::{Context, Poll, Waker};
-use std::pin::Pin;
 use hpack_patched::decoder::Decoder;
+use serde::Serialize;
+use std::{
+    collections::HashMap, fmt, pin::Pin, task::{Context, Poll, Waker}
+};
 
+#[derive(Debug, Clone, Copy,Eq,PartialEq,Serialize)]
+pub enum H2FrameDirection {
+    Incoming,
+    Outgoing,
+}
 
+/// Main observer struct:  
+/// Used for decoding http2 frames in both directions of an observed stream.    
 pub struct H2Observer {
     connection_window_size: u32,
     incoming: H2Buffer,
     outgoing: H2Buffer,
-    hpack_decoder: Decoder<'static>,
+    hpack_decoder_incoming: Decoder<'static>, // Separate decoder for incoming.. just to be sure..
+    hpack_decoder_outgoing: Decoder<'static>, // Separate decoder for outgoing.. just to be sure.. 
+    
     streams: HashMap<u32, StreamState>,
-}
-impl std::fmt::Debug for H2Observer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("H2Observer")
-        .field("incoming", &self.incoming)
-        .field("outgoing", &self.outgoing)
-        .field("streams", &self.streams).finish()
-    }
+
+    /// Partial HEADERS that haven’t seen END_HEADERS.  
+    /// We track *one* partial state at a time with its direction.  
+    // actually... not sure if there can possibly be more than one at a time but this seems to work for now
+    partial_headers: Option<PartialHeadersState>, 
+    partial_headers_direction: Option<H2FrameDirection>,
 }
 
-// TODO - Should probably make it so that we can rip out the bytes as we transform them in to events
-//        instead of having to keep them in memory
-impl H2Observer {
-    pub fn new() -> Self {
-        H2Observer {
-            connection_window_size: 65535,
-            incoming: H2Buffer::new(),
-            outgoing: H2Buffer::new(),
-            hpack_decoder: Decoder::new(),
-            streams: HashMap::new(),
-        }
-    }
-
-    pub fn write_incoming(&mut self, data: &[u8]) {
-        self.incoming.write(data);
-    }
-    #[allow(dead_code)]
-    pub fn write_outgoing(&mut self, data: &[u8]) {
-        self.outgoing.write(data);
-    }
-    pub fn get_all_events(&mut self) -> Vec<H2Event> {
-        let mut events = Vec::new();
-        while let Some(event) = self.process_frames(H2FrameDirection::Incoming) {
-            events.push(event);
-        }
-        while let Some(event) = self.process_frames(H2FrameDirection::Outgoing) {
-            events.push(event);
-        }
-        tracing::trace!("Streams: {:?}", self.streams);
-        events
-    }
-}
-
+/// Stores partial HEADERS that we’re still collecting (HEADERS + CONTINUATION).
 #[derive(Debug)]
-#[allow(dead_code)]
+struct PartialHeadersState {
+    stream_id: u32,
+    flags: u8,
+    /// Combined HPACK block so far
+    header_block: Vec<u8>,
+    /// True if we already parsed PADDED/PRIORITY bits on the HEADERS frame
+    #[allow(unused)]
+    initial_parsed: bool,
+}
+
+/// Simplified HTTP request structure (for `IncomingRequest` / `OutgoingRequest`).
+#[derive(Debug,Clone,Serialize)]
+pub struct HttpRequest {
+    pub stream_id: u32,
+    pub method: String,
+    pub path: String,
+    pub headers: HashMap<String, String>,
+    #[serde(serialize_with = "crate::serde_with::serialize_bytes_as_string")]
+    pub body: Vec<u8>,
+}
+
+impl std::fmt::Display for H2Event {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+
+        match self {
+            H2Event::IncomingRequest(http_request) => {
+                let body_str = match std::str::from_utf8(&http_request.body) {
+                    Ok(s) => format!("\"{}\"", s),
+                    Err(_) => format!("{:?}", &http_request.body)
+                };
+                write!(f,
+                    "IncomingRequest {{ stream_id: {}, method: \"{}\", path: \"{}\", headers: {:?}, body: {} }}",
+                    http_request.stream_id, http_request.method, http_request.path, http_request.headers, body_str
+                )
+            },
+            H2Event::OutgoingRequest(http_request) => {
+                let body_str = match std::str::from_utf8(&http_request.body) {
+                    Ok(s) => format!("\"{}\"", s),
+                    Err(_) => format!("{:?}", &http_request.body)
+                };
+                write!(f,
+                    "OutgoingRequest {{ stream_id: {}, method: \"{}\", path: \"{}\", headers: {:?}, body: {} }}",
+                    http_request.stream_id, http_request.method, http_request.path, http_request.headers, body_str
+                )
+            },
+            H2Event::OutgoingResponse(h2_response) => {
+                let body_str = match std::str::from_utf8(&h2_response.body) {
+                    Ok(s) => format!("\"{}\"", s),
+                    Err(_) => format!("{:?}", &h2_response.body)
+                };
+                write!(f,
+                    "OutgoingResponse {{ stream_id: {}, headers: {:?}, status: {:?}, body: {} }}",
+                    h2_response.stream_id, h2_response.headers, h2_response.status, body_str
+                )
+            },
+            H2Event::PartialOutgoingResponse(h2_response) => {
+                let body_str = match std::str::from_utf8(&h2_response.body) {
+                    Ok(s) => format!("\"{}\"", s),
+                    Err(_) => format!("{:?}", &h2_response.body)
+                };
+                write!(f,
+                    "PartialOutgoingResponse {{ stream_id: {}, headers: {:?}, status: {:?}, body: {} }}",
+                    h2_response.stream_id, h2_response.headers, h2_response.status, body_str
+                )
+            },
+            H2Event::Data { stream_id, data, direction, end_stream } => {
+                let data_str = match std::str::from_utf8(&data) {
+                    Ok(s) => format!("\"{}\"", s),
+                    Err(_) => format!("{:?}", &data)
+                };
+                write!(f,
+                    "Data {{ stream_id: {}, direction: {:?}, end_stream: {:?}, data: {} }}",
+                    stream_id, direction, end_stream, data_str
+                )
+            },
+            x => write!(f,"{x:?}")
+        }
+        
+    }
+}
+
+/// Minimal HTTP/2 Response structure for the outgoing direction.
+#[derive(Debug,Clone,Serialize)]
+pub struct H2Response {
+    pub stream_id: u32,
+    pub status: String,
+    pub headers: HashMap<String, String>,
+    #[serde(serialize_with = "crate::serde_with::serialize_bytes_as_string")]
+    pub body: Vec<u8>,
+}
+
+/// Events we can produce after decoding frames..
+#[derive(Debug,Clone,Serialize)]
 pub enum H2Event {
+    /// Received HEADERS with `:method` => we interpret it as an HTTP/2 request.
+    IncomingRequest(HttpRequest),
+
+    /// Sent HEADERS with `:method` => treat as an *outgoing* request.
+    OutgoingRequest(HttpRequest),
+
+    /// Sent HEADERS with `:status` => treat as a response from us.
+    OutgoingResponse(H2Response),
+
+    PartialOutgoingResponse(H2Response),
+
+    OutgoingHeaders {
+        stream_id: u32,
+        headers: HashMap<String, String>,
+    },
+
+    IncomingHeaders {
+        stream_id: u32,
+        headers: HashMap<String, String>,
+    },
+
+    Data {
+        stream_id: u32,
+        #[serde(serialize_with = "crate::serde_with::serialize_bytes_as_string")]
+        data: Vec<u8>,
+        direction: H2FrameDirection,
+        end_stream: bool,
+    },
+
     Priority {
         stream_id: u32,
         exclusive: bool,
         stream_dependency: u32,
         weight: u8,
     },
+
     GoAway {
         last_stream_id: u32,
         error_code: u32,
+        #[serde(serialize_with = "crate::serde_with::serialize_bytes_as_string")]
         debug_data: Vec<u8>,
     },
+
     WindowUpdate {
         direction: H2FrameDirection,
         stream_id: u32,
         window_size_increment: u32,
     },
-    Continuation {
-        stream_id: u32,
-        flags: u8,
-        header_block_fragment: Vec<u8>,
-    },
-    Unknown(H2Frame),
-    IncomingRequest(HttpRequest),
-    Data {
-        stream_id: u32,
-        data: Vec<u8>,
-        direction: H2FrameDirection,
-        end_stream: bool,
-    },
+
     Settings {
         direction: H2FrameDirection,
         flags: u8,
-        settings: Vec<(u16, u32)>,
+        settings: Vec<DecodedSettings>
     },
+
     Ping {
         direction: H2FrameDirection,
         flags: u8,
         opaque_data: [u8; 8],
     },
+
     PushPromise {
         stream_id: u32,
         promised_stream_id: u32,
         header_block_fragment: Vec<u8>,
     },
+
+    Unknown(H2Frame),
 }
 
-
-#[derive(Debug, Clone, Copy)]
-pub enum H2FrameDirection {
-    Incoming,
-    Outgoing,
+/// Represents an individual HTTP/2 Setting.
+#[derive(Debug, Clone, PartialEq, Eq,Serialize)]
+pub struct DecodedSettings {
+    pub identifier: SettingIdentifier,
+    pub value: u32,
 }
 
-impl Stream for H2Observer {
-    type Item = H2Event;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        tracing::trace!("poll_next called..");
-        let this = self.get_mut();
-
-        if let Some(event) = this.process_frames(H2FrameDirection::Incoming) {
-            tracing::trace!("returning event: {:?}", event);
-            return Poll::Ready(Some(event));
-        }
-
-        if let Some(event) = this.process_frames(H2FrameDirection::Outgoing) {
-            tracing::trace!("returning event: {:?}", event);
-            return Poll::Ready(Some(event));
-        }
-
-        tracing::trace!("no frames available..");
-
-        this.incoming.register_waker(cx.waker());
-        this.outgoing.register_waker(cx.waker());
-
-        Poll::Pending
+impl fmt::Display for DecodedSettings {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.identifier, self.value)
     }
 }
 
-fn vec_to_string(vec: Vec<u8>) -> String {
-    String::from_utf8(vec).unwrap_or_else(|_| {
-        // todo: handle invalid UTF-8 ??
-        format!("failed to convert to string..")
-    })
+/// Represents known HTTP/2 Settings identifiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[repr(u16)]
+pub enum SettingIdentifier {
+    HeaderTableSize = 0x1,
+    EnablePush = 0x2,
+    MaxConcurrentStreams = 0x3,
+    InitialWindowSize = 0x4,
+    MaxFrameSize = 0x5,
+    MaxHeaderListSize = 0x6,
+    /// SETTINGS_ENABLE_CONNECT_PROTOCOL (0x8) - from RFC 8441
+    EnableConnectProtocol = 0x8,
+    /// Unknown (or future settings)
+    Unknown(u16),
 }
-    
-impl H2Observer {
-    /// Process frames from a buffer (incoming or outgoing)
-    fn process_frames(&mut self, direction: H2FrameDirection) -> Option<H2Event> {
-        while let Some(frame) = {
-            let buffer = if let H2FrameDirection::Incoming = direction {
-                &mut self.incoming
-            } else {
-                &mut self.outgoing
-            };
-            buffer.read_next_frame()
-        } {
-            tracing::trace!("processing frame: {:?} in direction: {direction:?}", frame);
-            match frame {
-                H2Frame::PushPromise { stream_id, promised_stream_id, header_block_fragment } => {
-                    tracing::trace!(
-                        "Received PUSH_PROMISE: stream_id={}, promised_stream_id={}",
-                        stream_id,
-                        promised_stream_id
-                    );
-                    return Some(H2Event::PushPromise {
-                        stream_id,
-                        promised_stream_id,
-                        header_block_fragment,
-                    });
-                }
-                H2Frame::RstStream { stream_id, error_code } => {
-                    tracing::trace!(
-                        "Received RST_STREAM: stream_id={}, error_code={}",
-                        stream_id,
-                        error_code
-                    );
-                    // TODO: Handle the RST_STREAM frame instead of sending UNKNOWN!
-                    return Some(H2Event::Unknown(frame));
-                }
-                H2Frame::Headers { stream_id, flags, payload } => {
-                    let end_headers = flags & 0x4 != 0;
-                    let end_stream = flags & 0x1 != 0;
-
-                    let state = self.streams.entry(stream_id).or_insert_with(StreamState::new);
-
-                    state.header_blocks.extend_from_slice(&payload);
-
-                    if end_headers {
-                        // Decode headers
-                        let headers = match self.hpack_decoder.decode(&state.header_blocks) {
-                            Ok(hdrs) => hdrs,
-                            Err(e) => {
-                                tracing::warn!("HPACK decoding error: {:?}", e);
-                                continue;
-                            }
-                        };
-
-                    
-
-                        // Convert headers to HashMap
-                        let headers_map = headers
-                            .into_iter()
-                            .map(|(k, v)| (vec_to_string(k), vec_to_string(v)))
-                            .collect::<HashMap<String, String>>();
-
-                        state.headers = Some(headers_map.clone());
-                        state.header_blocks.clear();
-
-                        // Determine if this is a regular request or a continuous data stream
-                        if Self::is_continuous_stream(&headers_map) {
-                            state.is_continuous_stream = true;
-                        }
-                    }
-
-                    if end_stream && state.is_request_complete() {
-                        if state.is_continuous_stream {
-                            // For continuous streams, we may not emit an event yet
-                        } else {
-                            // Assemble the request
-                            let request = state.to_request(stream_id);
-                            self.streams.remove(&stream_id);
-
-                            return Some(H2Event::IncomingRequest(request));
-                        }
-                    }
-                }
-                H2Frame::Data { stream_id, flags, payload } => {
-                    let end_stream = flags & 0x1 != 0;
-                    let state = self.streams.entry(stream_id).or_insert_with(StreamState::new);
-
-                    // Always collect raw data
-                    match direction {
-                        H2FrameDirection::Incoming => {
-                            state.incoming_data.extend_from_slice(&payload);
-                        }
-                        H2FrameDirection::Outgoing => {
-                            state.outgoing_data.extend_from_slice(&payload);
-                        }
-                    }
-
-                    // For regular requests, collect body data
-                    if !state.is_continuous_stream {
-                        state.body.extend_from_slice(&payload);
-
-                        if end_stream && state.is_request_complete() {
-                            // Assemble the request
-                            let request = state.to_request(stream_id);
-                            self.streams.remove(&stream_id);
-
-                            return Some(H2Event::IncomingRequest(request));
-                        }
-                    }
-
-                    return Some(H2Event::Data {
-                        stream_id,
-                        data: payload,
-                        direction,
-                        end_stream,
-                    });
-                }
-                H2Frame::Settings { flags, settings } => {
-                    return Some(H2Event::Settings {
-                        direction,
-                        flags,
-                        settings,
-                    });
-                }
-                H2Frame::Ping { flags, opaque_data } => {
-                    return Some(H2Event::Ping {
-                        direction,
-                        flags,
-                        opaque_data,
-                    });
-                }
-                H2Frame::WindowUpdate { stream_id, window_size_increment } => {
-                    tracing::trace!(
-                        "Received WINDOW_UPDATE: stream_id={}, window_size_increment={}",
-                        stream_id,
-                        window_size_increment
-                    );
-    
-                    if window_size_increment == 0 {
-                        tracing::warn!(
-                            "Received WINDOW_UPDATE with window_size_increment=0, which is a protocol error... i think.."
-                        );
-                        continue;
-                    }
-    
-                    if stream_id == 0 {
-                        // Update connection-level flow control window
-                        self.connection_window_size = self
-                            .connection_window_size
-                            .checked_add(window_size_increment)
-                            .expect("Connection flow control window size overflow");
-                    } else {
-                        // Update stream-level flow control window
-                        let state = self.streams.entry(stream_id).or_insert_with(StreamState::new);
-                        state.stream_window_size = state
-                            .stream_window_size
-                            .checked_add(window_size_increment)
-                            .expect("Stream flow control window size overflow");
-                    }
-    
-                    return Some(H2Event::WindowUpdate {
-                        direction,
-                        stream_id,
-                        window_size_increment,
-                    });
-                }
-                H2Frame::Goaway { last_stream_id, error_code, debug_data } => {
-                    tracing::trace!(
-                        "Received GOAWAY: last_stream_id={}, error_code={}, debug_data={:?}",
-                        last_stream_id,
-                        error_code,
-                        String::from_utf8_lossy(&debug_data)
-                    );
-                    return Some(H2Event::GoAway { last_stream_id, error_code, debug_data  });
-                }
-                H2Frame::Unknown { stream_id, flags, payload:_, frame_type } => {
-                    tracing::warn!(
-                        "Received unknown frame type: {:#x}, stream_id={}, flags={:#x}",
-                        frame_type,
-                        stream_id,
-                        flags
-                    );
-                    return Some(H2Event::Unknown(frame));
-                }
-                H2Frame::Continuation { stream_id, flags, header_block_fragment } => {
-                    tracing::trace!("Received CONTINUATION: stream_id={}, flags={:#x}", stream_id, flags);
-                    return Some(H2Event::Continuation { stream_id, flags, header_block_fragment });
-                }
-                H2Frame::Priority { stream_id, exclusive, stream_dependency, weight } => {
-                    tracing::trace!("Received PRIORITY: stream_id={}, exclusive={}, stream_dependency={}, weight={}", stream_id, exclusive, stream_dependency, weight);
-                    return Some(H2Event::Priority { stream_id, exclusive, stream_dependency, weight })
-                }
-            }
-        }
-        None
-    }
-
-    // todo: not sure this is correct..
-    fn is_continuous_stream(headers: &HashMap<String, String>) -> bool {
-        // Treat streams as continuous unless certain they're regular requests.. ?
-        if let Some(method) = headers.get(":method") {
-            tracing::trace!("method: {}", method);
-            let regular_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
-            if regular_methods.contains(&method.as_str()) {
-                return false;
-            }
-        }
-        tracing::trace!("continuous stream detected!");
-        true
-    }
-
-}
-
-#[derive(Debug)]
-struct StreamState {
-    headers: Option<HashMap<String, String>>,
-    header_blocks: Vec<u8>,
-    body: Vec<u8>,
-    is_continuous_stream: bool,
-    incoming_data: Vec<u8>,
-    outgoing_data: Vec<u8>,
-    stream_window_size: u32
-}
-
-impl StreamState {
-    fn new() -> Self {
-        StreamState {
-            stream_window_size: 65535,
-            headers: None,
-            header_blocks: Vec::new(),
-            body: Vec::new(),
-            is_continuous_stream: false,
-            incoming_data: Vec::new(),
-            outgoing_data: Vec::new(),
+impl SettingIdentifier {
+    /// Converts a `u16` identifier into a `SettingIdentifier` enum variant.
+    pub fn from_u16(id: u16) -> Self {
+        match id {
+            0x1 => SettingIdentifier::HeaderTableSize,
+            0x2 => SettingIdentifier::EnablePush,
+            0x3 => SettingIdentifier::MaxConcurrentStreams,
+            0x4 => SettingIdentifier::InitialWindowSize,
+            0x5 => SettingIdentifier::MaxFrameSize,
+            0x6 => SettingIdentifier::MaxHeaderListSize,
+            0x8 => SettingIdentifier::EnableConnectProtocol,
+            other => SettingIdentifier::Unknown(other),
         }
     }
-
-    fn is_request_complete(&self) -> bool {
-        self.headers.is_some()
+}
+impl fmt::Display for SettingIdentifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            SettingIdentifier::HeaderTableSize => "Header Table Size",
+            SettingIdentifier::EnablePush => "Enable Push",
+            SettingIdentifier::MaxConcurrentStreams => "Max Concurrent Streams",
+            SettingIdentifier::InitialWindowSize => "Initial Window Size",
+            SettingIdentifier::MaxFrameSize => "Max Frame Size",
+            SettingIdentifier::MaxHeaderListSize => "Max Header List Size",
+            SettingIdentifier::EnableConnectProtocol => "Enable CONNECT Protocol",
+            SettingIdentifier::Unknown(id) => return write!(f, "Unknown({})", id),
+        };
+        write!(f, "{}", name)
     }
-
-    fn to_request(&self, stream_id: u32) -> HttpRequest {
-        let headers = self.headers.clone().unwrap_or_default();
-        let method = headers
-            .get(":method")
-            .cloned()
-            .unwrap_or_else(|| "GET".to_string());
-        let path = headers
-            .get(":path")
-            .cloned()
-            .unwrap_or_else(|| "/".to_string());
-
-        HttpRequest {
-            stream_id,
-            method,
-            path,
-            headers,
-            body: self.body.clone(),
+}
+impl H2Event {
+    /// None means this is for the http2 session as a whole, for example Settings flags, ping, goaway etc.
+    /// in which case we can just attach it to a specific TCP connection key.
+    pub fn stream_id(&self) -> Option<u32> {
+        match self {
+            H2Event::IncomingRequest(http_request) => Some(http_request.stream_id.clone()),
+            H2Event::OutgoingRequest(http_request) =>Some(http_request.stream_id.clone()),
+            H2Event::OutgoingResponse(h2_response) => Some(h2_response.stream_id.clone()),
+            H2Event::PartialOutgoingResponse(h2_response) => Some(h2_response.stream_id.clone()),
+            H2Event::OutgoingHeaders { stream_id, headers:_ } => Some(stream_id.clone()),
+            H2Event::IncomingHeaders { stream_id, headers:_ } =>Some(stream_id.clone()),
+            H2Event::Data { stream_id, data:_, direction:_, end_stream:_ } => Some(stream_id.clone()),
+            H2Event::Priority { stream_id, exclusive:_, stream_dependency:_, weight:_ } => Some(stream_id.clone()),
+            H2Event::GoAway { last_stream_id:_, error_code:_, debug_data:_ } => None,
+            H2Event::WindowUpdate { direction:_, stream_id, window_size_increment:_ } => Some(stream_id.clone()),
+            H2Event::Settings { direction:_, flags:_, settings:_ } => None,
+            H2Event::Ping { direction:_, flags:_, opaque_data:_ } => None,
+            H2Event::PushPromise { stream_id, promised_stream_id:_, header_block_fragment:_ } => Some(stream_id.clone()),
+            H2Event::Unknown(_h2_frame) => None
         }
     }
 }
 
-#[derive(Debug)]
-struct H2Buffer {
-    buffer: BytesMut,
-    preface_consumed: bool,
-    waker: Option<Waker>,
-}
-
-impl H2Buffer {
-    pub fn new() -> Self {
-        H2Buffer {
-            buffer: BytesMut::with_capacity(4096),
-            waker: None,
-            preface_consumed: false, 
-        }
-    }
-    fn consume_preface(&mut self) -> bool {
-        const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
-        if self.buffer.len() < PREFACE.len() {
-            // Not enough data yet
-            return false;
-        }
-
-        if &self.buffer[..PREFACE.len()] == PREFACE {
-            self.buffer.advance(PREFACE.len());
-            self.preface_consumed = true;
-            tracing::trace!("Connection preface consumed.");
-            true
-        } else {
-            // Invalid preface.. not sure what to do here if anything..
-            tracing::warn!("Invalid connection preface.");
-            self.buffer.advance(self.buffer.len());
-            false
-        }
-    }
-    
-    pub fn read_next_frame(&mut self) -> Option<H2Frame> {
-        if !self.preface_consumed {
-            if !self.consume_preface() {
-                return None; // Not enough data to consume preface
-            }
-        }        
-        parse_frame(&mut self.buffer)
-    }
-
-    pub fn write(&mut self, data: &[u8]) {
-        self.buffer.extend_from_slice(data);
-        if let Some(waker) = self.waker.take() {
-            waker.wake();
-        }
-    }
-
-    pub fn register_waker(&mut self, waker: &Waker) {
-        if self.waker.is_none() || !self.waker.as_ref().unwrap().will_wake(waker) {
-            self.waker = Some(waker.clone());
-        }
-    }
-}
-
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct HttpRequest {
-    pub stream_id: u32,
-    pub method: String,
-    pub path: String,
-    pub headers: HashMap<String, String>,
-    pub body: Vec<u8>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug)]
+/// Lower-level representation of a frame.
+/// Most of these will not be constructed as we do inline parsing and just go straight to a h2event.
+/// Leaving here since im thinking it would be nice to parse in to these even if just using as intermediate representations..
+#[derive(Debug,Clone,Serialize)]
 pub enum H2Frame {
     Data {
         stream_id: u32,
@@ -523,286 +336,783 @@ pub enum H2Frame {
         header_block_fragment: Vec<u8>,
     },
     Unknown {
+        frame_type: u8,
         stream_id: u32,
         flags: u8,
         payload: Vec<u8>,
-        frame_type: u8,
     },
 }
 
-fn parse_frame(buffer: &mut BytesMut) -> Option<H2Frame> {
+impl Default for H2Observer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-
-    // HTTP/2 frame header is 9 bytes
-    if buffer.len() < 9 {
-        return None; // Not enough data
+impl H2Observer {
+    pub fn new() -> Self {
+        H2Observer {
+            connection_window_size: 65535,
+            // For the incoming buffer, we expect the “PRI * HTTP/2.0” preface
+            incoming: H2Buffer::new(true),
+            // For the outgoing buffer, we don’t expect to see any preface
+            outgoing: H2Buffer::new(false),
+            hpack_decoder_incoming: Decoder::new(),
+            hpack_decoder_outgoing: Decoder::new(),
+            streams: HashMap::new(),
+            partial_headers: None,
+            partial_headers_direction: None,
+        }
     }
 
-    // Frame Header:
-    // Length (24 bits)
-    // Type (8 bits)
-    // Flags (8 bits)
-    // Reserved (1 bit) + Stream Identifier (31 bits)
-
-    let length = ((buffer[0] as u32) << 16)
-        | ((buffer[1] as u32) << 8)
-        | (buffer[2] as u32);
-    let frame_type = buffer[3];
-    let flags = buffer[4];
-    let stream_id = ((buffer[5] as u32 & 0x7F) << 24)
-        | ((buffer[6] as u32) << 16)
-        | ((buffer[7] as u32) << 8)
-        | (buffer[8] as u32);
-
-
-    let total_length = 9 + length as usize;
-    if buffer.len() < total_length {
-        return None; // Not enough data for the payload
+    pub fn write_incoming(&mut self, data: &[u8]) {
+        self.incoming.write(data);
     }
 
-    // Extract the payload
-    let payload = buffer[9..total_length].to_vec();
+    pub fn write_outgoing(&mut self, data: &[u8]) {
+        self.outgoing.write(data);
+    }
 
-    let frame = match frame_type {
-        0x0 => Some(H2Frame::Data {
-            stream_id,
-            flags,
-            payload,
-        }),
-        0x1 => {
-            
-            // HEADERS frame
-            let mut payload_buf = &payload[..];
-            let mut header_block_fragment = Vec::new();
-            let mut pad_length = 0;
-    
-            // Handle PADDED flag
-            if flags & 0x8 != 0 {
-                if payload_buf.len() < 1 {
-                    return None; // Not enough data
-                }
-                pad_length = payload_buf[0] as usize;
-                payload_buf = &payload_buf[1..];
-            }
+    pub fn get_all_events(&mut self) -> Vec<H2Event> {
+        // .. perhaps h2event should have been directional instead of only containing the direction :/
+        //    this means our caller is gonna have to match on the internal event for now..
+        let mut evs = Vec::new();
+        while let Some(e) = self.poll_one_frame(H2FrameDirection::Incoming) {
+            evs.push(e);
+        }
+        while let Some(e) = self.poll_one_frame(H2FrameDirection::Outgoing) {
+            evs.push(e);
+        }
+        evs
+    }
 
-            // Handle PRIORITY flag
-            if flags & 0x20 != 0 {
-                if payload_buf.len() < 5 {
-                    return None; // Not enough data
-                }
-                // Extract priority fields
-                let _exclusive = (payload_buf[0] & 0x80) != 0;
-                let _stream_dependency = ((payload_buf[0] as u32 & 0x7F) << 24)
-                    | ((payload_buf[1] as u32) << 16)
-                    | ((payload_buf[2] as u32) << 8)
-                    | (payload_buf[3] as u32);
-                let _weight = payload_buf[4];
-                payload_buf = &payload_buf[5..];
-            }
-    
-            // Check if payload has enough data after accounting for padding
-            if payload_buf.len() < pad_length {
-                return None; // Not enough data
-            }
-    
-            let header_block_len = payload_buf.len() - pad_length;
-            header_block_fragment.extend_from_slice(&payload_buf[..header_block_len]);
+    /// Attempt to parse exactly one frame from the given direction.  
+    /// If we parse or produce an event, return Some(...). If no data is available, return None.
+    fn poll_one_frame(&mut self, direction: H2FrameDirection) -> Option<H2Event> {
+        
+        let buffer = match direction {
+            H2FrameDirection::Incoming => &mut self.incoming,
+            H2FrameDirection::Outgoing => &mut self.outgoing,
+        };
 
-            // Handle CONTINUATION frames if END_HEADERS flag is not set
-            if flags & 0x4 == 0 {
-                // Collect header fragments from CONTINUATION frames
-                if let Some(mut continuation_fragment) = collect_continuation_frames(buffer, stream_id) {
-                    header_block_fragment.append(&mut continuation_fragment);
+        // Check if we’re in partial HEADERS mode for this direction
+        if let Some(ref mut partial) = self.partial_headers {
+            // If the partial is for a *different* direction, we might do an error or concurrency approach.
+            if self.partial_headers_direction != Some(direction) {
+                tracing::trace!("some fishy shit is going on.. seeing inconsistant directions in h2 frame parser..")
+            } else {
+                // Attempt to parse next frame for the *same* direction
+                if let Ok(Some(frame)) = parse_next_frame(&mut buffer.buffer) {
+                    // If not CONTINUATION or not same stream => treat it as new
+                    if frame.frame_type != 0x9 || frame.stream_id != partial.stream_id {
+                        // Release partial HEADERS or treat as protocol error
+                        return self.handle_regular_frame(direction, frame);
+                    }
+                    // Append
+                    partial.header_block.extend_from_slice(&frame.payload);
+                    let end_headers = (frame.flags & 0x4) != 0; // END_HEADERS
+                    if end_headers {
+                        let combined = std::mem::take(&mut partial.header_block);
+                        let s_id = partial.stream_id;
+                        let flags = partial.flags; // original HEADERS flags
+                        self.partial_headers = None;
+                        self.partial_headers_direction = None;
+                        return self.handle_complete_headers(direction, s_id, flags, combined);
+                    } else {
+                        return None;
+                    }
                 } else {
-                    return None; // Not enough data
+                    return None;
                 }
             }
-    
-            Some(H2Frame::Headers {
-                stream_id,
-                flags,
-                payload: header_block_fragment,
-            })
-        },
-        0x2 => {
-            // PRIORITY frame
-            if payload.len() != 5 {
-                return None; // Invalid PRIORITY frame.. wth is this?
+        }
+
+        // Not in partial HEADERS mode, parse a new frame
+        match parse_next_frame(&mut buffer.buffer) {
+            Ok(Some(frame)) => self.handle_regular_frame(direction, frame),
+            Ok(None) => None,    // Need more data
+            Err(_e) => None, // Not sure... maybe just retry? 🤷‍♂️
+        }
+    }
+
+    /// Called once HEADERS+CONTINUATION are done. We'll decode HPACK and produce an event.
+    fn handle_complete_headers(
+        &mut self,
+        direction: H2FrameDirection,
+        stream_id: u32,
+        flags: u8,
+        header_block: Vec<u8>,
+    ) -> Option<H2Event> {
+        let decode_result = match direction {
+            H2FrameDirection::Incoming => self.hpack_decoder_incoming.decode(&header_block),
+            H2FrameDirection::Outgoing => self.hpack_decoder_outgoing.decode(&header_block),
+        };
+        let headers_list = match decode_result {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::trace!("HPACK decode error: {:?}", e);
+                return Some(H2Event::Unknown(H2Frame::RstStream {
+                    stream_id,
+                    error_code: 0x1, // e.g. PROTOCOL_ERROR
+                }));
             }
-            let exclusive = (payload[0] & 0x80) != 0;
-            let stream_dependency = ((payload[0] as u32 & 0x7F) << 24)
-                | ((payload[1] as u32) << 16)
-                | ((payload[2] as u32) << 8)
-                | (payload[3] as u32);
-            let weight = payload[4];
-            Some(H2Frame::Priority {
-                stream_id,
+        };
+
+        let headers_map: HashMap<String, String> = headers_list
+            .into_iter()
+            .map(|(k, v)| (vec_to_string(k), vec_to_string(v)))
+            .collect();
+
+        // Insert / update StreamState
+        let st = self.streams.entry(stream_id).or_insert_with(StreamState::new);
+        st.headers = Some(headers_map.clone());
+
+        let end_stream = (flags & 0x1) != 0;
+
+        match direction {
+            H2FrameDirection::Incoming => {
+                // If it’s an incoming HEADERS with `end_stream` + a recognized method => produce `IncomingRequest`
+                if end_stream && !is_continuous_stream(&headers_map) {
+                    let req = st.to_request(stream_id);
+                    self.streams.remove(&stream_id);
+                    Some(H2Event::IncomingRequest(req))
+                } else {
+                    Some(H2Event::IncomingHeaders {
+                        stream_id: stream_id,
+                        headers:headers_map
+                    })
+                }
+            }
+            H2FrameDirection::Outgoing => {
+                // For outgoing HEADERS, we might see :method => “OutgoingRequest”, or
+                // :status => “OutgoingResponse”. If neither, produce “OutgoingHeaders”.
+                if let Some(_method) = headers_map.get(":method") {
+                    // If end_stream => produce an outgoing request
+                    if end_stream && !is_continuous_stream(&headers_map) {
+                        let req = st.to_request(stream_id);
+                        self.streams.remove(&stream_id);
+                        Some(H2Event::OutgoingRequest(req))
+                    } else {
+                        // HEADERS but not end_stream => partial or chunked?
+                        Some(H2Event::OutgoingRequest(st.to_request(stream_id)))
+                    }
+                } else if let Some(_status) = headers_map.get(":status") {
+                    // If end_stream => produce an outgoing response
+                    if end_stream {
+                        let resp = st.to_response(stream_id);
+                        self.streams.remove(&stream_id);
+                        Some(H2Event::OutgoingResponse(resp))
+                    } else {
+                        // HEADERS for a response but not end_stream => partial?
+                        Some(H2Event::PartialOutgoingResponse(st.to_response(stream_id)))
+                    }
+                } else {
+                    // Some HEADERS that have no :method or :status => maybe just custom frames
+                    Some(H2Event::OutgoingHeaders {
+                        stream_id,
+                        headers: headers_map,
+                    })
+                }
+            }
+        }
+    }
+
+
+    fn handle_priority_frame(&mut self, frame: FrameHeader) -> H2Event {
+        if frame.payload.len() == 5 {
+            let exclusive = (frame.payload[0] & 0x80) != 0;
+            let stream_dependency = ((frame.payload[0] as u32 & 0x7F) << 24)
+                | ((frame.payload[1] as u32) << 16)
+                | ((frame.payload[2] as u32) << 8)
+                | (frame.payload[3] as u32);
+            let weight = frame.payload[4];
+            H2Event::Priority {
+                stream_id: frame.stream_id,
                 exclusive,
                 stream_dependency,
                 weight,
-            })
-        }
-        0x3 => {
-            // RST_STREAM frame
-            if payload.len() != 4 {
-                return None; // Invalid RST_STREAM frame??
             }
-            let error_code = ((payload[0] as u32) << 24)
-                | ((payload[1] as u32) << 16)
-                | ((payload[2] as u32) << 8)
-                | (payload[3] as u32);
-            Some(H2Frame::RstStream {
-                stream_id,
-                error_code,
+        } else {
+            H2Event::Unknown(H2Frame::Unknown {
+                stream_id: frame.stream_id,
+                flags: frame.flags,
+                payload: frame.payload,
+                frame_type: frame.frame_type,
             })
-        }
-        0x4 => {
-            // SETTINGS frame
-            let mut settings = Vec::new();
-            let mut payload_buf = &payload[..];
-            while payload_buf.len() >= 6 {
-                let identifier = ((payload_buf[0] as u16) << 8) | (payload_buf[1] as u16);
-                let value = ((payload_buf[2] as u32) << 24)
-                    | ((payload_buf[3] as u32) << 16)
-                    | ((payload_buf[4] as u32) << 8)
-                    | (payload_buf[5] as u32);
-                settings.push((identifier, value));
-                payload_buf = &payload_buf[6..];
-            }
-            Some(H2Frame::Settings { flags, settings })
-        }
-        0x5 => {
-            // PUSH_PROMISE frame
-            if payload.len() < 4 {
-                return None; // Invalid PUSH_PROMISE frame!?
-            }
-            let promised_stream_id = ((payload[0] as u32 & 0x7F) << 24)
-                | ((payload[1] as u32) << 16)
-                | ((payload[2] as u32) << 8)
-                | (payload[3] as u32);
-            let header_block_fragment = payload[4..].to_vec();
-            Some(H2Frame::PushPromise {
-                stream_id,
-                promised_stream_id,
-                header_block_fragment,
-            })
-        }
-        0x6 => {
-            // PING frame
-            if payload.len() != 8 {
-                // Invalid PING frame!?
-                return None;
-            }
-            let mut opaque_data = [0u8; 8];
-            opaque_data.copy_from_slice(&payload);
-            Some(H2Frame::Ping { flags, opaque_data })
-        }
-        0x7 => {
-            // GOAWAY frame
-            if payload.len() < 8 {
-                // Invalid GOAWAY frame!??
-                return None;
-            }
-            let last_stream_id = ((payload[0] as u32 & 0x7F) << 24)
-                | ((payload[1] as u32) << 16)
-                | ((payload[2] as u32) << 8)
-                | (payload[3] as u32);
-            let error_code = ((payload[4] as u32) << 24)
-                | ((payload[5] as u32) << 16)
-                | ((payload[6] as u32) << 8)
-                | (payload[7] as u32);
-            let debug_data = payload[8..].to_vec();
-            
-            Some(H2Frame::Goaway {
-                last_stream_id,
-                error_code,
-                debug_data,
-            })
-        }
-        0x8 => {
-            // WINDOW_UPDATE frame
-            if payload.len() != 4 {
-                // Invalid WINDOW_UPDATE frame.. ?
-                return None;
-            }
-            let window_size_increment = ((payload[0] as u32 & 0x7F) << 24)
-                | ((payload[1] as u32) << 16)
-                | ((payload[2] as u32) << 8)
-                | (payload[3] as u32);
-            
-            Some(H2Frame::WindowUpdate {
-                stream_id,
-                window_size_increment,
-            })
-        }
-        0x9 => {
-            // CONTINUATION frame
-            let header_block_fragment = payload.to_vec();
-            Some(H2Frame::Continuation {
-                stream_id,
-                flags,
-                header_block_fragment,
-            })
-        }
-        _ => {
-            Some(H2Frame::Unknown {
-                frame_type,
-                flags,
-                stream_id,
-                payload,
-            })
-        }
-    };
-
-    buffer.advance(total_length);
-    frame
-    
-    
-}
-
-// todo: clean this up a bit
-fn collect_continuation_frames(buffer: &mut BytesMut, expected_stream_id: u32) -> Option<Vec<u8>> {
-    let mut header_block_fragment = Vec::new();
-
-    loop {
-        if buffer.len() < 9 {
-            return None; // Not enough data
-        }
-
-        // Parse the continuation frame header
-        // todo: this is a bit of a mess.. should make it clearer
-        let length = ((buffer[0] as u32) << 16)
-            | ((buffer[1] as u32) << 8)
-            | (buffer[2] as u32);
-        let frame_type = buffer[3];
-        let flags = buffer[4];
-        let stream_id = ((buffer[5] as u32 & 0x7F) << 24)
-            | ((buffer[6] as u32) << 16)
-            | ((buffer[7] as u32) << 8)
-            | (buffer[8] as u32);
-
-        if frame_type != 0x9 || stream_id != expected_stream_id {
-            // Invalid CONTINUATION frame
-            return None;
-        }
-
-        let total_length = 9 + length as usize;
-        if buffer.len() < total_length {
-            return None; // Not enough data
-        }
-
-        let payload = buffer[9..total_length].to_vec();
-
-        // Advance the buffer for the CONTINUATION frame
-        buffer.advance(total_length);
-
-        header_block_fragment.extend_from_slice(&payload);
-
-        if flags & 0x4 != 0 {
-            // END_HEADERS flag is set
-            break;
         }
     }
 
-    Some(header_block_fragment)
+    /// The main dispatch for a newly parsed frame (DATA, HEADERS, etc.).
+    fn handle_regular_frame(
+        &mut self,
+        direction: H2FrameDirection,
+        frame: FrameHeader,
+    ) -> Option<H2Event> {
+        match frame.frame_type {
+            0x0 => {
+                // DATA
+                self.handle_data_frame(direction, frame)
+            }
+            0x1 => {
+                // HEADERS
+                if let Some((block, end_headers)) = parse_headers_payload(frame.flags, &frame.payload) {
+                    if end_headers {
+                        // HEADERS all in one shot
+                        self.handle_complete_headers(direction, frame.stream_id, frame.flags, block)
+                    } else {
+                        // partial HEADERS => store until CONTINUATION
+                        self.partial_headers = Some(PartialHeadersState {
+                            stream_id: frame.stream_id,
+                            flags: frame.flags,
+                            header_block: block,
+                            initial_parsed: true,
+                        });
+                        self.partial_headers_direction = Some(direction);
+                        None
+                    }
+                } else {
+                    // invalid HEADERS parse => produce RST_STREAM or Unknown
+                    Some(H2Event::Unknown(H2Frame::RstStream {
+                        stream_id: frame.stream_id,
+                        error_code: 0x1, // e.g. PROTOCOL_ERROR
+                    }))
+                }
+            }
+            0x2 => {
+                Some(self.handle_priority_frame(frame))
+            }
+            0x3 => {
+                Some(self.handle_rst_stream(frame))
+            }
+            0x4 => {
+                Some(self.handle_settings_frame(direction, frame))
+            }
+            0x5 => {
+                Some(self.handle_push_promise(direction, frame))
+            }
+            0x6 => {
+                Some(self.handle_ping(direction, frame))
+            }
+            0x7 => {
+                Some(self.handle_goaway(direction, frame))
+            }
+            0x8 => {
+                Some(self.handle_window_update(direction, frame))
+            }
+            0x9 => {
+                // If we’re not currently collecting HEADERS, it’s out-of-place
+                tracing::trace!("CONTINUATION received in Ready state (no partial HEADERS).");
+                Some(H2Event::Unknown(H2Frame::Unknown {
+                    stream_id: frame.stream_id,
+                    flags: frame.flags,
+                    payload: frame.payload,
+                    frame_type: frame.frame_type,
+                }))
+            }
+            // Anything above 0x9 is unknown per the core spec (unless extension frames).
+            frame_type => {
+                Some(H2Event::Unknown(H2Frame::Unknown {
+                    stream_id: frame.stream_id,
+                    flags: frame.flags,
+                    payload: frame.payload,
+                    frame_type,
+                }))
+            }
+        }
+    }
+
+    fn handle_push_promise(
+        &mut self,
+        _direction: H2FrameDirection,
+        fh: FrameHeader,
+    ) -> H2Event {
+        // At minimum, we need 4 bytes to parse the promised_stream_id
+        if fh.payload.len() < 4 {
+            return H2Event::Unknown(H2Frame::Unknown {
+                stream_id: fh.stream_id,
+                flags: fh.flags,
+                payload: fh.payload,
+                frame_type: fh.frame_type,
+            });
+        }
+        let promised_stream_id = ((fh.payload[0] as u32 & 0x7F) << 24)
+            | ((fh.payload[1] as u32) << 16)
+            | ((fh.payload[2] as u32) << 8)
+            | (fh.payload[3] as u32);
+        let header_block_fragment = fh.payload[4..].to_vec();
+        H2Event::PushPromise {
+            stream_id: fh.stream_id,
+            promised_stream_id,
+            header_block_fragment,
+        }
+    }
+
+    fn handle_goaway(&mut self, _direction: H2FrameDirection, fh: FrameHeader) -> H2Event {
+        if fh.payload.len() >= 8 {
+            let last_stream_id = ((fh.payload[0] as u32 & 0x7F) << 24)
+                | ((fh.payload[1] as u32) << 16)
+                | ((fh.payload[2] as u32) << 8)
+                | (fh.payload[3] as u32);
+            let error_code = ((fh.payload[4] as u32) << 24)
+                | ((fh.payload[5] as u32) << 16)
+                | ((fh.payload[6] as u32) << 8)
+                | (fh.payload[7] as u32);
+            let debug_data = fh.payload[8..].to_vec();
+            H2Event::GoAway {
+                last_stream_id,
+                error_code,
+                debug_data,
+            }
+        } else {
+            H2Event::Unknown(H2Frame::Unknown {
+                stream_id: fh.stream_id,
+                flags: fh.flags,
+                payload: fh.payload,
+                frame_type: fh.frame_type,
+            })
+        }
+    }
+    fn handle_ping(&mut self, direction: H2FrameDirection, fh: FrameHeader) -> H2Event {
+        if fh.payload.len() == 8 {
+            let mut opaque_data = [0u8; 8];
+            opaque_data.copy_from_slice(&fh.payload);
+            H2Event::Ping {
+                direction,
+                flags: fh.flags,
+                opaque_data,
+            }
+        } else {
+            H2Event::Unknown(H2Frame::Unknown {
+                stream_id: fh.stream_id,
+                flags: fh.flags,
+                payload: fh.payload,
+                frame_type: fh.frame_type,
+            })
+        }
+    }
+    fn handle_settings_frame(
+        &mut self,
+        direction: H2FrameDirection,
+        fh: FrameHeader,
+    ) -> H2Event {
+        let mut cursor = &fh.payload[..];
+        let mut settings = Vec::new();
+
+        // Iterate over the payload in 6-byte chunks (2 bytes identifier + 4 bytes value)
+        while cursor.len() >= 6 {
+            let identifier = ((cursor[0] as u16) << 8) | (cursor[1] as u16);
+            let value = ((cursor[2] as u32) << 24)
+                | ((cursor[3] as u32) << 16)
+                | ((cursor[4] as u32) << 8)
+                | (cursor[5] as u32);
+
+            // Convert the raw identifier to a SettingIdentifier enum
+            let setting = DecodedSettings {
+                identifier: SettingIdentifier::from_u16(identifier),
+                value,
+            };
+            settings.push(setting);
+
+            // Move the cursor forward by 6 bytes
+            cursor = &cursor[6..];
+        }
+
+        // Check for any leftover bytes indicating a malformed SETTINGS frame
+        if !cursor.is_empty() {
+            tracing::trace!("Malformed SETTINGS frame: leftover bytes");
+            // todo : might just be me fucking up tbh.. should see if we can simplify this a bit
+            //        or at least decide if we should actually continue at all here
+        }
+
+        // Construct the Settings event with the parsed settings
+        H2Event::Settings {
+            direction,
+            flags: fh.flags,
+            settings
+        }
+    }
+
+    fn handle_window_update(&mut self, direction: H2FrameDirection, fh: FrameHeader) -> H2Event {
+        if fh.payload.len() == 4 {
+            let window_size_increment = ((fh.payload[0] as u32 & 0x7F) << 24)
+                | ((fh.payload[1] as u32) << 16)
+                | ((fh.payload[2] as u32) << 8)
+                | (fh.payload[3] as u32);
+            if fh.stream_id == 0 {
+                // connection-level
+                self.connection_window_size = self
+                    .connection_window_size
+                    .checked_add(window_size_increment)
+                    .unwrap_or(u32::MAX);
+            } else {
+                let st = self.streams.entry(fh.stream_id).or_insert_with(StreamState::new);
+                st.stream_window_size = st
+                    .stream_window_size
+                    .checked_add(window_size_increment)
+                    .unwrap_or(u32::MAX);
+            }
+            H2Event::WindowUpdate {
+                direction,
+                stream_id: fh.stream_id,
+                window_size_increment,
+            }
+        } else {
+            H2Event::Unknown(H2Frame::Unknown {
+                stream_id: fh.stream_id,
+                flags: fh.flags,
+                payload: fh.payload,
+                frame_type: fh.frame_type,
+            })
+        }
+    }
+     fn handle_rst_stream(&mut self, fh: FrameHeader) -> H2Event {
+        if fh.payload.len() == 4 {
+            let error_code = ((fh.payload[0] as u32) << 24)
+                | ((fh.payload[1] as u32) << 16)
+                | ((fh.payload[2] as u32) << 8)
+                | (fh.payload[3] as u32);
+            H2Event::Unknown(H2Frame::RstStream {
+                stream_id: fh.stream_id,
+                error_code,
+            })
+        } else {
+            H2Event::Unknown(H2Frame::Unknown {
+                stream_id: fh.stream_id,
+                flags: fh.flags,
+                payload: fh.payload,
+                frame_type: fh.frame_type,
+            })
+        }
+    }
+    /// Handle a DATA frame (including PADDED logic).
+    fn handle_data_frame(&mut self, direction: H2FrameDirection, frame: FrameHeader) -> Option<H2Event> {
+        if let Some((data, end_stream)) = parse_data_payload(frame.flags, &frame.payload) {
+            let st = self.streams.entry(frame.stream_id).or_insert_with(StreamState::new);
+
+            // For typical requests/responses, accumulate the body
+            st.body.extend_from_slice(&data);
+
+            // If end_stream => see if we can produce an IncomingRequest/OutgoingRequest/OutgoingResponse
+            // depending on direction and presence of :method/:status
+            if end_stream && st.headers.is_some() {
+                // Distinguish direction
+                match direction {
+                    H2FrameDirection::Incoming => {
+                        if let Some(hm) = &st.headers {
+                            if !is_continuous_stream(hm) {
+                                
+                                // TODO: perhaps we should embed this in to data
+                                // or otherwise return it unless we do elsewhere already?
+                                let _req = st.to_request(frame.stream_id);
+
+                                self.streams.remove(&frame.stream_id);
+                                return Some(H2Event::Data {
+                                    stream_id: frame.stream_id,
+                                    data,
+                                    direction,
+                                    end_stream,
+                                });
+                            }
+                        }
+                    }
+                    H2FrameDirection::Outgoing => {
+                        if let Some(hm) = &st.headers {
+                            if hm.contains_key(":method") {
+                                // OutgoingRequest
+                                let req = st.to_request(frame.stream_id);
+                                self.streams.remove(&frame.stream_id);
+                                return Some(H2Event::OutgoingRequest(req));
+                            } else if hm.contains_key(":status") {
+                                // OutgoingResponse
+                                let resp = st.to_response(frame.stream_id);
+                                self.streams.remove(&frame.stream_id);
+                                return Some(H2Event::OutgoingResponse(resp));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Otherwise, produce a plain Data event
+            Some(H2Event::Data {
+                stream_id: frame.stream_id,
+                data,
+                direction,
+                end_stream,
+            })
+        } else {
+            // Invalid padding ?
+            Some(H2Event::Unknown(H2Frame::Unknown {
+                stream_id: frame.stream_id,
+                flags: frame.flags,
+                payload: frame.payload,
+                frame_type: frame.frame_type,
+            }))
+        }
+    }
+}
+
+// Implementing `Stream<Item = H2Event>` for async usage
+impl Stream for H2Observer {
+    type Item = H2Event;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+
+        if let Some(e) = this.poll_one_frame(H2FrameDirection::Incoming) {
+            return Poll::Ready(Some(e));
+        }
+        if let Some(e) = this.poll_one_frame(H2FrameDirection::Outgoing) {
+            return Poll::Ready(Some(e));
+        }
+
+        this.incoming.register_waker(cx.waker());
+        this.outgoing.register_waker(cx.waker());
+
+        Poll::Pending
+    }
+}
+
+// ============== Per-stream State ==================
+
+#[derive(Debug)]
+#[allow(unused)]
+struct StreamState {
+    headers: Option<HashMap<String, String>>,
+    header_blocks: Vec<u8>,
+    body: Vec<u8>,
+    is_continuous_stream: bool,
+    incoming_data: Vec<u8>,
+    outgoing_data: Vec<u8>,
+    stream_window_size: u32,
+}
+
+impl StreamState {
+    fn new() -> Self {
+        StreamState {
+            stream_window_size: 65535,
+            headers: None,
+            header_blocks: Vec::new(),
+            body: Vec::new(),
+            is_continuous_stream: false,
+            incoming_data: Vec::new(),
+            outgoing_data: Vec::new(),
+        }
+    }
+
+    fn to_request(&self, stream_id: u32) -> HttpRequest {
+        let hdrs = self.headers.clone().unwrap_or_default();
+        let method = hdrs
+            .get(":method")
+            .cloned()
+            .unwrap_or_else(|| "GET".into());
+        let path = hdrs.get(":path").cloned().unwrap_or_else(|| "/".into());
+        HttpRequest {
+            stream_id,
+            method,
+            path,
+            headers: hdrs,
+            body: self.body.clone(),
+        }
+    }
+
+    fn to_response(&self, stream_id: u32) -> H2Response {
+        let hdrs = self.headers.clone().unwrap_or_default();
+        let h = hdrs.get(":status").cloned();
+        let h2 = h.clone();
+        let status = h.unwrap_or_else(||{
+            // todo - this kind of sucks... should improve this logic..
+            // i mean, we dont want to completely fail unless we have to but this is not great :<
+            tracing::warn!("Failed to parse status header ({h2:?})- will fall back to 200");
+            "200".into()
+        });
+        H2Response {
+            stream_id,
+            status,
+            headers: hdrs,
+            body: self.body.clone(),
+        }
+    }
+}
+
+// ============= Lower-level buffer & parser =============
+
+#[derive(Debug)]
+struct H2Buffer {
+    buffer: BytesMut,
+    waker: Option<Waker>,
+    needs_preface: bool,
+    preface_consumed: bool,
+}
+
+impl H2Buffer {
+    pub fn new(needs_preface: bool) -> Self {
+        Self {
+            buffer: BytesMut::with_capacity(4096),
+            waker: None,
+            needs_preface,
+            preface_consumed: false,
+        }
+    }
+
+    pub fn write(&mut self, data: &[u8]) {
+        self.buffer.extend_from_slice(data);
+        if !self.preface_consumed && self.needs_preface {
+            self.consume_preface();
+        }
+        if let Some(w) = self.waker.take() {
+            w.wake();
+        }
+    }
+
+    pub fn register_waker(&mut self, w: &std::task::Waker) {
+        if self.waker.is_none() || !self.waker.as_ref().unwrap().will_wake(w) {
+            self.waker = Some(w.clone());
+        }
+    }
+
+    fn consume_preface(&mut self) {
+        const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+        if self.buffer.len() < PREFACE.len() {
+            return; // Wait for more data
+        }
+        if &self.buffer[..PREFACE.len()] == PREFACE {
+            self.buffer.advance(PREFACE.len());
+            self.preface_consumed = true;
+            //tracing::debug!("HTTP/2 preface consumed.");
+        } else {
+            tracing::trace!("Invalid HTTP/2 preface. Discarding buffer.. {:?}",self.buffer);
+            self.buffer.advance(self.buffer.len());
+        }
+    }
+}
+
+/// Basic representation of a raw frame header + payload. We only parse the 9-byte header + length.
+#[derive(Debug)]
+struct FrameHeader {
+    frame_type: u8,
+    flags: u8,
+    stream_id: u32,
+    payload: Vec<u8>,
+}
+
+fn parse_next_frame(buf: &mut BytesMut) -> Result<Option<FrameHeader>, ()> {
+    if buf.len() < 9 {
+        return Ok(None);
+    }
+
+    let length = ((buf[0] as u32) << 16) | ((buf[1] as u32) << 8) | (buf[2] as u32);
+    let frame_type = buf[3];
+    let flags = buf[4];
+    let sid_raw = ((buf[5] as u32) << 24)
+        | ((buf[6] as u32) << 16)
+        | ((buf[7] as u32) << 8)
+        | (buf[8] as u32);
+    let stream_id = sid_raw & 0x7FFF_FFFF;
+
+    let total_len = 9 + length as usize;
+    if buf.len() < total_len {
+        return Ok(None); // partial
+    }
+
+    let payload = buf[9..total_len].to_vec();
+    buf.advance(total_len);
+
+    Ok(Some(FrameHeader {
+        frame_type,
+        flags,
+        stream_id,
+        payload,
+    }))
+}
+
+// =============== HEADERS / DATA Helpers ===============
+
+/// Parse HEADERS payload, handling optional PADDED or PRIORITY bits.  
+/// Returns `(header_block, end_headers)` if valid, or `None` if something’s off.
+fn parse_headers_payload(flags: u8, payload: &[u8]) -> Option<(Vec<u8>, bool)> {
+    let mut cursor = payload;
+    let mut pad_len = 0_usize;
+
+    // PADDED
+    if flags & 0x8 != 0 {
+        if cursor.is_empty() {
+            return None;
+        }
+        pad_len = cursor[0] as usize;
+        cursor = &cursor[1..];
+        if cursor.len() < pad_len {
+            return None;
+        }
+    }
+
+    // PRIORITY
+    if flags & 0x20 != 0 {
+        if cursor.len() < 5 {
+            return None;
+        }
+        // skip the 5 priority bytes
+        cursor = &cursor[5..];
+    }
+
+    if cursor.len() < pad_len {
+        return None;
+    }
+    let block_len = cursor.len() - pad_len;
+    let block = &cursor[..block_len];
+    let end_headers = (flags & 0x4) != 0; // bit 0x4 => END_HEADERS
+    Some((block.to_vec(), end_headers))
+}
+
+/// Parse DATA payload, handling optional PADDED. Return `(data, end_stream)`.
+fn parse_data_payload(flags: u8, payload: &[u8]) -> Option<(Vec<u8>, bool)> {
+    let mut cursor = payload;
+    let mut pad_len = 0_usize;
+
+    // PADDED?
+    if flags & 0x8 != 0 {
+        if cursor.is_empty() {
+            return None;
+        }
+        pad_len = cursor[0] as usize;
+        cursor = &cursor[1..];
+        if cursor.len() < pad_len {
+            return None;
+        }
+    }
+
+    let data_len = cursor.len().saturating_sub(pad_len);
+    let data = &cursor[..data_len];
+    let end_stream = (flags & 0x1) != 0; // END_STREAM bit
+    Some((data.to_vec(), end_stream))
+}
+
+/// A naive check: if `:method` is a known HTTP method, we treat it as a normal request.  
+/// If not, we treat it as “continuous.”
+fn is_continuous_stream(headers: &HashMap<String, String>) -> bool {
+    if let Some(m) = headers.get(":method") {
+        let regulars = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
+        if regulars.contains(&m.as_str()) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Convert a vector to a string (falling back if invalid UTF-8).
+fn vec_to_string(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes).unwrap_or_else(|_| "failed to convert to string..".to_string())
+}
+
+// ============= Implementation details / Debug =============
+
+impl std::fmt::Debug for H2Observer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("H2Observer")
+            .field("connection_window_size", &self.connection_window_size)
+            .field("streams", &self.streams.keys())
+            .field("partial_headers", &self.partial_headers)
+            .field("partial_headers_direction", &self.partial_headers_direction)
+            .finish()
+    }
 }

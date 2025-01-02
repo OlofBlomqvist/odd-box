@@ -1,7 +1,7 @@
 [package]
 name = "odd-box"
 description = "a dead simple reverse proxy server and web server"
-version = "0.1.11-alpha1"
+version = "0.1.11-alpha2"
 edition = "2021"
 authors = ["Olof Blomqvist <olof@twnet.se>"]
 repository = "https://github.com/OlofBlomqvist/odd-box"
@@ -28,7 +28,7 @@ hyper = { version = "1.4.1" , features=["http2","client","server"] }
 hyper-util = { version = "0.1.7", features = ["full"] }
 regex = "1.9.5"
 serde = { version = "1.0.88", features = ["derive"] }
-tokio = { version = "1.39.3", features = ["full"] }
+tokio = { version = "1.42.0", features = ["full"] }
 tokio-tungstenite = { version="0.24.0" , features = ["__rustls-tls"] }
 toml = "0.8.4"
 tracing = "0.1.37"
@@ -78,8 +78,10 @@ include_dir = "0.7.4"
 mime_guess = "2.0.5"
 tokio-util = "0.7.12"
 urlencoding = "2.1"
-# [target.'cfg(not(target_env = "msvc"))'.dependencies]
-# tikv-jemallocator = "0.6.0"
+procfs = "0.17.0"
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = { version = "0.6.0" }
 
 
 markdown = "1.0.0-alpha.21"
@@ -87,11 +89,12 @@ flate2 = "1.0.34"
 once_cell = "1.20.2"
 notify = "6.1.1"
 bollard = "0.18.1"
+serde_with = "3.12.0"
 #rsa = "0.9.6"
 # ===============================================================
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58.0", features = ["Win32","Win32_Foundation","Win32_System","Win32_System_Console"] }
+windows = { version = "0.58.0", features = ["Win32","Win32_Foundation","Win32_System","Win32_System_Console","Win32_NetworkManagement_IpHelper"] }
 
 [profile.release]
 opt-level = 'z'     # Optimize for size

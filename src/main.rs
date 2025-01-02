@@ -1,11 +1,11 @@
 #![warn(unused_extern_crates)]
 
-// #[cfg(not(target_env = "msvc"))]
-// use tikv_jemallocator::Jemalloc;
+#[cfg(not(target_env = "msvc"))]
+use tikv_jemallocator::Jemalloc;
 
-// #[cfg(not(target_env = "msvc"))]
-// #[global_allocator]
-// static GLOBAL: Jemalloc = Jemalloc;
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
 
 mod configuration;
 mod types;
@@ -30,7 +30,8 @@ use tokio::task::JoinHandle;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Layer;
 use types::args::Args;
-use types::odd_box_event::Event;
+use types::odd_box_event::EventForWebsocketClients;
+use types::odd_box_event::GlobalEvent;
 use types::proc_info::BgTaskInfo;
 use types::proc_info::ProcId;
 use types::proc_info::ProcInfo;
@@ -52,8 +53,11 @@ mod tui;
 mod api;
 mod logging;
 mod tests;
+mod tcp_pid;
 mod certs;
 mod self_update;
+mod observer;
+mod serde_with;
 use types::app_state::AppState;
 use lazy_static::lazy_static;
 mod letsencrypt;
@@ -74,7 +78,7 @@ pub fn generate_unique_id() -> u64 {
 pub mod global_state {
     use std::{sync::{atomic::AtomicU64, Arc}, time::SystemTimeError};
 
-    use crate::{certs::DynamicCertResolver, tcp_proxy::{ReverseTcpProxy, ReverseTcpProxyTarget}, types::odd_box_event::Event};
+    use crate::{certs::DynamicCertResolver, tcp_proxy::{ReverseTcpProxy, ReverseTcpProxyTarget}, types::odd_box_event::{EventForWebsocketClients, GlobalEvent}};
     #[derive(Debug)]
     pub struct GlobalState {
         pub started_at_time_stamp : std::time::SystemTime,
@@ -85,7 +89,10 @@ pub mod global_state {
         pub target_request_counts: dashmap::DashMap<String, AtomicU64>,
         pub cert_resolver: std::sync::Arc<DynamicCertResolver>,
         pub reverse_tcp_proxy_target_cache : dashmap::DashMap<String,Arc<ReverseTcpProxyTarget>>,
-        pub global_broadcast_channel: tokio::sync::broadcast::Sender<Event>
+        pub global_broadcast_channel: tokio::sync::broadcast::Sender<GlobalEvent>,
+        pub websockets_broadcast_channel: tokio::sync::broadcast::Sender<EventForWebsocketClients>,
+        pub monitoring_station : crate::observer::obs::MonitoringStation
+        
     }
     impl GlobalState {
         pub fn uptime(&self) -> Result<std::time::Duration,SystemTimeError> {
@@ -96,11 +103,13 @@ pub mod global_state {
             config: std::sync::Arc<tokio::sync::RwLock<crate::configuration::ConfigWrapper>>,
             tx_to_process_hosts: tokio::sync::broadcast::Sender<crate::http_proxy::ProcMessage>,
             cert_resolver: std::sync::Arc<DynamicCertResolver>   ,
-            global_broadcast_channel: tokio::sync::broadcast::Sender<Event>,
+            global_broadcast_channel: tokio::sync::broadcast::Sender<GlobalEvent>,
+            websockets_broadcast_channel: tokio::sync::broadcast::Sender<EventForWebsocketClients>,            
             log_handle : crate::OddLogHandle
         ) -> Self {
 
             Self {
+                monitoring_station : crate::observer::obs::MonitoringStation::new(websockets_broadcast_channel.clone()),
                 started_at_time_stamp: std::time::SystemTime::now(),
                 log_handle,
                 app_state,
@@ -109,7 +118,8 @@ pub mod global_state {
                 target_request_counts: dashmap::DashMap::new(),
                 cert_resolver,
                 reverse_tcp_proxy_target_cache: dashmap::DashMap::new(),
-                global_broadcast_channel
+                global_broadcast_channel,
+                websockets_broadcast_channel
             }
         }
         
@@ -181,7 +191,7 @@ pub mod global_state {
                 let rsc = x.generate_remote_config();
                 let t = ReverseTcpProxyTarget { 
                     proc_id : None,
-                    disable_tcp_tunnel_mode: false,
+                    terminate_tls: false,
                     hosted_target_config: None,                        
                     capture_subdomains: true,
                     forward_wildcard: true,
@@ -209,7 +219,7 @@ pub mod global_state {
                 if port > 0 {
                     let t = ReverseTcpProxyTarget {
                         proc_id : Some(y.get_id().clone()),
-                        disable_tcp_tunnel_mode: y.disable_tcp_tunnel_mode.unwrap_or_default(),
+                        terminate_tls: y.terminate_tls.unwrap_or_default(),
                         remote_target_config: None, // we dont need this for hosted processes
                         hosted_target_config: Some(y.clone()),
                         capture_subdomains: y.capture_subdomains.unwrap_or_default(),
@@ -233,7 +243,7 @@ pub mod global_state {
                     result = Some(shared_result);
                     break;
                 } else {
-                    tracing::warn!("the target was found but is not running.")
+                    tracing::debug!("the target was found but is not running")
                 }
 
                 
@@ -249,7 +259,7 @@ pub mod global_state {
 
                     let t = ReverseTcpProxyTarget { 
                         proc_id : None,
-                        disable_tcp_tunnel_mode: y.disable_tcp_tunnel_mode.unwrap_or_default(),
+                        terminate_tls: y.terminate_tls.unwrap_or_default(),
                         hosted_target_config: None,
                         remote_target_config: Some(y.clone()),
                         capture_subdomains: y.capture_subdomains.unwrap_or_default(),
@@ -360,8 +370,8 @@ async fn config_file_monitor(
     Ok(())
 }
 
-async fn thread_cleaner() {
-    let liveness_token = Arc::new(true);
+async fn thread_cleaner(_state:Arc<GlobalState>) {
+    let liveness_token: Arc<bool> = Arc::new(true);
     crate::BG_WORKER_THREAD_MAP.insert("The Janitor".into(), BgTaskInfo {
         liveness_ptr: Arc::downgrade(&liveness_token),
         status: "Managing active tasks..".into()
@@ -370,6 +380,8 @@ async fn thread_cleaner() {
         {
             PROC_THREAD_MAP.retain(|_k,v| v.liveness_ptr.upgrade().is_some());
             BG_WORKER_THREAD_MAP.retain(|_k,v| v.liveness_ptr.upgrade().is_some());
+
+            
         }
         tokio::time::sleep(std::time::Duration::from_secs(1)).await
     }
@@ -469,7 +481,6 @@ fn initialize_configuration(args:&Args) -> anyhow::Result<(ConfigWrapper,OddBoxC
 #[tracing::instrument()]
 async fn main() -> anyhow::Result<()> {
 
-
     match rustls::crypto::ring::default_provider().install_default() {
         Ok(_) => {},
         Err(e) => {
@@ -528,8 +539,11 @@ async fn main() -> anyhow::Result<()> {
         Some(LogLevel::Debug) => LevelFilter::DEBUG,
         _ => LevelFilter::INFO
     };
-    let global_event_broadcaster = tokio::sync::broadcast::Sender::<Event>::new(10);
-    let (proc_msg_tx,_) = tokio::sync::broadcast::channel::<ProcMessage>(33);
+
+    let global_event_broadcaster = tokio::sync::broadcast::Sender::<GlobalEvent>::new(1024);
+    let global_websockets_event_broadcaster = tokio::sync::broadcast::Sender::<EventForWebsocketClients>::new(1024);
+    
+    let (proc_msg_tx,_) = tokio::sync::broadcast::channel::<ProcMessage>(100);
     let inner_state = AppState::new();  
     
     let inner_state_arc = std::sync::Arc::new(inner_state);
@@ -562,6 +576,7 @@ async fn main() -> anyhow::Result<()> {
         proc_msg_tx.clone(),
         Arc::new(certs::DynamicCertResolver::new(enable_lets_encrypt)),
         global_event_broadcaster.clone(),
+        global_websockets_event_broadcaster.clone(),
         OddLogHandle::None
     );
     
@@ -569,12 +584,14 @@ async fn main() -> anyhow::Result<()> {
     let (cli_filter, cli_reload_handle) = 
         tracing_subscriber::reload::Layer::new(EnvFilter::from_default_env()
             .add_directive(format!("odd_box={}", log_level).parse().expect("This directive should always work"))
-            .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work")));
+            .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
+            .add_directive("odd_box::observer=warn".parse().expect("This directive should always work")));
     
     let (tui_filter, tui_reload_handle) = 
         tracing_subscriber::reload::Layer::new(EnvFilter::from_default_env()
             .add_directive(format!("odd_box={}", log_level).parse().expect("This directive should always work"))
-            .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work")));
+            .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
+            .add_directive("odd_box::observer=warn".parse().expect("This directive should always work")));
 
     
 
@@ -596,7 +613,7 @@ async fn main() -> anyhow::Result<()> {
         let subscriber = tracing_subscriber::registry().with(fmt_layer);
 
         subscriber
-            .with(logging::NonTuiLoggerLayer { broadcaster: global_event_broadcaster.clone() })
+            .with(logging::NonTuiLoggerLayer { broadcaster: global_websockets_event_broadcaster.clone() })
             .with(cli_filter)
             .init();
     } else {
@@ -608,9 +625,10 @@ async fn main() -> anyhow::Result<()> {
     let global_state = Arc::new(global_state);
 
     tokio::task::spawn(crate::letsencrypt::bg_worker_for_lets_encrypt_certs(global_state.clone()));
-    
+    tokio::task::spawn(crate::observer::run(global_state.clone()));
+
     // Spawn thread cleaner (removes dead threads from the proc_thread_map)
-    let cleanup_thread = tokio::spawn(thread_cleaner());
+    let cleanup_thread = tokio::spawn(thread_cleaner(global_state.clone()));
     let cfg_monitor = tokio::spawn(config_file_monitor(shared_config.clone(),global_state.clone()));
    
     let mut tui_task : Option<JoinHandle<()>> = None;
@@ -623,7 +641,7 @@ async fn main() -> anyhow::Result<()> {
         tui_task = Some(tokio::spawn(tui::run(
             global_state.clone(),
             proc_msg_tx, 
-            global_event_broadcaster,
+            global_websockets_event_broadcaster,
             tui_filter
         )));
     } else {

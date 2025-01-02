@@ -118,17 +118,17 @@ const RemoteSiteSettings = ({ site }: { site: RemoteSiteConfig }) => {
 
         <SettingsItem
           rowOnly
-          labelFor="disable_tcp_tunnel"
-          title="Disable TCP tunnel mode"
-          subTitle={SettingDescriptions["disable_tcp_tunnel"]}
+          labelFor="terminate_tls"
+          title="Always terminate TLS"
+          subTitle={SettingDescriptions["terminate_tls"]}
         >
           <Input
             type="checkbox"
-            checked={Boolean(site.disable_tcp_tunnel_mode)}
+            checked={Boolean(site.terminate_tls)}
             onChange={() => {
               updateSetting(
-                "disable_tcp_tunnel_mode",
-                !site.disable_tcp_tunnel_mode
+                "terminate_tls",
+                !site.terminate_tls
               );
             }}
             id="disable_tcp_tunnel"

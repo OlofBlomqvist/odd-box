@@ -6,15 +6,17 @@ use ratatui::widgets::{BorderType, List, ListItem };
 use tokio::task;
 use tracing::level_filters::LevelFilter;
 use tracing::Level;
+use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use std::io::Stdout;
 use std::str::FromStr;
+use std::time::Duration;
 use crate::global_state::GlobalState;
 use crate::logging::SharedLogBuffer;
 use crate::logging::LogMsg;
 use crate::types::app_state::*;
-use crate::types::odd_box_event::Event as OddBoxEvent;
+use crate::types::odd_box_event::EventForWebsocketClients;
 use crate::types::tui_state::{Page, TuiSiteWindowState, TuiState};
 use std::sync::{Arc, Mutex};
 use crate::http_proxy::ProcMessage;
@@ -67,7 +69,7 @@ pub fn init() {
 pub async fn run(
     global_state: Arc<GlobalState>,
     tx: tokio::sync::broadcast::Sender<ProcMessage>,
-    trace_msg_broadcaster: tokio::sync::broadcast::Sender<OddBoxEvent>,
+    trace_msg_broadcaster: tokio::sync::broadcast::Sender<EventForWebsocketClients>,
     reloadable_filter : tracing_subscriber::reload::Layer<EnvFilter, tracing_subscriber::layer::Layered<crate::logging::TuiLoggerLayer, tracing_subscriber::Registry>>,
 ) {
 
@@ -120,7 +122,9 @@ pub async fn run(
             };
 
             let mut last_set_log_level_by_tui = tracing::level_filters::LevelFilter::TRACE;
-
+            
+            let silence_observation_directive : Directive = "odd_box::observer=warn".parse().expect("This directive should always work");
+            
             let mut count = 0;
             
             let tx = tx.clone();
@@ -282,6 +286,12 @@ pub async fn run(
                         }
                         Event::Key(key) => {
 
+                                // note regarding observation mode:
+                                // - normally we have observations at warnings regardless of normal log-level.
+                                // - when observation mode is enabled, we will set observer log-level to same as the global loglevel.
+                                // - so that observation mode can be turned on without user having to get spammed with observation spam logs
+                                //   unless they switch to trace logging
+
                                 match key.code {
                                     KeyCode::Char('l') => {
                                         
@@ -297,6 +307,7 @@ pub async fn run(
                                                     // we always allow host processes to log anything - its controlled by site specific config
                                                     // and filtered in the host_proc logic. same with all levels below here.
                                                     .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
+                                                    .add_directive(silence_observation_directive.clone())
                                                 );
                                                 tracing::info!("Switched log level to INFO");
                                             }
@@ -305,6 +316,7 @@ pub async fn run(
                                                 _ = handle.reload(
                                                     EnvFilter::from_str("odd_box=warn").unwrap()
                                                     .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
+                                                    .add_directive(silence_observation_directive.clone())
                                                 );
                                                 // use warn log as it is now the lowest visible log level
                                                 tracing::warn!("Switched log level to WARN"); 
@@ -314,6 +326,7 @@ pub async fn run(
                                                 _ = handle.reload(
                                                     EnvFilter::from_str("odd_box=error").unwrap()
                                                     .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
+                                                    .add_directive(silence_observation_directive.clone())
                                                 );
                                                 // use error log as it is now the lowest visible log level
                                                 tracing::error!("Switched log level to ERROR");
@@ -323,6 +336,7 @@ pub async fn run(
                                                 _ = handle.reload(
                                                     EnvFilter::from_str("odd_box=debug").unwrap()
                                                     .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
+                                                    .add_directive(silence_observation_directive.clone())
                                                 );
                                                 tracing::debug!("Switched log level to DEBUG");
                                             }
@@ -331,6 +345,7 @@ pub async fn run(
                                                 _ = handle.reload(
                                                     EnvFilter::from_str("odd_box=trace").unwrap()
                                                     .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
+                                                    .add_directive(silence_observation_directive.clone())
                                                 );
                                                 tracing::trace!("Switched log level to TRACE");
                                             }
@@ -339,12 +354,51 @@ pub async fn run(
                                                 _ = handle.reload(
                                                     EnvFilter::from_str("odd_box=info").unwrap()
                                                     .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
+                                                    .add_directive(silence_observation_directive.clone())
                                                 );
                                                 tracing::info!("Switched log level to INFO from {x:?}");
                                             }
                                         }
                                         
                                     }
+                                    // TODO - this is not documented anywhere..
+                                    KeyCode::Char('o')  => {
+                                        {
+                                            let observation_mode_was_on_before_keypress = state.app_state.enable_global_traffic_inspection.load(std::sync::atomic::Ordering::SeqCst);
+                                            let handle = reloadable_filter_handle.clone();
+                                            let ef = match last_set_log_level_by_tui {
+                                                LevelFilter::DEBUG => "odd_box=debug",
+                                                LevelFilter::TRACE => "odd_box=trace",
+                                                LevelFilter::WARN => "odd_box=warn",
+                                                LevelFilter::INFO => "odd_box=info",
+                                                LevelFilter::ERROR => "odd_box=error",
+                                                _ => "odd_box=info"
+                                            };
+                                            if observation_mode_was_on_before_keypress {
+                                                //observation_directive = "odd_box::observer=warn".parse().expect("This directive should always work");
+                                                tracing::error!("OBSERVATION MODE DISABLED - PRESS O AGAIN TO ENABLE");
+                                                state.app_state.enable_global_traffic_inspection.store(false, std::sync::atomic::Ordering::SeqCst);
+                                                _ = handle.reload(
+                                                    EnvFilter::from_str(ef).unwrap()
+                                                    .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
+                                                    .add_directive(silence_observation_directive.clone())
+                                                    
+                                                );
+                                            } else {
+                                                //observation_directive = "odd_box::observer=trace".parse().expect("This directive should always work");
+                                                tracing::error!("OBSERVATION MODE ENABLED - PRESS O AGAIN TO DISABLE");
+                                                state.app_state.enable_global_traffic_inspection.store(true, std::sync::atomic::Ordering::SeqCst);
+                                                _ = handle.reload(
+                                                    EnvFilter::from_str(ef).unwrap()
+                                                    .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
+                                                   // .add_directive(observation_directive.clone())
+                                                    
+                                                );
+                                            }
+                                            
+                                        }
+                                        
+                                    },
                                     KeyCode::Esc | KeyCode::Char('q')  => {
                                         {
                                             tracing::warn!("User requested exit");
@@ -440,6 +494,7 @@ pub async fn run(
                                                 tui_state.log_tab_stage.scroll_state.vertical_scroll = None;
                                                 tui_state.log_tab_stage.scroll_state.vertical_scroll_state = tui_state.log_tab_stage.scroll_state.vertical_scroll_state.position(0);
                                                 buf.logs.clear();
+                                                buf.logs.shrink_to_fit();
                                                 
                                             }    
                                             _ => {}        
@@ -555,7 +610,14 @@ pub async fn run(
         
     };
 
-    _ = tui_handle.await.ok();
+    match tui_handle.await {
+        Ok(_) => {},
+        Err(e) => {
+            tracing::error!("fatal odd-box bug: {:?}",e);
+            // this is NEVER supposed to happen so just make it possible to see the error before we die
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        },
+    }
 
     _ = disable_raw_mode().ok();
     let mut stdout = std::io::stdout();

@@ -5,7 +5,6 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::widgets::{Cell, Row, Scrollbar, ScrollbarOrientation, Table};
 use crate::global_state::GlobalState;
 use crate::types::connection_type::ConnectionType;
-use crate::types::proxy_state::*;
 use crate::types::tui_state::TuiState;
 use ratatui::layout::Constraint;
 use super::Theme;
@@ -13,36 +12,15 @@ use super::Theme;
 impl Display for ConnectionType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConnectionType::FullTlsTerminatedWithHttpReEncryptedOutgoingTls => {
-                write!(f, "Full TLS Terminated: HTTP processed, outgoing re-encrypted with TLS")
-            }
-            ConnectionType::MixedTerminationWithPlainOutgoing => {
-                write!(f, "Mixed Termination: HTTP processed, outgoing is plain")
-            }
-            ConnectionType::TlsTerminatedWithReEncryptedOutgoingTls => {
-                write!(f, "TLS Terminated: Outgoing re-encrypted with TLS")
-            }
-            ConnectionType::TlsTerminatedWithPlainOutgoing => {
-                write!(f, "TLS Terminated: Outgoing is plain")
-            }
-            ConnectionType::HttpTerminatedWithOutgoingTls => {
-                write!(f, "HTTP Terminated: Outgoing encrypted with TLS")
-            }
-            ConnectionType::HttpTerminatedWithPlainOutgoing => {
-                write!(f, "HTTP Terminated: Outgoing is plain")
-            }
-            ConnectionType::OpaqueTlsForwarding => {
-                write!(f, "Opaque TLS Forwarding: End-to-end encrypted")
-            }
-            ConnectionType::PlainEndToEndForwarding => {
-                write!(f, "Plain Forwarding: No termination, data forwarded as plain")
-            }
-            ConnectionType::OpaqueIncomingTlsPassthroughWithPlainOutgoing => {
-                write!(f, "Opaque TLS Passthrough: Forwarded to plain outgoing")
-            }
-            ConnectionType::OpaqueIncomingTlsPassthroughWithOutgoingTls => {
-                write!(f, "Opaque TLS Passthrough: Forwarded to TLS outgoing")
-            }
+            ConnectionType::TlsTerminatedWithOutgoingClearText(target,backend) => write!(f, "HTTPS to HTTP Tunnel -> {}:{} ({})",backend.address,backend.port,target.host_name),
+            ConnectionType::TlsTerminatedWithOutgoingTLS(target,backend) => write!(f, "HTTPS Tunnel to {}:{} ({})",backend.address,backend.port,target.host_name),
+            ConnectionType::TlsTermination => write!(f, "HTTPS Terminated"),
+            ConnectionType::TlsPassthru(target,backend) => write!(f, "TLS Passthru to {}:{} ({})",backend.address,backend.port,target.host_name),
+            ConnectionType::HttpPassthru(target,backend) => write!(f, "HTTP Passthru to {}:{} ({})",backend.address,backend.port,target.host_name),
+            ConnectionType::HttpTermination => write!(f, "HTTP Terminated"),
+            ConnectionType::HttpWithOutgoingTLS(target,backend) => write!(f, "HTTP to HTTPS Tunnel -> {}:{} ({})",backend.address,backend.port,target.host_name),
+            ConnectionType::PendingInit => write!(f, "Initializing.."),
+            ConnectionType::Invalid(e) => write!(f, "Invalid: {e}"),
         }
     }
 }
@@ -62,41 +40,44 @@ pub fn draw(
     }
 
 
-    let headers = [ "Site", "Source","Destination", "Description"];
+    let headers = [  "Source", "In/Out","Description"];
     
     let mut rows = global_state.app_state.statistics.active_connections.iter().map(|guard| {
+        
         let (_,active_connection) = guard.pair();
-        let src = active_connection.client_addr.clone();
-        let backend = match &active_connection.backend {
-            Some(b) => format!("{}:{}",b.address,b.port),
-            None if active_connection.is_odd_box_admin_api_req => "odd-box".to_string(),
-            None => match active_connection {
-                ProxyActiveTCPConnection { dir_server: Some(_ds), .. } => format!("odd-box"),
-                _ => "<UNKNOWN>".to_string()
-            }
-        };
-        let connection_type = active_connection.get_connection_type().to_string();
+        
+        
 
-        if let Some(t) = &active_connection.target {
-            vec![
-                t.host_name.clone(),
-                src,
-                backend,
-                connection_type, 
-                
-            ]
+        let local_info = if let Some(v) = global_state.monitoring_station.tcp_connections.get(&active_connection.connection_key) {
+            v.local_process_name_and_pid.clone()
+        } else { None };
+        
+        let src = if let Some((n,p)) = local_info {
+            format!("{} ({} *{}*)",active_connection.client_addr_string.clone(),n,p)
         } else {
-            vec![
-                match (active_connection.dir_server.as_ref(),active_connection.is_odd_box_admin_api_req) {
-                    (Some(ds),_) => format!("{}",ds.host_name.clone()),
-                    (None,true) => "odd-box-admin-api".to_string(),
-                    _ => "<UNKNOWN>".to_string()
-                },
-                src,
-                backend,
-                connection_type, 
-            ]
-        }        
+            active_connection.client_addr_string.clone()
+        };
+
+        let grpc_tag = if active_connection.is_grpc.unwrap_or_default() { "[gRPC] "} else { "" };
+        let ws_tag = if active_connection.is_websocket.unwrap_or_default() { "[WS] "} else { "" };
+        let connection_type = format!("{grpc_tag}{ws_tag}{}",active_connection.get_connection_type());
+
+        let trans = if let Some(c) = global_state.monitoring_station.tcp_connections.get(&active_connection.connection_key) {
+            if c.bytes_rec == 0 && c.bytes_sent == 0 {
+                format!("-")
+            } else {
+                format!("{} bytes / {} bytes ", c.bytes_rec,c.bytes_sent)
+            }
+            
+        } else {
+            format!("not tracked")
+        };
+
+        vec![
+             src,
+             trans,
+             connection_type, 
+         ]    
     }).collect::<Vec<Vec<String>>>();
     
     rows.sort_by_key(|row| row[0].clone());
@@ -120,24 +101,25 @@ pub fn draw(
     // ====================================================================================================
 
     let is_dark_theme = matches!(&theme,Theme::Dark(_));
-    let odd_row_bg = if is_dark_theme { Color::from_hsl(15.0, 10.0, 10.0) } else {
-        Color::Rgb(250,250,250)
-    };
-    let row_bg =  if is_dark_theme { Color::from_hsl(10.0, 10.0, 5.0) } else {
-        Color::Rgb(235,235,255)
-    };
-    let table_rows : Vec<_> = display_rows.iter().enumerate().map(|(i,row)| {
-        let is_odd = i % 2 == 0;
+    // let odd_row_bg = if is_dark_theme { Color::from_hsl(15.0, 10.0, 10.0) } else {
+    //     Color::Rgb(250,250,250)
+    // };
+    // let row_bg =  if is_dark_theme { Color::from_hsl(10.0, 10.0, 5.0) } else {
+    //     Color::Rgb(235,235,255)
+    // };
+    let table_rows : Vec<_> = display_rows.iter().enumerate().map(|(_i,row)| {
+        //let is_odd = i % 2 == 0;
         Row::new(row.iter().map(|x|Cell::new(x.to_string()))).height(1 as u16)
             .style(
                 Style::new()
-                    .bg(
-                        if is_odd {
-                            odd_row_bg
-                        } else {
-                            row_bg
-                        }
-                    ).fg(if is_dark_theme { Color::White } else { Color::Black })
+                    // .bg(
+                    //     if is_odd {
+                    //         odd_row_bg
+                    //     } else {
+                    //         row_bg
+                    //     }
+                    // )
+                    .fg(if is_dark_theme { Color::White } else { Color::Black })
                 )
     }).collect();
     
@@ -154,10 +136,9 @@ pub fn draw(
     ).height(1);
 
     let widths = [
-        Constraint::Fill(1),
-        Constraint::Fill(1), 
-        Constraint::Fill(1),         
-        Constraint::Fill(4),        
+        Constraint::Percentage(40),
+        Constraint::Percentage(20),
+        Constraint::Percentage(40),      
     ];
     
     let table = Table::new(table_rows, widths.clone())

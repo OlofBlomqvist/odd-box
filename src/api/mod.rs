@@ -17,7 +17,7 @@ use utoipa_swagger_ui::SwaggerUi;
 pub struct WebSocketGlobalState {
     
 
-    pub broadcast_channel_to_all_websocket_clients: tokio::sync::broadcast::Sender<Event>,
+    pub broadcast_channel_to_all_websocket_clients: tokio::sync::broadcast::Sender<EventForWebsocketClients>,
 
     pub global_state: Arc<crate::global_state::GlobalState>
 }
@@ -27,7 +27,7 @@ mod controllers;
 
 use utoipauto::utoipauto;
 
-use crate::{tcp_proxy::{GenericManagedStream, ManagedStream, Peekable}, types::odd_box_event::Event};
+use crate::{tcp_proxy::{GenericManagedStream, ManagedStream, Peekable}, types::odd_box_event::EventForWebsocketClients};
 
 #[utoipauto]
 #[derive(OpenApi)]
@@ -153,11 +153,19 @@ async fn ws_log_messages_handler(
 
                 let mut valid_origins = 
                     if let Some(p) = state.global_state.config.read().await.tls_port {
-                        vec![
-                            format!("https://localhost:{p}"),
-                            format!("https://odd-box.localhost:{p}"),
-                            format!("https://oddbox.localhost:{p}")
-                        ]
+                            if p == 443 {
+                                vec![
+                                format!("https://localhost"),
+                                format!("https://odd-box.localhost"),
+                                format!("https://oddbox.localhost")
+                            ]
+                        } else {
+                            vec![
+                                format!("https://localhost:{p}"),
+                                format!("https://odd-box.localhost:{p}"),
+                                format!("https://oddbox.localhost:{p}")
+                            ]
+                        }
                     } else {
                         vec![
                             format!("https://localhost"),
@@ -256,7 +264,7 @@ async fn handle_socket(client_socket: WebSocket, who: SocketAddr, state: WebSock
 }
 
 
-async fn broadcast_manager(state: WebSocketGlobalState,tracing_broadcaster:tokio::sync::broadcast::Sender::<Event>) {
+async fn broadcast_manager(state: WebSocketGlobalState,tracing_broadcaster:tokio::sync::broadcast::Sender::<EventForWebsocketClients>) {
     // need this in a loop as we will drop all senders when log level is changed at runtime
     // and we dont want to stop sending messages to the websocket clients just because the log level was changed..
     loop {
@@ -313,7 +321,7 @@ impl OddBoxAPI {
                 }
             }
         } else {
-            tracing::warn!("No password set, allowing all requests");
+            //tracing::warn!("No password set, allowing all requests");
             Ok(next.run(req).await)
         }
     }
@@ -368,7 +376,7 @@ impl OddBoxAPI {
 
         let svc = router.into_make_service_with_connect_info::<SocketAddr>();
 
-        tokio::spawn(broadcast_manager(websocket_state,state.global_broadcast_channel.clone()));
+        tokio::spawn(broadcast_manager(websocket_state,state.websockets_broadcast_channel.clone()));
         OddBoxAPI {
             service: svc,
             _state: state
@@ -395,6 +403,10 @@ impl OddBoxAPI {
                 match tls_acceptor.accept(managed_stream).await {
                     Ok(tls_stream) => {
                         let mut s = ManagedStream::from_tls_stream(tls_stream);
+                        crate::proxy::mutate_tracked_connection(&self._state, &s.tcp_connection_id, |c|{
+                            c.tls_terminated = true;
+                            c.http_terminated = true;
+                        });
                         s.seal();                        
                         (GenericManagedStream::from_terminated_tls_stream(s),peer_addr)
                     }
@@ -405,14 +417,13 @@ impl OddBoxAPI {
             },
             GenericManagedStream::TerminatedTLS(s) => {
                 let peer_addr = s.stream.get_ref().0.stream.peer_addr()?;
+                crate::proxy::mutate_tracked_connection(&self._state, &s.tcp_connection_id, |c|{
+                    c.tls_terminated = true;
+                    c.http_terminated = true;
+                });
                 (GenericManagedStream::from_terminated_tls_stream(s),peer_addr)
             }
         };
-
-        crate::proxy::mutate_tracked_connection(&self._state, &generic_stream.get_id(), |x|{
-            x.is_odd_box_admin_api_req = true;
-            x.outgoing_connection_is_tls = false;
-        });
 
         let tower_service = svc.call(peer_addr).await.unwrap();
         let hyper_service = hyper::service::service_fn(move |request: axum::extract::Request<Incoming>| {

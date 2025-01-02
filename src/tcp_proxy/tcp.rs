@@ -11,6 +11,7 @@ use crate::configuration::BackendFilter;
 use crate::global_state::GlobalState;
 use crate::tcp_proxy::Peekable;
 use crate::types::proc_info::ProcId;
+use crate::types::proxy_state::OutgoingTunnelType;
 use tokio::net::TcpStream;
 use tracing::*;
 
@@ -30,24 +31,26 @@ pub struct ReverseTcpProxyTarget {
     pub forward_wildcard: bool,
     // subdomain is filled in otf upon receiving a request for this target and there is a subdomain used in the req
     pub sub_domain: Option<String> ,
-    pub disable_tcp_tunnel_mode : bool,
+    pub terminate_tls : bool,
     pub proc_id : Option<ProcId>,
 }
 
 
 
-#[derive(Debug,Eq,PartialEq)]
+#[derive(Debug,Eq,PartialEq,Clone)]
 pub enum DataType {
     TLS,
     ClearText
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct PeekResult {
     pub typ : DataType,
     #[allow(dead_code)]pub http_version : Option<Version>,
     pub target_host : Option<String>,
-    pub is_h2c_upgrade : bool
+    pub is_h2c_upgrade : bool,
+    pub sni : Option<String>,
+    pub host_header: Option<String>
 }
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -118,7 +121,7 @@ impl ReverseTcpProxy {
     ) -> anyhow::Result<(),TunnelError> {
 
 
-        let terminate_incoming = if target.disable_tcp_tunnel_mode  {
+        let terminate_incoming = if target.terminate_tls  {
             // this means we should always terminate incoming tls connections
             incoming_traffic_is_tls
         } else {
@@ -166,9 +169,11 @@ impl ReverseTcpProxy {
                             tls_stream.get_mut().0.is_tls_terminated = true;
                             tls_stream.get_mut().0.events.push("Terminated TLS prior to running bidirectional TCP tunnel".into());
                             let mut gen_stream = GenericManagedStream::from_terminated_tls_stream(ManagedStream::from_tls_stream(tls_stream));
-
+                            
                             let peek_result = gen_stream.peek_managed_stream(client_address).await;
+                            
                             gen_stream.seal();
+                            
                             match peek_result {
                                 Ok(r) => {
                                     let backend_filter = peekresult_to_backend_filter(r,true,is_h2c_upgrade_request);
@@ -199,6 +204,8 @@ impl ReverseTcpProxy {
         } else {
             (false,client_tcp_stream,peekresult_to_backend_filter(
                 PeekResult {
+                    host_header:None,
+                    sni: None,
                     typ: if incoming_traffic_is_tls { DataType::TLS } else { DataType::ClearText },
                     http_version,
                     target_host: Some(incoming_host_header_or_sni.clone()),
@@ -226,7 +233,7 @@ impl ReverseTcpProxy {
             };
         
         let backend = if backend == None {
-            tracing::warn!("No backend found for target {} using filter {backend_filter:?}.. falling back to http termination",target.host_name);
+            tracing::debug!("No backend found for target {} using filter {backend_filter:?}.. falling back to http termination",target.host_name);
             return Err(TunnelError::NoUsableBackendFound(possibly_terminated_stream))
         } else {
             backend.unwrap()
@@ -253,13 +260,13 @@ impl ReverseTcpProxy {
             Ok(rem_stream) => {
 
                 // THIS SHOULD BE THE ONLY PLACE WE INCREMENT THE TUNNEL COUNTER
-                match state.app_state.statistics.connections_per_hostname.get_mut(&target.host_name) {
+                match state.app_state.statistics.lb_access_count_per_hostname.get_mut(&target.host_name) {
                     Some(mut guard) => {
                         let (_k,v) = guard.pair_mut();
                         v.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     },
                     None => {
-                        state.app_state.statistics.connections_per_hostname
+                        state.app_state.statistics.lb_access_count_per_hostname
                         .insert(target.host_name.clone(), std::sync::atomic::AtomicUsize::new(1));
                     }
                 };
@@ -268,10 +275,12 @@ impl ReverseTcpProxy {
                     
                     
                     possibly_terminated_stream.update_tracked_info(|x|{
-                        x.backend = Some(backend);
-                        x.target = Some(target.as_ref().to_owned());
                         x.incoming_connection_uses_tls = incoming_traffic_is_tls;
-                        x.outgoing_connection_is_tls = backend_is_tls;              
+                        x.outgoing_tunnel_type = Some(if backend_is_tls {
+                            OutgoingTunnelType::TLS((*target).clone(),backend)
+                        } else {
+                            OutgoingTunnelType::Raw((*target).clone(),backend)
+                        });               
                     });
                     
                     match run_managed_bidirectional_tunnel(

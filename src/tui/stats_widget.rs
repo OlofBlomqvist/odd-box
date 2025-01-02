@@ -32,7 +32,7 @@ pub fn draw(
     // let total_connections = global_state
     //     .app_state
     //     .statistics
-    //     .connections_per_hostname
+    //     .lb_access_count_per_hostname
     //     .iter()
     //     .map(|x| {
     //         let (_, count) = x.pair();
@@ -46,32 +46,31 @@ pub fn draw(
     for x in global_state
         .app_state
         .statistics
-        .connections_per_hostname
+        .lb_access_count_per_hostname
         .iter()
     {
         let (domain_name, _) = x.pair();
         unique_hostnames.insert(domain_name.clone());
     }
 
-    //let num_unique_hostnames = unique_hostnames.len();
+    let num_unique_hostnames = unique_hostnames.len();
 
     let style = if is_dark_theme { Style::new().fg(Color::White) } else { Style::new().fg(Color::Black) };
 
-
+    let p1 = Paragraph::new(format!("Total accepted TCP connections: {}",global_state.app_state.statistics.total_accepted_tcp_connections.load(std::sync::atomic::Ordering::Relaxed))).style(style);
+    
     // let p2 = Paragraph::new(format!(
-    //     "Received TCP connections: {}",
-    //     total_connections // <--- this i no longer just tcp connections , its a mix.. we need to sort this out
-                             // after the rewrite so that we use the correct data from the new implementation
+    //     "Outgoing (to backends) requests count: {}",
+    //     total_connections
     // )).style(style);
 
-    let p2 = Paragraph::new(format!("This page is under re-construction..")).style(style);
-    
 
-    // let p3 = Paragraph::new(format!("Number of unique hostnames seen: {}", num_unique_hostnames)).style(style);
 
-    //f.render_widget(p1, area.offset(Offset { x: 4, y: 1 }));
-    f.render_widget(p2, area.offset(Offset { x: 4, y: 1 }));
-    // f.render_widget(p3, area.offset(Offset { x: 4, y: 2 }));
+    let p3 = Paragraph::new(format!("Number of unique hostnames seen: {}", num_unique_hostnames)).style(style);
+
+    f.render_widget(p1, area.offset(Offset { x: 4, y: 1 }));
+    //f.render_widget(p2, area.offset(Offset { x: 4, y: 2 }));
+    f.render_widget(p3, area.offset(Offset { x: 4, y: 3 }));
 
 
     // TODO - Use a scrollable table and display all host specific stats

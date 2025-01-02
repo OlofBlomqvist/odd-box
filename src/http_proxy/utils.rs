@@ -12,7 +12,7 @@ use tungstenite::http;
 use lazy_static::lazy_static;
 
 use crate::{
-    global_state::GlobalState, http_proxy::EpicResponse, CustomError
+    global_state::GlobalState, http_proxy::EpicResponse, types::proxy_state::ConnectionKey, CustomError
 };
 lazy_static! {
     static ref TE_HEADER: HeaderName = HeaderName::from_static("te");
@@ -65,28 +65,29 @@ pub enum Target {
 // while also selecting http version and handling upgraded connections.  
 // TODO: simplify the signature, we dont need it to be this complicated..
 pub async fn proxy(
-    req_host_name: &str,
+    original_req_host_name: &str,
+    parsed_req_host_name: &str,
     original_connection_is_https:bool,
     state: Arc<GlobalState>,
     mut req: hyper::Request<hyper::body::Incoming>,
     target_url: &str,
     target: Target,
-    client_ip: SocketAddr,
+    _client_ip: SocketAddr,
     client:  Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
     h2_only_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
-    _fallback_url: &str,
     use_https_to_backend_target: bool,
-    backend: crate::configuration::Backend
+    backend: crate::configuration::Backend,
+    connection_key:&ConnectionKey
 ) -> Result<ProxyCallResult, ProxyError> {
 
-    let incoming_http_version = req.version();
+    //let incoming_http_version = req.version();
     let request_upgrade_type = get_upgrade_type(req.headers());
     let request_upgraded = req.extensions_mut().remove::<OnUpgrade>();
 
 
-    tracing::trace!(
-        "Incoming {incoming_http_version:?} request to terminating proxy from {client_ip:?} with target url: {target_url}. original req: {req:#?}"
-    );
+    // tracing::trace!(
+    //     "Incoming {incoming_http_version:?} request to terminating proxy from {client_ip:?} with target url: {target_url}. original req: {req:#?}"
+    // );
 
     // These are the defaults, we will update by looking at the backend hints and the request.
     let mut use_prior_knowledge_h2c = false;
@@ -111,13 +112,13 @@ pub async fn proxy(
     match &target {
         Target::Remote(remote_site_config) => {
             if remote_site_config.keep_original_host_header.unwrap_or_default() {
-                host_header_to_use = Some(req_host_name.to_string());
+                host_header_to_use = Some(original_req_host_name.to_string());
             }
         },
         Target::Proc(cfg) => {
             if cfg.keep_original_host_header.unwrap_or_default() {
-                host_header_to_use = Some(req_host_name.to_string());
-            }            
+                host_header_to_use = Some(parsed_req_host_name.to_string());
+            }
         }
     };
 
@@ -126,6 +127,7 @@ pub async fn proxy(
     let mut proxied_request =
         create_proxied_request(&target_url, req, request_upgrade_type.as_ref(), host_header_to_use)?;
     
+
     // if incoming req is h2c, we will attempt to use h2c prior knowledge to the backend regardless of hints.
     if proxied_request.version() == Version::HTTP_2 && !original_connection_is_https && !incoming_req_used_h2c_upgrade_header {
         use_prior_knowledge_h2c = true;
@@ -161,9 +163,10 @@ pub async fn proxy(
     _ = update_port(&mut uri, p,use_https_to_backend_target);
 
 
+    let reqstring = format!("{:#?}",proxied_request);
 
-    tracing::trace!("Sending request:\n{:#?}", proxied_request);
-    
+    let _my_permit = crate::proxy::ACTIVE_HYPER_CLIENT_CONNECTIONS.acquire().await;
+
     // todo - prevent making a connection if client already has too many tcp connections open
     let mut response = {
         client
@@ -172,14 +175,27 @@ pub async fn proxy(
             .map_err(ProxyError::LegacyError)?
     };
 
-    tracing::trace!(
-        "GOT THIS RESPONSE FROM REQ TO '{target_url}' : {:?}",response
-    );
+    // ^ This place right here is the only place where we are able to actually modify packets that get sent to backends
+    //   and also modify responses prior to sending them to our client. Thus we will emit extra details around this traffic
+    //   for making it visibly the exact request we send and what we get in response.
+    //   Later on this can then be compared to the raw tcp data observations where it would be clear if odd-box has sent 
+    //   bad data or modified the result somehow in a destructive way..
     
+    // TODO - more structure to this type of events..
+    _ = state.global_broadcast_channel.send(crate::types::odd_box_event::GlobalEvent::SentHttpRequestToBackend(*connection_key,reqstring));
+    _ = state.global_broadcast_channel.send(crate::types::odd_box_event::GlobalEvent::GotResponseFromBackend(*connection_key,format!("{:#?}",response)));
+    
+    
+    
+
+    // tracing::trace!(
+    //     "GOT THIS RESPONSE FROM REQ TO '{target_url}' : {:?}",response
+    // );
+
     // if the backend agreed to upgrade to some other protocol, we will create a bidirectional tunnel for the client and backend to communicate directly.
     if response.status() == StatusCode::SWITCHING_PROTOCOLS {
         let response_upgrade_type = get_upgrade_type(response.headers());
-        tracing::trace!("RESPONSE IS TO UPGRADE TO : {response_upgrade_type:?}.");
+        //tracing::trace!("RESPONSE IS TO UPGRADE TO : {response_upgrade_type:?}.");
         if request_upgrade_type == response_upgrade_type {
             if let Some(request_upgraded) = request_upgraded {
 
@@ -327,21 +343,21 @@ fn create_proxied_request<B>(
     // replace the uri
     let target_uri = target_url.parse::<http::Uri>()
         .map_err(|e| ProxyError::InvalidUri(e))?;
-    *request.uri_mut() = target_uri;
+    *request.uri_mut() = target_uri.clone();
 
     
     // we want to pass the original host header to the backend (the one that the client requested)
     // and not the one we are connecting to as that might as well just be an internal name or IP.
     if let Some(req_host_name) = req_host_name {
         if let Ok(v) = HeaderValue::from_str(&req_host_name) {
-            let replaced = request.headers_mut().insert("Host",v);
-            tracing::trace!("Replaced host header '{replaced:?}' with {req_host_name}");
+            let _replaced = request.headers_mut().insert("Host",v);
+            //tracing::trace!("Replaced host header '{replaced:?}' with {req_host_name}");
         } else {
-            tracing::debug!("Failed to insert host header for '{req_host_name}'. Falling back to direct hostname call rather than 127.0.0.1.");
+            //tracing::debug!("Failed to insert host header for '{req_host_name}'. Falling back to direct hostname call rather than 127.0.0.1.");
             _ = request.uri_mut().host().replace(&req_host_name);
         }    
     } else {
-        tracing::trace!("using automatic host header based on remote url");
+        //tracing::trace!("using automatic host header based on remote url: {:?}",target_uri);
         request.headers_mut().remove("Host");
     }
 
@@ -480,7 +496,7 @@ pub async fn h2_stream_test(
 
     tokio::spawn(async move {
         while let Some(Ok(frame)) = rx_from_client.recv().await {
-            tracing::info!("msg from client: {frame:?}");
+            tracing::info!("h2 stream test - msg from client: {frame:?}");
         }
     });
 

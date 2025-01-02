@@ -55,8 +55,12 @@ pub struct InProcessSiteConfig {
     /// and can avoid conflicts when starting new processes. settings this in toml conf file will have no effect.
     #[serde(skip)] // <-- dont want to even read or write this to the config file, nor exposed in the api docs
     pub active_port : Option<u16>,
-    /// This is mostly useful in case the target uses SNI sniffing/routing
-    pub disable_tcp_tunnel_mode : Option<bool>,
+    /// This is mostly useful in case the target uses SNI sniffing/routing.
+    /// It means you want to use level 7 mode instead of level 4, thus always terminating connections.
+    /// Previously this setting was called 'disable_tcp_tunnel_mode'
+    #[serde(alias = "disable_tcp_tunnel_mode")]
+    pub terminate_tls : Option<bool>,
+    pub terminate_http : Option<bool>,
     /// H1,H2,H2C,H2CPK,H3 - empty means H1 is expected to work with passthru: everything else will be 
     /// using terminating mode.
     pub hints : Option<Vec<Hint>>,
@@ -97,7 +101,9 @@ pub struct InProcessSiteConfig {
     pub log_level: Option<LogLevel>,
 
     #[serde(default = "true_option")]
-    /// Defaults to true.
+    /// Defaults to true for hosted processes.
+    /// For higher performance you may wish to set this to FALSE as it avoids 
+    /// some overhead when it comes to DNS lookups
     pub keep_original_host_header: Option<bool>
 }
 impl InProcessSiteConfig {
@@ -111,7 +117,7 @@ pub struct FullyResolvedInProcessSiteConfig {
     pub excluded_from_start_all: bool,
     pub proc_id : ProcId,
     pub active_port : Option<u16>,
-    pub disable_tcp_tunnel_mode : Option<bool>,
+    pub terminate_tls : Option<bool>,
     pub hints : Option<Vec<Hint>>,
     pub host_name : String,
     pub dir : Option<String>,
@@ -137,7 +143,8 @@ impl PartialEq for InProcessSiteConfig {
     
     fn eq(&self, other: &Self) -> bool {
         self.log_level.eq(&other.log_level) &&
-        compare_option_bool(self.disable_tcp_tunnel_mode,other.disable_tcp_tunnel_mode) &&
+        compare_option_bool(self.terminate_tls,other.terminate_tls) &&
+        compare_option_bool(self.terminate_http,other.terminate_http) &&        
         self.hints == other.hints &&
         self.host_name == other.host_name &&
         self.dir == other.dir &&
@@ -205,8 +212,14 @@ pub struct RemoteSiteConfig{
     pub backends : Vec<Backend>,
     /// If you wish to use wildcard routing for any subdomain under the 'host_name'
     pub capture_subdomains : Option<bool>,
-    /// This is mostly useful in case the target uses SNI sniffing/routing
-    pub disable_tcp_tunnel_mode : Option<bool>,
+    /// This is mostly useful in case the target uses SNI sniffing/routing.
+    /// It means you want to use level 7 mode instead of level 4, thus always terminating connections.
+    /// Previously this setting was called 'disable_tcp_tunnel_mode'
+    #[serde(alias = "disable_tcp_tunnel_mode")]
+    pub terminate_tls : Option<bool>,
+    /// Enforce the termination of http requests. 
+    /// Only enable if you know exactly why you want this as it can negatively affect performance.
+    pub terminate_http : Option<bool>,
     /// If you wish to use the subdomain from the request in forwarded requests:
     /// test.example.com -> internal.site
     /// vs
@@ -227,8 +240,9 @@ impl PartialEq for RemoteSiteConfig {
         compare_option_bool(self.keep_original_host_header,other.keep_original_host_header) &&
         compare_option_bool(self.enable_lets_encrypt,other.enable_lets_encrypt) &&
         compare_option_bool(self.capture_subdomains, other.capture_subdomains) &&
-        compare_option_bool(self.disable_tcp_tunnel_mode, other.disable_tcp_tunnel_mode) &&
-        compare_option_bool(self.forward_subdomains, other.forward_subdomains)
+        compare_option_bool(self.terminate_tls, other.terminate_tls) &&
+        compare_option_bool(self.forward_subdomains, other.forward_subdomains) &&
+        compare_option_bool(self.terminate_http,other.terminate_http)
     }
 }
 
@@ -304,6 +318,7 @@ impl InProcessSiteConfig {
                 "localhost"
             }
         };
+        
 
         let backends = vec![Backend {
             address: local_addr.to_string(), // we are always connecting to localhost since we are the ones hosting this process
@@ -320,7 +335,7 @@ impl InProcessSiteConfig {
         if filtered_backends.len() == 0 { return None };
         
         let current_req_count_for_target_host_name = {
-            state.app_state.statistics.connections_per_hostname
+            state.app_state.statistics.lb_access_count_per_hostname
             .get(&self.host_name).and_then(|x|Some(x.load(std::sync::atomic::Ordering::SeqCst)))
             .unwrap_or(0)
         };
@@ -349,7 +364,7 @@ impl RemoteSiteConfig {
         if filtered_backends.len() == 0 { return None };
         
         let current_req_count_for_target_host_name = {
-            state.app_state.statistics.connections_per_hostname
+            state.app_state.statistics.lb_access_count_per_hostname
             .get(&self.host_name).and_then(|x|Some(x.load(std::sync::atomic::Ordering::SeqCst)))
             .unwrap_or(0)
         };
@@ -434,6 +449,7 @@ pub struct OddBoxV3Config {
     pub odd_box_password: Option<String>,
 
     /// Uses 127.0.0.1 instead of localhost when proxying to locally hosted processes. 
+    #[serde(default = "true_option")]
     pub use_loopback_ip_for_procs: Option<bool>
 
 }
@@ -578,8 +594,8 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
                     formatted_toml.push(format!("capture_subdomains = true"));
                 }
                 
-                if let Some(true) = site.disable_tcp_tunnel_mode {
-                    formatted_toml.push(format!("disable_tcp_tunnel_mode = {}", true));
+                if let Some(true) = site.terminate_tls {
+                    formatted_toml.push(format!("terminate_tls = {}", true));
                 }
 
                 if let Some(true) = site.enable_lets_encrypt {
@@ -659,6 +675,11 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
                     formatted_toml.push(format!("capture_subdomains = {}", "true"));
                 }
 
+                if let Some(true) = process.terminate_tls {
+                    formatted_toml.push(format!("terminate_tls = {}", true));
+                }
+
+
                 if let Some(evars) = &process.env_vars {
                     formatted_toml.push("env_vars = [".to_string());
                     for env_var in evars {
@@ -703,7 +724,8 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
                     proc_id: ProcId::new(),
                     active_port: None,
                     forward_subdomains: None,
-                    disable_tcp_tunnel_mode: Some(false),
+                    terminate_tls: Some(false),
+                    terminate_http: None,
                     args: Some(vec!["--test".to_string()]),
                     auto_start: Some(true),
                     bin: "my_bin".into(),
@@ -724,6 +746,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
             ]),
             remote_target: Some(vec![
                 RemoteSiteConfig { 
+                    terminate_http: None,
                     keep_original_host_header: None,
                     enable_lets_encrypt: Some(false),
                     forward_subdomains: None,
@@ -737,9 +760,10 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
                         }
                     ], 
                     capture_subdomains: Some(false), 
-                    disable_tcp_tunnel_mode: Some(false)
+                    terminate_tls: Some(false)
                 },
                 RemoteSiteConfig { 
+                    terminate_http: None,
                     keep_original_host_header: None,
                     enable_lets_encrypt: Some(false),
                     forward_subdomains: Some(true),                    
@@ -753,7 +777,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
                         }
                     ], 
                     capture_subdomains: Some(false), 
-                    disable_tcp_tunnel_mode: Some(true)
+                    terminate_tls: Some(true)
                 }
             ]),
             root_dir: Some("/tmp".into()),
@@ -767,12 +791,15 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
 fn default_log_level() -> Option<LogLevel> {
     Some(LogLevel::Info)
 }
+
 fn default_log_format() -> LogFormat {
     LogFormat::standard
 }
+
 fn default_https_port_4343() -> Option<u16> {
     Some(4343)
 }
+
 fn default_http_port_8080() -> Option<u16> {
     Some(8080)
 }
@@ -854,7 +881,8 @@ impl TryFrom<super::v2::OddBoxV2Config> for OddBoxV3Config{
                     proc_id: ProcId::new(),
                     active_port: None,
                     forward_subdomains: x.forward_subdomains,
-                    disable_tcp_tunnel_mode: x.disable_tcp_tunnel_mode,
+                    terminate_tls: x.disable_tcp_tunnel_mode,
+                    terminate_http: None,
                     args: x.args,
                     auto_start: x.auto_start,
                     bin: x.bin,
@@ -873,9 +901,10 @@ impl TryFrom<super::v2::OddBoxV2Config> for OddBoxV3Config{
             remote_target: Some(old_config.remote_target.unwrap_or_default().iter().map(|x|{
 
                 RemoteSiteConfig {
+                    terminate_http: x.disable_tcp_tunnel_mode, // <-- before v3 there was just disable tunnel mode, so both term tls and http get val from there now
                     keep_original_host_header: None,
                     enable_lets_encrypt: Some(false),
-                    disable_tcp_tunnel_mode: x.disable_tcp_tunnel_mode,
+                    terminate_tls: x.disable_tcp_tunnel_mode,
                     capture_subdomains: x.capture_subdomains,
                     forward_subdomains: x.forward_subdomains,
                     backends: x.backends.iter().map(|b| {

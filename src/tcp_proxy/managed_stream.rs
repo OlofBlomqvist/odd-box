@@ -3,7 +3,7 @@ use hyper::Version;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_rustls::server::TlsStream;
-use tracing::trace;
+use tracing::{trace, warn};
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -40,13 +40,14 @@ pub struct ManagedStream<T> where T: AsyncRead + AsyncWrite + Unpin {
     pub events : Vec<String>,
     // fields that will be set once we know more about the stream
     pub is_tls: bool,
+    pub is_http2: bool,
     pub is_tls_terminated: bool,
     pub is_http_terminated: bool,
     pub is_wrapped: bool,
     pub http_version: Option<Version>,
     pub is_websocket: bool,
     pub contains_h2c_upgrade_header: bool,
-
+    pub peek_result : Option<PeekResult>
 
     // State to manage reading and calling test
     //state: ReadState,
@@ -61,6 +62,24 @@ pub enum GenericManagedStream{
     TerminatedTLS(ManagedStream<TlsStream<ManagedStream<TcpStream>>>)
 }
 impl GenericManagedStream {
+    pub fn peek_stored_result(&self) -> Option<PeekResult> {
+        match self {
+            GenericManagedStream::TCP(managed_stream) => managed_stream.peek_result.clone(),
+            GenericManagedStream::TerminatedTLS(managed_stream) => managed_stream.peek_result.clone(),
+        }
+    }
+    pub fn save_peek_result(&mut self,peek_result:PeekResult) {
+        match self {
+            GenericManagedStream::TCP(managed_stream) => {
+                managed_stream.is_http2 = managed_stream.is_http2 || peek_result.http_version == Some(Version::HTTP_2);
+                managed_stream.peek_result = Some(peek_result);
+            },
+            GenericManagedStream::TerminatedTLS(managed_stream) => {
+                managed_stream.is_http2 = managed_stream.is_http2 || peek_result.http_version == Some(Version::HTTP_2);
+                managed_stream.peek_result = Some(peek_result)
+            }
+        };
+    }
     pub fn add_event(&mut self, event: String) {
         match self {
             GenericManagedStream::TCP(peekable_tcp_stream) => peekable_tcp_stream.events.push(event),
@@ -74,11 +93,25 @@ impl GenericManagedStream {
             GenericManagedStream::TerminatedTLS(stream) => stream.global_state.clone()
         }
     }
+    pub fn mark_as_http2(&mut self) {
+        match self {
+            GenericManagedStream::TCP(peekable_tcp_stream) => {
+                peekable_tcp_stream.is_http2 = true; 
+            },
+            GenericManagedStream::TerminatedTLS(stream) => {
+                stream.is_http2 = true;
+            }
+        }
+    }
     pub fn mark_as_tls(&mut self) {
         match self {
             // GenericManagedStream::TLS(peekable_tls_stream) => peekable_tls_stream.managed_tls_stream.is_tls = true,
-            GenericManagedStream::TCP(peekable_tcp_stream) => peekable_tcp_stream.is_tls = true,
-            GenericManagedStream::TerminatedTLS(stream) => stream.is_tls = true
+            GenericManagedStream::TCP(peekable_tcp_stream) => {
+                peekable_tcp_stream.is_tls = true; 
+            },
+            GenericManagedStream::TerminatedTLS(stream) => {
+                stream.is_tls = true;
+            }
         }
     }
     pub fn get_id(&self) -> Arc<ConnectionKey> {
@@ -105,7 +138,6 @@ impl Peekable for GenericManagedStream {
         match self {
             GenericManagedStream::TerminatedTLS(peekable_tls_stream) => {
                 peekable_tls_stream.sealed=true;
-                peekable_tls_stream.enable_inspection = true;
                 peekable_tls_stream.stream.get_mut().0.seal();
             },
             GenericManagedStream::TCP(peekable_tcp_stream) => peekable_tcp_stream.seal()
@@ -114,6 +146,29 @@ impl Peekable for GenericManagedStream {
 }
 
 impl GenericManagedStream {
+    // observing means that we will intercept all unencrypted bytes and log them or emit to websocket clients
+    // for generating a stream of data to be analyzed in whichever way we want
+    pub fn enable_observe(&mut self) {
+        match self {
+            GenericManagedStream::TCP(managed_stream) => {
+                if managed_stream.is_wrapped {
+                    warn!("enabling observation of an encrypted stream is not advised.. ignoring this request.");
+                } else {
+                    managed_stream.enable_inspection=true
+                }
+                
+            },
+            GenericManagedStream::TerminatedTLS(managed_stream) => {
+                if managed_stream.is_tls_terminated {
+                    managed_stream.enable_inspection=true;
+                    managed_stream.stream.get_mut().0.enable_inspection = false;
+                } else {
+                    warn!("enabling observation of an encrypted (non-terminated) stream is not advised.. ignoring this request.");
+                }
+            },
+        }
+    }
+    
     /// Updates the tracked connection with the given function.
     /// Note that this also refreshes the connection's TLS and HTTP termination status based on the current state of the stream.
     pub fn update_tracked_info(&self,f:impl FnOnce(&mut ProxyActiveTCPConnection) -> ()) {
@@ -144,24 +199,28 @@ impl GenericManagedStream {
                 } else {
                     "???".to_string()
                 };
+                let (_,sni) = match self.peek_stored_result() {
+                    Some(v) => (v.host_header,v.sni),
+                    None => (None,None)
+                };
                 crate::proxy::add_or_update_connection(
                     self.global_state(),
                     ProxyActiveTCPConnection {
+                        is_grpc: None,
+                        is_websocket: None,
+                        http_version: None,
+                        incoming_sni: sni,
                         resolved_connection_type: None,
                         resolved_connection_type_description: None,
-                        tcp_peer_addr: peekable_tcp_stream.stream.peer_addr().ok()
-                            .and_then(|x|Some(format!("{:?}",x))).unwrap_or("???".to_string()),
+                        client_socket_address: peekable_tcp_stream.stream.peer_addr().ok(),
+                        odd_box_socket: peekable_tcp_stream.stream.local_addr().ok(),
                         connection_key: *my_id,
                         connection_key_pointer: std::sync::Arc::<u64>::downgrade(&my_id),
-                        client_addr: client_addr,
-                        target: None,
-                        backend: None,
+                        client_addr_string: client_addr,
                         incoming_connection_uses_tls: peekable_tcp_stream.is_tls,
                         tls_terminated: peekable_tcp_stream.is_tls_terminated,
                         http_terminated: peekable_tcp_stream.is_http_terminated,
-                        outgoing_connection_is_tls: false,
-                        is_odd_box_admin_api_req: false,
-                        dir_server: None,
+                        outgoing_tunnel_type: None, // <-- no tunnel attached yet as we might still end up terminating each http request.
                         version: 1
 
                     }
@@ -177,20 +236,21 @@ impl GenericManagedStream {
                 crate::proxy::add_or_update_connection(
                     self.global_state(),
                     ProxyActiveTCPConnection {
+                        is_grpc: None,
+                        is_websocket: None,
+                        http_version: None,
+                        incoming_sni: None,
                         resolved_connection_type: None,
                         resolved_connection_type_description: None,
-                        tcp_peer_addr: format!("{:?}",managed_stream.stream.get_ref().0.stream.peer_addr()),
+                        odd_box_socket: managed_stream.stream.get_ref().0.stream.local_addr().ok(),
+                        client_socket_address: managed_stream.stream.get_ref().0.stream.peer_addr().ok(),
                         connection_key: *my_id,
                         connection_key_pointer: std::sync::Arc::<u64>::downgrade(&my_id),
-                        client_addr: client_addr,
-                        target: None,
-                        backend: None,
+                        client_addr_string: client_addr,
                         incoming_connection_uses_tls: true,
                         tls_terminated: true,
                         http_terminated: managed_stream.is_http_terminated,
-                        outgoing_connection_is_tls: false,
-                        is_odd_box_admin_api_req: false,
-                        dir_server: None,
+                        outgoing_tunnel_type: None,
                         version: 1
 
                     }
@@ -201,7 +261,7 @@ impl GenericManagedStream {
     pub fn from_terminated_tls_stream(mut stream: ManagedStream<TlsStream<ManagedStream<TcpStream>>>) -> Self {
         stream.sealed = false;
         stream.is_tls_terminated = true;
-        stream.is_tls;
+        stream.is_tls = true;
         stream.stream.get_mut().0.is_wrapped = true;
         stream.stream.get_mut().0.is_tls = true;        
         Self::TerminatedTLS(stream)
@@ -214,6 +274,7 @@ impl GenericManagedStream {
     //         managed_tls_stream: ManagedStream::from_tls_stream(stream)
     //     })
     // }
+    
     pub async fn peek_managed_stream(
          &mut self,
         _client_address: SocketAddr,
@@ -247,18 +308,25 @@ impl GenericManagedStream {
 
             }
 
+            
+
             // Check for TLS handshake (0x16 is the ContentType for Handshake in TLS)
             if buf[0] == 0x16 {
                 self.mark_as_tls();
                 match TlsClientHello::try_from(&buf[..]) {
                     Ok(v) => {
                         if let Ok(v) = v.read_sni_hostname() {
+                            self.update_tracked_info(|x| 
+                                x.incoming_sni=Some(v.clone())
+                            );
                             trace!("Got TLS client hello with SNI '{v}' while peeking a managed stream. ");
                             return Ok(PeekResult { 
                                 typ: DataType::TLS, 
                                 http_version: None, 
+                                sni: Some(v.clone()),
                                 target_host: Some(v),
-                                is_h2c_upgrade: false
+                                is_h2c_upgrade: false,
+                                host_header:None
                             });
                         }
                     }
@@ -276,6 +344,9 @@ impl GenericManagedStream {
                 continue;
             }
 
+            // clearly this is not a tls stream - so we can observe it.
+            self.enable_observe();
+
             // Check for valid HTTP/1.x request
             if let Ok(http_version) = super::http1::is_valid_http_request(&buf) {
                 //if let Ok(str_data) = std::str::from_utf8(&buf) {
@@ -292,6 +363,8 @@ impl GenericManagedStream {
                             }
                         }
                         return Ok(PeekResult { 
+                            sni: None,
+                            host_header: Some(host.clone()),
                             typ: DataType::ClearText, 
                             http_version: Some(http_version), 
                             target_host: Some(host),
@@ -305,6 +378,8 @@ impl GenericManagedStream {
                 // }
             } else if super::http2::is_valid_http2_request(&buf) {
 
+                self.mark_as_http2();
+
                 //tracing::info!("is valid h2... creating new h2o for buf with len: {}",buf.len());
                 let observer = match self {
                     GenericManagedStream::TCP(managed_stream) => {
@@ -316,6 +391,7 @@ impl GenericManagedStream {
                         &mut managed_stream.h2_observer
                     },
                 };
+            
 
                 observer.write_incoming(&buf);
 
@@ -326,15 +402,17 @@ impl GenericManagedStream {
                 } else {
 
                     for frame in items {
-                        // note: this does work but we want to do it in the managedstream read/write polling instead
-                        //       and not need to do it manually here
-                        // _ = self.global_state().global_broadcast_channel.send(crate::types::odd_box_event::Event::Http2Event(format!("{:?}",frame)));
                         match frame {
                             h2_parser::H2Event::IncomingRequest(rq) => {
                                
                                 if let Some(host) = rq.headers.get(":authority") {
                                     tracing::trace!("Found valid HTTP/2 authority header while peeking into TCP stream: {host}");
+                                    self.update_tracked_info(|x|
+                                        x.incoming_sni=Some(host.clone())
+                                    );
                                     return Ok(PeekResult { 
+                                        sni: None,
+                                        host_header: Some(host.clone()),
                                         typ: DataType::ClearText, 
                                         http_version: Some(Version::HTTP_2), 
                                         target_host: Some(host.to_string()),
@@ -343,7 +421,12 @@ impl GenericManagedStream {
                                 }
                                 if let Some(host) = rq.headers.get("Host") {
                                     tracing::trace!("Found valid HTTP/2 host header while peeking into TCP stream: {host}");
+                                    self.update_tracked_info(|x|
+                                        x.incoming_sni=Some(host.clone())
+                                    );
                                     return Ok(PeekResult { 
+                                        sni: None,
+                                        host_header: Some(host.clone()),
                                         typ: DataType::ClearText, 
                                         http_version: Some(Version::HTTP_2), 
                                         target_host: Some(host.to_string()),
@@ -367,6 +450,8 @@ impl GenericManagedStream {
                         let sni = sni_server_name.map(|v|v.to_string());
                         tracing::trace!("Using SNI for target host {sni:?} as no authority was found in the http2 request");
                         return Ok(PeekResult { 
+                            sni:sni.clone(),
+                            host_header: None,
                             typ: DataType::ClearText, 
                             http_version: Some(Version::HTTP_2), 
                             target_host: sni,
@@ -421,10 +506,10 @@ impl<T> ManagedStream<T> where T: AsyncRead + AsyncWrite + Unpin {
 
     #[cfg(debug_assertions)]
     pub async fn inspect(&mut self) {
-
+        
         // tracing::info!("Starting to pull h2 observer stream events");
-        // while let Some(x) = self.h2_observer.next().await {
-        //     tracing::info!("H2 Observer: {:?}", x);
+        // for e in self.h2_observer.get_all_events() {
+        //     tracing::info!("H2 Observer event: {:?}", e);
         // }
 
     }
@@ -452,6 +537,8 @@ impl ManagedStream<TcpStream> {
         let state = state.clone();
         //tracing::info!("Creating ManagedStream from TcpStream");
         ManagedStream::<tokio::net::TcpStream> {
+            is_http2: false,
+            peek_result:None,
             //state: ReadState::Reading,
             http_version: None,
             contains_h2c_upgrade_header: false,
@@ -483,10 +570,11 @@ impl ManagedStream<tokio_rustls::server::TlsStream<ManagedStream<tokio::net::Tcp
         //tracing::info!("Creating ManagedStream from TlsStream");
         stream.get_mut().0.events.push("The stream was found to be TLS".to_string());
         stream.get_mut().0.events.push("The stream has been wrapped by an outer ManagedStream struct, this inner instance will now only be used as a transparant proxy.".to_string());
-        stream.get_mut().0.enable_inspection = false; // just to be sure
         stream.get_mut().0.is_wrapped = true;
         stream.get_mut().0.is_tls = true;
         ManagedStream {
+            is_http2: false,
+            peek_result:None,
             //state: ReadState::Reading,
             http_version: None,
             contains_h2c_upgrade_header: false,
@@ -514,7 +602,6 @@ impl ManagedStream<tokio_rustls::server::TlsStream<ManagedStream<tokio::net::Tcp
 impl Peekable for ManagedStream<TlsStream<TcpStream>>  {
     fn seal(&mut self) {
         self.sealed = true;
-        self.enable_inspection = true;
     }
     /// peeks data from the tcpstream without consuming it.
     /// consequent calls to this function will further read data from the TcpStream
@@ -703,7 +790,29 @@ impl<T> AsyncRead for ManagedStream<T> where T: AsyncWrite + AsyncRead + Unpin {
 
         // If stream is sealed and buffer is empty, read directly from stream
         if self.buffer.is_empty() {
-            return Pin::new(&mut self.stream).poll_read(cx, buf);
+            if self.enable_inspection && !self.is_wrapped {
+                match Pin::new(&mut self.stream).poll_read(cx, buf) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(Ok(())) => {
+                        let data = buf.filled().to_vec();
+                        if !data.is_empty() {
+                            _ = self.global_state.global_broadcast_channel.send(
+                                crate::GlobalEvent::TcpEvent(
+                                    crate::types::odd_box_event::TCPEvent::RawBytesFromClientToOddBox(
+                                        self.tcp_connection_id.as_ref().clone(),
+                                        self.is_http2,
+                                        data
+                                    )
+                                )
+                            );
+                        }
+                        return Poll::Ready(Ok(()));
+                    },                
+                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e))
+                }
+            } else {
+                return Pin::new(&mut self.stream).poll_read(cx, buf);
+            }
         } 
 
         // Otherwise, drain any buffered data into the output buffer
@@ -714,17 +823,12 @@ impl<T> AsyncRead for ManagedStream<T> where T: AsyncWrite + AsyncRead + Unpin {
                 self.buffer = BytesMut::new(); // drop the old buffer to reclaim memory
             }
             if buf.remaining() == 0 {
-                // // Buffer is full after draining self.buffer
-                // if self.enable_inspection && !self.is_wrapped {
-                //     match self.http_version {
-                //         Some(Version::HTTP_2) => {
-                //               self.h2_observer.write_incoming(buf.filled());
-                //         },
-                //         _ => {
-                //             self.h1_in.extend_from_slice(buf.filled());
-                //         }
-                //     }
-                // }
+                if self.enable_inspection && !self.is_wrapped {
+                    let data = buf.filled().to_vec();
+                    if !data.is_empty() {
+                         _ = self.global_state.global_broadcast_channel.send(crate::GlobalEvent::TcpEvent(crate::types::odd_box_event::TCPEvent::RawBytesFromClientToOddBox(self.tcp_connection_id.as_ref().clone(),self.is_http2,data)));
+                    }
+                }
                 return Poll::Ready(Ok(()));
             }
             // Else, buf still has space, so we can try to read from stream
@@ -737,32 +841,22 @@ impl<T> AsyncRead for ManagedStream<T> where T: AsyncWrite + AsyncRead + Unpin {
                     // No data has been read yet, return Pending
                     Poll::Pending
                 } else {
-                    // Data has been read from self.buffer, return Ready
-                    // if self.enable_inspection && !self.is_wrapped {
-                    //     match self.http_version {
-                    //         Some(Version::HTTP_2) => {
-                    //            self.h2_observer.write_incoming(buf.filled());
-                    //         },
-                    //         _ => {
-                    //             self.h1_in.extend_from_slice(buf.filled());
-                    //         }
-                    //     }
-                    // }
+                    if self.enable_inspection && !self.is_wrapped {
+                        let data = buf.filled().to_vec();
+                        if !data.is_empty() {
+                            _ = self.global_state.global_broadcast_channel.send(crate::GlobalEvent::TcpEvent(crate::types::odd_box_event::TCPEvent::RawBytesFromClientToOddBox(self.tcp_connection_id.as_ref().clone(),self.is_http2,data)));
+                        }
+                    }
                     Poll::Ready(Ok(()))
                 }
             }
             Poll::Ready(Ok(())) => {
-                // Successfully read from stream into buf
-                // if self.enable_inspection && !self.is_wrapped {
-                //     match self.http_version {
-                //         Some(Version::HTTP_2) => {
-                //            self.h2_observer.write_incoming(buf.filled());
-                //         },
-                //         _ => {
-                //             self.h1_in.extend_from_slice(buf.filled());
-                //         }
-                //     }
-                // }
+                if self.enable_inspection && !self.is_wrapped {
+                    let data = buf.filled().to_vec();
+                    if !data.is_empty() {
+                        _ = self.global_state.global_broadcast_channel.send(crate::GlobalEvent::TcpEvent(crate::types::odd_box_event::TCPEvent::RawBytesFromClientToOddBox(self.tcp_connection_id.as_ref().clone(),self.is_http2,data)));
+                    }
+                }
                 Poll::Ready(Ok(()))
             }
             Poll::Ready(Err(e)) => {
@@ -770,18 +864,13 @@ impl<T> AsyncRead for ManagedStream<T> where T: AsyncWrite + AsyncRead + Unpin {
                     // No data was read at all, return the error
                     Poll::Ready(Err(e))
                 } else {
-                    // if self.enable_inspection && !self.is_wrapped {
-                    //     match self.http_version {
-                    //         Some(Version::HTTP_2) => {
-                    //            self.h2_observer.write_incoming(buf.filled());
-                    //         },
-                    //         _ => {
-                    //             self.h1_in.extend_from_slice(buf.filled());
-                    //         }
-                    //     }
-                    // }
                     // Data was read from self.buffer, return Ok
                     // The error can be returned on the next poll_read
+                    
+                    if self.enable_inspection && !self.is_wrapped {
+                        let data = buf.filled().to_vec();
+                        _ = self.global_state.global_broadcast_channel.send(crate::GlobalEvent::TcpEvent(crate::types::odd_box_event::TCPEvent::RawBytesFromClientToOddBox(self.tcp_connection_id.as_ref().clone(),self.is_http2,data)));
+                    }
                     Poll::Ready(Ok(()))
                 }
             }
@@ -795,18 +884,32 @@ impl<T> AsyncWrite for ManagedStream<T> where T: AsyncWrite + AsyncRead + Unpin 
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, Error>> {
-        // if self.enable_inspection && !self.is_wrapped{
-        //     match self.http_version {
-        //         Some(Version::HTTP_2) => {
-        //            self.h2_observer.write_outgoing(buf);
-        //         },
-        //         _ => {
-        //             self.h1_out.extend_from_slice(buf);
-        //         }
-        //     }
-        // }
 
-        Pin::new(&mut self.stream).poll_write(cx, buf)
+        
+        if self.enable_inspection && !self.is_wrapped {
+            match Pin::new(&mut self.stream).poll_write(cx, buf) {
+                Poll::Ready(Ok(n)) => {
+                    let data = buf.to_vec();
+                    if !data.is_empty() {
+                        _ = self.global_state.global_broadcast_channel.send(
+                            crate::GlobalEvent::TcpEvent(
+                                crate::types::odd_box_event::TCPEvent::RawBytesFromOddBoxToClient(
+                                    self.tcp_connection_id.as_ref().clone(),
+                                    self.is_http2,
+                                    data
+                                )
+                            )
+                        );
+                    }
+                    Poll::Ready(Ok(n))
+            
+                },
+                Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+                Poll::Pending => Poll::Pending
+            }
+        } else { 
+            Pin::new(&mut self.stream).poll_write(cx, buf)
+        }
     }
 
     fn poll_flush(

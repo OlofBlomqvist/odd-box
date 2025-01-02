@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use ratatui::layout::{ Constraint, Flex, Rect};
-use ratatui::style::{Color, Modifier, Style, Styled, Stylize};
-use ratatui::text::Line;
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::widgets::{ Cell, Row, Scrollbar, ScrollbarOrientation, Table};
 use crate::global_state::GlobalState;
 use crate::types::tui_state::TuiState;
@@ -86,27 +85,28 @@ pub fn draw(
     // =======================================================================================
 
     let is_dark_theme = matches!(&theme,Theme::Dark(_));
-    let odd_row_bg = if is_dark_theme { Color::from_hsl(15.0, 10.0, 10.0) } else {
-        Color::Rgb(250,250,250)
-    };
-    let row_bg =  if is_dark_theme { Color::from_hsl(10.0, 10.0, 5.0) } else {
-        Color::Rgb(235,235,255)
-    };
-    let table_rows : Vec<_> = display_rows.iter().enumerate().map(|(i,row)| {
+    // let odd_row_bg = if is_dark_theme { Color::from_hsl(15.0, 10.0, 10.0) } else {
+    //     Color::Rgb(250,250,250)
+    // };
+    // let row_bg =  if is_dark_theme { Color::from_hsl(10.0, 10.0, 5.0) } else {
+    //     Color::Rgb(235,235,255)
+    // };
+    let table_rows : Vec<_> = display_rows.iter().enumerate().map(|(_i,row)| {
         
-        let is_odd = i % 2 == 0;
+        // let is_odd = i % 2 == 0;
 
 
         Row::new(row.iter().map(|x|Cell::new(x.to_string()))).height(1 as u16)
             .style(
                 Style::new()
-                    .bg(
-                        if is_odd {
-                            odd_row_bg
-                        } else {
-                            row_bg
-                        }
-                    ).fg(if is_dark_theme { Color::White } else { Color::Black })
+                    // .bg(
+                    //     if is_odd {
+                    //         odd_row_bg
+                    //     } else {
+                    //         row_bg
+                    //     }
+                    // )
+                    .fg(if is_dark_theme { Color::White } else { Color::Black })
                 )
     }).collect();
     
