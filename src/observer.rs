@@ -28,6 +28,9 @@ pub async fn run(state:Arc<GlobalState>) {
                 SentHttpRequestToBackend(k,data) => {
                    observer.push_extra(&k, &format!("Odd-Box sent a request to the backend service - {}",&data),true); // outgoing: true
                 }
+                TcpEvent(TCPEvent::Close(key)) => {
+                    _ = observer.tcp_connections.remove(&key);
+                }
                 TcpEvent(e) => observer.push(e)
             }
 

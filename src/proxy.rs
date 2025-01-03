@@ -205,7 +205,7 @@ pub async fn listen(
 
 lazy_static! {
     static ref ACTIVE_TCP_CONNECTIONS_SEMAPHORE : tokio::sync::Semaphore = tokio::sync::Semaphore::new(200);
-    pub static ref ACTIVE_HYPER_CLIENT_CONNECTIONS : tokio::sync::Semaphore = tokio::sync::Semaphore::new(2000);
+    pub static ref ACTIVE_HYPER_CLIENT_CONNECTIONS : tokio::sync::Semaphore = tokio::sync::Semaphore::new(400);
     
 } 
 

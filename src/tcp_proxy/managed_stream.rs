@@ -285,6 +285,10 @@ impl GenericManagedStream {
         loop {
 
             if attempts > 2 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+
+            if attempts > 4 {
                 break;
             }
 
@@ -398,7 +402,8 @@ impl GenericManagedStream {
                 let items  = observer.get_all_events();
 
                 if items.len() < 2 {
-                    tracing::info!("not enough http2 frames found (yet)...");
+                    tracing::trace!("not enough http2 frames found (yet)");
+                    _ = tokio::time::sleep(Duration::from_millis(1000)).await;
                 } else {
 
                     for frame in items {

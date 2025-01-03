@@ -4,7 +4,8 @@
     to the proxy. Useful for tracking site-to-site calls more easily..
 */
 
-
+// turns out spawning lsof this way is pretty darn fast so just going to do that for now rather than
+// directly reading /proc fs as this will also work on macos
 fn get_pid_via_lsof(ip: &str, port: u16) -> std::io::Result<Option<u32>> {
 
     let address = format!("{}:{}", ip, port);
@@ -38,30 +39,24 @@ fn get_pid_via_lsof(ip: &str, port: u16) -> std::io::Result<Option<u32>> {
 
 #[cfg(any(target_os = "linux",target_os = "macos"))]
 pub fn get_process_by_socket(client_socket: &std::net::SocketAddr, _odd_box_socket: &std::net::SocketAddr) -> std::io::Result<Option<(String,i32)>> {
-    
+    use sysinfo::{Pid, ProcessRefreshKind, RefreshKind};
+
     if !client_socket.ip().is_loopback() {
         return Ok(None)
     }
 
-    // turns out spawning lsof this way is pretty darn fast so just going to do that for now rather than
-    // directly reading /proc fs as this will also work on macos
     if let Ok(Some(pid)) = get_pid_via_lsof(&client_socket.ip().to_string(),client_socket.port()) {
-        match procfs::process::Process::new(pid as i32) {
-            Ok(process) => {
-                match process.exe() {
-                    Ok(v) => {
-                        match v.file_name() {
-                            Some(name) => {
-                                let name = name.to_string_lossy().to_string();
-                                return Ok(Some((name,process.pid)));
-                            },
-                            None => { },
-                        }
-                    }
-                    _ => {}
-                }   
-            },
-            Err(_) => {},
+        let s = sysinfo::System::new_with_specifics(
+            RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::OnlyIfNotSet)),
+        );        
+        if let Some(process) = s.process(Pid::from_u32(pid)) {
+            if let Some(exe) = process.exe() {
+                if let Some(file_name) = exe.file_name() {
+                    return Ok(Some((file_name.to_str().unwrap_or("?").to_owned(),pid as i32)));
+                }
+                
+            }
+            
         }
     }
     Ok(None)
