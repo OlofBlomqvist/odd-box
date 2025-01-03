@@ -491,7 +491,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
         let mut formatted_toml = Vec::new();
 
         // this is to nudge editor plugins to use the correct schema for validation and intellisense
-        formatted_toml.push(format!("#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v3.0.json"));
+        formatted_toml.push(format!("#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v3.1.json"));
         
         // this is for our own use to know which version of the configuration we are using
         formatted_toml.push(format!("version = \"{:?}\"", self.version));
@@ -909,7 +909,6 @@ impl TryFrom<super::v2::OddBoxV2Config> for OddBoxV3Config{
                     forward_subdomains: x.forward_subdomains,
                     backends: x.backends.iter().map(|b| {
 
-                        
                         let mut new_hints : Vec<Hint> = b.hints.iter().flatten().filter_map(|x| match x {
                             &crate::configuration::v2::Hint::H2 => Some(Hint::H2),
                             &crate::configuration::v2::Hint::H2C => Some(Hint::H2C),
