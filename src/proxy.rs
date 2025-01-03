@@ -333,12 +333,15 @@ async fn listen_https(
         Ok(_) => {},
         Err(e) => tracing::warn!("Failed to set_reuse_address: {e:?}")
     }
+
+    #[cfg(not(target_os = "windows"))]
     match socket.set_reuse_port(true) {
         Ok(_) => {},
         Err(e) => {
             tracing::warn!("Not able to reuse port. This means odd-box cannot be updated in place with zero-downtime. {e:?}")
         }
     }
+    
     socket.bind(&bind_addr.into()).context(format!("Attempt to bind to port {:?} failed.",bind_addr))?;
     socket.listen(1024).context("we must be able to listen to https addr socket..")?;
 

@@ -91,7 +91,7 @@ pub fn get_process_by_socket(client_socket: &std::net::SocketAddr, odd_box_socke
 pub fn get_process_by_socket(
     client_socket: &std::net::SocketAddr,
     odd_box_socket: &std::net::SocketAddr,
-) -> std::io::Result<Option<(String, u32)>> {
+) -> std::io::Result<Option<(String, i32)>> {
     // yeah im not working on this shit today
     Ok(None)
 }

@@ -12,6 +12,33 @@ Pre-built binaries are available in the [release section](https://github.com/Olo
 
 You can also build it yourself, or install it using brew, cargo, nix or devbox; see the installation section for guidance.
 
+## Features (incomplete list)
+
+> See the [docs](https://odd-box.cruma.io) for details and more features.
+
+- Cross-platform support (Windows, Linux, macOS)
+- Lets-Encrypt support for automatic certificate generation
+- Docker integration
+- Simple configuration using TOML files
+- Keep specified binaries running automatically
+- Host local directories for static sites
+- Support for both process-specific and global environment variables
+- Proxy to remote backend servers
+- Terminating proxy supporting HTTP/1.1 & HTTP2 (level 7)
+- TCP tunneling for HTTP/1 and HTTPS via SNI sniffing (level 4)
+- Basic round-robin load balancing for remote targets
+- Automatic self-signed certificates for all hosted processes
+- Built in support for rendering markdown files as html for static sites
+- Administration API for programmatic control of the proxy
+- Web interface for those that do not enjoy the terminal based UI
+
+### Planned features
+
+- Certificate management UI (web & tui)
+- Traffic inspection UI (web & tui)
+- Extended routing rules (ie. not just host header & sni sniffing)
+- Basic statistics (process uptimes,con+req count,bytes transfered,latency etc.)
+
 ### Screenshot(s)
 
 **odd-box v0.1.2:**
