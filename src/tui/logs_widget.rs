@@ -133,7 +133,8 @@ pub fn draw(
 
             x.msg = trim_to_max_chars(x.msg.trim(),2000);
 
-            let max_width = ((max_msg_width + 2) as usize)
+            let max_width = ((max_msg_width) as usize)
+                .saturating_sub(4)
                 .saturating_sub(nr_str.len() + lvl_str.len() + thread_str.len());
             //odd = !odd;
             

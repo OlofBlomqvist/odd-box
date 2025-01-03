@@ -513,15 +513,9 @@ async fn handle_new_tcp_stream(
             }
             
 
-            // if is_tls {
-            //     tracing::trace!("tls peeked type: {typ:?} - v:{http_version:?} - host: {h2_authority_or_h1_host_header:?}");
-            // } else {
-            //     tracing::trace!("tcp peeked type: {typ:?} - v:{http_version:?} - host: {h2_authority_or_h1_host_header:?}");
-
-            // }
-
-            let target_host_name = if let Some(n) = h2_authority_or_h1_host_header {
-                n
+            // todo -  perhaps allow this also if we only have sni ?
+            let target_host_name = if let Some(n) = &h2_authority_or_h1_host_header {
+                n.to_owned()
             } else {
                 tracing::warn!("No target host found in peeked data.. will use terminating proxy mode instead.");
                 http_proxy::serve(fresh_service_template_with_source_info, peekable_tcp_stream).await;
@@ -543,7 +537,8 @@ async fn handle_new_tcp_stream(
                         let hints : Vec<&crate::configuration::Hint> = cfg.hints.iter().flatten().collect();
                         
                         if cfg.terminate_http.unwrap_or_default() {
-                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, FallbackReason::HttpTerminationEnforced).await;
+                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 
+                                FallbackReason::HttpTerminationEnforced(format!("terminate_http is set to true for the site."))).await;
                         }
 
                         if let Some(Version::HTTP_2) = http_version {
@@ -622,8 +617,27 @@ async fn handle_new_tcp_stream(
                     if let Some(cfg) = &target.remote_target_config {
                         let hints : Vec<Hint> = cfg.backends.iter().flat_map(|b| b.hints.clone().unwrap_or_default()).collect();
                         if cfg.terminate_http.unwrap_or_default() {
-                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, FallbackReason::HttpTerminationEnforced).await;
+                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 
+                                FallbackReason::HttpTerminationEnforced(format!("terminate_http is set to true for the site.")),
+                            ).await;
                         }
+                        
+                        // FOR REMOTE TARGETS WE NORMALLY WANT TO SEND THE BACKEND HOST NAME AS THE HOST HEADER.
+                        // IF NOT EXPLICITLY SET TO TRUE, THEN WE WILL THUS NEED TO USE FALLBACK (level 7) HTTP TERMINATION 
+                        // TO PERFORM THIS REWRITE.
+                        if cfg.keep_original_host_header.unwrap_or_default() != true {
+                            // The main reason we do this is SNI mismatch issues and such.
+                            // For the cases where ALL backends are "localhost" or "127.0.0.1" we will _NOT_ want to rewrite the host header
+                            // and can instead directly use level 4 tunnel mode here.
+                            if cfg.backends.iter().all(|x|x.address == "127.0.0.1"||x.address == "localhost") == false {
+                                // ok so theres at least one backend that is remote.. and keep_original_host_header is none/false,
+                                // thus we must make sure to rewrite the host header using level 7 / fallback mode.
+                                return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 
+                                    FallbackReason::HttpTerminationEnforced(format!("keep_original_host_header is false while not all backends are local"))
+                                ).await;
+                            }
+                        }
+
                         if let Some(Version::HTTP_2) = http_version {
                             if hints.iter().any(|h|
                                     h==&Hint::H2 // we can establsh a new https session should we need to
@@ -705,7 +719,7 @@ async fn handle_new_tcp_stream(
 
 #[derive(Debug)]
 pub enum FallbackReason {
-    HttpTerminationEnforced,
+    HttpTerminationEnforced(String),
     IncomingHttp2ButTargetDoesNotSupportIt,
     H2CPriorKnowledge, // when a clear text connection comes in with http2 prior knowledge and client did not pass a host/authority header
                        // we have to engage in the http2 session negotiation dance.. this can be handled by the terminating proxy service.
@@ -746,8 +760,8 @@ async fn use_fallback_mode(
         FallbackReason::NoBackendFound => {
             tracing::trace!("Falling back to terminating proxy mode because no backend exists that can handle the incoming requests as is.");
         },
-        FallbackReason::HttpTerminationEnforced => {
-            tracing::trace!("Using http termination as the target is configured to disallow tunnel mode")
+        FallbackReason::HttpTerminationEnforced(reason) => {
+            tracing::trace!("Using http termination as the target is configured to disallow tunnel mode. Detailed Reason: {reason}")
         }
     }
     

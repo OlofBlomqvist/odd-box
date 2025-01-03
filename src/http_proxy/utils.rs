@@ -115,10 +115,12 @@ pub async fn proxy(
                 host_header_to_use = Some(original_req_host_name.to_string());
             }
         },
-        Target::Proc(cfg) => {
-            if cfg.keep_original_host_header.unwrap_or_default() {
-                host_header_to_use = Some(parsed_req_host_name.to_string());
-            }
+        Target::Proc(_) => {
+            // while we will connect to 127.0.0.1/localhost for local procs..
+            // we still always want to pass whichever hostname was used in the original 
+            // request to the backend server.
+            host_header_to_use = Some(parsed_req_host_name.to_string());
+
         }
     };
 

@@ -504,9 +504,9 @@ async fn handle_http_request(
         };
 
         let local_addr = if configuration.use_loopback_ip_for_procs.unwrap_or_default() {
-            "127.0.0.1"
+            "127.0.0.1" // explicitly use ipv4 loopback for processes
         } else {
-            "localhost"
+            "localhost" // ipv6 enabled systems resolve this to ::1 and otherwise 127.0.0.1
         };
         
         // we add the host flag manually in proxy method, this is only to avoid dns lookup for local targets.

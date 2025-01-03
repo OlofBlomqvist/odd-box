@@ -143,7 +143,7 @@
       "minimum": 0.0
     },
     "use_loopback_ip_for_procs": {
-      "description": "Uses 127.0.0.1 instead of localhost when proxying to locally hosted processes.",
+      "description": "Always use 127.0.0.1 (ipv4) when proxying to locally hosted processes. (ie. not ipv6 or the incoming dns name)",
       "default": true,
       "type": [
         "boolean",
@@ -388,14 +388,6 @@
             "null"
           ]
         },
-        "keep_original_host_header": {
-          "description": "Defaults to true for hosted processes. For higher performance you may wish to set this to FALSE as it avoids some overhead when it comes to DNS lookups",
-          "default": true,
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
         "log_format": {
           "description": "The log format to use for this site. If this is not set, the default log format will be used. Currently the only supported log formats are \"standard\" and \"dotnet\".",
           "anyOf": [
@@ -497,7 +489,7 @@
           "type": "string"
         },
         "keep_original_host_header": {
-          "description": "If you wish to pass along the incoming request host header to the backend rather than the host name of the backends. Defaults to false.",
+          "description": "If you wish to pass along the incoming request host header to the backend rather than the host name of the backends. Defaults to false. note: remotes are by default going to be http(s) terminated in order to use the correct host header or sni based on the backend address. local ones (127.0.0.1/localhost) will NOT be terminated by default unless you explicitly set keep_original_host_header or terminate_http.",
           "type": [
             "boolean",
             "null"

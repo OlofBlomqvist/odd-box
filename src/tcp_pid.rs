@@ -1,91 +1,73 @@
 /*
 
     This is just a POC implementation to figure out which process is calling us when we see loopback connections
-    to the proxy. Useful for tracking site-to-site calls more easily.
-
-    Code quality: horrible :<
-
+    to the proxy. Useful for tracking site-to-site calls more easily..
 */
 
-#[cfg(target_os = "linux")]
-pub fn get_process_by_socket(client_socket: &std::net::SocketAddr, odd_box_socket: &std::net::SocketAddr) -> std::io::Result<Option<(String,i32)>> {
-   
-    use procfs::{process::FDTarget, ProcResult};
-    let all_procs = procfs::process::all_processes().unwrap();
 
-    let mut target_inode = None;
+fn get_pid_via_lsof(ip: &str, port: u16) -> std::io::Result<Option<u32>> {
 
-    let tcp = procfs::net::tcp().unwrap();
-    let tcp6 = procfs::net::tcp6().unwrap();
-
-
-    for entry in tcp.into_iter().chain(tcp6) {
-        if entry.local_address == *client_socket && entry.remote_address == *odd_box_socket {
-            target_inode = Some(entry.inode);
-            break;
-        }
-    }
-
-    match target_inode {
-        None => {
-            // Perhaps you can find it at 29°58′45″N 31°08′03″E
-        },
-        Some(n) => {
-            for process in all_procs.filter_map(|p|p.ok()) {
-                if let ProcResult::Ok(fds) = process.fd() {
-                    for fd in fds.filter_map(|fd|fd.ok()) {
-                        if let FDTarget::Socket(inode) = fd.target {
-                            if inode == n {
-                                match process.exe() {
-                                    Ok(v) => {
-                                        match v.file_name() {
-                                            Some(name) => {
-                                                let name = name.to_string_lossy().to_string();
-                                                return Ok(Some((name,process.pid)));
-                                            },
-                                            None => {},
-                                        }
-                                    }
-                                    _ => {}
-                                }                                
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(None)
-}
-
-#[cfg(target_os = "macos")]
-pub fn get_process_by_socket(client_socket: &std::net::SocketAddr, odd_box_socket: &std::net::SocketAddr) -> std::io::Result<Option<(String,i32)>> {
-    use std::{fs, net::Ipv4Addr};
+    let address = format!("{}:{}", ip, port);
     let output = std::process::Command::new("lsof")
-        .arg("-i")
-        .arg(format!("tcp:{}->{}", client_socket.port(), odd_box_socket.ip()))
+        .args(&[
+            "-nP",
+            &format!("-iTCP@{address}"),
+            "-sTCP:ESTABLISHED",
+            "-t", // Output only PIDs
+        ])
         .output()?;
 
     if !output.status.success() {
-        return Err(std::io::Error::new(std::io::ErrorKind::Other, "Failed to execute lsof"));
+        tracing::error!("lsof command failed with status: {}", String::from_utf8_lossy(&output.stderr));
+        return Ok(None);
     }
 
-    let output_str = String::from_utf8_lossy(&output.stdout);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if stdout.trim().is_empty() {
+        return Ok(None);
+    }
 
-    for line in output_str.lines().skip(1) {
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        if fields.len() > 1 {
-            if let Ok(pid) = fields[1].parse::<i32>() {
-                return Ok(Some((fields[0].to_string(),pid)));
-            }
+    if let Some(pid_str) = stdout.lines().next() {
+        if let Ok(pid) = pid_str.trim().parse::<u32>() {
+            return Ok(Some(pid));
         }
     }
-
 
     Ok(None)
 }
 
+#[cfg(any(target_os = "linux",target_os = "macos"))]
+pub fn get_process_by_socket(client_socket: &std::net::SocketAddr, _odd_box_socket: &std::net::SocketAddr) -> std::io::Result<Option<(String,i32)>> {
+    
+    if !client_socket.ip().is_loopback() {
+        return Ok(None)
+    }
+
+    // turns out spawning lsof this way is pretty darn fast so just going to do that for now rather than
+    // directly reading /proc fs as this will also work on macos
+    if let Ok(Some(pid)) = get_pid_via_lsof(&client_socket.ip().to_string(),client_socket.port()) {
+        match procfs::process::Process::new(pid as i32) {
+            Ok(process) => {
+                match process.exe() {
+                    Ok(v) => {
+                        match v.file_name() {
+                            Some(name) => {
+                                let name = name.to_string_lossy().to_string();
+                                return Ok(Some((name,process.pid)));
+                            },
+                            None => { },
+                        }
+                    }
+                    _ => {}
+                }   
+            },
+            Err(_) => {},
+        }
+    }
+    Ok(None)
+
+    
+}
 
 #[cfg(target_os = "windows")]
 pub fn get_process_by_socket(

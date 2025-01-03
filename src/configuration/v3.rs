@@ -98,13 +98,7 @@ pub struct InProcessSiteConfig {
     /// If you wish to set a specific loglevel for this hosted process.
     /// Defaults to "Info".
     /// If this level is lower than the global log_level you will get the message elevated to the global log level instead but tagged with the actual log level.
-    pub log_level: Option<LogLevel>,
-
-    #[serde(default = "true_option")]
-    /// Defaults to true for hosted processes.
-    /// For higher performance you may wish to set this to FALSE as it avoids 
-    /// some overhead when it comes to DNS lookups
-    pub keep_original_host_header: Option<bool>
+    pub log_level: Option<LogLevel>
 }
 impl InProcessSiteConfig {
     pub fn set_id(&mut self,id:ProcId){
@@ -228,8 +222,14 @@ pub struct RemoteSiteConfig{
     /// If you want to use lets-encrypt for generating certificates automatically for this site.
     /// Defaults to false. This feature will disable tcp tunnel mode.
     pub enable_lets_encrypt: Option<bool>,
+
     /// If you wish to pass along the incoming request host header to the backend
     /// rather than the host name of the backends. Defaults to false.
+    /// 
+    /// Setting this to true may cause issues with SNI sniffing if the backend uses that.
+    ///
+    /// Ignored when all backends are 127.0.0.1/localhost - in which case the original
+    /// host header from the incoming request is always used.
     pub keep_original_host_header: Option<bool>,
 }
 
@@ -448,7 +448,8 @@ pub struct OddBoxV3Config {
     /// Used for securing the admin api and web-interface. If you do not set this, anyone can access the admin api.
     pub odd_box_password: Option<String>,
 
-    /// Uses 127.0.0.1 instead of localhost when proxying to locally hosted processes. 
+    /// Always use 127.0.0.1 (ipv4) when proxying to locally hosted processes.
+    /// (ie. not ipv6 or the incoming dns name) 
     #[serde(default = "true_option")]
     pub use_loopback_ip_for_procs: Option<bool>
 
@@ -718,7 +719,6 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
             port_range_start: 4200,
             hosted_process: Some(vec![
                 InProcessSiteConfig {
-                    keep_original_host_header: None,
                     log_level: None,
                     enable_lets_encrypt: Some(false),
                     proc_id: ProcId::new(),
@@ -875,7 +875,6 @@ impl TryFrom<super::v2::OddBoxV2Config> for OddBoxV3Config{
                 let new_hints = if new_hints.len() == 0 { None } else { Some(new_hints) };
 
                 InProcessSiteConfig {
-                    keep_original_host_header: None,
                     log_level: None,
                     enable_lets_encrypt: Some(false),
                     proc_id: ProcId::new(),
