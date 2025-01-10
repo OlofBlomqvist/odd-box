@@ -10,13 +10,21 @@ pub async fn run(state:Arc<GlobalState>) {
     let mut receiver = state.global_broadcast_channel.subscribe();
     let observer = &state.monitoring_station;
     
+    let liveness_token: Arc<bool> = Arc::new(true);
+    {
+        crate::BG_WORKER_THREAD_MAP.insert("The Observer".into(), crate::types::proc_info::BgTaskInfo {
+            liveness_ptr: Arc::downgrade(&liveness_token),
+            status: "Alive".into()
+        });
+    }
     loop {
 
         if true == state.app_state.exit.load(std::sync::atomic::Ordering::Relaxed) {
             break
         }
-
+        
         if let Ok(msg) = receiver.recv().await {
+            
             if !state.app_state.enable_global_traffic_inspection.load(std::sync::atomic::Ordering::Relaxed) {
                 observer.reset();
                 continue
@@ -188,31 +196,24 @@ pub mod obs {
 
         pub fn push(&self,event:super::TCPEvent) {
             match event {
+                // we have already added the connection BEFORE even sending this event, so no need to add it here
                 crate::types::odd_box_event::TCPEvent::Open(proxy_active_tcpconnection) => {
 
                     //trace!("Connection id {id} created",id=proxy_active_tcpconnection.connection_key);
-                    let mut local_process_name_and_pid = None;
+                    
                     if let Some(ls) = proxy_active_tcpconnection.client_socket_address {
                         if let Some(odd_box_socket) = proxy_active_tcpconnection.odd_box_socket {
                            // if ls.ip().is_loopback() {
                                 if let Ok(Some((process_name,process_id))) = crate::tcp_pid::get_process_by_socket(&ls,&odd_box_socket) {
-                                    local_process_name_and_pid = Some((process_name,process_id))
+                                    self.update_connection(&proxy_active_tcpconnection.connection_key, |c|{
+                                        //trace!("Connection id {k} updated with new details (mode 1)",k=proxy_active_tcpconnection.connection_key);
+                                        c.local_process_name_and_pid = Some((process_name,process_id))
+                                    });
                                 }
                            // }
                         }
                     }
 
-                    self.tcp_connections.insert(proxy_active_tcpconnection.connection_key, TCPConnection {
-                        id: proxy_active_tcpconnection.connection_key,
-                        extra_log: vec![],
-                        packets: vec![],
-                        state: TCPConnectionState::Open,
-                        connection: proxy_active_tcpconnection,
-                        created_timestamp: SystemTime::now(),
-                        bytes_rec: 0,
-                        bytes_sent: 0,
-                        local_process_name_and_pid
-                    });
                 },
                 crate::types::odd_box_event::TCPEvent::Close(k) => {
                     if let Some(mut c) = self.tcp_connections.get_mut(&k) {

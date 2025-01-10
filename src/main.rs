@@ -380,8 +380,6 @@ async fn thread_cleaner(_state:Arc<GlobalState>) {
         {
             PROC_THREAD_MAP.retain(|_k,v| v.liveness_ptr.upgrade().is_some());
             BG_WORKER_THREAD_MAP.retain(|_k,v| v.liveness_ptr.upgrade().is_some());
-
-            
         }
         tokio::time::sleep(std::time::Duration::from_secs(1)).await
     }

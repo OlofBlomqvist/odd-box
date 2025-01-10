@@ -859,6 +859,19 @@ pub fn add_or_update_connection(state:Arc<GlobalState>,mut connection:ProxyActiv
     if let Some(key) = connection.connection_key_pointer.upgrade() {
         let app_state = state.app_state.clone();
         _ = app_state.statistics.active_connections.insert(*key, connection.clone()) ;
+        if state.app_state.enable_global_traffic_inspection.load(std::sync::atomic::Ordering::Relaxed) {
+            state.monitoring_station.tcp_connections.insert(connection.connection_key, crate::observer::obs::TCPConnection {
+                id: connection.connection_key,
+                extra_log: vec![],
+                packets: vec![],
+                state: crate::observer::obs::TCPConnectionState::Open,
+                connection: connection.clone(),
+                created_timestamp: std::time::SystemTime::now(),
+                bytes_rec: 0,
+                bytes_sent: 0,
+                local_process_name_and_pid: None
+            });
+        }
         _ = state.global_broadcast_channel.send(GlobalEvent::TcpEvent(crate::types::odd_box_event::TCPEvent::Open(connection)));    
     } else {
         tracing::warn!("Failed to add connection to global state, connection key was dropped.");
