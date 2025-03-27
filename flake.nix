@@ -40,6 +40,7 @@
 
             buildType = "release";
             buildInputs = [
+              pkgs.perl
               pkgs.openssl
               pkgs.pkg-config
               pkgs.vscode-extensions.rust-lang.rust-analyzer
