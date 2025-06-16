@@ -10,15 +10,17 @@ license-file = "LICENSE"
 [dependencies]
 
 # === MANAGEMENT API ============================================
-axum = { version="0.7.5",features=["ws"] }
-utoipa = "4.2.3"
-utoipa-swagger-ui = { version = "7.1.0", features = ["axum","vendored"] }
-utoipa-rapidoc = { version = "4.0.0", features = ["axum"] }
-utoipa-redoc = { version = "4.0.0", features = ["axum"] }
-utoipauto = "0.1.10"
+axum = { version="0.7.9",features=["ws"] } 
+
+utoipa =  { version = "5.3.1", features = ["axum_extras"]}
+utoipa-swagger-ui = { version = "8.1.0", features = ["axum","vendored"] }
+utoipa-rapidoc = {version = "5.0.0", features = ["axum"] }
+utoipa-redoc = { version = "5.0.0", features = ["axum"] }
+utoipauto = "0.2.0"
+
 tower = { version = "0.4.13", features = ["util"]}
 tower-http = { version = "0.5.2" , features = ["fs","cors","trace"]}
-axum-extra = { version = "0.9.3", features = ["typed-header"] }
+axum-extra = { version = "0.9.6", features = ["typed-header"] }
 # ===============================================================
 # === PROXY ====================================================
 dirs = "5.0.1"
@@ -48,7 +50,7 @@ chrono = { version = "0.4.38", features= ["serde"] }
 time = {version="0.3.36",features=["macros","formatting","parsing"]}
 reqwest = { version = "0.12.7", features = ["json","rustls-tls","native-tls-vendored"], default-features = false}
 serde_json = "1.0.111"
-self_update = "0.41.0"
+self_update = "0.42.0"
 bytes = "1.7.1"
 http-body-util = "0.1.2"
 hyper-rustls = { version = "0.27.3", features = ["http2","http1", "native-tokio","tls12"], default-features = false}
@@ -92,7 +94,10 @@ windows = { version = "0.58.0", features = ["Win32","Win32_Foundation","Win32_Sy
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = { version = "0.6.0" }
-
+ 
+# REMOVE THIS ONCE UTOIPA FIX PUBLISHED
+[patch.crates-io]
+zip = { git="https://github.com/zip-rs/zip2", rev= "v2.3.0" }
 
 #rsa = "0.9.6"
 # ===============================================================

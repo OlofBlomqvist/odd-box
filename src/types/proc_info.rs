@@ -1,11 +1,12 @@
 use std::sync::{atomic::AtomicBool, Weak};
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::configuration::FullyResolvedInProcessSiteConfig;
 
 
-#[derive(Eq,PartialEq,Debug,Clone,Hash, Serialize, Deserialize)]
+#[derive(Eq,PartialEq,Debug,Clone,Hash, Serialize, Deserialize, ToSchema)]
 pub struct ProcId { pub id: String }
 impl ProcId {
     pub fn new() -> Self {
