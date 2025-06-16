@@ -141,7 +141,7 @@ impl ResolvesServerCert for DynamicCertResolver {
             server_name = "odd-box.localhost";
         }
         
-        if self.enable_lets_encrypt.lock().unwrap().clone() {
+        if self.enable_lets_encrypt.lock().unwrap().clone() && !server_name.to_lowercase().ends_with("localhost") {
             if let Some(certified_key) = self.get_lets_encrypt_signed_cert_from_mem_cache(server_name) {
                 tracing::trace!("Returning a cached lets-encrypt certificate for {:?}",server_name);
                 return Some(certified_key.clone());
