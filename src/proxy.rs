@@ -541,6 +541,15 @@ async fn handle_new_tcp_stream(
                                 FallbackReason::HttpTerminationEnforced(format!("terminate_http is set to true for the site."))).await;
                         }
 
+                        if cfg.enable_lets_encrypt.unwrap_or_default() {
+                            tracing::warn!("Lets encrypt is enabled for the hosted site: {}, falling back to http terminating mode.", target.host_name);
+                            // we will not be able to use tunnel mode if lets encrypt is enabled, as it requires http termination for the LE callbacks to run.
+                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 
+                                FallbackReason::HttpTerminationEnforced(format!("Lets encrypt is enabled for the site"))).await;
+                        }
+                        
+                       
+
                         if let Some(Version::HTTP_2) = http_version {
                             if hints.iter().any(|h| {
                                 **h==Hint::H2 // we can establsh a new https session should we need to
@@ -620,6 +629,13 @@ async fn handle_new_tcp_stream(
                             return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 
                                 FallbackReason::HttpTerminationEnforced(format!("terminate_http is set to true for the site.")),
                             ).await;
+                        }
+
+                        if cfg.enable_lets_encrypt.unwrap_or_default() {
+                            tracing::warn!("Lets encrypt is enabled for the remote site: {}, falling back to http terminating mode.", target.host_name);
+                            // we will not be able to use tunnel mode if lets encrypt is enabled, as it requires http termination for the LE callbacks to run.
+                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 
+                                FallbackReason::HttpTerminationEnforced(format!("Lets encrypt is enabled for the site"))).await;
                         }
                         
                         // FOR REMOTE TARGETS WE NORMALLY WANT TO SEND THE BACKEND HOST NAME AS THE HOST HEADER.
