@@ -1,6 +1,6 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use anyhow::bail;
-use axum::{body::Body, extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State}, response::{IntoResponse, Response}, routing::get, Router};
+use axum::{body::Body, extract::{ws::{Message, WebSocket, WebSocketUpgrade}, Query, State}, response::{IntoResponse, Response}, routing::get, Router};
 use futures_util::{SinkExt, StreamExt};
 use hyper::{body::Incoming, StatusCode};
 use hyper_util::rt::TokioIo;
@@ -122,9 +122,32 @@ async fn ws_log_messages_handler(
     origin: Option<axum_extra::TypedHeader<axum_extra::headers::Origin>>,
     axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<SocketAddr> ,
     state : State<WebSocketGlobalState>,
-    cors_env_var : Option<String>
+    cors_env_var : Option<String>,
+    query: Query<HashMap<String, String>>
 ) -> impl axum::response::IntoResponse {
     
+    let possibly_password_required = state.global_state.config.read().await.odd_box_password.clone();
+    if let Some(pwd) = &possibly_password_required {
+        let password_from_rq_query = query.get("password").cloned();
+        if let Some(password) = &password_from_rq_query {
+            if password != pwd {
+                tracing::warn!("Invalid password provided for websocket connection, denying connection");
+                return Response::builder()
+                    .status(StatusCode::FORBIDDEN)
+                    .header("reason", "bad password")
+                    .body(Body::from("invalid password."))
+                    .expect("must be able to create response");
+            }
+        } else {
+            tracing::warn!("No password provided for websocket connection, denying connection");
+            return Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .header("reason", "no password")
+                .body(Body::from("no password provided."))
+                .expect("must be able to create response");
+        }
+    }
+
     // we only care about limiting these connections if we receive an origin header which most browsers will send.
     // if no custom env var is set, we will only allow connections from the admin api port on localhost.
     // if a custom env var is set for cors, we will only allow connections from that origin.
@@ -336,42 +359,61 @@ impl OddBoxAPI {
             global_state: state.clone()
         };
 
-
-        let cors_env_var = std::env::vars().find(|(key,_)| key=="ODDBOX_CORS_ALLOWED_ORIGIN").map(|x|x.1.to_lowercase());
+        let cors_env_var = std::env::vars().find(|(key, _)| key == "ODDBOX_CORS_ALLOWED_ORIGIN").map(|x| x.1.to_lowercase());
         let cors_env_var_cloned_for_ws = cors_env_var.clone();
         let mut router = Router::new()
             .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
             .merge(Redoc::with_url("/redoc", ApiDoc::openapi()))
             .merge(RapiDoc::new("/api-docs/openapi.json").path("/rapidoc"))
-            .merge(Router::new()
+            .merge(
+                Router::new()
                     .route("/STOP", axum::routing::get(stop_handler).with_state(state.clone()))
-                    .route("/START",  axum::routing::get(start_handler).with_state(state.clone()))
+                    .route("/START", axum::routing::get(start_handler).with_state(state.clone()))
             )
             .merge(crate::api::controllers::routes(state.clone()))
             .layer(axum::middleware::from_fn(
-                    move | req: axum::extract::Request<Body>, next: axum::middleware::Next | {
-                        Self::validate_request(
-                            req,
-                            next,
-                            validation_state.clone()
-                        )
-                    }
-                )
+                move |req: axum::extract::Request<Body>, next: axum::middleware::Next| {
+                    Self::validate_request(
+                        req,
+                        next,
+                        validation_state.clone()
+                    )
+                }
+            ))
+            .route(
+                "/ws/event_stream",
+                axum::routing::get(move |ws,
+                                         user_agent,
+                                         origin,
+                                         addr,
+                                         state,
+                                         query: axum::extract::Query<HashMap<String, String>>| {
+                    ws_log_messages_handler(
+                        ws,
+                        user_agent,
+                        origin,
+                        addr,
+                        state,
+                        cors_env_var_cloned_for_ws.clone(),
+                        query
+                    )
+                })
+                .with_state(websocket_state.clone())
             )
-            .route("/ws/event_stream", axum::routing::get( move|ws,user_agent,origin,addr,state|
-                ws_log_messages_handler(ws,user_agent,origin,addr,state, cors_env_var_cloned_for_ws)).with_state(websocket_state.clone()))
             .route("/", get(|| async { serve_static_file(axum::extract::Path("index.html".to_string())).await }))
             .route("/*file", get(serve_static_file));
         if let Some(cors_var) = cors_env_var { 
-            router = router.layer(
-                CorsLayer::new()
-                    .allow_methods(Any)
-                    .allow_headers(Any)
-                    .expose_headers(Any))
-            .layer(axum::middleware::from_fn(move |request: axum::extract::Request, next: axum::middleware::Next|
-                set_cors(request,next,cors_var.clone()))
-            );
-        }; 
+            router = router
+                .layer(
+                    CorsLayer::new()
+                        .allow_methods(Any)
+                        .allow_headers(Any)
+                        .expose_headers(Any)
+                )
+                .layer(axum::middleware::from_fn(move |request: axum::extract::Request, next: axum::middleware::Next| {
+                    set_cors(request, next, cors_var.clone())
+                }));
+        };
 
 
         let svc = router.into_make_service_with_connect_info::<SocketAddr>();
