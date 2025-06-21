@@ -1,4 +1,5 @@
 import { InProcessSiteConfig, SiteStatusEvent } from "@/generated-api";
+import { getCookie } from "@/utils/cookies";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import useWebSocket, { ReadyState } from "react-use-websocket";
@@ -44,7 +45,10 @@ const useEventStream = () => {
       ? `${import.meta.env.VITE_ODDBOX_LOGS_URL}:${import.meta.env.VITE_ODDBOX_API_PORT}`
       : `wss://${hostName}`;
 
-  const socketUrl = `${baseUrl}/ws/event_stream`;
+  const password = getCookie("password") ;
+  
+  const socketUrl = password === undefined ? `${baseUrl}/ws/event_stream` : `${baseUrl}/ws/event_stream?password=${password}` ;
+
   const { lastMessage, readyState } = useWebSocket(socketUrl);
 
   useEffect(() => {

@@ -7,6 +7,7 @@ import {
   RemoteSiteConfig,
 } from "../generated-api";
 import { getUrlFriendlyUrl } from "@/lib/get_url_friendly_url";
+import { getCookie } from "@/utils/cookies";
 
 const useSiteMutations = () => {
   let hostName = window.location.protocol + "//" + window.location.hostname
@@ -19,7 +20,14 @@ const useSiteMutations = () => {
       ? `${import.meta.env.VITE_ODDBOX_API_URL}:${import.meta.env.VITE_ODDBOX_API_PORT}`
       : hostName;
   
-  const apiClient = new Api({ baseUrl });
+  
+  const apiClient = new Api({ baseUrl, securityWorker: () => {
+    const password = getCookie("password");  
+      return {
+        headers: [["Authorization", `${password || ""}`]]
+      };
+  } });
+  
   const router = useRouter();
   const queryClient = useQueryClient();
 
