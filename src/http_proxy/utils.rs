@@ -8,7 +8,7 @@ use hyper_rustls::HttpsConnector;
 use hyper_util::{client::legacy::{connect::HttpConnector, Client}, rt::TokioIo};
 use std::{net::SocketAddr, str::FromStr, sync::Arc, task::Poll, time::Duration};
 use tungstenite::http;
-
+use crate::configuration::Hint;
 use lazy_static::lazy_static;
 
 use crate::{
@@ -64,8 +64,7 @@ pub enum Target {
 // The job of this method is simply to create a new request with the target url and the original request's headers.
 // while also selecting http version and handling upgraded connections.  
 // TODO: simplify the signature, we dont need it to be this complicated..
-pub async fn proxy(
-    original_req_host_name: &str,
+pub async fn proxy( 
     parsed_req_host_name: &str,
     original_connection_is_https:bool,
     state: Arc<GlobalState>,
@@ -77,7 +76,10 @@ pub async fn proxy(
     h2_only_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
     use_https_to_backend_target: bool,
     backend: crate::configuration::Backend,
-    connection_key:&ConnectionKey
+    connection_key:&ConnectionKey,
+    host_header: Option<String>,
+    sni: Option<String>,
+    subdomain: Option<String>,
 ) -> Result<ProxyCallResult, ProxyError> {
 
     //let incoming_http_version = req.version();
@@ -109,48 +111,110 @@ pub async fn proxy(
 
     let mut host_header_to_use = None;
 
+    // TODO - This is horrible and should be refactored to be more readable and maintainable.
+    //        Also we touch the target/host stuff in too many places , we should do it once at the start 
+    //        instead of fucking around all over the place
+ 
     match &target {
         Target::Remote(remote_site_config) => {
-            if remote_site_config.keep_original_host_header.unwrap_or_default() {
-                host_header_to_use = Some(original_req_host_name.to_string());
-            }
+ 
+    
+           if remote_site_config.keep_original_host_header.unwrap_or_default() {
+
+                if let Some(original_extracted_host_header) = host_header {
+                    tracing::trace!("[keep_original_host_header] Using host header from request: {original_extracted_host_header:?} for backend request to {target_url}.");
+                    host_header_to_use = Some(original_extracted_host_header);
+                } else if let Some(sni) = sni {
+                    tracing::trace!("[keep_original_host_header] Using SNI from request: {sni:?} for backend request to {target_url}.");
+                    host_header_to_use = Some(sni);
+                } else if let None = req.headers().get("host").map(|v| {
+                    if let Ok(v) = v.to_str() {
+                        host_header_to_use = Some(v.to_string());
+                        tracing::trace!("[keep_original_host_header] Replaced host header with original req host: {v}");
+                    } else {
+                        tracing::trace!("[keep_original_host_header] No host header found in original req.");
+                    }
+                }) { 
+                    if let Some(h) = req
+                        .uri()
+                        .host()  {
+                        let h = h.to_string();
+                        host_header_to_use = Some(h.clone());
+                        tracing::trace!("[keep_original_host_header] Using host header from request URI: {h} for backend request to {target_url}.");
+                    } else {
+                        tracing::trace!("[keep_original_host_header] Failed to understand the host header.. this could get rough.."); 
+                    }
+                }
+
+            } 
         },
         Target::Proc(_) => {
             // while we will connect to 127.0.0.1/localhost for local procs..
             // we still always want to pass whichever hostname was used in the original 
             // request to the backend server.
+            // TODO - we should support the host header stuff similar to remote targets..
             host_header_to_use = Some(parsed_req_host_name.to_string());
 
         }
     };
 
-    let hints = backend.hints.clone().unwrap_or_default();
-    
+    tracing::trace!("Using host header: {host_header_to_use:?} for backend request to {target_url}.");
+ 
+    let hints: Vec<Hint> = backend.hints.clone().unwrap_or_default();
+ 
     let mut proxied_request =
         create_proxied_request(&target_url, req, request_upgrade_type.as_ref(), host_header_to_use)?;
     
+    //tracing::trace!("PROXIED REQUEST: {:#?}", proxied_request);
 
-    // if incoming req is h2c, we will attempt to use h2c prior knowledge to the backend regardless of hints.
-    if proxied_request.version() == Version::HTTP_2 && !original_connection_is_https && !incoming_req_used_h2c_upgrade_header {
-        use_prior_knowledge_h2c = true;
-    }
+    // Detect if the _incoming_ connection was clear‑text HTTP/2 (h2c),
+    // either by direct preface or via an HTTP/1.1 Upgrade: h2c:
+    let incoming_h2c = !original_connection_is_https
+        && (proxied_request.version() == Version::HTTP_2 || incoming_req_used_h2c_upgrade_header);
 
-    // unless we have already decided to use h2cpk lets check the hints to see if we should use it...
-    if use_prior_knowledge_h2c == false && hints.len() > 0 && proxied_request.version() != Version::HTTP_2 {
+    let mut use_h2c_prior = false;
 
-        // if the incoming request is http1 but the server is set to allow h2cpk but not h1, we will use http2 prior knowledge.
-        if hints.contains(&crate::configuration::Hint::H2CPK) && !hints.contains(&crate::configuration::Hint::H1) && !original_connection_is_https  
-        {
-            use_prior_knowledge_h2c = true;
+    // Client spoke h2c — only honor it if backend hints H2CPK
+    if incoming_h2c {
+        if hints.contains(&Hint::H2CPK) {
+            use_h2c_prior = true;
+        } else {
+            tracing::warn!(
+                "Incoming h2c but backend does not support H2C; falling back to HTTP/1.1"
+            );
         }
     }
+
+    // Client was HTTP/1.x but backend _only_ speaks H2C (no H1)
+    // -> force HTTP/2 prior knowledge
+    if !use_h2c_prior
+        && !incoming_h2c
+        && hints.contains(&Hint::H2CPK)
+        && !hints.contains(&Hint::H1)
+    {
+        use_h2c_prior = true;
+    }
+
+    // Final selection: H2‑only client vs default (HTTP/1.1) client
+    let client = if use_h2c_prior {
+        *proxied_request.version_mut() = Version::HTTP_2;
+        //tracing::warn!("SETTING HTTP VERSION TO HTTP/2 PRIOR KNOWLEDGE FOR BACKEND REQUEST");
+        &h2_only_client
+    } else {
+        *proxied_request.version_mut() = Version::HTTP_11;
+        //tracing::warn!("SETTING HTTP VERSION TO HTTP/1.1 FOR BACKEND REQUEST");
+        &client  // can possibly still use ALPN‑upgrade to h2 (or h2c via Upgrade) if the backend supports it
+    };
+
 
 
     
     let client = if use_prior_knowledge_h2c {
         *proxied_request.version_mut() = Version::HTTP_2;
+        //tracing::trace!("SETTING HTTP VERSION TO HTTP/2 FOR BACKEND REQUEST");
         &h2_only_client
     } else {
+        //tracing::trace!("SETTING HTTP VERSION TO HTTP/1.1 FOR BACKEND REQUEST");
         *proxied_request.version_mut() = Version::HTTP_11;
         &client // this will use the default http1 client, which will upgrade to h2 if the backend supports it thru upgrade header or alpn
     };
