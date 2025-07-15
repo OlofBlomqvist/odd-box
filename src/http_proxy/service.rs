@@ -539,8 +539,7 @@ async fn handle_http_request(
         };
 
         let result = 
-            proxy(
-                &resolved_host_name, 
+            proxy( 
                 &parsed_host_name,
                 is_https,
                 state.clone(),
@@ -680,8 +679,7 @@ async fn perform_remote_forwarding(
 
     //tracing::info!("Incoming request to '{}' for remote proxy target {target_url}",next_backend_target.address);
     let result = 
-        proxy(
-            &req_host_name,
+        proxy( 
             &req_host_name,
             is_https,
             state.clone(),
