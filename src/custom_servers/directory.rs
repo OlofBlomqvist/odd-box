@@ -3,55 +3,48 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use hyper::Response;
+use hyper::{
+    Response,
+    header::{IF_NONE_MATCH, IF_MODIFIED_SINCE},
+};
 use mime_guess::mime;
+use httpdate::{fmt_http_date, parse_http_date};
 use crate::{
     configuration::DirServer,
-    http_proxy::{create_simple_response_from_bytes, EpicResponse},
+    http_proxy::{create_simple_response_from_bytes, EpicResponse, Target},
     CustomError,
 };
-
-
 use once_cell::sync::Lazy;
-type CacheValue = (String, Instant, Response<bytes::Bytes>); // (Content-Type, Cache Time, Response)
+pub type CacheValue = (String, Instant, Response<bytes::Bytes>); // (Content-Type, Cache Time, Response)
 use dashmap::DashMap;
-static RESPONSE_CACHE: Lazy<DashMap<String, CacheValue>> = Lazy::new(|| {
+
+pub static RESPONSE_CACHE: Lazy<DashMap<String, CacheValue>> = Lazy::new(|| {
     DashMap::new()
 });
-
-// todo:
-// - this endpoint is not counted towards any statistics or rate limits ... need to fix.
-// - cors headers and such.
-// - actual cache support using etag and such
-// - markdown rendering (configurable)
-// - directory listing opt in via config
-// - compression
-// - make sure we keep perf ok'ish. current impl sits around ~200k requests per second on an 8 core machine
-//   serving some basic example site from "https://github.com/cloudacademy/static-website-example"
+ 
 pub async fn handle(
     target: DirServer,
     req: hyper::Request<hyper::body::Incoming>,
 ) -> Result<EpicResponse, CustomError> {
+
+    
     use mime_guess::from_path;
 
     let root_dir = Path::new(&target.dir);
-let req_path : String = urlencoding::decode(req.uri().path()).map_err(|e|CustomError(format!("{e:?}")))?.to_string();
-        
+    let req_path: String =
+        urlencoding::decode(req.uri().path()).map_err(|e| CustomError(format!("{e:?}")))?.to_string();
+
+     
     let cache_key = req_path.trim_end_matches('/').to_string();
     {
-        //tracing::trace!("checking cache for {}", cache_key);
         let mut expired_in_cache = false;
         if let Some(guard) = RESPONSE_CACHE.get(&cache_key) {
-            
-            let (_content_type, cache_time,res) = guard.value();
-            // todo - configurable cache time
+            let (_content_type, cache_time, res) = guard.value();
             if cache_time.elapsed() < Duration::from_secs(10) {
-                tracing::trace!("Cache hit for {}", if cache_key.is_empty() {"/"} else {&cache_key});
                 return create_simple_response_from_bytes(res.clone());
             } else {
-                // tracing::trace!("Cache expired for {}", cache_key);
                 expired_in_cache = true;
             }
         }
@@ -60,109 +53,129 @@ let req_path : String = urlencoding::decode(req.uri().path()).map_err(|e|CustomE
         }
     }
 
-    tracing::trace!("Fetching cold file: {}", req_path);
-
     let requested_path = Path::new(&req_path);
     let full_path = root_dir.join(requested_path.strip_prefix("/").unwrap_or(requested_path));
-
     let full_path = match fs::canonicalize(&full_path) {
         Ok(path) => path,
         Err(e) => {
-            match e.kind() {
-                std::io::ErrorKind::NotFound => {
-                    let response_body = "sorry, there is nothing here..";
-                    let response = Response::builder()
-                        .status(404)
-                        .header("Content-Type", "text/plain")
-                        .body(response_body.into())
-                        .expect("should always be possible to create 404 reply");
-
-                    return create_simple_response_from_bytes(response);
-                }
-                _ => {}
+            if e.kind() == std::io::ErrorKind::NotFound {
+                let resp = Response::builder()
+                    .status(404)
+                    .header("Content-Type", "text/plain")
+                    .body("sorry, there is nothing here..".into())
+                    .unwrap();
+                return create_simple_response_from_bytes(resp);
             }
             return Err(CustomError(format!("Failed to canonicalize path: {}", e).into()));
         }
     };
-
     if !full_path.starts_with(root_dir) {
         return Err(CustomError("Attempted directory traversal".into()));
     }
 
+    // --- FILE BRANCH WITH CONDITIONAL GET & HEADERS ---
     if full_path.is_file() {
+        // 1) Gather metadata for ETag / Last-Modified
+        let meta = fs::metadata(&full_path)
+            .map_err(|e| CustomError(format!("Failed to stat file: {}", e).into()))?;
+        let modified: SystemTime = meta.modified()
+            .map_err(|e| CustomError(format!("Failed to get mtime: {}", e).into()))?;
+        let last_modified = fmt_http_date(modified);
+        let size = meta.len();
+        let etag = format!("\"{}-{}\"", size, modified.duration_since(UNIX_EPOCH).unwrap().as_secs());
+
+        let maybe_cache_max_age = target.cache_control_max_age_in_seconds;
+        // 2) Handle If-None-Match → 304
+        if let Some(hv) = req.headers().get(IF_NONE_MATCH) {
+            if hv.to_str().unwrap_or("") == etag {
+            let mut builder = Response::builder().status(304)
+                .header("ETag", &etag)
+                .header("Last-Modified", &last_modified);
+            if let Some(max_age) = maybe_cache_max_age {
+                let cache_control_header = format!("public, max-age={}, immutable", max_age);
+                builder = builder.header("Cache-Control", cache_control_header);
+            }
+            let resp304 = builder
+                .body(bytes::Bytes::new().into())
+                .map_err(|e| CustomError(format!("Failed to create response: {}", e).into()))?;
+            return create_simple_response_from_bytes(resp304);
+            }
+        }
+        // 3) Handle If-Modified-Since → 304
+        if let Some(hv) = req.headers().get(IF_MODIFIED_SINCE) {
+            if let Ok(since) = parse_http_date(hv.to_str().unwrap_or("")) {
+            if modified <= since {
+                let mut builder = Response::builder().status(304)
+                .header("ETag", &etag)
+                .header("Last-Modified", &last_modified);
+                if let Some(max_age) = maybe_cache_max_age {
+                let cache_control_header = format!("public, max-age={}, immutable", max_age);
+                builder = builder.header("Cache-Control", cache_control_header);
+                }
+                let resp304 = builder
+                .body(bytes::Bytes::new().into())
+                .map_err(|e| CustomError(format!("Failed to create response: {}", e).into()))?;
+                return create_simple_response_from_bytes(resp304);
+            }
+            }
+        }
+
+        // 4) Read & serve
         let file_content = fs::read(&full_path)
             .map_err(|e| CustomError(format!("Failed to read file: {}", e).into()))?;
 
-        if target.render_markdown.unwrap_or_default() && full_path.extension().and_then(|ext| {
-            if let Some(v) = ext.to_str() {
-                if v.eq_ignore_ascii_case("md") {
-                    Some(v)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }).is_some() {
-            // Convert Markdown to HTML
+        // Markdown rendering branch
+        if target.render_markdown.unwrap_or_default()
+            && full_path.extension().and_then(|e| e.to_str()).map(|v| v.eq_ignore_ascii_case("md")).unwrap_or(false)
+        {
             let markdown = String::from_utf8_lossy(&file_content);
-            let html = super::markdown_to_html(full_path.file_name().unwrap_or_default().to_str().unwrap_or("unnamed"),&markdown)
-                .map_err(|e| CustomError(format!("Failed to convert Markdown to HTML: {}", e).into()))?;
+            let html = super::markdown_to_html(
+                full_path.file_name().unwrap().to_str().unwrap_or("unnamed"),
+                &markdown,
+            ).map_err(|e| CustomError(format!("Failed to convert Markdown: {}", e).into()))?;
 
-            let response = hyper::Response::builder()
+            let maybe_cache_max_age = &target.cache_control_max_age_in_seconds;
+
+            let mut builder = Response::builder()
                 .status(200)
                 .header("Content-Type", "text/html; charset=utf-8")
+                .header("ETag", &etag)
+                .header("Last-Modified", &last_modified);
+
+            if let Some(max_age) = maybe_cache_max_age {
+                let cache_control_header = format!("public, max-age={}, immutable", max_age);
+                builder = builder.header("Cache-Control", cache_control_header);
+            }
+
+            let resp = builder
                 .body(html.into_bytes().into())
                 .map_err(|e| CustomError(format!("Failed to create response: {}", e).into()))?;
 
-            // Cache the response
-            {
-                RESPONSE_CACHE.insert(
-                    cache_key.clone(),
-                    (
-                        "text/html; charset=utf-8".to_string(),
-                        Instant::now(),
-                        response.clone()
-                    ),
-                );
-            }
-
-            return create_simple_response_from_bytes(response);
+            RESPONSE_CACHE.insert(cache_key.clone(), ("text/html; charset=utf-8".into(), Instant::now(), resp.clone()));
+            return create_simple_response_from_bytes(resp);
         }
 
-
+        // Binary / static file branch
         let mut mime_type = from_path(&full_path).first_or_octet_stream();
-
-        if let Some(extension) = full_path.extension().and_then(|ext| ext.to_str()) {
-            if extension.eq_ignore_ascii_case("md") {
-                mime_type = mime::TEXT_PLAIN_UTF_8;
-            }
+        if full_path.extension().and_then(|e| e.to_str()).map(|v| v.eq_ignore_ascii_case("md")).unwrap_or(false) {
+            mime_type = mime::TEXT_PLAIN_UTF_8;
         }
+        let body_bytes: Arc<[u8]> = Arc::from(file_content);
 
-        let response_bytes : Arc<[u8]> = Arc::from(file_content);
-
-        let response = hyper::Response::builder()
+        let resp = Response::builder()
             .status(200)
             .header("Content-Type", mime_type.to_string())
-            .body(response_bytes.to_vec().into())
+            .header("Cache-Control", "public, max-age=10, immutable")
+            .header("ETag", &etag)
+            .header("Last-Modified", &last_modified)
+            .body(body_bytes.to_vec().into())
             .map_err(|e| CustomError(format!("Failed to create response: {}", e).into()))?;
 
-        // Cache the response
-        {
-            RESPONSE_CACHE.insert(
-                cache_key.clone(),
-                (
-                   // response_bytes.clone(),
-                    mime_type.to_string(),
-                    Instant::now(),
-                    response.clone()
-                ),
-            );
-        }
-
-
-        create_simple_response_from_bytes(response)
-    } else if full_path.is_dir() {
+        RESPONSE_CACHE.insert(cache_key.clone(), (mime_type.to_string(), Instant::now(), resp.clone()));
+        return create_simple_response_from_bytes(resp);
+    }
+ 
+    else if full_path.is_dir() {
 
         if req_path.ends_with("/") == false {
             let response = hyper::Response::builder()
@@ -189,7 +202,7 @@ let req_path : String = urlencoding::decode(req.uri().path()).map_err(|e|CustomE
                 if default_file_path.extension().and_then(|ext| ext.to_str()) == Some("md") {
                     // Convert Markdown to HTML
                     let markdown = String::from_utf8_lossy(&file_content);
-                    let html = super::markdown_to_html("Index.md",&markdown)
+                    let html = super::markdown_to_html(&target.host_name,&markdown)
                         .map_err(|e| CustomError(format!("Failed to convert Markdown to HTML: {}", e).into()))?;
 
                     let response = hyper::Response::builder()
@@ -254,18 +267,15 @@ let req_path : String = urlencoding::decode(req.uri().path()).map_err(|e|CustomE
         }    
 
         
-        create_index_page(&full_path, &req_path,cache_key)
+        create_index_page(&target,&full_path, &req_path,cache_key)
 
     } else {
-        // Return 404 Not Found if the path is neither a file nor a directory
-        let response_body = "Not Found";
-        let response = hyper::Response::builder()
+        let resp = Response::builder()
             .status(404)
             .header("Content-Type", "text/plain")
-            .body(response_body.into())
+            .body("Not Found".into())
             .map_err(|e| CustomError(format!("Failed to create response: {}", e).into()))?;
-
-        create_simple_response_from_bytes(response)
+        create_simple_response_from_bytes(resp)
     }
 }
 
@@ -285,10 +295,28 @@ fn format_file_size(size: u64) -> String {
 
 use std::collections::HashMap;
 
-fn create_index_page(full_path: &PathBuf, req_path: &str, cache_key: String) -> Result<EpicResponse, CustomError> {
+fn create_index_page(target:&DirServer,full_path: &PathBuf, req_path: &str, cache_key: String) -> Result<EpicResponse, CustomError> {
+    
+    // Read and collect all entries up front
+    let mut content_in_the_directory: Vec<_> = fs::read_dir(&full_path)
+        .map_err(|e| CustomError(format!("Failed to read directory: {}", e).into()))?
+        .collect::<Result<_, _>>()
+        .map_err(|e| CustomError(format!("Failed to read entry: {}", e).into()))?;
 
-    let content_in_the_directory = fs::read_dir(&full_path)
-        .map_err(|e| CustomError(format!("Failed to read directory: {}", e).into()))?;
+    // Sort so that directories come first, then files; each group alphabetically
+    content_in_the_directory.sort_by(|a, b| {
+        let a_is_dir = a.metadata().map(|m| m.is_dir()).unwrap_or(false);
+        let b_is_dir = b.metadata().map(|m| m.is_dir()).unwrap_or(false);
+        match (a_is_dir, b_is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => {
+                let a_name = a.file_name().to_string_lossy().to_lowercase();
+                let b_name = b.file_name().to_string_lossy().to_lowercase();
+                a_name.cmp(&b_name)
+            }
+        }
+    });
 
     // Helper function to map file extensions to icons
     fn get_icon_for_extension(extension: &str) -> &'static str {
@@ -332,11 +360,17 @@ fn create_index_page(full_path: &PathBuf, req_path: &str, cache_key: String) -> 
     // Build the HTML response
     let html = Cow::Borrowed(
         r#"<!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Directory Listing</title>
+<html lang="en">
+<head>
+    <!-- immediately paint according to system theme -->
+    <script>
+        const dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.style.backgroundColor = dark ? '#121212' : '#ffffff';
+        document.documentElement.style.color            = dark ? '#ffffff' : '#000000';
+    </script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Directory Listing</title>
 <style>
     body {
         padding: 2em;
@@ -404,79 +438,75 @@ fn create_index_page(full_path: &PathBuf, req_path: &str, cache_key: String) -> 
         100% { background-position: 100% 50%; }
     }
 </style>
-
-
-
-    </head>
-    <body>
-        <h1>Directory Listing for "#,
+</head>
+<body>
+    <h1>Directory Listing for "#,
     );
 
     let mut html_owned = html.into_owned();
     html_owned.push_str(&req_path);
     html_owned.push_str(r#"</h1>
-        <ul>"#);
+    <ul>"#);
 
-    // Add a link to the parent directory if not at the root
+    // Parent link if not root
     if req_path != "/" {
-        let parent_path = Path::new(&req_path).parent().unwrap_or(Path::new("/"));
-        let parent_path_str = parent_path.to_str().unwrap_or("/");
+        let parent = Path::new(&req_path).parent().unwrap_or(Path::new("/"));
+        let parent_str = parent.to_str().unwrap_or("/");
         html_owned.push_str(&format!(
             r#"<li><a href="{0}">.. (Parent Directory)</a></li>"#,
-            parent_path_str
+            parent_str
         ));
     }
 
+    // Now iterate the **sorted** entries
     for entry in content_in_the_directory {
-        let entry = entry.map_err(|e| CustomError(format!("Failed to read entry: {}", e).into()))?;
         let metadata = entry.metadata().map_err(|e| CustomError(format!("Failed to get metadata: {}", e).into()))?;
-        let file_name = entry.file_name().into_string().unwrap_or_else(|_| "Unknown".into());
-        let file_size = if metadata.is_file() {
+        let name = entry.file_name().into_string().unwrap_or_else(|_| "Unknown".into());
+        let size_text = if metadata.is_file() {
             format!(" ({})", format_file_size(metadata.len()))
         } else {
             " (Directory)".to_string()
         };
-
-        let entry_path = format!("{}/{}", req_path.trim_end_matches('/'), file_name);
+        let path = format!("{}/{}", req_path.trim_end_matches('/'), name);
         let icon = if metadata.is_file() {
-            let extension = file_name.rsplit('.').next().unwrap_or("");
-            get_icon_for_extension(extension)
+            let ext = name.rsplit('.').next().unwrap_or("");
+            get_icon_for_extension(ext)
         } else {
-            "📁" // Folder icon
+            "📁"
         };
 
         html_owned.push_str(&format!(
             r#"<li><span class="icon">{2}</span><a href="{0}">{1}</a><span class="file-size">{3}</span></li>"#,
-            entry_path,
-            file_name,
-            icon,
-            file_size
+            path, name, icon, size_text
         ));
     }
 
     html_owned.push_str(
         r#"
-        </ul>
-    </body>
-    </html>"#,
+    </ul>
+</body>
+</html>"#,
     );
 
-    let response = hyper::Response::builder()
+    let maybe_cache_max_age = &target.cache_control_max_age_in_seconds;
+    let mut builder = hyper::Response::builder()
         .status(200)
-        .header("Content-Type", "text/html; charset=utf-8")
+        .header("Content-Type", "text/html; charset=utf-8");
+
+    if let Some(max_age) = maybe_cache_max_age {
+        let cache_control_header = format!("public, max-age={}, immutable", max_age);
+        builder = builder.header("Cache-Control", cache_control_header);
+    }
+
+    let response = builder
         .body(html_owned.into_bytes().into())
         .map_err(|e| CustomError(format!("Failed to create response: {}", e).into()))?;
 
-    // Cache the response
-    {
-        RESPONSE_CACHE.insert(
-            cache_key.clone(),
-            (
-                "text/html; charset=utf-8".to_string(),
-                Instant::now(),
-                response.clone()
-            ),
-        );
-    }
+    // Cache it
+    RESPONSE_CACHE.insert(
+        cache_key.clone(),
+        ("text/html; charset=utf-8".into(), Instant::now(), response.clone()),
+    );
+
     create_simple_response_from_bytes(response)
 }

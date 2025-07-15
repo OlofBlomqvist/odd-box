@@ -186,100 +186,169 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h2 id="configuration-v2"><a class="header" href="#configuration-v2">Configuration (V2)</a></h2>
-<p>To configure the <code>odd-box</code> proxy server, create a configuration file following the format provided in the <a href="https://github.com/OlofBlomqvist/odd-box/blob/main/odd-box-example-config.toml">example configuration file</a>. The configuration file uses the TOML format and is designed to define both remote targets (sites that <code>odd-box</code> proxies traffic to) and hosted processes (sites or services managed directly by <code>odd-box</code>).</p>
-<p>Running odd-box without any arguments it will first try to read from odd-box.toml, then Config.toml. You can supply a custom config path using: ./odd-box “/tmp/my-file.toml”</p>
-<p>It is also possible to update the active configuration at runtime thru an administration API which fully documents the possible settings.</p>
-<h3 id="configuration-variables"><a class="header" href="#configuration-variables">Configuration Variables</a></h3>
-<div class="table-wrapper"><table><thead><tr><th>Variable</th><th>Description</th></tr></thead><tbody>
-<tr><td>$root_dir</td><td>Resolves to whatever you set it to in the global configuration section.</td></tr>
-<tr><td>$cfg_dir</td><td>Resolves to the directory which the configuration toml file was read from.</td></tr>
-<tr><td>$port</td><td>Resolves to whatever port has been specified in the configuration. Only used for hosted processes.</td></tr>
+                        <h2 id="configuration-v3"><a class="header" href="#configuration-v3">Configuration (V3)</a></h2>
+<h3 id="quick-start"><a class="header" href="#quick-start">Quick start</a></h3>
+<p>Create <code>odd-box.toml</code> (or <code>Config.toml</code>) and run:</p>
+<pre><code class="language-bash">./odd-box              # loads odd-box.toml or Config.toml in the cwd
+./odd-box "/path/to/config.toml"   # explicit path
+</code></pre>
+<p>Most settings can be reloaded at runtime through the admin API.</p>
+<hr />
+<h3 id="placeholder-variables"><a class="header" href="#placeholder-variables">Placeholder variables</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Variable</th><th>Resolves to</th><th>Default when unset</th><th>What it’s for</th></tr></thead><tbody>
+<tr><td><code>$root_dir</code></td><td>Value of <code>root_dir</code></td><td>current working directory</td><td>Use in any path or argument to stay portable.</td></tr>
+<tr><td><code>$cfg_dir</code></td><td>Directory of the loaded config file</td><td>—</td><td>Handy for relative paths that follow the config.</td></tr>
+<tr><td><code>$port</code></td><td>The port chosen for the current <strong>hosted_process</strong></td><td>next free ≥ <code>port_range_start</code></td><td>Lets you inject the runtime port into args/env without hard‑coding.</td></tr>
 </tbody></table>
 </div>
 <blockquote>
-<p>Tip: if you are editing the confguration file using vs-code you should try the “even better toml” extension, which will provide you not only with syntax highlighting but also intellisense based on the configuration files ‘#:schema …’ tag.</p>
+<p><strong>Tip (VS Code):</strong> Install <em>Even Better TOML</em> and keep the <code>#:schema …</code> tag for instant validation &amp; IntelliSense.</p>
 </blockquote>
-<h3 id="basic-configuration-structure"><a class="header" href="#basic-configuration-structure">Basic Configuration Structure</a></h3>
-<p>There are more options than the ones shown here; these are the most commonly used ones. See the example configuration or schema.json file for a list of all possible options.</p>
-<ol>
-<li>
-<p><strong>Global Settings:</strong> Set the global properties like <code>http_port</code>, <code>tls_port</code>, <code>ip</code>, <code>log_level</code>, <code>port_range_start</code>, and <code>env_vars</code>. These settings control the overall behavior of <code>odd-box</code>.</p>
-<pre><code class="language-toml">#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v3.0.json
-version = "V3"
-http_port = 8080
-tls_port = 4343
-ip = "127.0.0.1"
-log_level = "Trace"
-port_range_start = 4242
-env_vars = []
-lets_encrypt_account_email = "example@example.com"
-</code></pre>
-<ul>
-<li><code>version</code>: Must be “V2”</li>
-<li><code>http_port</code>: TCP Port for the server to use. Defaults to 8080 if not specified.</li>
-<li><code>tls_port</code>: TCP Port for the server to buse. Defaults to 4343 if not specified.</li>
-<li><code>ip</code>: IP Address for the server to use. Defaults to 127.0.0.1 if not specified.</li>
-<li><code>log_level</code>: info/warn/err/debug/trace - defaults to info of not specified.</li>
-<li><code>port_range_start</code>: Must be specified - used for automatically assign the PORT env var to hosted sites (if not set explicity for a site).</li>
-<li><code>env_vars</code>: List of environment variables that all hosted processes should have.</li>
-<li><code>lets_encrypt_account_email</code>: (Optional) Set email to use if you wish to use lets-encrypt.</li>
-</ul>
-</li>
-<li>
-<p>Adding Remote Targets: Define remote targets to forward traffic to external servers. Each remote_target requires a host_name (the incoming domain) and a list of backends (the target servers). To add a new remote site:</p>
-<pre><code class="language-toml">[[remote_target]]
-host_name = "example.com"
-backends = [
-    # hints are optional and used for specifying if server requires for example H2C.
-    { https = true, address="example.com", port=443, hints = [] }
-]
-</code></pre>
-<ul>
-<li><code>host_name</code>: The incoming domain that odd-box will listen for.</li>
-<li><code>backends</code>: A list of backend servers to forward traffic to. The https property specifies if TLS is used.</li>
-</ul>
-</li>
-<li>
-<p>Adding Hosted Processes: Define hosted processes that odd-box will manage. These are services that odd-box can start, stop, and restart. Each hosted_process requires a <code>host_name</code>, <code>dir</code>, <code>bin</code>, and <code>args</code>:</p>
-<pre><code class="language-toml">[[hosted_process]]
-host_name = "myapp.local"
-dir = "/home/kalle/" # variables like $root_dir or $config_dir are allowed here
-bin = "/usr/bin/python3" # variables like $root_dir or $config_dir are allowed here
-args = ["-m", "http.server", "$port"] # variables like $port, $root_dir &amp; $config_dir are allowed here
-exclude_from_start_all = false # if you do not wish start this site when pressing the 's' key in tui mode.
-auto_start = true 
-hints = ["H1","H2","H2C","H2CPK","H3"]
-capture_subdomains = false
-https = false 
+<hr />
+<h2 id="1--global-settings"><a class="header" href="#1--global-settings">1 — Global settings</a></h2>
+<h3 id="what-each-field-does"><a class="header" href="#what-each-field-does">What each field does</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Meaning</th><th>Default</th></tr></thead><tbody>
+<tr><td><code>version</code></td><td>Must be <code>"V3"</code> so odd‑box knows which schema to parse.</td><td>—</td></tr>
+<tr><td><code>root_dir</code></td><td>Base for <code>$root_dir</code>; relative paths are resolved from here.</td><td>current working dir</td></tr>
+<tr><td><code>ip</code></td><td>Address the HTTP/HTTPS listeners bind to.</td><td><code>127.0.0.1</code></td></tr>
+<tr><td><code>http_port</code> / <code>tls_port</code></td><td>Public ports for HTTP and HTTPS listeners.</td><td><code>8080</code> / <code>4343</code></td></tr>
+<tr><td><code>alpn</code></td><td>Offer HTTP/2 over TLS via ALPN; disable only for exotic setups.</td><td><code>true</code></td></tr>
+<tr><td><code>port_range_start</code></td><td>First port odd‑box tries for <strong>hosted_process</strong> auto‑ports.</td><td><code>4200</code></td></tr>
+<tr><td><code>default_log_format</code></td><td>Line layout for process logs (<code>standard</code> or <code>dotnet</code>).</td><td><code>standard</code></td></tr>
+<tr><td><code>log_level</code></td><td>Odd‑box’s own log verbosity.</td><td><code>Info</code></td></tr>
+<tr><td><code>auto_start</code></td><td>Whether to start every hosted process at launch unless they override.</td><td><code>true</code></td></tr>
+<tr><td><code>use_loopback_ip_for_procs</code></td><td>Always proxy to <code>127.0.0.1</code> instead of the incoming host name (avoids IPv6/SNI weirdness).</td><td><code>true</code></td></tr>
+<tr><td><code>env_vars</code></td><td>Key–value pairs injected into <strong>every</strong> hosted process.</td><td><code>[]</code></td></tr>
+<tr><td><code>lets_encrypt_account_email</code></td><td>Enables Let’s Encrypt support; this email is sent to ACME.</td><td>unset</td></tr>
+<tr><td><code>odd_box_url</code> / <code>odd_box_password</code></td><td>Custom hostname + password for the admin UI/API; if unset, UI binds to <em>localhost</em> and is unsecured.</td><td>unset</td></tr>
+</tbody></table>
+</div>
+<h3 id="example-block"><a class="header" href="#example-block">Example block</a></h3>
+<pre><code class="language-toml">#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v3.1.json
+version                   = "V3"
+root_dir                  = "/srv/odd-box"
+ip                        = "0.0.0.0"
+http_port                 = 8080
+tls_port                  = 4343
+alpn                      = true
+port_range_start          = 4200
+default_log_format        = "standard"
+log_level                 = "Info"
+auto_start                = true
+use_loopback_ip_for_procs = true
 env_vars = [
-    { key = "some-environment-variable", value = "example-value" }, 
+  { key = "GLOBAL_KEY", value = "value" }
+]
+lets_encrypt_account_email = "admin@example.com"
+odd_box_url                = "admin.example.com"
+odd_box_password           = "s3cr3t"
+</code></pre>
+<hr />
+<h2 id="2--reverseproxy-backends-remote_target"><a class="header" href="#2--reverseproxy-backends-remote_target">2 — Reverse‑proxy back‑ends (<code>[[remote_target]]</code>)</a></h2>
+<h3 id="field-meanings"><a class="header" href="#field-meanings">Field meanings</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>What it controls</th><th>Default</th></tr></thead><tbody>
+<tr><td><code>host_name</code></td><td>Incoming host (SNI / Host header) odd‑box listens for. <strong>Required</strong>.</td><td>—</td></tr>
+<tr><td><code>capture_subdomains</code></td><td>If <code>true</code>, <code>*.host_name</code> is also routed here.</td><td><code>false</code></td></tr>
+<tr><td><code>forward_subdomains</code></td><td>If <code>true</code>, the matching subdomain is kept when rewriting Host header (<code>foo.api.example.com</code> ➜ <code>foo.backend</code>).</td><td><code>false</code></td></tr>
+<tr><td><code>terminate_tls</code></td><td>Terminate HTTPS at odd‑box, forward HTTP to the back‑end.</td><td><code>false</code></td></tr>
+<tr><td><code>terminate_http</code></td><td>Force layer‑7 proxy even for plain HTTP (can enable URL rewriting).</td><td><code>false</code></td></tr>
+<tr><td><code>enable_lets_encrypt</code></td><td>Issue real certs for <code>host_name</code> via Let’s Encrypt. Requires <code>lets_encrypt_account_email</code>.</td><td><code>false</code></td></tr>
+<tr><td><code>keep_original_host_header</code></td><td>Forwards inbound <code>Host</code> header unchanged instead of using the back‑end’s address.</td><td><code>false</code></td></tr>
+<tr><td><code>backends</code></td><td>Array of one or more servers. <strong>Each needs <code>address</code> + <code>port</code>.</strong></td><td>—</td></tr>
+</tbody></table>
+</div>
+<p>Back‑end object keys:</p>
+<div class="table-wrapper"><table><thead><tr><th>Key</th><th>Meaning</th><th>Default</th></tr></thead><tbody>
+<tr><td><code>address</code></td><td>IP / FQDN of the target server.</td><td>—</td></tr>
+<tr><td><code>port</code></td><td>TCP port on the target.</td><td>—</td></tr>
+<tr><td><code>https</code></td><td>If <code>true</code>, use TLS to the back‑end.</td><td><code>false</code></td></tr>
+<tr><td><code>hints</code></td><td>List of <code>H1</code>, <code>H2</code>, <code>H2C</code>, <code>H2CPK</code>, <code>H3</code> to steer protocol negotiation.</td><td><code>[]</code></td></tr>
+</tbody></table>
+</div>
+<h3 id="example"><a class="header" href="#example">Example</a></h3>
+<pre><code class="language-toml">[[remote_target]]
+host_name = "api.example.com"
+capture_subdomains        = false
+forward_subdomains        = true
+terminate_tls             = true
+enable_lets_encrypt       = true
+keep_original_host_header = true
+
+backends = [
+  { address = "10.0.0.5", port = 443, https = true, hints = ["H2","H1"] },
+  { address = "10.0.0.6", port = 8443, https = true }
 ]
 </code></pre>
-<ul>
-<li><code>host_name</code>: The incoming domain that odd-box will listen for.</li>
-<li><code>dir</code>: Directory where the process will be executed.</li>
-<li><code>bin</code>: Executable path to a binary file (absolute, relative to dir, or in pwd)</li>
-<li><code>args</code>: Arguments to pass to the binary.</li>
-<li><code>auto_start</code>: (Optional) Set to true to automatically start the process with odd-box.</li>
-<li><code>hints</code>: (Optional) Not normally needed but can be set to specify that a server requires for example H2C.</li>
-<li><code>https</code>: (Optional) Set to true if the process uses HTTP (TLS)</li>
-<li><code>enable_lets_encrypt</code>: (Optional) Set to true to enable lets-encrypt to be used for this site.</li>
-<li><code>exclude_from_Start_all</code>: (Optional) Set this to false if you do not want this site to start automatically when odd-box starts, and to have it excluded from the start_all command.</li>
-<li><code>capture_subdomains</code>: (Optional) Set to true if you want to listen to *.host_name and not just host_name.</li>
-</ul>
-</li>
-<li>
-<p>Adding dir servers: for serving static websites or files. Supports directory indexing and markdown rendering.</p>
-<pre><code class="language-toml">[[dir_server]]
-host_name = "dir.localtest.me"
-dir = "$cfg_dir"
-enable_directory_browsing = true
-render_markdown = true
+<hr />
+<h2 id="3--hosted-processes-hosted_process"><a class="header" href="#3--hosted-processes-hosted_process">3 — Hosted processes (<code>[[hosted_process]]</code>)</a></h2>
+<h3 id="field-meanings-1"><a class="header" href="#field-meanings-1">Field meanings</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>What it controls</th><th>Default</th></tr></thead><tbody>
+<tr><td><code>host_name</code></td><td>Incoming host odd‑box proxies to this process. <strong>Required</strong>.</td><td>—</td></tr>
+<tr><td><code>dir</code></td><td>Working directory for the process.</td><td>current working dir</td></tr>
+<tr><td><code>bin</code></td><td>Executable or script to run. <strong>Required</strong>.</td><td>—</td></tr>
+<tr><td><code>args</code></td><td>Command‑line arguments array.</td><td><code>[]</code></td></tr>
+<tr><td><code>env_vars</code></td><td>Extra env vars (merged with global <code>env_vars</code>).</td><td><code>[]</code></td></tr>
+<tr><td><code>log_format</code></td><td>Overrides <code>default_log_format</code>.</td><td>inherited</td></tr>
+<tr><td><code>log_level</code></td><td>Overrides global <code>log_level</code>.</td><td>inherited</td></tr>
+<tr><td><code>auto_start</code></td><td>Start with odd‑box? Overrides global <code>auto_start</code>.</td><td>inherited (<code>true</code>)</td></tr>
+<tr><td><code>exclude_from_start_all</code></td><td>If <code>true</code>, <code>start_all</code> CLI/API skips this process.</td><td><code>false</code></td></tr>
+<tr><td><code>port</code></td><td>Fixed port; if unset odd‑box auto‑assigns.</td><td>auto‑assign</td></tr>
+<tr><td><code>https</code></td><td>If <code>true</code>, the process itself speaks HTTPS.</td><td><code>false</code></td></tr>
+<tr><td><code>capture_subdomains</code></td><td>Handle <code>*.host_name</code>.</td><td><code>false</code></td></tr>
+<tr><td><code>terminate_http</code></td><td>Terminates HTTP connections rather than directly forwarding the data stream.</td><td><code>false</code></td></tr>
+<tr><td><code>terminate_tls</code></td><td>Terminates TLS connections rather than directly forwarding the data stream.</td><td><code>false</code></td></tr>
+<tr><td><code>forward_subdomains</code></td><td>Preserve subdomain when rewriting Host.</td><td><code>false</code></td></tr>
+<tr><td><code>enable_lets_encrypt</code></td><td>Issue certs for this process’s host.</td><td><code>false</code></td></tr>
+<tr><td><code>hints</code></td><td>Protocol hints exactly like in <code>backends</code>.</td><td><code>[]</code></td></tr>
+</tbody></table>
+</div>
+<h3 id="example-1"><a class="header" href="#example-1">Example</a></h3>
+<pre><code class="language-toml">[[hosted_process]]
+host_name              = "app.local"
+dir                    = "$root_dir/apps/myapp"
+bin                    = "./start-server"
+args                   = ["--config", "$cfg_dir/app.toml"]
+env_vars               = [
+  { key = "APP_ENV", value = "production" }
+]
+log_format             = "dotnet"
+log_level              = "Debug"
+port                   = 3000
+https                  = true
+auto_start             = true
+exclude_from_start_all = false
+capture_subdomains     = false
+forward_subdomains     = false
+terminate_tls          = false
+terminate_http         = false
+enable_lets_encrypt    = false
+hints                  = ["H1","H2"]
 </code></pre>
-<p>(by default, index.html will be served when browsing to a site, but also index.md (markdown) files can be served as html automatically)</p>
-</li>
-</ol>
+<hr />
+<h2 id="4--static-file-servers-dir_server"><a class="header" href="#4--static-file-servers-dir_server">4 — Static file servers (<code>[[dir_server]]</code>)</a></h2>
+<h3 id="field-meanings-2"><a class="header" href="#field-meanings-2">Field meanings</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>What it controls</th><th>Default</th></tr></thead><tbody>
+<tr><td><code>host_name</code></td><td>Hostname odd‑box listens for. <strong>Required</strong>.</td><td>—</td></tr>
+<tr><td><code>dir</code></td><td>Directory on disk to serve. <strong>Required</strong>.</td><td>—</td></tr>
+<tr><td><code>capture_subdomains</code></td><td>Serve <code>*.host_name</code>.</td><td><code>false</code></td></tr>
+<tr><td><code>enable_directory_browsing</code></td><td>List files if no <code>index.html</code>/<code>index.md</code>.</td><td><code>false</code></td></tr>
+<tr><td><code>render_markdown</code></td><td>Convert <code>.md</code> ➜ HTML automatically.</td><td><code>false</code></td></tr>
+<tr><td><code>redirect_to_https</code></td><td>Respond with 301 to HTTPS listener.</td><td><code>false</code></td></tr>
+<tr><td><code>enable_lets_encrypt</code></td><td>Issue certs for this site.</td><td><code>false</code></td></tr>
+<tr><td><code>cache_control_max_age_in_seconds</code></td><td>Sets the cache-control header max-age (public, max-age=<n>, immutable)</td><td><code>no cache-control header</code></td></tr>
+</tbody></table>
+</div>
+<h3 id="example-2"><a class="header" href="#example-2">Example</a></h3>
+<pre><code class="language-toml">[[dir_server]]
+host_name                 = "static.example.com"
+dir                       = "/var/www/public"
+capture_subdomains        = true
+enable_directory_browsing = true
+render_markdown           = true
+redirect_to_https         = true
+enable_lets_encrypt       = true
+cache_control_max_age_in_seconds = 60
+</code></pre>
 
                     </main>
 

@@ -2602,6 +2602,7 @@ dependencies = [
  "http-body",
  "http-body-util",
  "httparse",
+ "httpdate",
  "hyper",
  "hyper-rustls",
  "hyper-tungstenite",

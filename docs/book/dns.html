@@ -187,7 +187,8 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="dns-and-routing"><a class="header" href="#dns-and-routing">DNS and Routing</a></h1>
-<p>Since <code>odd-box</code> routes based on hostnames, your machine must resolve those names correctly. Options include:</p>
+<p>Odd-box uses SNI-sniffing for TLS and otherwise peeks at HTTP Host headers in order to decide which target site to route traffic to. When using odd-box for local development you need to make sure that you can resolve the names you give each site.</p>
+<p>Options include:</p>
 <ul>
 <li><strong>Host file entries:</strong> Point domains to <code>127.0.0.1</code>.</li>
 <li><strong>localtest.me:</strong> Use for testing (e.g., <code>my-site.localtest.me</code>).</li>

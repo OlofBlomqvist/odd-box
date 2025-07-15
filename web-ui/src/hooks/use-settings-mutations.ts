@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Api } from "../generated-api";
+import { Api } from "../generated-api"; 
 
 const useSettingsMutations = () => {
   let hostName = window.location.protocol + "//" + window.location.hostname
@@ -12,6 +12,7 @@ const useSettingsMutations = () => {
       ? `${import.meta.env.VITE_ODDBOX_API_URL}:${import.meta.env.VITE_ODDBOX_API_PORT}`
       : hostName;
   
+
   const apiClient = new Api({ baseUrl });
   const queryClient = useQueryClient();
   const updateSettings = useMutation({

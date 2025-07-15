@@ -187,9 +187,36 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="lets-encrypt"><a class="header" href="#lets-encrypt">Let’s Encrypt</a></h1>
-<p>Lets encrypt support works by creating a virtual file that can be used for proving ownership of a domain name. No support exists for the DNS auth mode.</p>
+<p>Odd-box supports automatically generating and renewing certificates using lets-encrypt - no certbot required.</p>
 <p>You will need to have odd-box running on a server with a public IP and a DNS record pointing to it. Port 80 and 443 are both used and need to be open.</p>
 <p>Certificates are automatically renewed when they have less than 30 days left of validity.</p>
+<h2 id="example-configuration"><a class="header" href="#example-configuration">Example Configuration</a></h2>
+<pre><code class="language-toml">lets_encrypt_account_email = "some-email@example.com"
+  
+[[remote_target]]
+host_name = "api.example.com"
+enable_lets_encrypt = true # Enable LE
+redirect_to_https = true
+...
+
+[[dir_server]]
+host_name                 = "static.example.com"
+dir                       = "/var/www/public" 
+enable_lets_encrypt       = true # Enable LE
+enable_directory_browsing = true
+render_markdown           = true
+redirect_to_https         = true
+...
+
+```toml
+[[hosted_process]]
+host_name              = "app.local"
+enable_lets_encrypt    = true # Enable LE
+...
+</code></pre>
+<h3 id="how-it-works"><a class="header" href="#how-it-works">How it works</a></h3>
+<p>When a request is made to odd-box using HTTP(s) with a hostname where we have not yet generated a certificate, odd-box will complete the lets-encrypt challenge and generate a certificate which is then used to serve the site.</p>
+<p>You can read more about the entire process here: https://letsencrypt.org/docs/challenge-types/#http-01-challenge</p>
 
                     </main>
 

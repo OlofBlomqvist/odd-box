@@ -764,6 +764,11 @@ pub async fn bg_worker_for_lets_encrypt_certs(state: Arc<GlobalState>) {
                 all_sites_with_lets_encrypt_enabled.push(ourl.clone());
             }
 
+            // todo : we should probably just do a dns lookup to see if local instead of this shit
+            all_sites_with_lets_encrypt_enabled.retain(|x| { 
+                !(x.ends_with(".localtest.me") || x.ends_with(".localhost") || x == "localhost")
+            });
+
             drop(state_guard);
 
             
