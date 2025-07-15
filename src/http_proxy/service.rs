@@ -367,7 +367,7 @@ async fn handle_http_request(
             Ok(r) => return Ok(r),
             Err(e) => {
                 tracing::error!("Failed to handle file request: {e:?}");
-                let mut rr = EpicResponse::new(create_epic_string_full_body(&e.0));
+                let mut rr = EpicResponse::new(create_epic_string_full_body(&e.0)); 
                 *rr.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
                 return Ok(rr)
             },

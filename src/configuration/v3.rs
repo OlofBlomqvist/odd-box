@@ -29,6 +29,11 @@ pub struct DirServer {
     //pub rules: Option<Vec<ReqRule>>,
     // --- todo --------------------------------------
     pub render_markdown: Option<bool>,
+
+    /// If you want to use a cache for the files served by this directory server, you can set this to the max age in seconds.
+    pub cache_control_max_age_in_seconds: Option<u64>,
+
+    // TODO etags and last-modified headers
 }
 
 // note: there is no implementation using these yet..
@@ -579,6 +584,9 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
                 if let Some(true) = s.redirect_to_https {
                     formatted_toml.push(format!("redirect_to_https = true"));
                 }
+                if let Some(v) = s.cache_control_max_age_in_seconds {
+                    formatted_toml.push(format!("cache_control_max_age_in_seconds = {}", v));
+                } 
             }
         }
         

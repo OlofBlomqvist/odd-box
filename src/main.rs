@@ -60,6 +60,8 @@ mod observer;
 mod serde_with;
 use types::app_state::AppState;
 use lazy_static::lazy_static;
+
+use crate::custom_servers::directory::CacheValue;
 mod letsencrypt;
 mod custom_servers;
 mod docker;
@@ -370,16 +372,36 @@ async fn config_file_monitor(
     Ok(())
 }
 
-async fn thread_cleaner(_state:Arc<GlobalState>) {
+async fn generic_cleanup_thread(_state:Arc<GlobalState>) {
     let liveness_token: Arc<bool> = Arc::new(true);
     crate::BG_WORKER_THREAD_MAP.insert("The Janitor".into(), BgTaskInfo {
         liveness_ptr: Arc::downgrade(&liveness_token),
         status: "Managing active tasks..".into()
     });
+
+    let mut every_30_seconds_counter = 0;
+
     loop {
         {
+            every_30_seconds_counter += 1;
+
             PROC_THREAD_MAP.retain(|_k,v| v.liveness_ptr.upgrade().is_some());
-            BG_WORKER_THREAD_MAP.retain(|_k,v| v.liveness_ptr.upgrade().is_some());
+            BG_WORKER_THREAD_MAP.retain(|_k,v| v.liveness_ptr.upgrade().is_some()); 
+
+            if every_30_seconds_counter > 30 {
+                every_30_seconds_counter = 0; 
+                custom_servers::directory::RESPONSE_CACHE.retain(|_, v| { 
+                    let (key,instant,_res) = v;
+                    let elapsed = instant.elapsed();
+                    if elapsed.as_secs() > 30 {
+                        tracing::debug!("Dropping cache entry for {} as it is older than 30 seconds", key);
+                        return false;
+                    } 
+                    true
+                });
+            }
+            
+
         }
         tokio::time::sleep(std::time::Duration::from_secs(1)).await
     }
@@ -626,7 +648,7 @@ async fn main() -> anyhow::Result<()> {
     tokio::task::spawn(crate::observer::run(global_state.clone()));
 
     // Spawn thread cleaner (removes dead threads from the proc_thread_map)
-    let cleanup_thread = tokio::spawn(thread_cleaner(global_state.clone()));
+    let cleanup_thread = tokio::spawn(generic_cleanup_thread(global_state.clone()));
     let cfg_monitor = tokio::spawn(config_file_monitor(shared_config.clone(),global_state.clone()));
    
     let mut tui_task : Option<JoinHandle<()>> = None;
@@ -697,6 +719,7 @@ async fn main() -> anyhow::Result<()> {
     drop(config_guard);
 
     tokio::task::spawn(docker_thread(global_state.clone()));
+
 
     
     // // if on a released/stable version, we notify the user when there is a later stable version
