@@ -33,4 +33,6 @@ pub struct ReverseProxyService {
     /// the configuration multiple times during the request. We do not want to lock the config each time.
     pub configuration : Arc<crate::configuration::ConfigWrapper>,
     pub connection_key : ConnectionKey,
+    pub sni : Option<String>,
+    pub host_header : Option<String>
 }
