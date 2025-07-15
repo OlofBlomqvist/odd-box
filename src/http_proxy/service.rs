@@ -232,7 +232,9 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
             self.h2_client.clone(),
             self.resolved_target.clone(),
             self.configuration.clone(),
-            self.connection_key.clone()
+            self.connection_key.clone(),
+            self.host_header.clone(),
+            self.sni.clone()
         );
         
         return Box::pin(async move {
@@ -265,11 +267,14 @@ async fn handle_http_request(
     h2_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
     peeked_target: Option<Arc<ReverseTcpProxyTarget>>,
     configuration: Arc<crate::configuration::ConfigWrapper>,
-    connection_key: ConnectionKey
+    connection_key: ConnectionKey,
+    host_header: Option<String>,
+    sni: Option<String>
 
 ) -> Result<EpicResponse, CustomError> {
     
-    let req_host_name = 
+    // This will either point to the backend hostname or whatever the caller used as hostname
+    let resolved_host_name = 
         if let Some(t) = &peeked_target {
             t.host_name.to_string()
         } else if let Some(hh) = req.headers().get("host") { 
@@ -278,7 +283,6 @@ async fn handle_http_request(
         } else { 
             req.uri().authority().ok_or(CustomError(format!("No hostname and no Authority found")))?.host().to_string()
         };
-
 
     let req_path = req.uri().path();
 
@@ -295,19 +299,19 @@ async fn handle_http_request(
     if peeked_target.is_none() && !is_https { 
 
             
-        if let Some(r) = intercept_local_commands(&req_host_name,&params,req_path,tx.clone()).await {
+        if let Some(r) = intercept_local_commands(&resolved_host_name,&params,req_path,tx.clone()).await {
             return Ok(r)
         }
         
         // if no target was found and the request is for the odd-box ui, it means we have gotten a request to the odd-box ui
         // over a non-encrypted channel. if so we will just redirect to https.
         let odd_box_url = configuration.odd_box_url.clone().unwrap_or("!".to_string());
-        if req_host_name == odd_box_url || req_host_name == "localhost" || req_host_name == "oddbox.localhost" || req_host_name == "odd-box.localhost"  {
+        if resolved_host_name == odd_box_url || resolved_host_name == "localhost" || resolved_host_name == "oddbox.localhost" || resolved_host_name == "odd-box.localhost"  {
             let p = configuration.tls_port.unwrap_or(4343);
             return Ok(
                 OddResponse::empty()
                     .with_headers(vec![
-                        ("Location", &format!("https://{}:{p}",req_host_name))
+                        ("Location", &format!("https://{}:{p}",resolved_host_name))
                     ])
                     .with_status(StatusCode::TEMPORARY_REDIRECT)
                     .into()
@@ -318,26 +322,26 @@ async fn handle_http_request(
     //tracing::trace!("Handling request from {client_ip:?} on hostname {req_host_name:?}");
     
     // THIS SHOULD BE THE ONLY PLACE WE INCREMENT THE TERMINATION COUNTER
-    match state.app_state.statistics.lb_access_count_per_hostname.get_mut(&req_host_name) {
+    match state.app_state.statistics.lb_access_count_per_hostname.get_mut(&resolved_host_name) {
         Some(mut guard) => {
             let (_k,v) = guard.pair_mut();
             1 + v.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
         },
         None => {
-            state.app_state.statistics.lb_access_count_per_hostname.insert(req_host_name.clone(), std::sync::atomic::AtomicUsize::new(1));
+            state.app_state.statistics.lb_access_count_per_hostname.insert(resolved_host_name.clone(), std::sync::atomic::AtomicUsize::new(1));
             1
         }
     };
     
 
 
-    if let Some(r) = intercept_local_commands(&req_host_name,&params,req_path,tx.clone()).await {
+    if let Some(r) = intercept_local_commands(&resolved_host_name,&params,req_path,tx.clone()).await {
         return Ok(r)
     }
     
     // todo - cache this?
     let dir_target = if peeked_target.is_some() { None } else { configuration.dir_server.iter().flatten().find_map(|x| {
-        if x.host_name == req_host_name {
+        if x.host_name == resolved_host_name {
             match configuration.resolve_dir_server_configuration(x) {
                 Ok(r) => Some(r),
                 Err(e) => {
@@ -353,9 +357,9 @@ async fn handle_http_request(
     if let Some(t) = dir_target {
         if let Some(true) = t.redirect_to_https {
             if !is_https {
-                let mut rr = EpicResponse::new(create_epic_string_full_body(&format!("Please use https://{req_host_name} instead of http://{req_host_name}")));
+                let mut rr = EpicResponse::new(create_epic_string_full_body(&format!("Please use https://{resolved_host_name} instead of http://{resolved_host_name}")));
                 *rr.status_mut() = StatusCode::PERMANENT_REDIRECT;
-                rr.headers_mut().insert("Location", hyper::header::HeaderValue::from_str(&format!("https://{req_host_name}:{}{}",configuration.tls_port.unwrap_or(4343),req.uri())).unwrap());
+                rr.headers_mut().insert("Location", hyper::header::HeaderValue::from_str(&format!("https://{resolved_host_name}:{}{}",configuration.tls_port.unwrap_or(4343),req.uri())).unwrap());
                 return Ok(rr)
             }
         }
@@ -372,15 +376,17 @@ async fn handle_http_request(
 
     if peeked_target.is_none() && dir_target.is_none() {
         let fresh_container_info = { state.config.read().await.docker_containers.clone()} ;
-        if let Some(rc) = fresh_container_info.get(&req_host_name).and_then(|x|Some(x.generate_remote_config())) {
+        if let Some(rc) = fresh_container_info.get(&resolved_host_name).and_then(|x|Some(x.generate_remote_config())) {
             return perform_remote_forwarding(
-                req_host_name,is_https,
+                resolved_host_name,is_https,
                 state.clone(),
                 client_ip,
                 &rc,
                 req,client.clone(),
                 h2_client.clone(),
-                connection_key
+                connection_key,
+                host_header.clone(),
+                sni.clone()
             ).await
         }        
     }
@@ -392,9 +398,9 @@ async fn handle_http_request(
         } else {
             if let Some(processes) = &configuration.hosted_process {
                 if let Some(pp) = processes.iter().find(|p| {
-                    req_host_name == p.host_name
+                    resolved_host_name == p.host_name
                     || p.capture_subdomains.unwrap_or_default() 
-                    && req_host_name.ends_with(&format!(".{}",p.host_name))
+                    && resolved_host_name.ends_with(&format!(".{}",p.host_name))
                 }) {
                     //tracing::trace!("Found hosted target for {req_host_name}");
                     Some(pp.clone())
@@ -457,7 +463,7 @@ async fn handle_http_request(
         let mut wait_count = 0;
         loop {
             if wait_count > 10 {
-                return Err(CustomError(format!("No active port found for {req_host_name}.")))
+                return Err(CustomError(format!("No active port found for {resolved_host_name}.")))
             } else {
                 // let id: &crate::types::proc_info::ProcId = target_proc_cfg.get_id();
                 // let name = target_proc_cfg.host_name.clone();
@@ -469,7 +475,7 @@ async fn handle_http_request(
                         port = p;
                         break;
                     } else {
-                        tracing::warn!("No active port found for {req_host_name}.");
+                        tracing::warn!("No active port found for {resolved_host_name}.");
                     }
                 };
             } else {
@@ -489,9 +495,9 @@ async fn handle_http_request(
 
 
         // todo: we dont really handle subdomain passing here anymore
-        let (parsed_host_name,_subdomain) = {
+        let (parsed_host_name,subdomain) = {
             let forward_subdomains = target_proc_cfg.forward_subdomains.unwrap_or_default();
-            let sub = get_subdomain(&req_host_name, &target_proc_cfg.host_name);
+            let sub = get_subdomain(&resolved_host_name, &target_proc_cfg.host_name);
             if forward_subdomains {
                 if let Some(subdomain) = sub {
                     (Cow::Owned(format!("{subdomain}.{}", &target_proc_cfg.host_name)),Some(subdomain))
@@ -534,7 +540,7 @@ async fn handle_http_request(
 
         let result = 
             proxy(
-                &req_host_name,
+                &resolved_host_name, 
                 &parsed_host_name,
                 is_https,
                 state.clone(),
@@ -546,7 +552,10 @@ async fn handle_http_request(
                 h2_client,
                 enforce_https,
                 backend,
-                &connection_key
+                &connection_key,
+                host_header,
+                sni,
+                subdomain
             ).await;
 
         map_result(&skip_dns_for_local_target_url,result).await
@@ -556,32 +565,36 @@ async fn handle_http_request(
         if let Some(peeked_remote_config) = peeked_target.and_then(|x| x.remote_target_config.clone() ) {
 
             return perform_remote_forwarding(
-                req_host_name,is_https,
+                resolved_host_name,is_https,
                 state.clone(),
                 client_ip,
                 &peeked_remote_config,
                 req,client.clone(),
                 h2_client.clone(),
-                connection_key
+                connection_key,
+                host_header.clone(),
+                sni.clone()
             ).await
         }
         else if let Some(remote_target_cfg) = &configuration.remote_target.iter().flatten().find(|p|{
             //tracing::info!("comparing incoming req: {} vs {} ",req_host_name,p.host_name);
-            req_host_name == p.host_name
-            || p.capture_subdomains.unwrap_or_default() && req_host_name.ends_with(&format!(".{}",p.host_name))
+            resolved_host_name == p.host_name
+            || p.capture_subdomains.unwrap_or_default() && resolved_host_name.ends_with(&format!(".{}",p.host_name))
         }) {
             return perform_remote_forwarding(
-                req_host_name,is_https,
+                resolved_host_name,is_https,
                 state.clone(),
                 client_ip,
                 remote_target_cfg,
                 req,client.clone(),
                 h2_client.clone(),
-                connection_key
+                connection_key,
+                host_header.clone(),
+                sni.clone()
             ).await
         };
 
-        tracing::warn!("Received request that does not match any known target: {:?}", req_host_name);
+        tracing::warn!("Received request that does not match any known target: {:?}", resolved_host_name);
         let body_str = format!("Sorry, I don't know how to proxy this request.. {:?}", req);
         
         let mut response = EpicResponse::new(create_epic_string_full_body(&body_str));
@@ -603,6 +616,15 @@ fn get_subdomain(requested_hostname: &str, backend_hostname: &str) -> Option<Str
     None
 }
 
+#[test]
+fn subdomain_handling_works() {
+    let example = "example1.123091238123-3333.tower.cruma.io";
+    let backend = "tower.cruma.io";
+    let subdomain = get_subdomain(example, backend);
+    println!("Subdomain: {:?}", subdomain);
+    assert_eq!(subdomain, Some("example1.123091238123-3333".to_string()));
+}
+
 async fn perform_remote_forwarding(
     req_host_name:String,
     is_https:bool,
@@ -612,7 +634,9 @@ async fn perform_remote_forwarding(
     req:hyper::Request<IncomingBody>,
     client:  Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
     h2_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
-    connection_key: ConnectionKey
+    connection_key: ConnectionKey,
+    host_header: Option<String>,
+    sni: Option<String>
 ) -> Result<EpicResponse,CustomError> {
     
     
@@ -632,7 +656,7 @@ async fn perform_remote_forwarding(
     let scheme = if enforce_https { "https" } else { "http" }; 
     
     // todo - we dont handle subdomain passing correctly here
-    let (resolved_host_name,_subdomain) = {
+    let (resolved_host_name,subdomain_part) = {
         let sub = get_subdomain(&req_host_name, &remote_target_config.host_name);
         if remote_target_config.forward_subdomains.unwrap_or_default() {
             if let Some(subdomain) = sub {
@@ -669,7 +693,10 @@ async fn perform_remote_forwarding(
             h2_client,
             next_backend_target.https.unwrap_or_default(),
             next_backend_target,
-            &connection_key
+            &connection_key,
+            host_header.clone(),
+            sni.clone(),
+            subdomain_part
         ).await;
 
     map_result(&target_url,result).await

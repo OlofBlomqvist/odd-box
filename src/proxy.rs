@@ -136,6 +136,8 @@ pub async fn listen(
                 is_https_only: false,
                 client,
                 h2_client,
+                host_header: None,
+                sni: None
             };
 
             let new_http_cancel_token = CancellationToken::new();
@@ -472,6 +474,9 @@ async fn handle_new_tcp_stream(
             host_header
         }) => {
 
+            fresh_service_template_with_source_info.host_header = host_header.clone();
+            fresh_service_template_with_source_info.sni = sni.clone();
+
             peekable_tcp_stream.save_peek_result(PeekResult {
                 typ:typ.clone(),
                 http_version:http_version.clone(),
@@ -801,6 +806,7 @@ async fn use_fallback_mode(
                         Ok(tls_stream) => {
                             let sni = tls_stream.get_ref().1.server_name().map(|x|x.to_string());
                             fresh_service_template_with_source_info.is_https_only = true;
+                            fresh_service_template_with_source_info.sni = sni.clone();
                             tracing::trace!("falling back to TLS termination combined with legacy http terminating mode");
                             let mut new_peekable = GenericManagedStream::from_terminated_tls_stream(ManagedStream::from_tls_stream(tls_stream));
                             
@@ -820,6 +826,7 @@ async fn use_fallback_mode(
                                 x.incoming_connection_uses_tls = true;
                                 x.incoming_sni = sni
                             });
+
                             new_peekable.add_event("Terminated incoming tls, redirecting tcp stream in to http terminating proxy service".to_string());
                             http_proxy::serve(fresh_service_template_with_source_info, new_peekable).await;
                         },
