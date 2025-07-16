@@ -5,6 +5,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use axum::http::HeaderValue;
 use hyper::{
     Response,
     header::{IF_NONE_MATCH, IF_MODIFIED_SINCE},
@@ -13,13 +14,18 @@ use mime_guess::mime;
 use httpdate::{fmt_http_date, parse_http_date};
 use crate::{
     configuration::DirServer,
-    http_proxy::{create_simple_response_from_bytes, EpicResponse, Target},
+    http_proxy::{create_simple_response_from_bytes, EpicResponse},
     CustomError,
 };
 use once_cell::sync::Lazy;
 pub type CacheValue = (String, Instant, Response<bytes::Bytes>); // (Content-Type, Cache Time, Response)
 use dashmap::DashMap;
 
+// TODO: This cache is global and shared across all requests for the same url
+// and we clear it every 30 seconds. Normally we only use values younger than 10 seconds tho.
+// While this helps with performance, it can lead to stale data being served incorrectly
+// as we don't care about the incoming requests preference.
+// At some point we might want to implement a more sophisticated cache
 pub static RESPONSE_CACHE: Lazy<DashMap<String, CacheValue>> = Lazy::new(|| {
     DashMap::new()
 });
@@ -43,7 +49,16 @@ pub async fn handle(
         if let Some(guard) = RESPONSE_CACHE.get(&cache_key) {
             let (_content_type, cache_time, res) = guard.value();
             if cache_time.elapsed() < Duration::from_secs(10) {
-                return create_simple_response_from_bytes(res.clone());
+                let response = create_simple_response_from_bytes(res.clone());
+                match response {
+                    Ok(mut resp) => {
+                        resp.headers_mut().append("mem-cached", HeaderValue::from_static("true"));
+                        return Ok(resp);
+                    },
+                    Err(e) => {
+                        tracing::trace!("Ignoring bad response from cache: {}", e);
+                    }
+                } 
             } else {
                 expired_in_cache = true;
             }

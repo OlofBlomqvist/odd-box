@@ -16,7 +16,7 @@ use super::LogLevel;
 /// A directory server configuration allows you to serve files from a directory on the local filesystem.
 /// Both unencrypted (http) and encrypted (https) connections are supported, either self-signed or thru lets-encrypt.
 /// You can specify rules for how the cache should behave, and you can also specify rules for how the files should be served.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash, JsonSchema, PartialEq, Eq,Default)]
 pub struct DirServer {
     pub dir : String,
     /// This is the hostname that the site will respond to.
@@ -205,7 +205,7 @@ pub struct Backend {
     pub hints : Option<Vec<Hint>>,
 }
 
-#[derive(Debug, Hash, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[derive(Debug, Hash, Clone, Serialize, Deserialize, ToSchema, JsonSchema,Default)]
 pub struct RemoteSiteConfig{
     pub host_name : String,
     pub backends : Vec<Backend>,

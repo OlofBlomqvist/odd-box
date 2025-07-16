@@ -220,27 +220,69 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
             })
         }
 
+        let existing_forwarded_for_header = req.headers().get("X-Forwarded-For")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+
+        let client_ip = self.source_addr.expect("Source address should be set").ip().to_string();
+
+        let patched_or_new_ff = if existing_forwarded_for_header.is_empty() {
+            HeaderValue::from_str(&client_ip)
+        } else {
+            // Append the current proxy IP to the end so that the leftmost IP remains the originating client.
+            HeaderValue::from_str(&format!("{existing_forwarded_for_header}, {client_ip}"))
+        }.expect("Should be able to create X-Forwarded-For header");
+ 
+
+        // note: in case of h2cpk , we will NOT actually have a host header here as it will be negotiated
+        // during the h2c connection setup and is not part of the first packet, and we also wont 
+        // have sni available. we can then see the negotiated host header by looking at the req.uri().authority().
+        let mut original_host = req.headers().get("host").and_then(|value| {
+            let s = value.to_str().ok()?;
+            HeaderValue::from_str(s).ok()
+        });
+
+        if original_host.is_none() {
+            // if we have no host header, we will use the authority from the request uri
+            if let Some(authority) = req.uri().authority() {
+                tracing::trace!("Using authority from request URI as original host: {}", authority);
+                original_host = Some(HeaderValue::from_str(authority.as_str()).expect("Should be able to create X-Forwarded-Host header"));
+            } else {
+                tracing::warn!("No host header and no authority found in request URI.. This may cause issues with some services.");
+            }
+        }
+ 
+        let forwarded_proto = if self.is_https {
+            HeaderValue::from_static("https")
+        } else {
+            HeaderValue::from_static("http")
+        };
+
         
         // handle normal proxy path
-        let f = handle_http_request(
-            self.remote_addr.expect("there must always be a client"),
+        let f = handle_http_request( 
             req,
             self.tx.clone(),
             self.state.clone(),
-            self.is_https_only,
+            self.is_https,
             self.client.clone(),
             self.h2_client.clone(),
             self.resolved_target.clone(),
             self.configuration.clone(),
-            self.connection_key.clone(),
-            self.host_header.clone(),
-            self.sni.clone()
+            self.connection_key.clone() 
         );
-        
+
         return Box::pin(async move {
             match f.await {
-                Ok(x) => {
-                    //x.headers_mut().insert("odd-box", HeaderValue::from_static("YEAH BABY YEAH"));
+                Ok(mut x) => { 
+                    {
+                        let headers = x.headers_mut();
+                        headers.insert("X-Forwarded-For", patched_or_new_ff);
+                        headers.insert("X-Forwarded-Proto", forwarded_proto);
+                        if let Some(h) = original_host {
+                            headers.insert("X-Forwarded-Host", h);
+                        } 
+                    }
                     Ok(x)
                 },
                 Err(e) => {
@@ -257,19 +299,16 @@ impl<'a> Service<Request<hyper::body::Incoming>> for ReverseProxyService {
     }
 }
 
-async fn handle_http_request(
-    client_ip: std::net::SocketAddr, 
+async fn handle_http_request( 
     req: Request<hyper::body::Incoming>,
     tx: Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
     state: Arc<GlobalState>,
     is_https:bool,
-    client:  Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
-    h2_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
+    http_client:  Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
+    h2_only_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
     peeked_target: Option<Arc<ReverseTcpProxyTarget>>,
     configuration: Arc<crate::configuration::ConfigWrapper>,
-    connection_key: ConnectionKey,
-    host_header: Option<String>,
-    sni: Option<String>
+    connection_key: ConnectionKey 
 
 ) -> Result<EpicResponse, CustomError> {
     
@@ -379,14 +418,11 @@ async fn handle_http_request(
         if let Some(rc) = fresh_container_info.get(&resolved_host_name).and_then(|x|Some(x.generate_remote_config())) {
             return perform_remote_forwarding(
                 resolved_host_name,is_https,
-                state.clone(),
-                client_ip,
+                state.clone(), 
                 &rc,
-                req,client.clone(),
-                h2_client.clone(),
-                connection_key,
-                host_header.clone(),
-                sni.clone()
+                req,http_client.clone(),
+                h2_only_client.clone(),
+                connection_key 
             ).await
         }        
     }
@@ -486,28 +522,14 @@ async fn handle_http_request(
         }
 
 
-        let enforce_https = target_proc_cfg.https.is_some_and(|x|x);
-        let scheme = if enforce_https { "https" } else { "http" };
+        let use_https_to_backend_target = target_proc_cfg.https.is_some_and(|x|x);
+        let scheme = if use_https_to_backend_target { "https" } else { "http" };
 
         let mut original_path_and_query = req.uri().path_and_query()
             .and_then(|x| Some(x.as_str())).unwrap_or_default();
         if original_path_and_query == "/" { original_path_and_query = ""}
 
 
-        // todo: we dont really handle subdomain passing here anymore
-        let (parsed_host_name,subdomain) = {
-            let forward_subdomains = target_proc_cfg.forward_subdomains.unwrap_or_default();
-            let sub = get_subdomain(&resolved_host_name, &target_proc_cfg.host_name);
-            if forward_subdomains {
-                if let Some(subdomain) = sub {
-                    (Cow::Owned(format!("{subdomain}.{}", &target_proc_cfg.host_name)),Some(subdomain))
-                } else {
-                    (Cow::Borrowed(&target_proc_cfg.host_name),sub)
-                }
-            } else {
-                (Cow::Borrowed(&target_proc_cfg.host_name),sub)
-            }
-        };
 
         let local_addr = if configuration.use_loopback_ip_for_procs.unwrap_or_default() {
             "127.0.0.1" // explicitly use ipv4 loopback for processes
@@ -524,8 +546,7 @@ async fn handle_http_request(
         );
 
         let target_cfg = target_proc_cfg.clone();
-        let hints = target_cfg.hints.clone();
-        let target = crate::http_proxy::Target::Proc(target_cfg.clone());
+        let hints = target_cfg.hints.clone(); 
         
         // we do this just to increment the statistics counter
         _ = target_cfg.next_backend(&state, crate::configuration::BackendFilter::Any).await;
@@ -535,26 +556,46 @@ async fn handle_http_request(
             // we are hosting this service so clearly it is local
             address: local_addr.to_string(),
             port: port,
-            https: Some(enforce_https)
+            https: Some(use_https_to_backend_target)
         };
+
+        let mut host_header_override = None;
+
+        if target_cfg.capture_subdomains.unwrap_or_default() || target_cfg.forward_subdomains.unwrap_or_default() {
+ 
+            let calculated_host_name_to_use_for_backend = {
+                let forward_subdomains = target_proc_cfg.forward_subdomains.unwrap_or_default();
+                let sub = get_subdomain(&resolved_host_name, &target_proc_cfg.host_name);
+                if forward_subdomains {
+                    if let Some(subdomain) = sub {
+                        Cow::Owned(format!("{subdomain}.{}", &target_proc_cfg.host_name))
+                    } else {
+                        Cow::Borrowed(&target_proc_cfg.host_name)
+                    }
+                } else {
+                    Cow::Borrowed(&target_proc_cfg.host_name)
+                }
+            };
+
+            tracing::trace!("Patching the request host header with calculated one: {calculated_host_name_to_use_for_backend:?}",);
+            host_header_override = Some(calculated_host_name_to_use_for_backend.to_string());
+
+        } else {
+            tracing::trace!("Will not patch the request host header as the capture_subdomains and forward_subdomains are set to false for this in-process site config.");
+        }
 
         let result = 
             proxy( 
-                &parsed_host_name,
+                host_header_override,
                 is_https,
                 state.clone(),
                 req,
-                &skip_dns_for_local_target_url,
-                target,
-                client_ip,
-                client,
-                h2_client,
-                enforce_https,
+                &skip_dns_for_local_target_url, 
+                http_client,
+                h2_only_client,
+                use_https_to_backend_target,
                 backend,
-                &connection_key,
-                host_header,
-                sni,
-                subdomain
+                &connection_key 
             ).await;
 
         map_result(&skip_dns_for_local_target_url,result).await
@@ -566,13 +607,10 @@ async fn handle_http_request(
             return perform_remote_forwarding(
                 resolved_host_name,is_https,
                 state.clone(),
-                client_ip,
                 &peeked_remote_config,
-                req,client.clone(),
-                h2_client.clone(),
-                connection_key,
-                host_header.clone(),
-                sni.clone()
+                req,http_client.clone(),
+                h2_only_client.clone(),
+                connection_key
             ).await
         }
         else if let Some(remote_target_cfg) = &configuration.remote_target.iter().flatten().find(|p|{
@@ -583,13 +621,10 @@ async fn handle_http_request(
             return perform_remote_forwarding(
                 resolved_host_name,is_https,
                 state.clone(),
-                client_ip,
                 remote_target_cfg,
-                req,client.clone(),
-                h2_client.clone(),
-                connection_key,
-                host_header.clone(),
-                sni.clone()
+                req,http_client.clone(),
+                h2_only_client.clone(),
+                connection_key
             ).await
         };
 
@@ -626,16 +661,13 @@ fn subdomain_handling_works() {
 
 async fn perform_remote_forwarding(
     req_host_name:String,
-    is_https:bool,
-    state: Arc<GlobalState>,
-    client_ip:std::net::SocketAddr,
+    original_is_https:bool,
+    state: Arc<GlobalState>, 
     remote_target_config:&crate::configuration::RemoteSiteConfig,
     req:hyper::Request<IncomingBody>,
     client:  Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
     h2_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
-    connection_key: ConnectionKey,
-    host_header: Option<String>,
-    sni: Option<String>
+    connection_key: ConnectionKey 
 ) -> Result<EpicResponse,CustomError> {
     
     
@@ -653,51 +685,58 @@ async fn perform_remote_forwarding(
     let enforce_https = next_backend_target.https.unwrap_or_default();
    
     let scheme = if enforce_https { "https" } else { "http" }; 
-    
-    // todo - we dont handle subdomain passing correctly here
-    let (resolved_host_name,subdomain_part) = {
-        let sub = get_subdomain(&req_host_name, &remote_target_config.host_name);
-        if remote_target_config.forward_subdomains.unwrap_or_default() {
-            if let Some(subdomain) = sub {
-            //tracing::debug!("remote forward terminating proxy rewrote subdomain: {subdomain}!");
-                (format!("{subdomain}.{}", &next_backend_target.address),Some(subdomain))
-            } else {
-                (next_backend_target.address.clone(),sub)
-            }
-        } else {
-            (next_backend_target.address.clone(),sub)
-        }
-    };
+     
         
-    let target_url = format!("{scheme}://{}:{}{}",
-        resolved_host_name,
+    let backend_target_url = format!("{scheme}://{}:{}{}",
+        next_backend_target.address,
         next_backend_target.port,
         original_path_and_query
     );
+
+     
+    let host_header_override = {
+
+        if remote_target_config.keep_original_host_header.unwrap_or_default() {
+            None
+        } else if remote_target_config.forward_subdomains.unwrap_or_default() {
+            let sub = get_subdomain(&req_host_name, &remote_target_config.host_name);
+            if let Some(subdomain) = sub { 
+                let r = Some(format!("{subdomain}.{}", &next_backend_target.address));
+                let original_host_header = req.headers().get("host").and_then(|h| h.to_str().ok()).unwrap_or_default();
+                tracing::trace!("Patching the original request host header ({}) with calculated header:{r:?}",original_host_header);
+                r
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+
+    };  
+
+    if host_header_override.is_none() {
+        let original_host_header = req.headers().get("host").and_then(|h| h.to_str().ok()).unwrap_or_default();
+        tracing::trace!("Will not patch the request host header ({original_host_header}) as the keep_original_host_header is set to true for this remote site config.");
+    }
 
     //map_result(&target_url,Err(super::ProxyError::OddBoxError(String::from("meh")))).await
 
     //tracing::info!("Incoming request to '{}' for remote proxy target {target_url}",next_backend_target.address);
     let result = 
         proxy( 
-            &req_host_name,
-            is_https,
+            host_header_override,
+            original_is_https,
             state.clone(),
             req,
-            &target_url,
-            crate::http_proxy::Target::Remote(remote_target_config.clone()),
-            client_ip,
+            &backend_target_url, 
             client,
             h2_client,
             next_backend_target.https.unwrap_or_default(),
             next_backend_target,
-            &connection_key,
-            host_header.clone(),
-            sni.clone(),
-            subdomain_part
+            &connection_key 
         ).await;
 
-    map_result(&target_url,result).await
+    map_result(&backend_target_url,result).await
 
 }
 
