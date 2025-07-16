@@ -6,7 +6,7 @@ use hyper::{
 };
 use hyper_rustls::HttpsConnector;
 use hyper_util::{client::legacy::{connect::HttpConnector, Client}, rt::TokioIo};
-use std::{net::SocketAddr, str::FromStr, sync::Arc, task::Poll, time::Duration};
+use std::{str::FromStr, sync::Arc, task::Poll, time::Duration};
 use tungstenite::http;
 use crate::configuration::Hint;
 use lazy_static::lazy_static;
@@ -65,21 +65,16 @@ pub enum Target {
 // while also selecting http version and handling upgraded connections.  
 // TODO: simplify the signature, we dont need it to be this complicated..
 pub async fn proxy( 
-    parsed_req_host_name: &str,
+    host_header_override: Option<String>,
     original_connection_is_https:bool,
     state: Arc<GlobalState>,
     mut req: hyper::Request<hyper::body::Incoming>,
-    target_url: &str,
-    target: Target,
-    _client_ip: SocketAddr,
-    client:  Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
-    h2_only_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
+    backend_target_url: &str,  
+    http_client:  Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
+    h2_only_http_client: Client<HttpsConnector<HttpConnector>, hyper::body::Incoming>,
     use_https_to_backend_target: bool,
     backend: crate::configuration::Backend,
-    connection_key:&ConnectionKey,
-    host_header: Option<String>,
-    sni: Option<String>,
-    subdomain: Option<String>,
+    connection_key:&ConnectionKey, 
 ) -> Result<ProxyCallResult, ProxyError> {
 
     //let incoming_http_version = req.version();
@@ -90,9 +85,7 @@ pub async fn proxy(
     // tracing::trace!(
     //     "Incoming {incoming_http_version:?} request to terminating proxy from {client_ip:?} with target url: {target_url}. original req: {req:#?}"
     // );
-
-    // These are the defaults, we will update by looking at the backend hints and the request.
-    let mut use_prior_knowledge_h2c = false;
+ 
     let mut incoming_req_used_h2c_upgrade_header = false;
     // Handle upgrade headers
     if let Some(typ) = &request_upgrade_type {
@@ -109,61 +102,14 @@ pub async fn proxy(
         }
     }
 
-    let mut host_header_to_use = None;
-
-    // TODO - This is horrible and should be refactored to be more readable and maintainable.
-    //        Also we touch the target/host stuff in too many places , we should do it once at the start 
-    //        instead of fucking around all over the place
  
-    match &target {
-        Target::Remote(remote_site_config) => {
- 
-    
-           if remote_site_config.keep_original_host_header.unwrap_or_default() {
-
-                if let Some(original_extracted_host_header) = host_header {
-                    tracing::trace!("[keep_original_host_header] Using host header from request: {original_extracted_host_header:?} for backend request to {target_url}.");
-                    host_header_to_use = Some(original_extracted_host_header);
-                } else if let Some(sni) = sni {
-                    tracing::trace!("[keep_original_host_header] Using SNI from request: {sni:?} for backend request to {target_url}.");
-                    host_header_to_use = Some(sni);
-                } else if let None = req.headers().get("host").map(|v| {
-                    if let Ok(v) = v.to_str() {
-                        host_header_to_use = Some(v.to_string());
-                        tracing::trace!("[keep_original_host_header] Replaced host header with original req host: {v}");
-                    } else {
-                        tracing::trace!("[keep_original_host_header] No host header found in original req.");
-                    }
-                }) { 
-                    if let Some(h) = req
-                        .uri()
-                        .host()  {
-                        let h = h.to_string();
-                        host_header_to_use = Some(h.clone());
-                        tracing::trace!("[keep_original_host_header] Using host header from request URI: {h} for backend request to {target_url}.");
-                    } else {
-                        tracing::trace!("[keep_original_host_header] Failed to understand the host header.. this could get rough.."); 
-                    }
-                }
-
-            } 
-        },
-        Target::Proc(_) => {
-            // while we will connect to 127.0.0.1/localhost for local procs..
-            // we still always want to pass whichever hostname was used in the original 
-            // request to the backend server.
-            // TODO - we should support the host header stuff similar to remote targets..
-            host_header_to_use = Some(parsed_req_host_name.to_string());
-
-        }
-    };
-
-    tracing::trace!("Using host header: {host_header_to_use:?} for backend request to {target_url}.");
- 
-    let hints: Vec<Hint> = backend.hints.clone().unwrap_or_default();
+    let hints: &[Hint] = backend
+            .hints           
+            .as_deref() 
+            .unwrap_or(&[]);
  
     let mut proxied_request =
-        create_proxied_request(&target_url, req, request_upgrade_type.as_ref(), host_header_to_use)?;
+        create_proxied_request(&backend_target_url, req, request_upgrade_type.as_ref(), host_header_override)?;
     
     //tracing::trace!("PROXIED REQUEST: {:#?}", proxied_request);
 
@@ -199,27 +145,14 @@ pub async fn proxy(
     let client = if use_h2c_prior {
         *proxied_request.version_mut() = Version::HTTP_2;
         //tracing::warn!("SETTING HTTP VERSION TO HTTP/2 PRIOR KNOWLEDGE FOR BACKEND REQUEST");
-        &h2_only_client
+        &h2_only_http_client
     } else {
         *proxied_request.version_mut() = Version::HTTP_11;
         //tracing::warn!("SETTING HTTP VERSION TO HTTP/1.1 FOR BACKEND REQUEST");
-        &client  // can possibly still use ALPN‑upgrade to h2 (or h2c via Upgrade) if the backend supports it
+        &http_client  // can possibly still use ALPN‑upgrade to h2 (or h2c via Upgrade) if the backend supports it
     };
 
-
-
-    
-    let client = if use_prior_knowledge_h2c {
-        *proxied_request.version_mut() = Version::HTTP_2;
-        //tracing::trace!("SETTING HTTP VERSION TO HTTP/2 FOR BACKEND REQUEST");
-        &h2_only_client
-    } else {
-        //tracing::trace!("SETTING HTTP VERSION TO HTTP/1.1 FOR BACKEND REQUEST");
-        *proxied_request.version_mut() = Version::HTTP_11;
-        &client // this will use the default http1 client, which will upgrade to h2 if the backend supports it thru upgrade header or alpn
-    };
-
-    
+ 
     let p = proxied_request.uri().port().map_or(
         if use_https_to_backend_target { 443 as u16 } else { 80  as u16 },
         |x|x.as_u16()
@@ -400,21 +333,21 @@ fn map_to_err<T:core::fmt::Debug>(x:T) -> ProxyError {
 }
 
 fn create_proxied_request<B>(
-    target_url: &str,
+    backend_target_url: &str,
     mut request: Request<B>,
     upgrade_type: Option<&String>,
-    req_host_name: Option<String>
+    host_header_override: Option<String>
 ) -> Result<Request<B>, ProxyError> {
     
     // replace the uri
-    let target_uri = target_url.parse::<http::Uri>()
+    let target_uri = backend_target_url.parse::<http::Uri>()
         .map_err(|e| ProxyError::InvalidUri(e))?;
     *request.uri_mut() = target_uri.clone();
 
     
     // we want to pass the original host header to the backend (the one that the client requested)
     // and not the one we are connecting to as that might as well just be an internal name or IP.
-    if let Some(req_host_name) = req_host_name {
+    if let Some(req_host_name) = host_header_override {
         if let Ok(v) = HeaderValue::from_str(&req_host_name) {
             let _replaced = request.headers_mut().insert("Host",v);
             //tracing::trace!("Replaced host header '{replaced:?}' with {req_host_name}");
@@ -422,10 +355,7 @@ fn create_proxied_request<B>(
             //tracing::debug!("Failed to insert host header for '{req_host_name}'. Falling back to direct hostname call rather than 127.0.0.1.");
             _ = request.uri_mut().host().replace(&req_host_name);
         }    
-    } else {
-        //tracing::trace!("using automatic host header based on remote url: {:?}",target_uri);
-        request.headers_mut().remove("Host");
-    }
+    } 
 
     // we will decide to use https or not to the backend ourselves, no need to forward this.
     _ = request

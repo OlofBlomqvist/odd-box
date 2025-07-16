@@ -119,21 +119,22 @@ pub async fn listen(
             let executor = hyper_util::rt::TokioExecutor::new();
 
             let client = hyper_util::client::legacy::Client::builder(executor.clone())
-                .http2_only(false)
+                .http2_only(false) 
                 .build(connector.clone());
 
             let h2_client = hyper_util::client::legacy::Client::builder(executor)
                 .http2_only(true)
                 .build(connector);
 
-            let terminating_proxy_service = ReverseProxyService { 
+            let terminating_proxy_service = ReverseProxyService {
+                source_addr: None, // this will be set when the connection is accepted 
                 connection_key: 0,
                 configuration: Arc::new(cfg.read().await.clone()),
                 resolved_target: None,
                 state: state.clone(), 
                 remote_addr: None, 
                 tx: tx.clone(), 
-                is_https_only: false,
+                is_https: false,
                 client,
                 h2_client,
                 host_header: None,
@@ -448,6 +449,7 @@ async fn handle_new_tcp_stream(
     peekable_tcp_stream.seal();
     peekable_tcp_stream.track();
     fresh_service_template_with_source_info.connection_key = *peekable_tcp_stream.get_id();
+    fresh_service_template_with_source_info.source_addr = Some(source_addr);
 
     // add to global tracking. we will update the state of this connection as it progresses through the system
     match &peekable_tcp_stream {
@@ -805,7 +807,7 @@ async fn use_fallback_mode(
                     match tls_acceptor.accept(peekable_tcp_stream).await {
                         Ok(tls_stream) => {
                             let sni = tls_stream.get_ref().1.server_name().map(|x|x.to_string());
-                            fresh_service_template_with_source_info.is_https_only = true;
+                            fresh_service_template_with_source_info.is_https = true;
                             fresh_service_template_with_source_info.sni = sni.clone();
                             tracing::trace!("falling back to TLS termination combined with legacy http terminating mode");
                             let mut new_peekable = GenericManagedStream::from_terminated_tls_stream(ManagedStream::from_tls_stream(tls_stream));
@@ -837,7 +839,7 @@ async fn use_fallback_mode(
                     }
                 },
                 terminated_stream => {
-                    fresh_service_template_with_source_info.is_https_only = true;
+                    fresh_service_template_with_source_info.is_https = true;
                     terminated_stream.update_tracked_info(|x| {
                         x.http_terminated = true;
                         x.tls_terminated = true;

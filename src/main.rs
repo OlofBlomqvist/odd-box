@@ -52,7 +52,7 @@ use types::app_state::ProcState;
 mod tui;
 mod api;
 mod logging;
-mod tests;
+
 mod tcp_pid;
 mod certs;
 mod self_update;
@@ -60,11 +60,13 @@ mod observer;
 mod serde_with;
 use types::app_state::AppState;
 use lazy_static::lazy_static;
-
-use crate::custom_servers::directory::CacheValue;
+ 
 mod letsencrypt;
 mod custom_servers;
 mod docker;
+
+#[cfg(test)]
+mod tests;
 
 lazy_static! {
     static ref PROC_THREAD_MAP: Arc<DashMap<ProcId, ProcInfo>> = Arc::new(DashMap::new());

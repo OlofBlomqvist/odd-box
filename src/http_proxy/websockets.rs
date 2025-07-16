@@ -73,7 +73,7 @@ pub async fn handle_ws(req:Request<IncomingBody>,service:ReverseProxyService,ws:
     };
     
 
-    let svc_scheme = if service.is_https_only {"wss"} else { "ws" };
+    let svc_scheme = if service.is_https {"wss"} else { "ws" };
    
     let proto = if enforce_https { "wss" } else { req.uri().scheme_str().unwrap_or(svc_scheme) };
 
