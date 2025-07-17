@@ -1,7 +1,7 @@
 use markdown::{CompileOptions, Options, ParseOptions};
 pub mod directory;
 
-pub fn markdown_to_html(title: &str, text: &str) -> Result<String, markdown::message::Message> {
+pub fn markdown_to_html(theme:directory::ThemeDecision,title: &str, text: &str) -> Result<String, markdown::message::Message> {
     let mut mo = Options {
         parse: ParseOptions::gfm(),
         compile: CompileOptions {
@@ -19,12 +19,12 @@ pub fn markdown_to_html(title: &str, text: &str) -> Result<String, markdown::mes
 
     Ok(format!(
         r#"<!DOCTYPE html>
-        <html lang="en">
+        <html lang="en" {html_style}>
         <head>
             <!-- paint background early to avoid flash -->
             <script>
-                const dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-                document.documentElement.style.backgroundColor = dark ? '#121212' : '#ffffff';
+                const dark = {ssr_dark} ?? localStorage.getItem("theme") == "dark" ?? window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                document.documentElement.style.backgroundColor = dark ? '#0d1117' : '#ffffff';
                 document.documentElement.style.color            = dark ? '#ffffff' : '#000000';
             </script>
             <meta charset="UTF-8">
@@ -119,12 +119,19 @@ pub fn markdown_to_html(title: &str, text: &str) -> Result<String, markdown::mes
                     document.documentElement.classList.toggle('light-mode');
                     const isDarkMode = document.documentElement.classList.contains('dark-mode');
 
+                    document.documentElement.style.backgroundColor = isDarkMode ? '#0d1117' : '#ffffff';
+                    document.documentElement.style.color            = isDarkMode ? '#ffffff' : '#000000';
+
                     // Swap the markdown theme and syntax highlighting stylesheets based on the current theme
                     themeStylesheet.href = `https://cdn.jsdelivr.net/gh/hyrious/github-markdown-css@main/dist/${{isDarkMode ? 'dark' : 'light'}}.css`;
                     syntaxStylesheet.href = `https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/${{isDarkMode ? 'atom-one-dark' : 'github'}}.min.css`;
 
                     // Store the preference
                     localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
+                    document.cookie = isDarkMode ? "theme=dark" : "theme=light"; 
+
+
+
                 }}
             </script>
         </head>
@@ -149,5 +156,14 @@ pub fn markdown_to_html(title: &str, text: &str) -> Result<String, markdown::mes
     "#,
         title = title,
         html = html,
+        ssr_dark = match theme {
+            directory::ThemeDecision::Dark => "true",
+            _ => "false",
+        },
+        html_style = match theme {
+            directory::ThemeDecision::Dark => "style='background-color:#0d1117'",
+            directory::ThemeDecision::Light => "style='background-color:#ffffff'",
+            directory::ThemeDecision::Auto => "",
+        }     
     ))
 }

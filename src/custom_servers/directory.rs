@@ -7,8 +7,7 @@ use std::{
 };
 use axum::http::HeaderValue;
 use hyper::{
-    Response,
-    header::{IF_NONE_MATCH, IF_MODIFIED_SINCE},
+    header::{COOKIE, IF_MODIFIED_SINCE, IF_NONE_MATCH}, Response
 };
 use mime_guess::mime;
 use httpdate::{fmt_http_date, parse_http_date};
@@ -21,6 +20,13 @@ use once_cell::sync::Lazy;
 pub type CacheValue = (String, Instant, Response<bytes::Bytes>); // (Content-Type, Cache Time, Response)
 use dashmap::DashMap;
 
+
+pub enum ThemeDecision {
+    Dark,
+    Light,
+    Auto,
+}
+
 // TODO: This cache is global and shared across all requests for the same url
 // and we clear it every 30 seconds. Normally we only use values younger than 10 seconds tho.
 // While this helps with performance, it can lead to stale data being served incorrectly
@@ -29,7 +35,30 @@ use dashmap::DashMap;
 pub static RESPONSE_CACHE: Lazy<DashMap<String, CacheValue>> = Lazy::new(|| {
     DashMap::new()
 });
- 
+
+/// Return `true` if the user has a cookie `theme=dark`.
+fn req_is_dark(req: &hyper::Request<hyper::body::Incoming>) -> ThemeDecision {
+    match req.headers().get(COOKIE) {
+        Some(cookie_header) => {
+            if let Ok(cookie_str) = cookie_header.to_str() {
+                for cookie_str in cookie_str.split(';') {
+                    if let Ok(cookie) = cookie::Cookie::parse(cookie_str.trim()) {
+                        if cookie.name() == "theme" {
+                            return if cookie.value().to_string().trim() == "dark" {
+                                ThemeDecision::Dark
+                            } else {
+                                ThemeDecision::Light
+                            };
+                        }
+                    }
+                }
+            }
+        }
+        None => {}
+    }
+    ThemeDecision::Auto
+}
+
 pub async fn handle(
     target: DirServer,
     req: hyper::Request<hyper::body::Incoming>,
@@ -42,8 +71,16 @@ pub async fn handle(
     let req_path: String =
         urlencoding::decode(req.uri().path()).map_err(|e| CustomError(format!("{e:?}")))?.to_string();
 
-     
     let cache_key = req_path.trim_end_matches('/').to_string();
+    let c = if let Some(c) = req.headers().get(COOKIE) {
+        c.to_str().unwrap_or_default()
+    } else { 
+        "no-cookies"
+    };
+
+    let cache_key = format!("{}-{}-{}", target.host_name, c, cache_key);
+    tracing::warn!("Cache key: {}", cache_key);
+    
     {
         let mut expired_in_cache = false;
         if let Some(guard) = RESPONSE_CACHE.get(&cache_key) {
@@ -52,7 +89,11 @@ pub async fn handle(
                 let response = create_simple_response_from_bytes(res.clone());
                 match response {
                     Ok(mut resp) => {
-                        resp.headers_mut().append("mem-cached", HeaderValue::from_static("true"));
+                        resp.headers_mut().insert("Vary", 
+                        HeaderValue::from(COOKIE)
+                        );
+                        resp.headers_mut().insert("cache-key", HeaderValue::from_str(&cache_key).unwrap());
+                        resp.headers_mut().insert("mem-cached", HeaderValue::from_static("true"));
                         return Ok(resp);
                     },
                     Err(e) => {
@@ -88,7 +129,7 @@ pub async fn handle(
         return Err(CustomError("Attempted directory traversal".into()));
     }
 
-    // --- FILE BRANCH WITH CONDITIONAL GET & HEADERS ---
+    // --- FILE BRANCH WITH CONDITIONAL GET & HEADERS ---   
     if full_path.is_file() {
         // 1) Gather metadata for ETag / Last-Modified
         let meta = fs::metadata(&full_path)
@@ -97,7 +138,7 @@ pub async fn handle(
             .map_err(|e| CustomError(format!("Failed to get mtime: {}", e).into()))?;
         let last_modified = fmt_http_date(modified);
         let size = meta.len();
-        let etag = format!("\"{}-{}\"", size, modified.duration_since(UNIX_EPOCH).unwrap().as_secs());
+        let etag = format!("\"{}-{cache_key}-{}\"", size, modified.duration_since(UNIX_EPOCH).unwrap().as_secs());
 
         let maybe_cache_max_age = target.cache_control_max_age_in_seconds;
         // 2) Handle If-None-Match → 304
@@ -105,10 +146,16 @@ pub async fn handle(
             if hv.to_str().unwrap_or("") == etag {
             let mut builder = Response::builder().status(304)
                 .header("ETag", &etag)
-                .header("Last-Modified", &last_modified);
+                .header("Last-Modified", &last_modified)
+                .header("Vary", 
+                        HeaderValue::from(COOKIE)
+                )
+                .header("cache-key", HeaderValue::from_str(&cache_key).unwrap());
+               
             if let Some(max_age) = maybe_cache_max_age {
                 let cache_control_header = format!("public, max-age={}, immutable", max_age);
-                builder = builder.header("Cache-Control", cache_control_header);
+                builder = builder
+                    .header("Cache-Control", cache_control_header);
             }
             let resp304 = builder
                 .body(bytes::Bytes::new().into())
@@ -122,10 +169,14 @@ pub async fn handle(
             if modified <= since {
                 let mut builder = Response::builder().status(304)
                 .header("ETag", &etag)
-                .header("Last-Modified", &last_modified);
+                .header("Last-Modified", &last_modified)
+                .header("Vary", 
+                        HeaderValue::from(COOKIE)
+                        );
                 if let Some(max_age) = maybe_cache_max_age {
                 let cache_control_header = format!("public, max-age={}, immutable", max_age);
                 builder = builder.header("Cache-Control", cache_control_header);
+                builder = builder.header("cache-key", HeaderValue::from_str(&cache_key).unwrap());
                 }
                 let resp304 = builder
                 .body(bytes::Bytes::new().into())
@@ -145,6 +196,7 @@ pub async fn handle(
         {
             let markdown = String::from_utf8_lossy(&file_content);
             let html = super::markdown_to_html(
+                req_is_dark(&req),
                 full_path.file_name().unwrap().to_str().unwrap_or("unnamed"),
                 &markdown,
             ).map_err(|e| CustomError(format!("Failed to convert Markdown: {}", e).into()))?;
@@ -155,7 +207,11 @@ pub async fn handle(
                 .status(200)
                 .header("Content-Type", "text/html; charset=utf-8")
                 .header("ETag", &etag)
-                .header("Last-Modified", &last_modified);
+                .header("Last-Modified", &last_modified)
+                .header("cache-key", HeaderValue::from_str(&cache_key).unwrap())
+                .header("Vary", 
+                        HeaderValue::from(COOKIE)
+                        );
 
             if let Some(max_age) = maybe_cache_max_age {
                 let cache_control_header = format!("public, max-age={}, immutable", max_age);
@@ -183,6 +239,7 @@ pub async fn handle(
             .header("Cache-Control", "public, max-age=10, immutable")
             .header("ETag", &etag)
             .header("Last-Modified", &last_modified)
+            .header("Vary", HeaderValue::from(COOKIE))
             .body(body_bytes.to_vec().into())
             .map_err(|e| CustomError(format!("Failed to create response: {}", e).into()))?;
 
@@ -217,7 +274,7 @@ pub async fn handle(
                 if default_file_path.extension().and_then(|ext| ext.to_str()) == Some("md") {
                     // Convert Markdown to HTML
                     let markdown = String::from_utf8_lossy(&file_content);
-                    let html = super::markdown_to_html(&target.host_name,&markdown)
+                    let html = super::markdown_to_html(req_is_dark(&req),&target.host_name,&markdown)
                         .map_err(|e| CustomError(format!("Failed to convert Markdown to HTML: {}", e).into()))?;
 
                     let response = hyper::Response::builder()
@@ -379,8 +436,8 @@ fn create_index_page(target:&DirServer,full_path: &PathBuf, req_path: &str, cach
 <head>
     <!-- immediately paint according to system theme -->
     <script>
-        const dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        document.documentElement.style.backgroundColor = dark ? '#121212' : '#ffffff';
+        const dark = localStorage.getItem("theme") == "dark" ?? window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.style.backgroundColor = dark ? '#161a29' : '#ffffff';
         document.documentElement.style.color            = dark ? '#ffffff' : '#000000';
     </script>
     <meta charset="UTF-8">
@@ -389,7 +446,7 @@ fn create_index_page(target:&DirServer,full_path: &PathBuf, req_path: &str, cach
 <style>
     body {
         padding: 2em;
-        background-color: #121212;
+        background-color: #161a29;
         color: #ffffff;
         font-family: Arial, sans-serif;
         margin: 0;
@@ -407,7 +464,7 @@ fn create_index_page(target:&DirServer,full_path: &PathBuf, req_path: &str, cach
         margin: 0 auto; /* Centers the element horizontally */
         border-radius: 8px;
         padding: 4px; /* Adds padding inside the element for inner spacing */
-        background-color: #121212;
+        background-color: #161a29;
         background-image: 
             linear-gradient(45deg, #ff0000, #ff7f00, #ffff00, #00ff00, #0000ff, #4b0082, #8f00ff, #ff0000);
         background-size: 200% 200%;
@@ -420,10 +477,10 @@ fn create_index_page(target:&DirServer,full_path: &PathBuf, req_path: &str, cach
         align-items: center;
         padding: 10px;
         border-bottom: 1px solid #333;
-        background-color: #121212; /* Matches background for inner padding effect */
+        background-color: #1e2336; /* Matches background for inner padding effect */
     }
     li:nth-child(even) {
-        background-color: #1d1d1d;
+        background-color: #0e1623;
     }
     .icon {
         margin-right: 10px;
