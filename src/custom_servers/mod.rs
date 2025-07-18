@@ -1,169 +1,153 @@
-use markdown::{CompileOptions, Options, ParseOptions};
 pub mod directory;
+use directory::*;
+use markdown::{CompileOptions, Options, ParseOptions};
 
-pub fn markdown_to_html(theme:directory::ThemeDecision,title: &str, text: &str) -> Result<String, markdown::message::Message> {
-    let mut mo = Options {
+pub fn markdown_to_html(
+    theme: ThemeDecision,
+    title: &str,
+    text: &str,
+) -> Result<String, markdown::message::Message> {
+    let mut opts = Options {
         parse: ParseOptions::gfm(),
         compile: CompileOptions {
             allow_dangerous_html: true,
             ..CompileOptions::default()
         },
     };
-    mo.parse.constructs.gfm_table = true;
-    mo.parse.constructs.thematic_break = true;
-    mo.compile.allow_dangerous_html = true;
-    mo.parse.constructs.code_text = true;
+    opts.parse.constructs.gfm_table = true;
+    opts.parse.constructs.thematic_break = true;
+    opts.parse.constructs.code_text = true;
 
-    let txt = text.replace("- [] ", "- [ ] ").replace("* [] ", "* [ ] ");
-    let html = markdown::to_html_with_options(&txt, &mo)?;
+    // normalise unchecked boxes (“- []” → “- [ ]”) so GFM parses them
+    let cleaned = text.replace("- [] ", "- [ ] ").replace("* [] ", "* [ ] ");
+
+    let md_html = markdown::to_html_with_options(&cleaned, &opts)?;
 
     Ok(format!(
-        r#"<!DOCTYPE html>
-        <html lang="en" {html_style}>
-        <head>
-            <!-- paint background early to avoid flash -->
-            <script>
-                const dark = {ssr_dark} ?? localStorage.getItem("theme") == "dark" ?? window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-                document.documentElement.style.backgroundColor = dark ? '#0d1117' : '#ffffff';
-                document.documentElement.style.color            = dark ? '#ffffff' : '#000000';
-            </script>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        r#"
+<!doctype html>
+<html lang="en" {html_tag_style}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title}</title>
 
-            <title>{title}</title>
+<!-- === early theme bootstrap ========================================= -->
+<script>
+(() => {{
+    /* ----- helpers ---------------------------------------------------- */
+    const getCookieTheme = () => {{
+        const m = document.cookie.match(/(?:^|;\s*)theme=(dark|light)/);
+        return m ? m[1] : null;
+    }};
+    const sysPrefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
 
-            <!-- Load initial markdown theme and syntax highlighting CSS based on user preference -->
-            <link id="theme-stylesheet" rel="stylesheet" href="">
-            <link id="syntax-stylesheet" rel="stylesheet" href="">
+    /* ----- decide ----------------------------------------------------- */
+    const theme =
+        getCookieTheme() ??
+        localStorage.getItem('theme') ??
+        (sysPrefersDark ? 'dark' : 'light');
 
-            <style>
-            /* Base styling and theme switch */
-            :root {{
-                --font-size: 1rem;
-                --font-family: Arial, sans-serif;
-                --line-height: 1.6;
-            }}
+    const dark = theme === 'dark';
 
-            body {{
-                font-family: var(--font-family);
-                font-family: 'Crimson Text', serif;
-                font-size: var(--font-size);
-                line-height: var(--line-height);
-                padding: 2rem;
-                transition: background-color 0.3s, color 0.3s;
-                display: flex;
-                justify-content: center;
-            }}
+    /* ----- paint & class --------------------------------------------- */
+    document.documentElement.classList.add(dark ? 'dark-mode' : 'light-mode');
+    document.documentElement.style.backgroundColor = dark ? '#161a29' : '#ffffff';
+    document.documentElement.style.color           = dark ? '#ffffff' : '#000000';
+}})();
+</script>
 
-            .inner-markdown {{
-                max-width: 1400px;
-                width: 100%;
-                margin: 0 auto;
-                position: relative; /* Position for absolute toggle button */
-            }}
+<!-- placeholders that will be swapped by JS after boot -->
+<link id="theme-stylesheet" rel="stylesheet">
+<link id="syntax-stylesheet" rel="stylesheet">
 
-            /* Toggle Switch */
-            .theme-toggle {{
-                position: absolute;
-                top: 1rem;
-                right: 1rem;
-                width: 40px;
-                height: 20px;
-                background-color: #ccc;
-                border-radius: 10px;
-                display: flex;
-                align-items: center;
-                cursor: pointer;
-                z-index: 1;
-            }}
-            .toggle-slider {{
-                position: absolute;
-                width: 16px;
-                height: 16px;
-                background-color: #333;
-                border-radius: 50%;
-                transition: transform 0.3s;
-            }}
-            .light-mode .toggle-slider {{
-                transform: translateX(2px);
-            }}
-            .dark-mode .toggle-slider {{
-                transform: translateX(22px);
-            }}
-            .light-mode pre {{
-                border: 1px solid #ddd;
-            }}
-            .dark-mode pre {{
-                border: 1px solid #333;
-            }}
-            .markdown-body pre code {{
-                white-space: break-spaces !important;
-            }}
-            </style>
-            <script>
-                // Set initial theme based on user preference or system setting
-                const userPrefersDark = localStorage.getItem('theme') === 'dark' ||
-                    (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
-                const initialTheme = userPrefersDark ? 'dark' : 'light';
-                document.documentElement.classList.add(userPrefersDark ? 'dark-mode' : 'light-mode');
+<style>
+:root {{
+    --font-size: 1rem;
+    --font-family: Arial, sans-serif;
+    --line-height: 1.6;
+}}
+body {{
+    font-family: var(--font-family);
+    font-family: 'Crimson Text', serif;
+    font-size: var(--font-size);
+    line-height: var(--line-height);
+    margin: 0;
+    padding: 2rem;
+    transition: background-color .3s,color .3s;
+    display:flex;justify-content:center;
+}}
+.inner-markdown {{ max-width:1400px;width:100%;position:relative; }}
+/* --- toggle ---------------------------------------------------------- */
+.theme-toggle {{
+    position:absolute;top:1rem;right:1rem;width:40px;height:20px;background:#ccc;
+    border-radius:10px;display:flex;align-items:center;cursor:pointer;z-index:1;
+}}
+.toggle-slider {{
+    position:absolute;width:16px;height:16px;background:#333;border-radius:50%;
+    transition:transform .3s;
+}}
+.light-mode .toggle-slider {{ transform:translateX(2px);  }}
+.dark-mode  .toggle-slider {{ transform:translateX(22px); }}
+.light-mode pre {{ border:1px solid #ddd; }}
+.dark-mode  pre {{ border:1px solid #333; }}
+.markdown-body pre code {{ white-space:break-spaces!important; }}
+.markdown-body {{
+        background-color: transparent !important;
+}}
+</style>
 
-                // Set the initial theme and syntax highlighting stylesheets
-                const themeStylesheet = document.getElementById('theme-stylesheet');
-                const syntaxStylesheet = document.getElementById('syntax-stylesheet');
-                themeStylesheet.href = `https://cdn.jsdelivr.net/gh/hyrious/github-markdown-css@main/dist/${{initialTheme}}.css`;
-                syntaxStylesheet.href = `https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/${{userPrefersDark ? 'atom-one-dark' : 'github'}}.min.css`;
+<script>
+/* after the bootstrap above has decided, wire up the page -------------- */
+window.addEventListener('DOMContentLoaded', () => {{
+    const dark = document.documentElement.classList.contains('dark-mode');
 
-                // Toggle theme function
-                function toggleTheme() {{
-                    document.documentElement.classList.toggle('dark-mode');
-                    document.documentElement.classList.toggle('light-mode');
-                    const isDarkMode = document.documentElement.classList.contains('dark-mode');
+    const themeSheet   = document.getElementById('theme-stylesheet');
+    const syntaxSheet  = document.getElementById('syntax-stylesheet');
+    const setSheets = (isDark) => {{
+        themeSheet.href  = `https://cdn.jsdelivr.net/gh/hyrious/github-markdown-css@main/dist/${{isDark?'dark':'light'}}.css`;
+        syntaxSheet.href = `https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/${{isDark?'atom-one-dark':'github'}}.min.css`;
+    }};
+    setSheets(dark);
 
-                    document.documentElement.style.backgroundColor = isDarkMode ? '#0d1117' : '#ffffff';
-                    document.documentElement.style.color            = isDarkMode ? '#ffffff' : '#000000';
+    window.toggleTheme = () => {{
+        const nowDark = document.documentElement.classList.toggle('dark-mode');
+        document.documentElement.classList.toggle('light-mode', !nowDark);
+        document.documentElement.style.backgroundColor = nowDark ? '#161a29' : '#ffffff';
+        document.documentElement.style.color           = nowDark ? '#ffffff' : '#000000';
+        setSheets(nowDark);
 
-                    // Swap the markdown theme and syntax highlighting stylesheets based on the current theme
-                    themeStylesheet.href = `https://cdn.jsdelivr.net/gh/hyrious/github-markdown-css@main/dist/${{isDarkMode ? 'dark' : 'light'}}.css`;
-                    syntaxStylesheet.href = `https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/${{isDarkMode ? 'atom-one-dark' : 'github'}}.min.css`;
+        /* persist */
+        localStorage.setItem('theme', nowDark ? 'dark' : 'light');
+        document.cookie = `theme=${{nowDark?'dark':'light'}}; path=/; SameSite=Lax`;
+    }};
+}});
+</script>
+</head>
 
-                    // Store the preference
-                    localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
-                    document.cookie = isDarkMode ? "theme=dark" : "theme=light"; 
+<body class="markdown-body">
+    <div class="inner-markdown">
+        <div class="theme-toggle" onclick="toggleTheme()">
+            <div class="toggle-slider"></div>
+        </div>
+        {md_html}
+    </div>
 
-
-
-                }}
-            </script>
-        </head>
-        <body class='markdown-body'>
-            <div class='inner-markdown'>
-                <div class="theme-toggle" onclick="toggleTheme()">
-                    <div class="toggle-slider"></div>
-                </div>
-                {html}
-            </div>
-
-            <!-- Load Highlight.js library -->
-            <script src='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js'></script>
-            <script>
-                // Apply syntax highlighting to all code blocks
-                document.querySelectorAll('code[class^="language-"]').forEach((el) => {{
-                    hljs.highlightElement(el);
-                }});
-            </script>
-        </body>
-        </html>
-    "#,
-        title = title,
-        html = html,
-        ssr_dark = match theme {
-            directory::ThemeDecision::Dark => "true",
-            _ => "false",
+    <!-- highlight.js ---------------------------------------------------- -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+    <script>
+        hljs.highlightAll();
+    </script>
+</body>
+</html>
+"#,
+        title           = title,
+        md_html         = md_html,
+        /* server‑side colour flash‑guard */
+        html_tag_style  = match theme {
+            ThemeDecision::Dark  => "style='background:#161a29;color:#ffffff'",
+            ThemeDecision::Light => "style='background:#ffffff;color:#000000'",
+            ThemeDecision::Auto  => "",
         },
-        html_style = match theme {
-            directory::ThemeDecision::Dark => "style='background-color:#0d1117'",
-            directory::ThemeDecision::Light => "style='background-color:#ffffff'",
-            directory::ThemeDecision::Auto => "",
-        }     
     ))
 }
