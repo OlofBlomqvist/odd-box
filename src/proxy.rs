@@ -484,7 +484,7 @@ async fn handle_new_tcp_stream(
                 http_version:http_version.clone(),
                 target_host:h2_authority_or_h1_host_header.clone(),
                 is_h2c_upgrade,
-                sni,
+                sni:sni.clone(),
                 host_header
             });
     
@@ -519,9 +519,8 @@ async fn handle_new_tcp_stream(
                 _ => {}
             }
             
-
-            // todo -  perhaps allow this also if we only have sni ?
-            let target_host_name = if let Some(n) = &h2_authority_or_h1_host_header {
+ 
+            let target_host_name = if let Some(n) = &h2_authority_or_h1_host_header.or(sni.clone()) {
                 n.to_owned()
             } else {
                 tracing::warn!("No target host found in peeked data.. will use terminating proxy mode instead.");
@@ -540,6 +539,10 @@ async fn handle_new_tcp_stream(
                     
                     if let Some(cfg) = &target.hosted_target_config {
 
+                        if cfg.redirect_to_https.unwrap_or_default() {
+                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 
+                                FallbackReason::HttpTerminationEnforced(format!("Redirect to https is enabled, will do so using terminating proxy."))).await;
+                        }
 
                         let hints : Vec<&crate::configuration::Hint> = cfg.hints.iter().flatten().collect();
                         
@@ -631,6 +634,14 @@ async fn handle_new_tcp_stream(
                 } else {
                     
                     if let Some(cfg) = &target.remote_target_config {
+
+                        
+                        if cfg.redirect_to_https.unwrap_or_default() {
+                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 
+                                FallbackReason::HttpTerminationEnforced(format!("Redirect to https is enabled, will do so using terminating proxy."))).await;
+                        }
+
+
                         let hints : Vec<Hint> = cfg.backends.iter().flat_map(|b| b.hints.clone().unwrap_or_default()).collect();
                         if cfg.terminate_http.unwrap_or_default() {
                             return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 

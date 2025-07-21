@@ -450,6 +450,12 @@ async fn handle_http_request(
 
     if let Some(target_proc_cfg) = found_hosted_target {
 
+            
+        if !is_https && target_proc_cfg.redirect_to_https.unwrap_or_default() {
+            return redir_to_https(req,configuration.tls_port.unwrap_or(4343));
+        }
+
+        
         let current_target_status : Option<crate::ProcState> = {
             let info = state.app_state.site_status_map.get(&target_proc_cfg.host_name);
             match info {
@@ -604,6 +610,10 @@ async fn handle_http_request(
     else {
         if let Some(peeked_remote_config) = peeked_target.and_then(|x| x.remote_target_config.clone() ) {
 
+                
+            if !is_https && peeked_remote_config.redirect_to_https.unwrap_or_default() { 
+                return redir_to_https(req,configuration.tls_port.unwrap_or(4343)); 
+            }
             return perform_remote_forwarding(
                 resolved_host_name,is_https,
                 state.clone(),
@@ -618,6 +628,11 @@ async fn handle_http_request(
             resolved_host_name == p.host_name
             || p.capture_subdomains.unwrap_or_default() && resolved_host_name.ends_with(&format!(".{}",p.host_name))
         }) {
+            
+            if !is_https && remote_target_cfg.redirect_to_https.unwrap_or_default() { 
+                return redir_to_https(req,configuration.tls_port.unwrap_or(4343)); 
+            }
+
             return perform_remote_forwarding(
                 resolved_host_name,is_https,
                 state.clone(),
@@ -929,4 +944,38 @@ fn please_wait_response() -> String {
         </body>
         </html>
     "#.to_string()
+}
+
+
+
+fn redir_to_https(req: Request<hyper::body::Incoming>,https_port:u16) -> Result<EpicResponse, CustomError> {
+
+    
+    let host_header = req
+        .headers()
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .ok_or_else(|| CustomError("Host header is missing".to_string()))?;
+
+    let mut parts = host_header.splitn(2, ':');
+    let hostname = parts.next().unwrap();
+    let host_port = parts.next();
+
+    let path_and_query = req.uri().path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
+
+    let location = match host_port {
+        // if user can reach http without specifying a port... lets assume they can also reach https?
+        None => format!("https://{}{}", hostname, path_and_query),
+        // otherwise lets include the https port in the location..
+        Some(_) => format!("https://{}:{}{}", hostname, https_port, path_and_query),
+    };
+
+    Ok(
+        OddResponse::empty()
+            .with_headers(vec![
+                ("Location", &location)
+            ])
+            .with_status(StatusCode::PERMANENT_REDIRECT)
+            .into()
+    )
 }

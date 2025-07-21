@@ -103,7 +103,8 @@ pub struct InProcessSiteConfig {
     /// If you wish to set a specific loglevel for this hosted process.
     /// Defaults to "Info".
     /// If this level is lower than the global log_level you will get the message elevated to the global log level instead but tagged with the actual log level.
-    pub log_level: Option<LogLevel>
+    pub log_level: Option<LogLevel>,
+    pub redirect_to_https: Option<bool>,
 }
 impl InProcessSiteConfig {
     pub fn set_id(&mut self,id:ProcId){
@@ -236,6 +237,8 @@ pub struct RemoteSiteConfig{
     /// Ignored when all backends are 127.0.0.1/localhost - in which case the original
     /// host header from the incoming request is always used.
     pub keep_original_host_header: Option<bool>,
+
+    pub redirect_to_https: Option<bool>,
 }
 
 impl PartialEq for RemoteSiteConfig {
@@ -598,6 +601,10 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
                 if let Some(true) = site.forward_subdomains {
                     formatted_toml.push(format!("forward_subdomains = true"));
                 }
+
+                if let Some(true) = site.redirect_to_https {
+                    formatted_toml.push(format!("redirect_to_https = true"));
+                }
                 
                 if let Some(true) = site.capture_subdomains {
                     formatted_toml.push(format!("capture_subdomains = true"));
@@ -664,7 +671,9 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
                 if let Some(log_level) = &process.log_level {
                     formatted_toml.push(format!("log_level = \"{:?}\"", log_level));
                 }
-
+                if let Some(true) = process.redirect_to_https {
+                    formatted_toml.push(format!("redirect_to_https = true"));
+                }
                 if let Some(true) = process.enable_lets_encrypt {
                     formatted_toml.push(format!("enable_lets_encrypt = {}", true));
                 }
@@ -727,6 +736,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
             port_range_start: 4200,
             hosted_process: Some(vec![
                 InProcessSiteConfig {
+                    redirect_to_https: Some(true),
                     log_level: None,
                     enable_lets_encrypt: Some(false),
                     proc_id: ProcId::new(),
@@ -754,6 +764,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
             ]),
             remote_target: Some(vec![
                 RemoteSiteConfig { 
+                    redirect_to_https: Some(true),
                     terminate_http: None,
                     keep_original_host_header: None,
                     enable_lets_encrypt: Some(false),
@@ -771,6 +782,7 @@ impl crate::configuration::OddBoxConfiguration<OddBoxV3Config> for OddBoxV3Confi
                     terminate_tls: Some(false)
                 },
                 RemoteSiteConfig { 
+                    redirect_to_https: Some(true),
                     terminate_http: None,
                     keep_original_host_header: None,
                     enable_lets_encrypt: Some(false),
@@ -883,6 +895,7 @@ impl TryFrom<super::v2::OddBoxV2Config> for OddBoxV3Config{
                 let new_hints = if new_hints.len() == 0 { None } else { Some(new_hints) };
 
                 InProcessSiteConfig {
+                    redirect_to_https: None,
                     log_level: None,
                     enable_lets_encrypt: Some(false),
                     proc_id: ProcId::new(),
@@ -908,6 +921,7 @@ impl TryFrom<super::v2::OddBoxV2Config> for OddBoxV3Config{
             remote_target: Some(old_config.remote_target.unwrap_or_default().iter().map(|x|{
 
                 RemoteSiteConfig {
+                    redirect_to_https: None,
                     terminate_http: x.disable_tcp_tunnel_mode, // <-- before v3 there was just disable tunnel mode, so both term tls and http get val from there now
                     keep_original_host_header: None,
                     enable_lets_encrypt: Some(false),

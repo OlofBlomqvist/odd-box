@@ -82,6 +82,7 @@ odd_box_password           = "s3cr3t"
 | `forward_subdomains` | If `true`, the matching subdomain is kept when rewriting Host header (`foo.api.example.com` ➜ `foo.backend`). | `false` |
 | `terminate_tls` | Terminate HTTPS at odd‑box, forward HTTP to the back‑end. | `false` |
 | `terminate_http` | Force layer‑7 proxy even for plain HTTP (can enable URL rewriting). | `false` |
+| `redirect_to_https` | Respond with 308 to HTTPS listener. | `false` |
 | `enable_lets_encrypt` | Issue real certs for `host_name` via Let’s Encrypt. Requires `lets_encrypt_account_email`. | `false` |
 | `keep_original_host_header` | Forwards inbound `Host` header unchanged instead of using the back‑end’s address. | `false` |
 | `backends` | Array of one or more servers. **Each needs `address` + `port`.** | — |
@@ -100,6 +101,7 @@ Back‑end object keys:
 ```toml
 [[remote_target]]
 host_name = "api.example.com"
+redirect_to_https         = true
 capture_subdomains        = false
 forward_subdomains        = true
 terminate_tls             = true
@@ -129,6 +131,7 @@ backends = [
 | `log_level` | Overrides global `log_level`. | inherited |
 | `auto_start` | Start with odd‑box? Overrides global `auto_start`. | inherited (`true`) |
 | `exclude_from_start_all` | If `true`, `start_all` CLI/API skips this process. | `false` |
+| `redirect_to_https` | Respond with 308 to HTTPS listener. | `false` |
 | `port` | Fixed port; if unset odd‑box auto‑assigns. | auto‑assign |
 | `https` | If `true`, the process itself speaks HTTPS. | `false` |
 | `capture_subdomains` | Handle `*.host_name`. | `false` |
@@ -143,6 +146,7 @@ backends = [
 ```toml
 [[hosted_process]]
 host_name              = "app.local"
+redirect_to_https         = true
 dir                    = "$root_dir/apps/myapp"
 bin                    = "./start-server"
 args                   = ["--config", "$cfg_dir/app.toml"]
@@ -176,7 +180,7 @@ hints                  = ["H1","H2"]
 | `capture_subdomains` | Serve `*.host_name`. | `false` |
 | `enable_directory_browsing` | List files if no `index.html`/`index.md`. | `false` |
 | `render_markdown` | Convert `.md` ➜ HTML automatically. | `false` |
-| `redirect_to_https` | Respond with 301 to HTTPS listener. | `false` |
+| `redirect_to_https` | Respond with 308 to HTTPS listener. | `false` |
 | `enable_lets_encrypt` | Issue certs for this site. | `false` |
 | `cache_control_max_age_in_seconds` | Sets the cache-control header max-age (public, max-age=<n>, immutable) | `no cache-control header` |`
 

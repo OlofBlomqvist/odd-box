@@ -33,6 +33,7 @@ impl ContainerProxyTarget {
                     hints: hints 
                 }
             ],
+            redirect_to_https: self.redirect_to_https,
             capture_subdomains: self.capture_subdomains,
             terminate_tls: self.terminate_tls,
             terminate_http: self.terminate_http,
@@ -60,6 +61,7 @@ pub struct ContainerProxyTarget {
     pub forward_subdomains : Option<bool>,
     pub enable_lets_encrypt : Option<bool>,
     pub keep_original_host_header : Option<bool>,
+    pub redirect_to_https: Option<bool>,
 
 }
 
@@ -160,6 +162,7 @@ pub async fn get_container_proxy_targets(
             host_name_label: label_host_name.cloned(),
             running,
             port,
+            redirect_to_https: None
         });
     }
 
