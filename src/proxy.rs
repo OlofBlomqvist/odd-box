@@ -539,7 +539,7 @@ async fn handle_new_tcp_stream(
                     
                     if let Some(cfg) = &target.hosted_target_config {
 
-                        if cfg.redirect_to_https.unwrap_or_default() {
+                        if !is_tls && cfg.redirect_to_https.unwrap_or_default() {
                             return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 
                                 FallbackReason::HttpTerminationEnforced(format!("Redirect to https is enabled, will do so using terminating proxy."))).await;
                         }
@@ -636,7 +636,7 @@ async fn handle_new_tcp_stream(
                     if let Some(cfg) = &target.remote_target_config {
 
                         
-                        if cfg.redirect_to_https.unwrap_or_default() {
+                        if !is_tls && cfg.redirect_to_https.unwrap_or_default() {
                             return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 
                                 FallbackReason::HttpTerminationEnforced(format!("Redirect to https is enabled, will do so using terminating proxy."))).await;
                         }
