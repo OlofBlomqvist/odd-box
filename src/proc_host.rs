@@ -14,6 +14,101 @@ use std::sync::Arc;
 use std::time::Duration;
 use sysinfo::System;
 
+use std::io;
+use std::process::{Child, ExitStatus};
+use std::time::Instant;
+
+// for mac & linux we send sigint rather than sigkill such that we trigger
+// a more graceful shutdown of the child process, giving it a chance to cleanup
+// resources and such. duno how this works on windows atm so wont change that for now.
+#[cfg(unix)]
+pub fn graceful_stop_pid_only(
+    mut parent: Child,
+    include_direct_children: bool,
+    total_timeout: Duration,
+) -> io::Result<ExitStatus> {
+    use nix::sys::signal::{kill, Signal::{SIGINT, SIGKILL, SIGTERM}};
+    use nix::unistd::Pid;
+    use sysinfo::{ProcessRefreshKind, RefreshKind, System};
+
+    let parent_pid = parent.id() as i32;
+
+    // Snapshot direct children once (optional), PID-by-PID only.
+    let child_pids: Vec<i32> = if include_direct_children {
+
+        let sys = System::new_with_specifics(
+            RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
+        );
+
+        sys.processes()
+            .values()
+            .filter(|p| p.thread_kind().is_none())
+            .filter(|p| p.parent().map(|pp| pp.as_u32()) == Some(parent_pid as u32))
+            .map(|p| p.pid().as_u32() as i32)
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Helper: send a signal to one PID, ignore errors like ESRCH (already gone).
+    #[inline]
+    fn send(pid: i32, sig: nix::sys::signal::Signal) {
+        let _ = kill(Pid::from_raw(pid), sig);
+    }
+
+    // Partition total timeout across phases.
+    let t_int  = total_timeout.mul_f64(0.5);
+    let t_term = total_timeout.mul_f64(0.35);
+    let t_kill = total_timeout - t_int - t_term;
+
+    // Phase 1: SIGINT (Ctrl-C)
+    for &cpid in &child_pids { send(cpid, SIGINT); }
+    send(parent_pid, SIGINT);
+    if let Some(st) = wait_with_deadline(&mut parent, t_int)? {
+        tracing::info!("Stopped the process using sigint (ctrl-c)");
+        return Ok(st);
+    }
+
+    // Phase 2: SIGTERM
+    for &cpid in &child_pids { send(cpid, SIGTERM); }
+    send(parent_pid, SIGTERM);
+    if let Some(st) = wait_with_deadline(&mut parent, t_term)? {
+        tracing::info!("Stopped the process using sigterm");
+        return Ok(st);
+    }
+
+    // Phase 3: SIGKILL (last resort)
+    for &cpid in &child_pids { send(cpid, SIGKILL); }
+    send(parent_pid, SIGKILL);
+    if let Some(st) = wait_with_deadline(&mut parent, t_kill)? {
+        tracing::warn!("Stopped the process using sigkill - this may leave resources allocated");
+        return Ok(st);
+    }
+
+    // Not really expecting to get here so lets just see if
+    // perhaps we already stopped while we were sending signals.
+    // Just doing a one-shot check here to not hang around forever
+    if let Some(st) = parent.try_wait()? {
+        return Ok(st);
+    }
+
+    Err(io::Error::new(io::ErrorKind::TimedOut, "failed to stop process within the given timeout"))
+}
+
+#[cfg(unix)]
+fn wait_with_deadline(child: &mut Child, dur: Duration) -> io::Result<Option<ExitStatus>> {
+    let start = Instant::now();
+    loop {
+        if let Some(st) = child.try_wait()? {
+            return Ok(Some(st));
+        }
+        if start.elapsed() >= dur {
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 
 pub async fn host(
     mut resolved_proc: crate::configuration::FullyResolvedInProcessSiteConfig,
@@ -62,45 +157,55 @@ pub async fn host(
 
     let re = regex::Regex::new(r"^\d* *\[.*?\] .*? - ").expect("host regex always works");
 
-    pub fn kill_process_and_its_children(mut parent: std::process::Child) {
+    pub fn kill_process_and_its_children(parent: std::process::Child) {
 
-        use std::thread;
-        let parent_pid = parent.id();
+        #[cfg(unix)]
+        {
+            let _ = graceful_stop_pid_only(parent, true, Duration::from_secs(5));
+            return;
+        }
 
-        let mut sys = System::new_with_specifics(
-             sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::everything()),
-        );
+        #[cfg(not(unix))]
+        {
 
-        sys.refresh_all();
+            use std::thread;
+            let parent_pid = parent.id();
 
-        let child_pids: Vec<u32> = sys
-            .processes()
-            .values()
-            .filter(|p| p.thread_kind().is_none())
-            .filter(|p| p.parent().map(|pp| pp.as_u32()) == Some(parent_pid))
-            .map(|p| p.pid().as_u32())
-            .collect();
+            let mut sys = System::new_with_specifics(
+                sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::everything()),
+            );
 
-        for pid_u32 in &child_pids {
-            if let Some(p) = sys.process(sysinfo::Pid::from_u32(*pid_u32)) {
+            sys.refresh_all();
 
-                if p.kill() {
-                    tracing::debug!("Sent kill to child process with pid {}", pid_u32);
-                } else {
-                    tracing::warn!("Failed to kill child process with pid {}", pid_u32);
+            let child_pids: Vec<u32> = sys
+                .processes()
+                .values()
+                .filter(|p| p.thread_kind().is_none())
+                .filter(|p| p.parent().map(|pp| pp.as_u32()) == Some(parent_pid))
+                .map(|p| p.pid().as_u32())
+                .collect();
+
+            for pid_u32 in &child_pids {
+                if let Some(p) = sys.process(sysinfo::Pid::from_u32(*pid_u32)) {
+
+                    if p.kill() {
+                        tracing::debug!("Sent kill to child process with pid {}", pid_u32);
+                    } else {
+                        tracing::warn!("Failed to kill child process with pid {}", pid_u32);
+                    }
                 }
             }
+
+            thread::sleep(Duration::from_millis(50));
+
+            match parent.kill() {
+                Ok(()) => tracing::debug!("Sent kill to main process with pid {}", parent_pid),
+                Err(e) => tracing::warn!("Failed to kill main process {}: {}", parent_pid, e),
+            }
+
+            // dont want no zombies
+            let _ = parent.wait();
         }
-
-        thread::sleep(Duration::from_millis(50));
-
-        match parent.kill() {
-            Ok(()) => tracing::debug!("Sent kill to main process with pid {}", parent_pid),
-            Err(e) => tracing::warn!("Failed to kill main process {}: {}", parent_pid, e),
-        }
-
-        // dont want no zombies
-        let _ = parent.wait();
     }
 
 
@@ -147,9 +252,9 @@ pub async fn host(
         } else {
             previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopped,"stopped due to init true");
         }
-        
+
         let is_enabled_before = enabled == true;
-        
+
         while let Ok(msg) = rcv.try_recv() {
             match msg {
                 ProcMessage::StartAll if excluded_from_auto_start => tracing::debug!("Refusing to start {} as thru the start all command as it is disabled",&resolved_proc.host_name),
@@ -183,7 +288,7 @@ pub async fn host(
                 }
             }
         }
-        
+
         if !enabled {
             if enabled != is_enabled_before {
                 tracing::info!("[{}] Disabled via command from proxy service",&resolved_proc.host_name);

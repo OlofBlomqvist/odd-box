@@ -2623,6 +2623,7 @@ dependencies = [
  "markdown",
  "memchr",
  "mime_guess",
+ "nix 0.29.0",
  "notify",
  "once_cell",
  "p256",

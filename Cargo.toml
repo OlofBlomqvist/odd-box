@@ -10,7 +10,7 @@ license-file = "LICENSE"
 [dependencies]
 
 # === MANAGEMENT API ============================================
-axum = { version="0.7.9",features=["ws"] } 
+axum = { version="0.7.9",features=["ws"] }
 
 utoipa =  { version = "5.3.1", features = ["axum_extras"]}
 utoipa-swagger-ui = { version = "8.1.0", features = ["axum","vendored"] }
@@ -94,9 +94,12 @@ cookie = "0.18.1"
 windows = { version = "0.58.0", features = ["Win32","Win32_Foundation","Win32_System","Win32_System_Console","Win32_NetworkManagement_IpHelper"] }
 
 
+[target.'cfg(unix)'.dependencies]
+nix = "0.29"
+
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = { version = "0.6.0" }
- 
+
 # REMOVE THIS ONCE UTOIPA FIX PUBLISHED
 [patch.crates-io]
 zip = { git="https://github.com/zip-rs/zip2", rev= "v2.3.0" }
