@@ -157,7 +157,7 @@ pub async fn host(
 
     let re = regex::Regex::new(r"^\d* *\[.*?\] .*? - ").expect("host regex always works");
 
-    pub fn kill_process_and_its_children(parent: std::process::Child) {
+    pub fn kill_process_and_its_children(mut parent: std::process::Child) {
 
         #[cfg(unix)]
         {
