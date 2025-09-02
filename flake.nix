@@ -24,7 +24,7 @@
         packages.default = pkgs.rustPlatform.buildRustPackage rec {
 
             name = "odd-box";
-            version = "0.1.11";
+            version = "0.1.12";
             src = ./.;
 
             cargoLock = {
