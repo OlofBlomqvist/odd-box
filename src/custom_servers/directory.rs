@@ -161,16 +161,58 @@ fn cache_response(key: String, content_type: &str, resp: &Response<Bytes>) {
 // File‑serving helpers
 // ==========================================================================
 
+ 
+use hyper::header;
+use http_body::Frame;
+use tokio_util::io::ReaderStream;
+use futures_util::StreamExt; 
+  
+fn apply_streaming_headers<B>(
+    mut resp: Response<B>,
+    status: StatusCode,
+    content_type: &str,
+    max_age: Option<u64>,
+    conditional: Option<(&str, &str)>, // (etag, last_modified)
+    content_length: Option<u64>,
+) -> Response<B> {
+    *resp.status_mut() = status;
+    let headers = resp.headers_mut();
+
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_str(content_type).unwrap());
+    headers.insert(header::VARY, HeaderValue::from_static("Cookie"));
+    headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+
+    if let Some(max_age) = max_age {
+        headers.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_str(&format!("public, max-age={max_age}, immutable")).unwrap(),
+        );
+    }
+    if let Some((etag, last_modified)) = conditional {
+        headers.insert(header::ETAG, HeaderValue::from_str(etag).unwrap());
+        headers.insert(header::LAST_MODIFIED, HeaderValue::from_str(last_modified).unwrap());
+    }
+    if let Some(len) = content_length {
+        headers.insert(header::CONTENT_LENGTH, HeaderValue::from_str(&len.to_string()).unwrap());
+    }
+    resp
+}
+
+const SMALL_FILE_MAX: u64 = 2 * 1024 * 1024; // 2 MiB
+
+// todo - possibly we could support compression here
 async fn serve_file(
     cfg: &DirServer,
     req: &hyper::Request<hyper::body::Incoming>,
     full_path: &Path,
     cache_key: String,
 ) -> Result<EpicResponse, CustomError> {
-
-    let Some((meta, file_bytes)) = read_file(full_path).await? else {
-        return simple_status(StatusCode::NOT_FOUND, "404 - FILE NOT FOUND")
+    
+    let meta = match tokio::fs::metadata(full_path).await {
+        Ok(m) if m.is_file() => m,
+        _ => return simple_status(StatusCode::NOT_FOUND, "404 - FILE NOT FOUND"),
     };
+
     let last_modified = fmt_http_date(meta.modified().unwrap_or(SystemTime::UNIX_EPOCH));
     let size = meta.len();
     let etag = format!(
@@ -183,19 +225,16 @@ async fn serve_file(
             .as_secs()
     );
 
-    // ------------ conditional GET ----------------------------------------
     if is_not_modified(req, &etag, meta.modified().ok())? {
         return simple_status(StatusCode::NOT_MODIFIED, "");
     }
 
-    // ------------ Markdown branch ----------------------------------------
     let ext_is_md = full_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("md"))
-        .unwrap_or(false);
+        .extension().and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("md")).unwrap_or(false);
 
     if cfg.render_markdown.unwrap_or_default() && ext_is_md {
+        let file_bytes = Bytes::from(tokio::fs::read(full_path).await.map_err(|e| map_io(e, "read"))?);
         return serve_markdown(
             cfg,
             &file_bytes,
@@ -203,26 +242,102 @@ async fn serve_file(
             &last_modified,
             &cache_key,
             ThemeDecision::from_req(req),
-        )
-        .await;
+        ).await;
     }
+ 
+    let mime_type = if ext_is_md {
+        mime::TEXT_PLAIN_UTF_8
+    } else {
+        mime_guess::from_path(full_path).first_or_octet_stream()
+    };
+ 
+    let is_head = req.method() == hyper::Method::HEAD;
 
-    // ------------ Binary / plain‑text branch -----------------------------
-    let mut mime_type = mime_guess::from_path(full_path).first_or_octet_stream();
-    if ext_is_md {
-        mime_type = mime::TEXT_PLAIN_UTF_8;
-    }
+    let (tx_to_client, internal_rx) = crate::http_proxy::create_response_channel(4);
+    let resp: EpicResponse = crate::http_proxy::create_stream_response(internal_rx);
 
-    let resp = build_response(
+    let resp = apply_streaming_headers(
+        resp,
         StatusCode::OK,
         mime_type.as_ref(),
         cfg.cache_control_max_age_in_seconds,
-        Some((&etag, &last_modified)),
-        file_bytes.clone(),
-    )?;
-    cache_response(cache_key, mime_type.as_ref(), &resp);
-    create_simple_response_from_bytes(resp)
+        Some((&*etag, &*last_modified)),
+        Some(size), 
+    );
+
+    if is_head {
+        return Ok(resp);
+    }
+
+    // -------- SMALL FILE PATH: read once, cache, and send one frame --------
+    if size <= SMALL_FILE_MAX {
+        // tracing::info!("SENDING FULL FILE!!!! {full_path:?} ({size} bytes)");
+        let bytes = Bytes::from(
+            tokio::fs::read(full_path)
+                .await
+                .map_err(|e| map_io(e, "read"))?
+        );
+
+        // Send the whole thing as a single data frame (fast, zero-copy into the channel)
+        let tx = tx_to_client.clone();
+        let bytes_for_client = bytes.clone();
+        tokio::spawn(async move {
+            let _ = tx.send(Ok(http_body::Frame::data(bytes_for_client))).await;
+            // drop sender => EOF
+        });
+
+        if size > 0 {
+            if let Ok(cached_resp) = build_response(
+                StatusCode::OK,
+                mime_type.as_ref(),
+                cfg.cache_control_max_age_in_seconds,
+                Some((&etag, &last_modified)),
+                // Re-read avoided: reuse the same bytes we already loaded
+                // (clone is cheap; Bytes is ref-counted)
+                bytes.clone(),
+            ) {
+                cache_response(cache_key, mime_type.as_ref(), &cached_resp);
+            }
+        }
+
+        return Ok(resp);
+    }
+
+    // -------- LARGE FILE PATH: pure streaming from disk, no cache --------
+    // tracing::info!("STREAMING FILE!!!! {full_path:?} ({size} bytes)");
+    let path_for_task = full_path.to_owned();
+    tokio::spawn(async move {
+        use futures_util::StreamExt;
+        use tokio_util::io::ReaderStream;
+
+        let file = match tokio::fs::File::open(&path_for_task).await {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("open error: {e}");
+                return;
+            }
+        };
+
+        let mut reader = ReaderStream::new(file);
+        while let Some(chunk_res) = reader.next().await {
+            match chunk_res {
+                Ok(bytes) => {
+                    if tx_to_client.send(Ok(http_body::Frame::data(bytes))).await.is_err() {
+                        break; // client disconnected/backpressure closed
+                    }
+                }
+                Err(e) => {
+                    eprintln!("read error: {e}");
+                    break;
+                }
+            }
+        }
+        // drop sender => EOF
+    });
+
+    Ok(resp)
 }
+
 
 async fn serve_markdown(
     cfg: &DirServer,
