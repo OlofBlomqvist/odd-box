@@ -26,11 +26,11 @@ impl ContainerProxyTarget {
         crate::configuration::RemoteSiteConfig {
             host_name: self.generate_host_name(),
             backends: vec![
-                crate::configuration::Backend { 
-                    address: self.target_addr.clone(), 
-                    port: self.port, 
-                    https: Some(self.tls), 
-                    hints: hints 
+                crate::configuration::Backend {
+                    address: self.target_addr.clone(),
+                    port: self.port,
+                    https: Some(self.tls),
+                    hints: hints
                 }
             ],
             redirect_to_https: self.redirect_to_https,
@@ -87,7 +87,7 @@ pub async fn get_container_proxy_targets(
     let mut proxy_targets = Vec::new();
 
     for container in containers {
-        
+
         let container_name = if let Some(name) = container.names
             .and_then(|names| names.first().map(|name| Some(name.trim_start_matches('/').to_string())))
             .unwrap_or_else(|| container.id.clone()) {
@@ -110,19 +110,8 @@ pub async fn get_container_proxy_targets(
         let label_host_name =  labels.get("odd_box_host_name");
         let label_hints =  labels.get("odd_box_hints");
 
-        
-        let container_ip = if let Some(ip) = container.network_settings
-            .and_then(|net| net.networks)
-            .and_then(|x|x.get("bridge")
-            .and_then(|x|x.ip_address.clone())) {
 
-                ip
-
-        } else {
-            continue
-        };
-
-        let port = if let Some(port_str) = labels.get("odd_box_port") {
+        let container_port = if let Some(port_str) = labels.get("odd_box_port") {
             match port_str.parse::<u16>() {
                 Ok(p) => p,
                 Err(_e) => {
@@ -132,6 +121,35 @@ pub async fn get_container_proxy_targets(
             }
         } else {
             continue
+        };
+
+        let (target_addr, target_port) = if let Some(ports) = &container.ports {
+            // PRIORITY 1: host-published port (public_port) for this container_port
+            if let Some(p) = ports.iter()
+                .find(|p| p.private_port == container_port && p.typ == Some(bollard::secret::PortTypeEnum::TCP) && p.public_port.is_some())
+            {
+                ("127.0.0.1".to_string(), p.public_port.unwrap() as u16)
+            } else {
+                // PRIORITY 2: in-Docker networking (prefer non-bridge, then bridge)
+                let ip = container.network_settings
+                    .as_ref()
+                    .and_then(|ns| any_network_ip(&ns.networks));
+
+                match ip {
+                    Some(ip) => (ip, container_port),
+                    None => { continue; } // unreachable
+                }
+            }
+        } else {
+            // no ports info in summary; fall back to networks
+            let ip = container.network_settings
+                .as_ref()
+                .and_then(|ns| any_network_ip(&ns.networks));
+
+            match ip {
+                Some(ip) => (ip, container_port),
+                None => { continue; }
+            }
         };
 
         let mut hints = vec![];
@@ -149,7 +167,7 @@ pub async fn get_container_proxy_targets(
         }
         proxy_targets.push(ContainerProxyTarget {
             hints,
-            target_addr: container_ip,
+            target_addr,
             capture_subdomains: labels.get("odd_box_capture_subdomains").map(|x|x.to_lowercase()=="true"),
             terminate_tls: labels.get("odd_box_terminate_tls").map(|x|x.to_lowercase()=="true"),
             terminate_http: labels.get("odd_box_terminate_http").map(|x|x.to_lowercase()=="true"),
@@ -161,10 +179,30 @@ pub async fn get_container_proxy_targets(
             image_name: image_name.clone(),
             host_name_label: label_host_name.cloned(),
             running,
-            port,
+            port: target_port,
             redirect_to_https: None
         });
     }
 
     Ok(proxy_targets)
+}
+
+
+// helper: pick an IP from networks, prefer non-"bridge", then "bridge"
+fn any_network_ip(
+    networks: &Option<std::collections::HashMap<String, bollard::models::EndpointSettings>>
+) -> Option<String> {
+    let nets = networks.as_ref()?;
+    // prefer user-defined networks
+    for (name, s) in nets {
+        if name != "bridge" {
+            if let Some(ip) = &s.ip_address {
+                if !ip.is_empty() { return Some(ip.clone()); }
+            }
+        }
+    }
+    // fallback to bridge (preserves previous behavior)
+    nets.get("bridge")
+        .and_then(|s| s.ip_address.clone())
+        .filter(|ip| !ip.is_empty())
 }

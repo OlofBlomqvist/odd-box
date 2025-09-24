@@ -28,7 +28,8 @@ impl IntoResponse for SitesError {
 pub enum ConfigurationItem {
    HostedProcess(InProcessSiteConfig),
    RemoteSite(RemoteSiteConfig),
-   DirServer(DirServer)
+   DirServer(DirServer),
+   DockerContainer(RemoteSiteConfig)
 }
 
 #[derive(ToSchema,Serialize)]
@@ -61,8 +62,8 @@ impl From<crate::ProcState> for BasicProcState {
             crate::types::app_state::ProcState::Remote => BasicProcState::Remote,
             crate::types::app_state::ProcState::DirServer => BasicProcState::DirServer,
             crate::types::app_state::ProcState::Docker => BasicProcState::Docker,
-            
-            
+
+
         }
     }
 }
@@ -81,25 +82,30 @@ impl From<crate::ProcState> for BasicProcState {
     )
 )]
 pub async fn list_handler(state: axum::extract::State<Arc<GlobalState>>) -> axum::response::Result<impl IntoResponse,SitesError> {
-    
+
     let cfg_guard = state.config.read().await;
-    
+
     let procs = cfg_guard.hosted_process.clone().unwrap_or_default();
     let rems = cfg_guard.remote_target.clone().unwrap_or_default();
     let dirs = cfg_guard.dir_server.clone().unwrap_or_default();
 
+    let docker_containers : Vec<RemoteSiteConfig> = cfg_guard.docker_containers.iter().map(|x|{
+        x.generate_remote_config()
+    }).collect();
+
     Ok(Json(ListResponse {
         items: procs.into_iter()
             .map(ConfigurationItem::HostedProcess)
+            .chain(docker_containers.into_iter().map(ConfigurationItem::DockerContainer))
             .chain(rems.into_iter().map(ConfigurationItem::RemoteSite))
             .chain(dirs.into_iter().map(ConfigurationItem::DirServer))
             .collect()
     }))
-    
+
 }
 
 
-/// List all configured sites.
+/// Get status of configured sites.
 #[utoipa::path(
     operation_id="status",
     get,
@@ -111,7 +117,7 @@ pub async fn list_handler(state: axum::extract::State<Arc<GlobalState>>) -> axum
     )
 )]
 pub async fn status_handler(state: axum::extract::State<Arc<GlobalState>>) -> axum::response::Result<impl IntoResponse,SitesError> {
-    
+
     Ok(Json(StatusResponse {
         items: state.app_state.site_status_map.iter().map(|guard|{
             let (site,state) = guard.pair();
@@ -121,7 +127,7 @@ pub async fn status_handler(state: axum::extract::State<Arc<GlobalState>>) -> ax
             }
         }).collect()
     }))
-    
+
 }
 
 
@@ -150,6 +156,17 @@ pub struct UpdateQuery {
     pub hostname: Option<String>,
 }
 
+#[derive(Deserialize, Serialize, ToSchema)]
+pub struct UpdateSiteResponse(Option<String>);
+impl IntoResponse for UpdateSiteResponse {
+    fn into_response(self) -> Response {
+        let body = match self.0 {
+            None => "OK".to_string(),
+            Some(msg) => msg
+        };
+        (StatusCode::OK, body).into_response()
+    }
+}
 
 /// Update a specific item by hostname
 #[utoipa::path(
@@ -162,15 +179,33 @@ pub struct UpdateQuery {
     ),
     path = "/api/sites",
     responses(
-        (status = 200, description = "Successful Response", body = ()),
+        (status = 200, description = "Successful Response", body = UpdateSiteResponse),
         (status = 500, description = "When something goes wrong", body = String),
     )
 )]
 pub async fn update_handler(State(state): axum::extract::State<Arc<GlobalState>>,Query(query): Query<UpdateQuery>, body: Json<UpdateRequest>) -> axum::response::Result<impl IntoResponse,SitesError> {
-    
+
     // lets clone the current config and update it. then save to disk, causing reload to be triggered.
-    let mut new_conf = { state.config.read().await.clone() };
-    
+
+    let (mut new_conf,old_conf) = {
+        let x = state.config.read().await;
+        (x.clone(),x.clone())
+    };
+
+    if let Some(h) = &query.hostname {
+
+        let existing_docker_site = new_conf
+            .docker_containers
+            .iter()
+            .any(|c| c.generate_host_name() == *h);
+
+        if existing_docker_site {
+            return Err(SitesError::UnknownError(
+                "cannot update docker sites as they are managed automatically through their labels".into(),
+            ));
+        }
+    }
+
     let result = match &body.new_configuration {
         ConfigItem::DirServer(new_cfg) => {
             let hostname = query.hostname.clone().unwrap_or(new_cfg.host_name.clone());
@@ -187,7 +222,7 @@ pub async fn update_handler(State(state): axum::extract::State<Arc<GlobalState>>
 
             match new_conf.add_or_replace_remote_site(
                 &hostname,new_cfg.to_owned(),
-                state.clone()         
+                state.clone()
             ).await {
                 Ok(_) => {
                     state.invalidate_cache();
@@ -198,7 +233,7 @@ pub async fn update_handler(State(state): axum::extract::State<Arc<GlobalState>>
 
         },
         ConfigItem::HostedProcess(new_cfg) => {
-            
+
             let hostname = query.hostname.clone().unwrap_or(new_cfg.host_name.clone());
             match new_conf.add_or_replace_hosted_process(&hostname,new_cfg.to_owned(),state.clone()).await {
                 Ok(_) => {
@@ -211,9 +246,13 @@ pub async fn update_handler(State(state): axum::extract::State<Arc<GlobalState>>
         }
     };
 
+    if new_conf.eq(&old_conf) {
+        return Ok(UpdateSiteResponse(Some("Received null-change, doing nothing.".into())));
+    }
+
     match result {
-        Ok(_) => {        
-            tracing::info!("Configuration updated and written to disk. Waiting for reload to complete.");            
+        Ok(_) => {
+            tracing::info!("Configuration updated and written to disk. Waiting for reload to complete.");
             let mut i = 0;
             loop {
                 if i > 1000 { // 10 seconds
@@ -229,7 +268,7 @@ pub async fn update_handler(State(state): axum::extract::State<Arc<GlobalState>>
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             tracing::debug!("Site settings updated thru api");
-            Ok(())
+            Ok(UpdateSiteResponse(Some("Site settings updated".into())))
         },
         Err(e) => Err(e)
     }
@@ -258,18 +297,18 @@ pub struct DeleteQueryParams {
     )
 )]
 pub async fn delete_handler(
-    axum::extract::State(global_state): axum::extract::State<Arc<GlobalState>>, 
+    axum::extract::State(global_state): axum::extract::State<Arc<GlobalState>>,
     Query(query): Query<DeleteQueryParams>,
 ) -> axum::response::Result<impl IntoResponse,SitesError> {
-  
-   
+
+
 
     let mut new_config = global_state.config.read().await.clone();
-    
+
     let mut deleted = false;
     let mut deleted_is_proc = false;
     if let Some(sites) = new_config.hosted_process.as_mut() {
-        
+
         sites.retain(|x| {
             let result = x.host_name != query.hostname;
             if result == false {
@@ -279,9 +318,9 @@ pub async fn delete_handler(
             result
         })
     }
-        
+
     if let Some(sites) = new_config.remote_target.as_mut() {
-        
+
         sites.retain(|x| {
             let result = x.host_name != query.hostname;
             if result == false {
@@ -292,7 +331,7 @@ pub async fn delete_handler(
     }
 
     if let Some(sites) = new_config.dir_server.as_mut() {
-        
+
         sites.retain(|x| {
             let result = x.host_name != query.hostname;
             if result == false {
@@ -301,7 +340,7 @@ pub async fn delete_handler(
             result
         })
     }
-    
+
 
     if deleted {
         global_state.app_state.site_status_map.remove( &query.hostname);
@@ -329,14 +368,14 @@ pub async fn delete_handler(
     }
 
     global_state.invalidate_cache();
-    
+
 
     Ok(())
-    
+
 }
 
 
-    
+
 #[derive(Deserialize,IntoParams)]
 #[into_params(
     parameter_in=Query
@@ -359,10 +398,10 @@ pub struct StopQueryParams {
     )
 )]
 pub async fn stop_handler(
-    axum::extract::State(global_state): axum::extract::State<Arc<GlobalState>>, 
+    axum::extract::State(global_state): axum::extract::State<Arc<GlobalState>>,
     Query(query): Query<StopQueryParams>
 ) -> axum::response::Result<impl IntoResponse,SitesError> {
-  
+
     let signal = if query.hostname == "*" {
         crate::http_proxy::ProcMessage::StopAll
     } else {
@@ -371,13 +410,13 @@ pub async fn stop_handler(
 
    // todo - check if site exists and if its already stopped?
     global_state.proc_broadcaster.send(signal).map_err(|e|
-        SitesError::UnknownError(format!("{e:?}"))    
+        SitesError::UnknownError(format!("{e:?}"))
     )?;
     Ok(())
-    
+
 }
 
-    
+
 #[derive(Deserialize,IntoParams)]
 #[into_params(
     parameter_in=Query
@@ -400,10 +439,10 @@ pub struct StartQueryParams {
     )
 )]
 pub async fn start_handler(
-    axum::extract::State(global_state): axum::extract::State<Arc<GlobalState>>, 
+    axum::extract::State(global_state): axum::extract::State<Arc<GlobalState>>,
     Query(query): Query<StartQueryParams>
 ) -> axum::response::Result<impl IntoResponse,SitesError> {
-  
+
     let signal = if query.hostname == "*" {
         crate::http_proxy::ProcMessage::StartAll
     } else {
@@ -411,10 +450,8 @@ pub async fn start_handler(
     };
 
     global_state.proc_broadcaster.send(signal).map_err(|e|
-        SitesError::UnknownError(format!("{e:?}"))    
+        SitesError::UnknownError(format!("{e:?}"))
     )?;
     Ok(())
-    
+
 }
-
-
