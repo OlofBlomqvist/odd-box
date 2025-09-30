@@ -186,7 +186,7 @@ pub async fn run(
                             code: crossterm::event::KeyCode::Char(' '),
                             modifiers: KeyModifiers::NONE,
                             #[cfg(target_os="windows")]
-                            kind: KeyEventKind::Press,
+                            kind: event::KeyEventKind::Press,
                             #[cfg(not(target_os="windows"))]
                             kind: _,
                             state:_
@@ -210,7 +210,7 @@ pub async fn run(
                             code: crossterm::event::KeyCode::Char('c'),
                             modifiers: KeyModifiers::CONTROL,
                             #[cfg(target_os="windows")]
-                            kind: KeyEventKind::Press,
+                            kind: event::KeyEventKind::Press,
                             #[cfg(not(target_os="windows"))]
                             kind: _,
                             state:_
@@ -292,7 +292,7 @@ pub async fn run(
                         }
                         Event::Key(KeyEvent {
                             #[cfg(target_os="windows")]
-                            kind: KeyEventKind::Press,
+                            kind: event::KeyEventKind::Press,
                             #[cfg(not(target_os="windows"))]
                             kind: _,
                             code,
