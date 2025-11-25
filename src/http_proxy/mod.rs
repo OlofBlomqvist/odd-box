@@ -24,7 +24,6 @@ pub enum ProcMessage {
 pub struct ReverseProxyService {
     pub source_addr: Option<std::net::SocketAddr>,
     pub state: Arc<GlobalState>,
-    pub remote_addr : Option<std::net::SocketAddr>,
     pub tx: std::sync::Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
     pub is_https:bool,
     pub client: Client<HttpsConnector<HttpConnector>, Incoming>,

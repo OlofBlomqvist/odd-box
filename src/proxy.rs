@@ -39,14 +39,14 @@ use tokio::task::JoinHandle;
 // It sets up the two tcp sockets and routes traffic either to the terminating proxy service (hyper)
 // or thru the managed tunnel mode where we do not terminate http traffic (but possibly do terminate tls depending on config).
 pub async fn listen(
-    cfg: Arc<RwLock<ConfigWrapper>>, 
+    cfg: Arc<RwLock<ConfigWrapper>>,
     initial_bind_addr: SocketAddr,
-    initial_bind_addr_tls: SocketAddr, 
+    initial_bind_addr_tls: SocketAddr,
     tx: Arc<tokio::sync::broadcast::Sender<ProcMessage>>,
     state: Arc<GlobalState>,
     shutdown_signal: Arc<Notify>
 ) {
-    
+
     let mut previous_bind_addr = initial_bind_addr;
     let mut previous_bind_addr_tls = initial_bind_addr_tls;
 
@@ -57,7 +57,7 @@ pub async fn listen(
     let mut https_task : Option<JoinHandle<()>> = None;
 
     loop {
-        
+
         // Read the current configuration
         let (current_bind_addr, current_bind_addr_tls) = {
 
@@ -80,15 +80,15 @@ pub async fn listen(
             // Addresses have changed; need to restart the listeners
             if let Some(token) = http_cancel_token.take() {
                 tracing::info!("http port has changed from {} to {}, shutting down http listener..",previous_bind_addr.port(),current_bind_addr.port());
-                token.cancel(); 
+                token.cancel();
                 if let Some(http_task) = http_task.take() {
                     tracing::info!("waiting for http task to finish..");
                     http_task.await.expect("http task failed");
-                    
+
                     tracing::info!("http task finished.");
                 }
-                
-            }         
+
+            }
 
             if let Some(token) = https_cancel_token.take() {
                 tracing::info!("https port has changed from {} to {}, shutting down http listener..",previous_bind_addr_tls.port(),current_bind_addr_tls.port());
@@ -100,7 +100,7 @@ pub async fn listen(
                 }
             }
 
-            
+
 
             let client_tls_config = tokio_rustls::rustls::ClientConfig::builder_with_protocol_versions(tokio_rustls::rustls::ALL_VERSIONS)
                 // todo - add support for accepting self-signed certificates etc
@@ -112,14 +112,14 @@ pub async fn listen(
 
             let https_builder = hyper_rustls::HttpsConnectorBuilder::new()
                 .with_tls_config(client_tls_config);
-            
-            let connector: hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector> = 
+
+            let connector: hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector> =
                 https_builder.https_or_http().enable_all_versions().build();
 
             let executor = hyper_util::rt::TokioExecutor::new();
 
             let client = hyper_util::client::legacy::Client::builder(executor.clone())
-                .http2_only(false) 
+                .http2_only(false)
                 .build(connector.clone());
 
             let h2_client = hyper_util::client::legacy::Client::builder(executor)
@@ -127,13 +127,12 @@ pub async fn listen(
                 .build(connector);
 
             let terminating_proxy_service = ReverseProxyService {
-                source_addr: None, // this will be set when the connection is accepted 
+                source_addr: None, // this will be set when the connection is accepted
                 connection_key: 0,
                 configuration: Arc::new(cfg.read().await.clone()),
                 resolved_target: None,
-                state: state.clone(), 
-                remote_addr: None, 
-                tx: tx.clone(), 
+                state: state.clone(),
+                tx: tx.clone(),
                 is_https: false,
                 client,
                 h2_client,
@@ -162,6 +161,9 @@ pub async fn listen(
                 shutdown_signal.clone(),
                 new_https_cancel_token.clone(),
             );
+
+            // TODO - HERE WE SHOULD SPAWN THE CRUMA THREAD SO WE CAN GET ALL THE SHARED STUFF IN THERE AS WELL
+            _ = tokio::spawn(crate::cruma::cruma_thread(shutdown_signal.clone(), state.clone(), terminating_proxy_service.clone()));
 
             let cloned_ct = new_http_cancel_token.clone();
             http_task = Some(tokio::spawn(async move {
@@ -198,7 +200,7 @@ pub async fn listen(
 
             previous_bind_addr = current_bind_addr;
             previous_bind_addr_tls = current_bind_addr_tls;
-            
+
         }
 
         // Sleep for a while before checking again
@@ -207,10 +209,10 @@ pub async fn listen(
 }
 
 lazy_static! {
-    static ref ACTIVE_TCP_CONNECTIONS_SEMAPHORE : tokio::sync::Semaphore = tokio::sync::Semaphore::new(200);
+    pub static ref ACTIVE_TCP_CONNECTIONS_SEMAPHORE : tokio::sync::Semaphore = tokio::sync::Semaphore::new(200);
     pub static ref ACTIVE_HYPER_CLIENT_CONNECTIONS : tokio::sync::Semaphore = tokio::sync::Semaphore::new(400);
-    
-} 
+
+}
 
 
 async fn listen_http(
@@ -221,9 +223,9 @@ async fn listen_http(
     _shutdown_signal: Arc<Notify> ,
     cancel_token: CancellationToken,
 ) -> anyhow::Result<()> {
-    
+
     use socket2::{Domain,Type};
-    
+
     let socket = Socket::new(Domain::for_address(bind_addr), Type::STREAM, Some(Protocol::TCP)).expect("should always be possible to create a tcp socket for tls");
     match socket.set_only_v6(false) {
         Ok(_) => {},
@@ -250,7 +252,7 @@ async fn listen_http(
     let listener: std::net::TcpListener = socket.into();
     listener.set_nonblocking(true).context("must be able to set_nonblocking on http listener")?;
     let tokio_listener = tokio::net::TcpListener::from_std(listener).context("we must be able to listen to http port..")?;
-    
+
     loop {
 
         {
@@ -273,7 +275,7 @@ async fn listen_http(
         };
 
         permit.forget();
-        
+
         //tracing::info!("accepting http connection..");
         tokio::select! {
             _ = cancel_token.cancelled() => {
@@ -283,18 +285,18 @@ async fn listen_http(
             x = tokio_listener.accept() => {
                 match x {
                     Ok((tcp_stream,source_addr)) => {
-                        
+
                         let mut service: ReverseProxyService = terminating_service_template.clone();
                         service.configuration = Arc::new(state.config.read().await.clone());
-                        service.remote_addr = Some(source_addr);   
+                        service.source_addr = Some(source_addr);
                         let tx = tx.clone();
                         let state = state.clone();
-                        tokio::spawn(async move {           
+                        tokio::spawn(async move {
                             handle_new_tcp_stream(None, service,tcp_stream, source_addr,tx.clone(),state.clone(),None)
                                 .await;
                             ACTIVE_TCP_CONNECTIONS_SEMAPHORE.add_permits(1);
                         });
-                        
+
 
                     }
                     Err(e) => {
@@ -304,7 +306,7 @@ async fn listen_http(
                     }
                 }
             }
-        }       
+        }
     }
     tracing::warn!("listen_http went bye bye.");
     Ok(())
@@ -328,11 +330,11 @@ async fn listen_https(
         Ok(_) => {},
         Err(e) => tracing::trace!("Failed to set_only_vs: {e:?}")
     };
-    
+
     // note: we reuse here as we want to be able to run multiple instances of odd-box at the same time.
     // if nothing else it lets us launch a newer version of the server without stopping the old, so that we can upgrade
     // to a later version without downtime.
-    
+
     match socket.set_reuse_address(true) { // annoying as hell otherwise for quick resets
         Ok(_) => {},
         Err(e) => tracing::warn!("Failed to set_reuse_address: {e:?}")
@@ -352,12 +354,12 @@ async fn listen_https(
     let listener: std::net::TcpListener = socket.into();
     listener.set_nonblocking(true).context("must be able to set_nonblocking on https listener")?;
     let tokio_listener = tokio::net::TcpListener::from_std(listener).context("we must be able to listen to https port..")?;
-    
-    let mut rustls_config = 
+
+    let mut rustls_config =
         tokio_rustls::rustls::ServerConfig::builder()
                 .with_no_client_auth()
                 .with_cert_resolver(state.cert_resolver.clone());
-    
+
     if let Some(true) = state.config.read().await.alpn {
         rustls_config.alpn_protocols.push("h2".into());
         rustls_config.alpn_protocols.push("http/1.1".into());
@@ -377,7 +379,7 @@ async fn listen_https(
             break;
         }
 
-     
+
         let permit = if let Ok(p) = ACTIVE_TCP_CONNECTIONS_SEMAPHORE.acquire().await {
             p
         } else {
@@ -387,10 +389,10 @@ async fn listen_https(
 
         permit.forget();
 
-        
-    
+
+
         let api = OddBoxAPI::new(state.clone());
-        
+
         tokio::select! {
             _ = cancel_token.cancelled() => {
                 tracing::info!("Cancellation token triggered, shutting down HTTPS listener.");
@@ -399,19 +401,19 @@ async fn listen_https(
             x = tokio_listener.accept() => {
                 match x {
                     Ok((tcp_stream,source_addr)) => {
-                    
+
                         let mut service: ReverseProxyService = terminating_service_template.clone();
                         service.configuration = Arc::new(state.config.read().await.clone());
-                        service.remote_addr = Some(source_addr);  
+                        service.source_addr = Some(source_addr);
                         let tx = tx.clone();
                         let arced_tls_config = Some(arced_tls_config.clone());
                         let state = state.clone();
-                        tokio::spawn(async move {               
+                        tokio::spawn(async move {
                             handle_new_tcp_stream(arced_tls_config,service,tcp_stream, source_addr,tx.clone(),state.clone(),Some(api))
                                 .await;
                             ACTIVE_TCP_CONNECTIONS_SEMAPHORE.add_permits(1);
                         });
-                        
+
 
                     }
                     Err(e) => {
@@ -425,7 +427,7 @@ async fn listen_https(
 
     }
 
-    
+
     tracing::warn!("listen_https went bye bye.");
 
     Ok(())
@@ -434,7 +436,7 @@ async fn listen_https(
 
 // this will peek in to the incoming tcp stream and either create a direct tcp tunnel (passthru mode)
 // or hand it off to the terminating http/https hyper services
-async fn handle_new_tcp_stream(
+pub async fn handle_new_tcp_stream(
     rustls_config: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
     mut fresh_service_template_with_source_info: ReverseProxyService,
     tcp_stream: TcpStream,
@@ -461,10 +463,10 @@ async fn handle_new_tcp_stream(
         },
     }
 
-    _ = state.app_state.statistics.total_accepted_tcp_connections.fetch_add(1, std::sync::atomic::Ordering::SeqCst);                            
+    _ = state.app_state.statistics.total_accepted_tcp_connections.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
     match peek_result {
-        
+
         // we see that this is cleartext data, and we expect clear text data, and we also extracted a hostname by peeking.
         // at this point, we should check if the target is NOT configured for https (tls) before forwarding.
         Ok(PeekResult {
@@ -487,7 +489,7 @@ async fn handle_new_tcp_stream(
                 sni:sni.clone(),
                 host_header
             });
-    
+
             let is_tls = typ == DataType::TLS;
             let ourl = state.config.read().await.odd_box_url.clone().unwrap_or(String::from("!"));
             match h2_authority_or_h1_host_header.as_ref().map(|x| x.as_str()) {
@@ -518,8 +520,8 @@ async fn handle_new_tcp_stream(
                 }
                 _ => {}
             }
-            
- 
+
+
             let target_host_name = if let Some(n) = &h2_authority_or_h1_host_header.or(sni.clone()) {
                 n.to_owned()
             } else {
@@ -527,38 +529,38 @@ async fn handle_new_tcp_stream(
                 http_proxy::serve(fresh_service_template_with_source_info, peekable_tcp_stream).await;
                 return;
             };
-            
-          
+
+
             if let Some(target) = state.try_find_site(&target_host_name).await {
 
                 let cloned_target = target.clone();
 
                 fresh_service_template_with_source_info.resolved_target = Some(cloned_target.clone());
-                
+
                 if target.is_hosted {
-                    
+
                     if let Some(cfg) = &target.hosted_target_config {
 
                         if !is_tls && cfg.redirect_to_https.unwrap_or_default() {
-                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 
+                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info,
                                 FallbackReason::HttpTerminationEnforced(format!("Redirect to https is enabled, will do so using terminating proxy."))).await;
                         }
 
                         let hints : Vec<&crate::configuration::Hint> = cfg.hints.iter().flatten().collect();
-                        
+
                         if cfg.terminate_http.unwrap_or_default() {
-                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 
+                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info,
                                 FallbackReason::HttpTerminationEnforced(format!("terminate_http is set to true for the site."))).await;
                         }
 
                         if cfg.enable_lets_encrypt.unwrap_or_default() {
                             tracing::warn!("Lets encrypt is enabled for the hosted site: {}, falling back to http terminating mode.", target.host_name);
                             // we will not be able to use tunnel mode if lets encrypt is enabled, as it requires http termination for the LE callbacks to run.
-                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 
+                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info,
                                 FallbackReason::HttpTerminationEnforced(format!("Lets encrypt is enabled for the site"))).await;
                         }
-                        
-                       
+
+
 
                         if let Some(Version::HTTP_2) = http_version {
                             if hints.iter().any(|h| {
@@ -585,7 +587,7 @@ async fn handle_new_tcp_stream(
                             }
                         }
                     }
-                    
+
                     let proc_state = {
                         match state.app_state.site_status_map.get(&target.host_name) {
                             Some(v) => Some(v.clone()),
@@ -599,17 +601,17 @@ async fn handle_new_tcp_stream(
                         },
                         Some(app_state::ProcState::Stopped) => {
                             _ = tx.send(ProcMessage::Start(target.host_name.clone()));
-                            
+
                         },
                         _ => {}
                     }
 
                     match tcp_proxy::ReverseTcpProxy::tunnel(
-                        peekable_tcp_stream, 
-                        cloned_target, 
+                        peekable_tcp_stream,
+                        cloned_target,
                         is_tls,
                         state.clone(),
-                        source_addr, 
+                        source_addr,
                         rustls_config.clone(),
                         target_host_name,
                         http_version,
@@ -632,19 +634,19 @@ async fn handle_new_tcp_stream(
                     }
 
                 } else {
-                    
+
                     if let Some(cfg) = &target.remote_target_config {
 
-                        
+
                         if !is_tls && cfg.redirect_to_https.unwrap_or_default() {
-                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 
+                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info,
                                 FallbackReason::HttpTerminationEnforced(format!("Redirect to https is enabled, will do so using terminating proxy."))).await;
                         }
 
 
                         let hints : Vec<Hint> = cfg.backends.iter().flat_map(|b| b.hints.clone().unwrap_or_default()).collect();
                         if cfg.terminate_http.unwrap_or_default() {
-                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 
+                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info,
                                 FallbackReason::HttpTerminationEnforced(format!("terminate_http is set to true for the site.")),
                             ).await;
                         }
@@ -652,12 +654,12 @@ async fn handle_new_tcp_stream(
                         if cfg.enable_lets_encrypt.unwrap_or_default() {
                             tracing::warn!("Lets encrypt is enabled for the remote site: {}, falling back to http terminating mode.", target.host_name);
                             // we will not be able to use tunnel mode if lets encrypt is enabled, as it requires http termination for the LE callbacks to run.
-                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 
+                            return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info,
                                 FallbackReason::HttpTerminationEnforced(format!("Lets encrypt is enabled for the site"))).await;
                         }
-                        
+
                         // FOR REMOTE TARGETS WE NORMALLY WANT TO SEND THE BACKEND HOST NAME AS THE HOST HEADER.
-                        // IF NOT EXPLICITLY SET TO TRUE, THEN WE WILL THUS NEED TO USE FALLBACK (level 7) HTTP TERMINATION 
+                        // IF NOT EXPLICITLY SET TO TRUE, THEN WE WILL THUS NEED TO USE FALLBACK (level 7) HTTP TERMINATION
                         // TO PERFORM THIS REWRITE.
                         if cfg.keep_original_host_header.unwrap_or_default() != true {
                             // The main reason we do this is SNI mismatch issues and such.
@@ -666,7 +668,7 @@ async fn handle_new_tcp_stream(
                             if cfg.backends.iter().all(|x|x.address == "127.0.0.1"||x.address == "localhost") == false {
                                 // ok so theres at least one backend that is remote.. and keep_original_host_header is none/false,
                                 // thus we must make sure to rewrite the host header using level 7 / fallback mode.
-                                return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, 
+                                return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info,
                                     FallbackReason::HttpTerminationEnforced(format!("keep_original_host_header is false while not all backends are local"))
                                 ).await;
                             }
@@ -699,8 +701,8 @@ async fn handle_new_tcp_stream(
                     }
 
                     match tcp_proxy::ReverseTcpProxy::tunnel(
-                        peekable_tcp_stream, 
-                        cloned_target, 
+                        peekable_tcp_stream,
+                        cloned_target,
                         is_tls,
                         state.clone(),
                         source_addr,rustls_config.clone(),
@@ -724,7 +726,7 @@ async fn handle_new_tcp_stream(
                         },
                     }
                 }
-                
+
             } else {
                 // fallback mode also handles directory services, and other non-hosted targets
                 return use_fallback_mode(rustls_config, peekable_tcp_stream, fresh_service_template_with_source_info, FallbackReason::NoTargetFound).await;
@@ -766,14 +768,14 @@ pub enum FallbackReason {
 }
 
 async fn use_fallback_mode(
-    rustls_config: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>, 
-    mut generic_managed_stream: GenericManagedStream, 
+    rustls_config: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>>,
+    mut generic_managed_stream: GenericManagedStream,
     mut fresh_service_template_with_source_info: ReverseProxyService,
     reason: FallbackReason
 ) {
-    
+
     generic_managed_stream.add_event(format!("using fallback_mode - reason: {:?}",reason));
-    
+
     match reason {
         FallbackReason::IncomingHttp2ButTargetDoesNotSupportIt => {
             tracing::debug!("Falling back to http terminating mode as the incoming connection is HTTP2, but the target does not support HTTP2");
@@ -798,7 +800,7 @@ async fn use_fallback_mode(
             tracing::trace!("Using http termination as the target is configured to disallow tunnel mode. Detailed Reason: {reason}")
         }
     }
-    
+
 
     // // Neither TCP Tunnel mode nor Worm Hole mode is NOT possible if we got here!
     // //  - At this point we have determined that we are not going to use the tcp tunnel mode, and we will use the terminating proxy mode instead.
@@ -813,7 +815,7 @@ async fn use_fallback_mode(
                 //     tracing::error!("unexpected state: tls stream in handle_new_tcp_stream");
                 // },
                 GenericManagedStream::TCP(peekable_tcp_stream) => {
-                            
+
                     let tls_acceptor = TlsAcceptor::from(tls_cfg.clone());
                     match tls_acceptor.accept(peekable_tcp_stream).await {
                         Ok(tls_stream) => {
@@ -822,13 +824,13 @@ async fn use_fallback_mode(
                             fresh_service_template_with_source_info.sni = sni.clone();
                             tracing::trace!("falling back to TLS termination combined with legacy http terminating mode");
                             let mut new_peekable = GenericManagedStream::from_terminated_tls_stream(ManagedStream::from_tls_stream(tls_stream));
-                            
+
                             // this peek is done so that we mark the stream with correct http version.
                             // meaning we can later parse the http2 packets for making them easy to observe instead of the binary format.
-                            if let Some(c) = fresh_service_template_with_source_info.remote_addr {
+                            if let Some(c) = fresh_service_template_with_source_info.source_addr {
                                 _ = new_peekable.peek_managed_stream(c).await;
                             }
-                            
+
                             new_peekable.seal();
 
                             new_peekable.enable_observe();
@@ -845,7 +847,7 @@ async fn use_fallback_mode(
                         },
                         Err(e) => {
                             tracing::warn!("accept_tcp_stream_via_tls_terminating_proxy_service failed with error: {e:?}");
-                            return 
+                            return
                         }
                     }
                 },
@@ -860,9 +862,9 @@ async fn use_fallback_mode(
             }
 
 
-        }, 
+        },
         _ => {
-            
+
             generic_managed_stream.enable_observe();
             generic_managed_stream.update_tracked_info(|x| {
                 x.http_terminated = true;
@@ -908,11 +910,11 @@ pub fn add_or_update_connection(state:Arc<GlobalState>,mut connection:ProxyActiv
                 local_process_name_and_pid: None
             });
         }
-        _ = state.global_broadcast_channel.send(GlobalEvent::TcpEvent(crate::types::odd_box_event::TCPEvent::Open(connection)));    
+        _ = state.global_broadcast_channel.send(GlobalEvent::TcpEvent(crate::types::odd_box_event::TCPEvent::Open(connection)));
     } else {
         tracing::warn!("Failed to add connection to global state, connection key was dropped.");
     }
-    
+
 }
 
 pub fn mutate_tracked_connection(
@@ -930,7 +932,7 @@ pub fn mutate_tracked_connection(
         let v = conn.version;
         mutator(conn.value_mut());
         conn.version = v + 1;
-        _ = state.global_broadcast_channel.send(GlobalEvent::TcpEvent(crate::types::odd_box_event::TCPEvent::Update(conn.clone())));   
+        _ = state.global_broadcast_channel.send(GlobalEvent::TcpEvent(crate::types::odd_box_event::TCPEvent::Update(conn.clone())));
     }
 }
 
@@ -940,6 +942,6 @@ pub fn del_connection(state:Arc<GlobalState>,key:&ConnectionKey) {
     if guard.active_connections.remove(key).is_some() {
         // for wrapped connections (where we have a terminated tls connection) we will be closing two tcp connections:
         // the tls one and the inner one. we do not need to broadcast this twice as they share connection key
-        _ = state.global_broadcast_channel.send(GlobalEvent::TcpEvent(crate::types::odd_box_event::TCPEvent::Close(*key))); 
+        _ = state.global_broadcast_channel.send(GlobalEvent::TcpEvent(crate::types::odd_box_event::TCPEvent::Close(*key)));
     }
 }

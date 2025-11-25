@@ -28,7 +28,7 @@ use super::proxy;
 
 
 lazy_static! {
-    static ref SERVER_ONE: hyper_util::server::conn::auto::Builder<TokioExecutor> =
+    pub static ref SERVER_ONE: hyper_util::server::conn::auto::Builder<TokioExecutor> =
         hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
 }
 pub async fn serve(service:ReverseProxyService,io:GenericManagedStream) {
@@ -416,7 +416,6 @@ async fn handle_http_request(
     if peeked_target.is_none() && dir_target.is_none() {
         let fresh_container_info = { state.config.read().await.docker_containers.clone()} ;
         if let Some(rc) = fresh_container_info.get(&resolved_host_name).and_then(|x|Some(x.generate_remote_config())) {
-            tracing::warn!("SDFSLKDJFKLSJDF");
             return perform_remote_forwarding(
                 resolved_host_name,is_https,
                 state.clone(),
@@ -478,7 +477,15 @@ async fn handle_http_request(
             if cts == crate::ProcState::Stopped || cts == crate::ProcState::Starting || cts == crate::ProcState::Faulty {
                 match req.method() {
                     &Method::GET => {
-                        if let Some(ua) = req.headers().get("user-agent") {
+
+                        if let Some(acpt) = req.headers().get("accept") {
+                            let hv = acpt.to_str().unwrap_or_default().to_uppercase() ;
+                            if hv.contains("text/html") {
+                                return Ok(EpicResponse::new(create_epic_string_full_body(&please_wait_response())))
+                            }
+                        }
+
+                        if let Some(ua) = req.headers().get("user-agent")  {
                             let hv = ua.to_str().unwrap_or_default().to_uppercase() ;
                             // we only want to risk showing the please wait page to browsers..
                             // not perfect but should be good enough for now..?

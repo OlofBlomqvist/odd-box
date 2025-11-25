@@ -41,17 +41,17 @@ pub fn draw(
 
 
     let headers = [  "Source", "In/Out","Description"];
-    
+
     let mut rows = global_state.app_state.statistics.active_connections.iter().map(|guard| {
-        
+
         let (_,active_connection) = guard.pair();
-        
-        
+
+
 
         let local_info = if let Some(v) = global_state.monitoring_station.tcp_connections.get(&active_connection.connection_key) {
             v.local_process_name_and_pid.clone()
         } else { None };
-        
+
         let src = if let Some((n,p)) = local_info {
             format!("{} ({} *{}*)",active_connection.client_addr_string.clone(),n,p)
         } else {
@@ -60,7 +60,10 @@ pub fn draw(
 
         let grpc_tag = if active_connection.is_grpc.unwrap_or_default() { "[gRPC] "} else { "" };
         let ws_tag = if active_connection.is_websocket.unwrap_or_default() { "[WS] "} else { "" };
-        let connection_type = format!("{grpc_tag}{ws_tag}{}",active_connection.get_connection_type());
+        let connection_type = format!("{grpc_tag}{ws_tag}{}. {}",
+            active_connection.get_connection_type(),
+            active_connection.resolved_connection_type_description.as_ref().unwrap_or(&String::new())
+        );
 
         let trans = if let Some(c) = global_state.monitoring_station.tcp_connections.get(&active_connection.connection_key) {
             if c.bytes_rec == 0 && c.bytes_sent == 0 {
@@ -68,7 +71,7 @@ pub fn draw(
             } else {
                 format!("{} bytes / {} bytes ", c.bytes_rec,c.bytes_sent)
             }
-            
+
         } else {
             format!("not tracked")
         };
@@ -76,18 +79,18 @@ pub fn draw(
         vec![
              src,
              trans,
-             connection_type, 
-         ]    
+             connection_type,
+         ]
     }).collect::<Vec<Vec<String>>>();
-    
+
     rows.sort_by_key(|row| row[0].clone());
-    
+
     // let rows : Vec<Vec<String>> = vec![
     //     vec!["QQQQQQQQQQ".to_string(),"BBBBBBB".to_string(),"CCCCCC".to_string(),"DDDDDD".to_string()],
     // ];
 
     // ====================================================================================================
-    let wrapped_line_count = rows.len();    
+    let wrapped_line_count = rows.len();
     tui_state.connections_tab_state.scroll_state.total_rows = wrapped_line_count;
     let area_height = area.height.saturating_sub(0); // header and footer
     tui_state.connections_tab_state.scroll_state.area_height = area_height as usize;
@@ -122,14 +125,14 @@ pub fn draw(
                     .fg(if is_dark_theme { Color::White } else { Color::Black })
                 )
     }).collect();
-    
+
 
     tui_state.connections_tab_state.scroll_state.visible_rows = display_rows.iter().len() as usize;
     tui_state.connections_tab_state.scroll_state.total_rows = rows.len();
 
 
-    
-    
+
+
     let headers = Row::new(headers
         .iter()
         .map(|&h| Cell::from(h).fg(if is_dark_theme {Color::LightGreen} else {Color::Blue}).underlined().add_modifier(Modifier::BOLD))
@@ -138,9 +141,9 @@ pub fn draw(
     let widths = [
         Constraint::Percentage(40),
         Constraint::Percentage(20),
-        Constraint::Percentage(40),      
+        Constraint::Percentage(40),
     ];
-    
+
     let table = Table::new(table_rows, widths.clone())
         .header(headers)
         .highlight_style(Style::default().add_modifier(Modifier::BOLD))
@@ -160,17 +163,17 @@ pub fn draw(
         .orientation(ScrollbarOrientation::VerticalRight);
 
     tui_state.connections_tab_state.scroll_state.area_height = area_height as usize;
-    
+
     if tui_state.connections_tab_state.scroll_state.scroll_bar_hovered {
         scrollbar = scrollbar.thumb_style(Style::default().fg(Color::Yellow).bg(Color::LightRed));
     }
 
     let scrollbar_area = Rect::new(area.right() - 1, area.top(), 1, area.height);
-    tui_state.connections_tab_state.scroll_state.vertical_scroll_state = 
+    tui_state.connections_tab_state.scroll_state.vertical_scroll_state =
         tui_state.connections_tab_state.scroll_state.vertical_scroll_state
             .content_length(rows.len().saturating_sub(area_height as usize));
     if scroll_pos.is_none() {
-        tui_state.connections_tab_state.scroll_state.vertical_scroll_state = 
+        tui_state.connections_tab_state.scroll_state.vertical_scroll_state =
             tui_state.connections_tab_state.scroll_state.vertical_scroll_state.position(rows.len().saturating_sub(area_height as usize));
     }
 
@@ -179,4 +182,3 @@ pub fn draw(
     f.render_stateful_widget(scrollbar,scrollbar_area, &mut tui_state.connections_tab_state.scroll_state.vertical_scroll_state);
 
 }
-

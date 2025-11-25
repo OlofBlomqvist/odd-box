@@ -1,18 +1,18 @@
 
 #![allow(clippy::needless_pass_by_value)]
-
+use hyper::header;
 use axum::http::HeaderValue;
 use bytes::Bytes;
 use dashmap::DashMap;
 use httpdate::{fmt_http_date, parse_http_date};
 use hyper::{
-    header::{CONTENT_TYPE, COOKIE, IF_MODIFIED_SINCE, IF_NONE_MATCH, VARY},
+    header::*,
     Response, StatusCode,
 };
 use mime_guess::mime;
 use once_cell::sync::Lazy;
 use std::{
-    f32::consts::E, path::{Path, PathBuf}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}
+    path::{Path, PathBuf}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}
 };
 
 
@@ -58,12 +58,12 @@ pub async fn handle(
     target: DirServer,
     req: hyper::Request<hyper::body::Incoming>,
 ) -> Result<EpicResponse, CustomError> {
-    
 
-    
+
+
     let path_decoded: String = urlencoding::decode(req.uri().path())
         .map_err(|e| CustomError(format!("{e:?}")))?
-        .into_owned(); 
+        .into_owned();
 
     let cookie_sig = req
         .headers()
@@ -85,7 +85,7 @@ pub async fn handle(
     }
 
     // ----------------- canonicalize path & traversal defence ---------------
-   
+
     let target = target.clone();
     let path_decoded_clone = path_decoded.clone();
     let path = PathBuf::from(&target.dir).join(
@@ -108,7 +108,7 @@ pub async fn handle(
         return simple_status(StatusCode::NOT_FOUND, "404 - NOT FOUND");
     }
 
-    
+
 
     if !full_path.starts_with(&target.dir) {
         return Err(CustomError("Attempted directory traversal".into()));
@@ -161,12 +161,8 @@ fn cache_response(key: String, content_type: &str, resp: &Response<Bytes>) {
 // File‑serving helpers
 // ==========================================================================
 
- 
-use hyper::header;
-use http_body::Frame;
-use tokio_util::io::ReaderStream;
-use futures_util::StreamExt; 
-  
+
+
 fn apply_streaming_headers<B>(
     mut resp: Response<B>,
     status: StatusCode,
@@ -207,7 +203,7 @@ async fn serve_file(
     full_path: &Path,
     cache_key: String,
 ) -> Result<EpicResponse, CustomError> {
-    
+
     let meta = match tokio::fs::metadata(full_path).await {
         Ok(m) if m.is_file() => m,
         _ => return simple_status(StatusCode::NOT_FOUND, "404 - FILE NOT FOUND"),
@@ -244,13 +240,13 @@ async fn serve_file(
             ThemeDecision::from_req(req),
         ).await;
     }
- 
+
     let mime_type = if ext_is_md {
         mime::TEXT_PLAIN_UTF_8
     } else {
         mime_guess::from_path(full_path).first_or_octet_stream()
     };
- 
+
     let is_head = req.method() == hyper::Method::HEAD;
 
     let (tx_to_client, internal_rx) = crate::http_proxy::create_response_channel(4);
@@ -262,7 +258,7 @@ async fn serve_file(
         mime_type.as_ref(),
         cfg.cache_control_max_age_in_seconds,
         Some((&*etag, &*last_modified)),
-        Some(size), 
+        Some(size),
     );
 
     if is_head {
@@ -453,7 +449,7 @@ async fn read_file(path: &Path) -> Result<Option<(std::fs::Metadata, Bytes)>, Cu
                 }
             }
         }
-        Err(_) => Ok(None), 
+        Err(_) => Ok(None),
     }
 }
 
