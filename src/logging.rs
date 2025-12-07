@@ -13,6 +13,21 @@ pub struct LogMsg {
     pub thread: Option<String>
 }
 
+impl serde::Serialize for LogMsg {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("LogMsg", 4)?;
+        state.serialize_field("msg", &self.msg)?;
+        state.serialize_field("lvl", &self.lvl.as_str())?;
+        state.serialize_field("src", &self.src)?;
+        state.serialize_field("thread", &self.thread)?;
+        state.end()
+    }
+}
+
 
 
 struct LogVisitor {
@@ -203,4 +218,3 @@ impl<S: Subscriber> Layer<S> for TuiLoggerLayer {
     
     }
 }
-

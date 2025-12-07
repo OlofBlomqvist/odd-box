@@ -23,4 +23,3 @@ pub struct Args {
     #[arg(long)]
     pub config_schema: bool
 }
-

@@ -343,9 +343,7 @@ impl InProcessSiteConfig {
         if filtered_backends.len() == 0 { return None };
         
         let current_req_count_for_target_host_name = {
-            state.app_state.statistics.lb_access_count_per_hostname
-            .get(&self.host_name).and_then(|x|Some(x.load(std::sync::atomic::Ordering::SeqCst)))
-            .unwrap_or(0)
+            0
         };
 
         let selected_backend = filtered_backends.get((current_req_count_for_target_host_name % (filtered_backends.len() as usize)) as usize );
@@ -372,9 +370,7 @@ impl RemoteSiteConfig {
         if filtered_backends.len() == 0 { return None };
         
         let current_req_count_for_target_host_name = {
-            state.app_state.statistics.lb_access_count_per_hostname
-            .get(&self.host_name).and_then(|x|Some(x.load(std::sync::atomic::Ordering::SeqCst)))
-            .unwrap_or(0)
+            0
         };
 
         let selected_backend = filtered_backends.get((current_req_count_for_target_host_name % (filtered_backends.len() as usize)) as usize );

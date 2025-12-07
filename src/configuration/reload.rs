@@ -5,7 +5,7 @@ use anyhow::{bail, Result};
 use tracing::{info, level_filters::LevelFilter, trace, warn};
 use tracing_subscriber::EnvFilter;
 
-use crate::{configuration::{DirServer, InProcessSiteConfig, RemoteSiteConfig, LogLevel}, global_state::GlobalState, proc_host, types::app_state::ProcState};
+use crate::{configuration::{DirServer, InProcessSiteConfig, RemoteSiteConfig, LogLevel}, cruma_integration::{apply_port_offset as apply_cruma_port_offset, build_config as build_cruma_config}, global_state::GlobalState, proc_host, types::app_state::ProcState};
 
 use super::{ConfigWrapper, AnyOddBoxConfig};
 
@@ -162,10 +162,36 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
         }
     }
 
+    // Rebuild cruma configuration to keep hosting/tunnel stack in sync with the latest config.
+    let cruma_port_offset = std::env::var("ODD_BOX_CRUMA_PORT_OFFSET")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let rebuilt_cruma_config = match build_cruma_config(&new_configuration) {
+        Ok((mut cfg, notes)) => {
+            if let Err(e) = apply_cruma_port_offset(&mut cfg, cruma_port_offset) {
+                tracing::error!(error=%e, "Failed to apply port offset to cruma config during reload");
+            }
+            if !notes.unsupported.is_empty() {
+                tracing::warn!("cruma config placeholders/unsupported after reload: {:?}", notes.unsupported);
+            }
+            Some(cfg)
+        }
+        Err(e) => {
+            tracing::error!(error=%e, "Failed to rebuild cruma config during reload");
+            None
+        }
+    };
+
     let new_log_level = new_configuration.log_level.clone();
     let mut guard = global_state.config.write().await;
     *guard = new_configuration;
     drop(guard);
+
+    if let Some(new_cruma_cfg) = rebuilt_cruma_config {
+        let mut cruma_guard = global_state.cruma_config.write().await;
+        *cruma_guard = new_cruma_cfg;
+    }
 
     
     let log_level : LevelFilter = match new_log_level {
@@ -210,16 +236,9 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
 
 
     if has_changed_le_mail {
-        if active_configuration.lets_encrypt_account_email.is_some() {
-            global_state.cert_resolver.enable_lets_encrypt();
-        } else {
-            global_state.cert_resolver.disable_lets_encrypt();
-        }
+        tracing::warn!("LetsEncrypt configuration changed, but legacy cert handling is disabled in cruma-only mode.");
     }
 
-    
-    info!("Configuration reloaded successfully, invalidading caches.");
-    global_state.invalidate_cache();
-    info!("Configuration swap complete - caches invalidated.");
+    info!("Configuration reloaded successfully.");
     Ok(())
 }

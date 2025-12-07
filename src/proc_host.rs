@@ -1,6 +1,7 @@
 use crate::configuration::{LogFormat, LogLevel};
+use crate::cruma_integration::{apply_port_offset as apply_cruma_port_offset, build_config as build_cruma_config};
 use crate::global_state::GlobalState;
-use crate::http_proxy::ProcMessage;
+use crate::control::ProcMessage;
 use crate::types::app_state::ProcState;
 use crate::types::odd_box_event::EventForWebsocketClients;
 use crate::types::proc_info::ProcId;
@@ -12,7 +13,6 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
-use sysinfo::System;
 
 use std::io;
 use std::process::{Child, ExitStatus};
@@ -157,7 +157,7 @@ pub async fn host(
 
     let re = regex::Regex::new(r"^\d* *\[.*?\] .*? - ").expect("host regex always works");
 
-    pub fn kill_process_and_its_children(mut parent: std::process::Child) {
+pub fn kill_process_and_its_children(parent: std::process::Child) {
 
         #[cfg(unix)]
         {
@@ -308,9 +308,29 @@ pub async fn host(
         // just to make sure we havnt messed up timing-wise and selected the same port for two different processes
         // we will always call this function to get a new port (or keep the old one if we are the only one using it)
 
+        let previous_port = resolved_proc.active_port;
         let mut guard = state.config.write().await;
         if let Ok(p) = guard.set_active_port(&mut resolved_proc) {
+            let changed = Some(p) != previous_port;
             resolved_proc.active_port = Some(p);
+
+            if changed {
+                // Keep the cruma runtime in sync with newly assigned ports.
+                if let Ok((mut cfg, notes)) = build_cruma_config(&guard) {
+                    let offset = std::env::var("ODD_BOX_CRUMA_PORT_OFFSET")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(0);
+                    if let Err(e) = apply_cruma_port_offset(&mut cfg, offset) {
+                        tracing::error!(error=%e, "Failed to apply port offset to cruma config after port change");
+                    }
+                    if !notes.unsupported.is_empty() {
+                        tracing::warn!("cruma config placeholders/unsupported after port change: {:?}", notes.unsupported);
+                    }
+                    let mut cruma_guard = state.cruma_config.write().await;
+                    *cruma_guard = cfg;
+                }
+            }
         }
         drop(guard);
 

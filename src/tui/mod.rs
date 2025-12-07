@@ -1,1096 +1,134 @@
-use crossterm::event::{KeyEvent, KeyModifiers};
-use ratatui::layout::{Alignment, Margin};
-use ratatui::style::{Color, Modifier, Style, Stylize };
-use ratatui::text::Line;
-use ratatui::widgets::{BorderType, List, ListItem };
-use tokio::task;
-use tracing::level_filters::LevelFilter;
-use tracing::Level;
-use tracing_subscriber::filter::Directive;
-use tracing_subscriber::EnvFilter;
-use tracing_subscriber::layer::SubscriberExt;
-use std::io::Stdout;
-use std::str::FromStr;
+use std::fmt::Write as _;
+use std::io::{self, Write};
+use std::sync::Arc;
 use std::time::Duration;
+
+use crate::control::ProcMessage;
 use crate::global_state::GlobalState;
-use crate::logging::SharedLogBuffer;
-use crate::logging::LogMsg;
-use crate::types::app_state::*;
+use crate::types::app_state::ProcState;
 use crate::types::odd_box_event::EventForWebsocketClients;
-use crate::types::tui_state::{Page, TuiSiteWindowState, TuiState};
-use std::sync::{Arc, Mutex};
-use crate::http_proxy::ProcMessage;
 
-use serde::ser::SerializeStruct;
+pub fn init() {
+    println!("Starting odd-box TUI (press Ctrl+C to exit)...");
+}
 
-mod connections_widget;
-mod logs_widget;
-mod stats_widget;
-mod threads_widget;
-pub mod scroll_state_wrapper;
-
-use ratatui::{
-    layout::{Constraint, Direction, Layout},
-    widgets::{Block, Borders, Paragraph}
-};
-
-use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
-    execute,
-    terminal::{
-        disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
-
-use ratatui::{
-    backend::CrosstermBackend,
-    Terminal,
-};
-
-impl serde::Serialize for LogMsg {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer {
-        let mut s = serializer.serialize_struct("LogMsg", 4)?;
-        s.serialize_field("msg", &self.msg)?;
-        s.serialize_field("lvl", &self.lvl.as_str())?;
-        s.serialize_field("src", &self.src)?;
-        s.serialize_field("thread", &self.thread.as_ref().unwrap_or(&"".to_string()))?;
-        s.end()
-
+fn fmt_state(state: ProcState) -> &'static str {
+    match state {
+        ProcState::Running => "running",
+        ProcState::Starting => "starting",
+        ProcState::Stopping => "stopping",
+        ProcState::Stopped => "stopped",
+        ProcState::Faulty => "faulty",
+        ProcState::Remote => "remote",
+        ProcState::DirServer => "dir",
+        ProcState::Docker => "docker",
     }
 }
 
+async fn build_snapshot(global_state: &GlobalState) -> String {
+    let status_map = global_state.app_state.site_status_map.clone();
+    let cfg = global_state.config.read().await;
 
-pub fn init() {
-    _ = enable_raw_mode().expect("must be able to enable raw mode");();
-    execute!(std::io::stdout(), EnterAlternateScreen, EnableMouseCapture).expect("must always be able to enter alt screen");
+    let mut out = String::new();
+    writeln!(&mut out, "odd-box status (read-only)").ok();
+    writeln!(&mut out, "=======================").ok();
+
+    let hosted: Vec<_> = cfg.hosted_processes.iter().map(|kv| kv.value().clone()).collect();
+    writeln!(&mut out, "Hosted processes ({}):", hosted.len()).ok();
+    for proc in hosted {
+        let state = status_map
+            .get(&proc.host_name)
+            .map(|v| v.value().clone())
+            .unwrap_or(ProcState::Stopped);
+        let port = proc
+            .active_port
+            .or(proc.port)
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "-".into());
+        writeln!(
+            &mut out,
+            " - {:<30} {:<10} port: {}",
+            proc.host_name,
+            fmt_state(state),
+            port
+        )
+        .ok();
+    }
+
+    let remotes: Vec<_> = cfg.remote_sites.iter().map(|kv| kv.value().clone()).collect();
+    writeln!(&mut out, "\nRemote sites ({}):", remotes.len()).ok();
+    for remote in remotes {
+        let state = status_map
+            .get(&remote.host_name)
+            .map(|v| v.value().clone())
+            .unwrap_or(ProcState::Remote);
+        writeln!(
+            &mut out,
+            " - {:<30} {:<10} backends: {}",
+            remote.host_name,
+            fmt_state(state),
+            remote.backends.len()
+        )
+        .ok();
+    }
+
+    let dirs: Vec<_> = cfg.dir_server.clone().unwrap_or_default();
+    writeln!(&mut out, "\nDir servers ({}):", dirs.len()).ok();
+    for dir in dirs {
+        let state = status_map
+            .get(&dir.host_name)
+            .map(|v| v.value().clone())
+            .unwrap_or(ProcState::DirServer);
+        writeln!(
+            &mut out,
+            " - {:<30} {:<10} dir: {}",
+            dir.host_name,
+            fmt_state(state),
+            dir.dir
+        )
+        .ok();
+    }
+
+    let docker: Vec<_> = cfg.docker_containers.iter().map(|kv| kv.value().clone()).collect();
+    writeln!(&mut out, "\nDocker ({}):", docker.len()).ok();
+    for cont in docker {
+        let host = cont.generate_host_name();
+        let state = status_map
+            .get(&host)
+            .map(|v| v.value().clone())
+            .unwrap_or(ProcState::Docker);
+        writeln!(
+            &mut out,
+            " - {:<30} {:<10} image: {}",
+            host,
+            fmt_state(state),
+            cont.image_name
+        )
+        .ok();
+    }
+
+    out
 }
 
 pub async fn run(
     global_state: Arc<GlobalState>,
-    tx: tokio::sync::broadcast::Sender<ProcMessage>,
-    trace_msg_broadcaster: tokio::sync::broadcast::Sender<EventForWebsocketClients>,
-    reloadable_filter : tracing_subscriber::reload::Layer<EnvFilter, tracing_subscriber::layer::Layered<crate::logging::TuiLoggerLayer, tracing_subscriber::Registry>>,
+    _tx: tokio::sync::broadcast::Sender<ProcMessage>,
+    _trace_msg_broadcaster: tokio::sync::broadcast::Sender<EventForWebsocketClients>,
 ) {
-
-    let log_buffer = Arc::new(Mutex::new(SharedLogBuffer::new()));
-    let layer = crate::logging::TuiLoggerLayer { log_buffer: log_buffer.clone(), broadcaster: trace_msg_broadcaster };
-
-    let reloadable_filter_handle = reloadable_filter.handle();
-
-    let subscriber = tracing_subscriber::registry()
-       .with(layer).with(reloadable_filter);
-
-    tracing::subscriber::set_global_default(subscriber).expect("Failed to set collector");
-
-
-    let backend = CrosstermBackend::new(std::io::stdout());
-
-    let terminal = Terminal::new(backend).expect("must be possible to create terminal");
-
-    let terminal = Arc::new(tokio::sync::Mutex::new(terminal));
-
-
-    let mut manually_selected_theme : Option<dark_light::Mode> = None;
-
-    let dark_style = dark_theme();
-    let light_style = light_theme();
-
-
-    let disabled_items : Vec<String> =  global_state.config.read().await.hosted_process.iter().flatten().filter_map( |x|
-      if x.auto_start.unwrap_or_default() {
-        Some(x.host_name.clone())
-      } else {
-        None
-      }
-    ).collect();
-
-
-    tracing::info!("odd-box started successfully");
-
-    // TUI event loop
-    let tui_handle = {
-        let terminal = Arc::clone(&terminal);
-        let state = global_state.clone();
-        let tx = tx.clone();
-        task::spawn(async move {
-
-            let mut theme = match dark_light::detect() {
-                dark_light::Mode::Dark => Theme::Dark(dark_style),
-                dark_light::Mode::Light => Theme::Light(light_style),
-                dark_light::Mode::Default => Theme::Dark(dark_style),
-            };
-
-            let mut last_set_log_level_by_tui = tracing::level_filters::LevelFilter::TRACE;
-
-            let silence_observation_directive : Directive = "odd_box::observer=warn".parse().expect("This directive should always work");
-
-            let mut count = 0;
-
-            let tx = tx.clone();
-
-            let mut tui_state = crate::types::tui_state::TuiState::new();
-
-            loop {
-
-                tui_state.log_level = LevelFilter::current().to_string();
-
-                if count > 100 && manually_selected_theme.is_none() {
-                    theme = match dark_light::detect() {
-                        dark_light::Mode::Dark => Theme::Dark(dark_style),
-                        dark_light::Mode::Light => Theme::Light(light_style),
-                        dark_light::Mode::Default => Theme::Dark(dark_style)
-                    };
-                    count = 0;
-
-                }
-
-                // KEEP LOCK SHORT TO AVOID DEADLOCK
-                {
-                    let mut terminal = terminal.lock().await;
-                    terminal.draw(|f|
-                        draw_ui::<CrosstermBackend<Stdout>>(
-                            f,
-                            global_state.clone(),
-                            &mut tui_state,
-                            &log_buffer,
-                            &theme
-                        )
-                    )?;
-
-                }
-
-
-                if global_state.app_state.exit.load(std::sync::atomic::Ordering::SeqCst) == true {
-                    if global_state.app_state.site_status_map.iter().find(|x|
-                            x.value() == &ProcState::Stopping
-                        || x.value() == &ProcState::Running
-                        || x.value() == &ProcState::Starting
-
-                    ).is_none() {
-                        break; // nothing is running,stopping or starting.. we can exit now
-                    }
-                }
-
-                if let Ok(true) = event::poll(std::time::Duration::from_millis(100)) {
-
-                    let (current_page,site_list_state) = {
-                        (tui_state.current_page.clone(),tui_state.app_window_state.clone())
-                    };
-
-                    let evt = event::read()?;
-
-
-                    match evt {
-                        Event::Key(KeyEvent {
-                            code: crossterm::event::KeyCode::Char(' '),
-                            modifiers: KeyModifiers::NONE,
-                            #[cfg(target_os="windows")]
-                            kind: event::KeyEventKind::Press,
-                            #[cfg(not(target_os="windows"))]
-                            kind: _,
-                            state:_
-                        }) if tui_state.current_page==Page::Logs => {
-
-                            let mut buf = log_buffer.lock().expect("must always be able to lock log buffer");
-                            buf.pause = !buf.pause;
-                            let paused = buf.pause;
-                            buf.logs.push_back(LogMsg {
-                                msg: if paused {
-                                    format!("LOGGING PAUSED! PRESS SPACE TO RESUME.")
-                                } else {
-                                    format!("LOGGING RESUMED! PRESS SPACE TO PAUSE.")
-                                },
-                                lvl: Level::WARN,
-                                src: String::from(""),
-                                thread: Some(String::from("odd_box::tracing")),
-                            });
-                        }
-                        Event::Key(KeyEvent {
-                            code: crossterm::event::KeyCode::Char('c'),
-                            modifiers: KeyModifiers::CONTROL,
-                            #[cfg(target_os="windows")]
-                            kind: event::KeyEventKind::Press,
-                            #[cfg(not(target_os="windows"))]
-                            kind: _,
-                            state:_
-                        }) => {
-                            state.app_state.exit.store(true, std::sync::atomic::Ordering::SeqCst);
-                            break;
-                        },
-                        Event::Mouse(mouse) => {
-
-                                if TuiSiteWindowState::Hide != site_list_state  {
-                                    match mouse.kind {
-                                        event::MouseEventKind::Moved => {
-                                            tui_state.sites_handle_mouse_hover(mouse.column,mouse.row);
-                                        }
-                                        event::MouseEventKind::Down(event::MouseButton::Left) => {
-                                            tui_state.sites_handle_mouse_click(mouse.column,mouse.row,tx.clone(), &state.app_state.site_status_map)
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                                match current_page {
-                                    Page::Statistics => {
-
-                                    }
-                                    Page::Logs => {
-                                        match mouse.kind {
-                                            event::MouseEventKind::Drag(event::MouseButton::Left) => {
-                                                tui_state.log_tab_stage.scroll_state.handle_mouse_drag(mouse.column,mouse.row);
-                                            }
-                                            event::MouseEventKind::Moved => {
-                                                tui_state.log_tab_stage.scroll_state.handle_mouse_move(mouse.column,mouse.row);
-                                            }
-
-                                            event::MouseEventKind::ScrollDown => {
-                                                tui_state.log_tab_stage.scroll_state.scroll_down(Some(10));
-                                            },
-                                            event::MouseEventKind::ScrollUp => {
-                                                tui_state.log_tab_stage.scroll_state.scroll_up(Some(10));
-                                            },
-                                            _ => {}
-                                        }
-                                    },
-                                    Page::Threads => {
-                                        match mouse.kind {
-                                            event::MouseEventKind::Drag(event::MouseButton::Left) => {
-                                                tui_state.threads_tab_state.scroll_state.handle_mouse_drag(mouse.column,mouse.row);
-                                            }
-                                            event::MouseEventKind::Moved => {
-                                                tui_state.threads_tab_state.scroll_state.handle_mouse_move(mouse.column,mouse.row);
-                                            }
-                                            event::MouseEventKind::ScrollDown => {
-                                                tui_state.threads_tab_state.scroll_state.scroll_down(Some(10));
-                                            },
-                                            event::MouseEventKind::ScrollUp => {
-                                                tui_state.threads_tab_state.scroll_state.scroll_up(Some(10));
-                                            },
-                                            _ => {}
-                                        }
-                                    },
-                                    Page::Connections => {
-                                        match mouse.kind {
-                                            event::MouseEventKind::Drag(event::MouseButton::Left) => {
-                                                tui_state.connections_tab_state.scroll_state.handle_mouse_drag(mouse.column,mouse.row);
-                                            }
-                                            event::MouseEventKind::Moved => {
-                                                tui_state.connections_tab_state.scroll_state.handle_mouse_move(mouse.column,mouse.row);
-                                            }
-                                            event::MouseEventKind::ScrollDown => {
-                                                tui_state.connections_tab_state.scroll_state.scroll_down(Some(10));
-                                            },
-                                            event::MouseEventKind::ScrollUp => {
-                                                tui_state.connections_tab_state.scroll_state.scroll_up(Some(10));
-                                            },
-                                            _ => {}
-                                        }
-                                    },
-                                }
-
-                        }
-                        Event::Key(KeyEvent {
-                            #[cfg(target_os="windows")]
-                            kind: event::KeyEventKind::Press,
-                            #[cfg(not(target_os="windows"))]
-                            kind: _,
-                            code,
-                            ..
-                        }) => {
-
-                                // note regarding observation mode:
-                                // - normally we have observations at warnings regardless of normal log-level.
-                                // - when observation mode is enabled, we will set observer log-level to same as the global loglevel.
-                                // - so that observation mode can be turned on without user having to get spammed with observation spam logs
-                                //   unless they switch to trace logging
-
-                                match code {
-                                    KeyCode::Char('l') => {
-
-                                        let handle = reloadable_filter_handle.clone();
-
-                                        // we cannot use the current log level anymore as we set different levels for proc host and main app
-                                        // thus we will instead save a local copy of the current log level and circle through the levels here.
-                                        match last_set_log_level_by_tui {
-                                            tracing::level_filters::LevelFilter::TRACE => {
-                                                last_set_log_level_by_tui = tracing::level_filters::LevelFilter::INFO;
-                                                _ = handle.reload(
-                                                    EnvFilter::from_str("odd_box=info").unwrap()
-                                                    // we always allow host processes to log anything - its controlled by site specific config
-                                                    // and filtered in the host_proc logic. same with all levels below here.
-                                                    .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
-                                                    .add_directive(silence_observation_directive.clone())
-                                                );
-                                                tracing::info!("Switched log level to INFO");
-                                            }
-                                            tracing::level_filters::LevelFilter::INFO => {
-                                                last_set_log_level_by_tui = tracing::level_filters::LevelFilter::WARN;
-                                                _ = handle.reload(
-                                                    EnvFilter::from_str("odd_box=warn").unwrap()
-                                                    .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
-                                                    .add_directive(silence_observation_directive.clone())
-                                                );
-                                                // use warn log as it is now the lowest visible log level
-                                                tracing::warn!("Switched log level to WARN");
-                                            }
-                                            tracing::level_filters::LevelFilter::WARN => {
-                                                last_set_log_level_by_tui = tracing::level_filters::LevelFilter::ERROR;
-                                                _ = handle.reload(
-                                                    EnvFilter::from_str("odd_box=error").unwrap()
-                                                    .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
-                                                    .add_directive(silence_observation_directive.clone())
-                                                );
-                                                // use error log as it is now the lowest visible log level
-                                                tracing::error!("Switched log level to ERROR");
-                                            }
-                                            tracing::level_filters::LevelFilter::ERROR => {
-                                                last_set_log_level_by_tui = tracing::level_filters::LevelFilter::DEBUG;
-                                                _ = handle.reload(
-                                                    EnvFilter::from_str("odd_box=debug").unwrap()
-                                                    .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
-                                                    .add_directive(silence_observation_directive.clone())
-                                                );
-                                                tracing::debug!("Switched log level to DEBUG");
-                                            }
-                                            tracing::level_filters::LevelFilter::DEBUG => {
-                                                last_set_log_level_by_tui = tracing::level_filters::LevelFilter::TRACE;
-                                                _ = handle.reload(
-                                                    EnvFilter::from_str("odd_box=trace").unwrap()
-                                                    .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
-                                                    .add_directive(silence_observation_directive.clone())
-                                                );
-                                                tracing::trace!("Switched log level to TRACE");
-                                            }
-                                            x => {
-                                                last_set_log_level_by_tui = tracing::level_filters::LevelFilter::INFO;
-                                                _ = handle.reload(
-                                                    EnvFilter::from_str("odd_box=info").unwrap()
-                                                    .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
-                                                    .add_directive(silence_observation_directive.clone())
-                                                );
-                                                tracing::info!("Switched log level to INFO from {x:?}");
-                                            }
-                                        }
-
-                                    }
-                                    // TODO - this is not documented anywhere..
-                                    KeyCode::Char('o')  => {
-                                        {
-                                            let observation_mode_was_on_before_keypress = state.app_state.enable_global_traffic_inspection.load(std::sync::atomic::Ordering::SeqCst);
-                                            let handle = reloadable_filter_handle.clone();
-                                            let ef = match last_set_log_level_by_tui {
-                                                LevelFilter::DEBUG => "odd_box=debug",
-                                                LevelFilter::TRACE => "odd_box=trace",
-                                                LevelFilter::WARN => "odd_box=warn",
-                                                LevelFilter::INFO => "odd_box=info",
-                                                LevelFilter::ERROR => "odd_box=error",
-                                                _ => "odd_box=info"
-                                            };
-                                            if observation_mode_was_on_before_keypress {
-                                                //observation_directive = "odd_box::observer=warn".parse().expect("This directive should always work");
-                                                tracing::error!("OBSERVATION MODE DISABLED - PRESS O AGAIN TO ENABLE");
-                                                state.app_state.enable_global_traffic_inspection.store(false, std::sync::atomic::Ordering::SeqCst);
-                                                _ = handle.reload(
-                                                    EnvFilter::from_str(ef).unwrap()
-                                                    .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
-                                                    .add_directive(silence_observation_directive.clone())
-
-                                                );
-                                            } else {
-                                                //observation_directive = "odd_box::observer=trace".parse().expect("This directive should always work");
-                                                tracing::error!("OBSERVATION MODE ENABLED - PRESS O AGAIN TO DISABLE");
-                                                state.app_state.enable_global_traffic_inspection.store(true, std::sync::atomic::Ordering::SeqCst);
-                                                _ = handle.reload(
-                                                    EnvFilter::from_str(ef).unwrap()
-                                                    .add_directive("odd_box::proc_host=trace".parse().expect("This directive should always work"))
-                                                   // .add_directive(observation_directive.clone())
-
-                                                );
-                                            }
-
-                                        }
-
-                                    },
-                                    KeyCode::Esc | KeyCode::Char('q')  => {
-                                        {
-                                            tracing::warn!("User requested exit");
-                                            state.app_state.exit.store(true, std::sync::atomic::Ordering::SeqCst);
-                                            break;
-                                        }
-
-                                    },
-                                    KeyCode::Char('t') => {
-                                        match manually_selected_theme {
-                                            None => {
-                                                // when switching from auto to manual theme, we will switch to the opposite of the current theme
-                                                match theme {
-                                                    Theme::Light(_) => {
-                                                        manually_selected_theme = Some(dark_light::Mode::Dark);
-                                                        theme = Theme::Dark(dark_style);
-                                                    },
-                                                    Theme::Dark(_) => {
-                                                        manually_selected_theme = Some(dark_light::Mode::Light);
-                                                        theme = Theme::Light(light_style);
-                                                    },
-                                                }
-                                            }
-                                            Some(dark_light::Mode::Dark) => {
-                                                manually_selected_theme = Some(dark_light::Mode::Light);
-                                                theme = Theme::Light(light_style);
-                                            },
-                                            Some(dark_light::Mode::Light) => {
-                                                manually_selected_theme = Some(dark_light::Mode::Dark);
-                                                theme = Theme::Dark(dark_style);
-                                            },
-                                            _ => {},
-                                        };
-                                    },
-                                    _ => {}
-                                }
-                                match current_page {
-                                    Page::Threads => {
-                                        match code {
-                                            KeyCode::PageUp => {
-                                                tui_state.threads_tab_state.scroll_state.scroll_up(Some(10));
-                                            }
-                                            KeyCode::PageDown => {
-                                                tui_state.threads_tab_state.scroll_state.scroll_down(Some(10))
-
-                                            },
-                                            KeyCode::Up => {
-                                                tui_state.threads_tab_state.scroll_state.scroll_up(None)
-                                            }
-                                            KeyCode::Down => {
-                                                tui_state.threads_tab_state.scroll_state.scroll_down(None)
-                                            }
-                                            _ => {}
-                                        }
-                                    },
-                                    Page::Logs => {
-                                        match code {
-                                            KeyCode::Enter => {
-                                                tui_state.log_tab_stage.scroll_state.vertical_scroll = None;
-                                                let mut buf = log_buffer.lock().expect("must always be able to lock log buffer");
-                                                // immediate effect instead of waiting for next log item
-                                                match buf.limit {
-                                                    Some(x) => {
-                                                        while buf.logs.len() > x {
-                                                            buf.logs.pop_front();
-                                                        }
-                                                    },
-                                                    None => {},
-                                                }
-
-                                            }
-                                            KeyCode::Up => {
-                                                tui_state.log_tab_stage.scroll_state.scroll_up(Some(1));
-                                            }
-                                            KeyCode::Down => {
-                                                tui_state.log_tab_stage.scroll_state.scroll_down(Some(1));
-                                            }
-                                            KeyCode::PageUp => {
-                                                let scroll_count = tui_state.log_tab_stage.scroll_state.area_height.saturating_div(2);
-                                                if scroll_count > 0 {
-                                                    tui_state.log_tab_stage.scroll_state.scroll_up(Some(scroll_count));
-                                                }
-                                            }
-                                            KeyCode::PageDown => {
-                                                let scroll_count = tui_state.log_tab_stage.scroll_state.area_height.saturating_div(2);
-                                                if scroll_count > 0 {
-                                                    tui_state.log_tab_stage.scroll_state.scroll_down(Some(scroll_count));
-                                                }
-                                            },
-                                            KeyCode::Char('c') => {
-                                                let mut buf = log_buffer.lock().expect("must always be able to lock log buffer");
-                                                tui_state.log_tab_stage.scroll_state.total_rows = 0;
-                                                tui_state.log_tab_stage.scroll_state.vertical_scroll = None;
-                                                tui_state.log_tab_stage.scroll_state.vertical_scroll_state = tui_state.log_tab_stage.scroll_state.vertical_scroll_state.position(0);
-                                                buf.logs.clear();
-                                                buf.logs.shrink_to_fit();
-
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                    Page::Statistics => {},
-                                    Page::Connections => {
-                                        match code {
-                                            KeyCode::PageUp => {
-                                                tui_state.connections_tab_state.scroll_state.scroll_up(Some(10));
-                                            }
-                                            KeyCode::PageDown => {
-                                                tui_state.connections_tab_state.scroll_state.scroll_down(Some(10));
-
-                                            },
-                                            KeyCode::Up => {
-                                                let scroll_count = tui_state.connections_tab_state.scroll_state.area_height.saturating_div(2);
-                                                if scroll_count > 0 {
-                                                    tui_state.connections_tab_state.scroll_state.scroll_up(None);
-                                                }
-                                            }
-                                            KeyCode::Down => {
-                                                tui_state.connections_tab_state.scroll_state.scroll_down(None);
-                                            }
-                                            _ => {}
-                                        }
-                                    },
-                                }
-
-                                match code {
-
-                                    KeyCode::Char('1') => {
-                                        tui_state.current_page = Page::Logs;
-                                    }
-                                    KeyCode::Char('2') => {
-                                        tui_state.current_page = Page::Connections;
-                                    }
-                                    KeyCode::Char('3') => {
-                                        tui_state.current_page = Page::Statistics;
-                                    }
-                                    KeyCode::Char('4') => {
-                                        tui_state.current_page = Page::Threads;
-                                    }
-                                    KeyCode::BackTab | KeyCode::Left => {
-                                        match tui_state.current_page {
-                                            Page::Logs => tui_state.current_page = Page::Threads,
-                                            Page::Threads => tui_state.current_page = Page::Statistics,
-                                            Page::Statistics => tui_state.current_page = Page::Connections,
-                                            Page::Connections => tui_state.current_page = Page::Logs
-                                        }
-                                    }
-                                    KeyCode::Tab | KeyCode::Right => {
-                                        match tui_state.current_page {
-                                            Page::Logs => tui_state.current_page = Page::Connections,
-                                            Page::Connections => tui_state.current_page = Page::Statistics,
-                                            Page::Statistics => tui_state.current_page = Page::Threads,
-                                            Page::Threads => tui_state.current_page = Page::Logs
-                                        }
-                                    }
-                                    KeyCode::Char('z') => {
-                                        {
-                                            for mut guard in global_state.app_state.site_status_map.iter_mut() {
-                                                let (_k,state) = guard.pair_mut();
-                                                match state {
-                                                    ProcState::Faulty =>  *state = ProcState::Stopping,
-                                                    ProcState::Running =>  *state = ProcState::Stopping,
-                                                    _ => {}
-                                                }
-                                            }
-                                        }
-                                        tx.clone().send(ProcMessage::StopAll).expect("must always be able to send internal messages");
-                                    }
-                                    KeyCode::Char('s') => {
-                                        {
-                                            for mut guard in global_state.app_state.site_status_map.iter_mut() {
-                                                let (_k,state) = guard.pair_mut();
-                                                if disabled_items.contains(_k) {
-                                                    continue;
-                                                }
-                                                if let ProcState::Running = state {
-                                                    *state = ProcState::Starting;
-                                                }
-                                            }
-                                        }
-                                        tx.clone().send(ProcMessage::StartAll).expect("must always be able to send internal messages");
-                                    }
-                                    KeyCode::Char('a') => {
-                                        tui_state.app_window_state = tui_state.app_window_state.next()
-                                    }
-
-                                    _ => {
-
-                                    }
-                            }
-
-
-                            // }
-
-
-
-                        },
-                        _=> {}
-                    }
-
-                }
-
-
-
-
-            }
-            Result::<(), std::io::Error>::Ok(())
-        })
-
-    };
-
-    match tui_handle.await {
-        Ok(_) => {},
-        Err(e) => {
-            tracing::error!("fatal odd-box bug: {:?}",e);
-            // this is NEVER supposed to happen so just make it possible to see the error before we die
-            tokio::time::sleep(Duration::from_secs(5)).await;
-        },
-    }
-
-    _ = disable_raw_mode().ok();
-    let mut stdout = std::io::stdout();
-    execute!(stdout, LeaveAlternateScreen, DisableMouseCapture).expect("should always be possible to leave tui");
-
-    println!("odd-box tui thread exited.")
-
-}
-
-
-
-/// Returns a `Style` configured for a dark theme.
-fn dark_theme() -> Style {
-    Style::default()
-        .fg(Color::White) // Text color
-        //.bg(Color::Black) // Background color
-        .add_modifier(Modifier::BOLD) // Text modifier
-}
-
-/// Returns a `Style` configured for a light theme.
-fn light_theme() -> Style {
-    Style::default()
-        .fg(Color::Black) // Text color
-        //.bg(Color::White) // Background color
-        .add_modifier(Modifier::BOLD) // Text modifier
-}
-
-#[derive(Clone)]
-pub enum Theme {
-    Light(Style),
-    Dark(Style)
-}
-impl Theme {
-    fn inner_cloned(&self) -> Style {
-        match self {
-            Theme::Light(x) => *x,
-            Theme::Dark(x) => *x,
-        }
-    }
-}
-
-fn draw_ui<B: ratatui::backend::Backend>(
-    f: &mut ratatui::Frame,
-    global_state: Arc<GlobalState>,
-    tui_state: &mut TuiState,
-    log_buffer: &Arc<Mutex<SharedLogBuffer>>,
-    theme: &Theme,
-) {
-
-    let size = f.area();
-
-    if size.height < 10 || size.width < 10 {
-        return
-    }
-
-
-    let help_bar_height = 3 as u16;
-
-    let constraints = if size.height < 15 {
-        vec![
-            Constraint::Min(1), // MAIN SECTION
-            Constraint::Max(0),
-            Constraint::Length(help_bar_height), // QUICK BAR
-        ]
-    } else {
-        match tui_state.app_window_state{
-            TuiSiteWindowState::Hide => vec![
-                Constraint::Percentage(100),
-                Constraint::Max(0),
-                Constraint::Length(help_bar_height),
-            ],
-            TuiSiteWindowState::Small => vec![
-                Constraint::Percentage(70),
-                Constraint::Min(5),
-                Constraint::Length(help_bar_height),
-            ],
-            TuiSiteWindowState::Medium => vec![
-                Constraint::Percentage(60),
-                Constraint::Min(5),
-                Constraint::Length(help_bar_height),
-            ],
-            TuiSiteWindowState::Large => vec![
-                Constraint::Percentage(50),
-                Constraint::Min(5),
-                Constraint::Length(help_bar_height),
-            ]
-        }
-};
-
-    let vertical = Layout::vertical(constraints);
-    let [top_area, mid_area, bot_area] = vertical.areas(size);
-
-    let is_dark_theme = matches!(&theme,Theme::Dark(_));
-
-    let app_bg = {
-        if is_dark_theme {
-            Color::Reset
-        } else {
-            Color::White
-        }
-    };
-
-    let tab_fg_color = if is_dark_theme {
-        Color::Cyan
-    } else {
-        Color::DarkGray
-    };
-
-    let main_area = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(100)
-        ])
-        .split(top_area.clone());
-
-
-    f.render_widget(Block::new().bg(app_bg), f.area());
-
-    let tabs =  ratatui::widgets::Tabs::new(
-        vec![
-             ratatui::text::Span::styled("[1] Logs", Style::default().fg(tab_fg_color)),
-             ratatui::text::Span::styled("[2] Connections",Style::default().fg(tab_fg_color)),
-             ratatui::text::Span::styled("[3] Stats",Style::default().fg(tab_fg_color)),
-             ratatui::text::Span::styled("[4] Threads", Style::default().fg(tab_fg_color))
-        ]).highlight_style(
-            if is_dark_theme {
-                Style::new().fg(Color::LightYellow)
-            } else {
-                Style::new().fg(Color::Black)
-            }
-        )
-        .select(match tui_state.current_page {
-            Page::Logs => 0,
-            Page::Connections => 1,
-            Page::Statistics => 2,
-            Page::Threads => 3
-        })
-
-        .divider(ratatui::text::Span::raw("|"));
-
-
-
-    let frame_margin = Margin { horizontal: 1, vertical: 1 };
-
-    match tui_state.current_page {
-        Page::Logs => logs_widget::draw(f,global_state.clone(),tui_state,log_buffer,main_area[0].inner(frame_margin),&theme),
-        Page::Statistics => stats_widget::draw(f,global_state.clone(),tui_state,main_area[0].inner(frame_margin),&theme),
-        Page::Connections => connections_widget::draw(f,global_state.clone(),tui_state,main_area[0].inner(frame_margin),&theme),
-        Page::Threads => threads_widget::draw(f,global_state.clone(),tui_state,main_area[0].inner(frame_margin),&theme)
-    }
-
-    let frame =
-        Block::new()
-        .border_style(
-            if is_dark_theme {
-                Style::new().fg(Color::DarkGray)
-            } else {
-                Style::new().fg(Color::DarkGray)
-            }
-
-        )
-        .border_type(BorderType::Rounded)
-        .borders(Borders::ALL);
-
-    f.render_widget(frame, main_area[0]);
-
-
-    // render the tab bar on top of the tab content
-    f.render_widget(tabs, main_area[0].inner(Margin { horizontal: 2, vertical: 0 }));
-
-    if size.height >= 15 && TuiSiteWindowState::Hide != tui_state.app_window_state {
-
-        let sites_area_height = mid_area.height.saturating_sub(2);
-        if sites_area_height == 0 {
-            return
-        }
-        let sites_count = global_state.app_state.site_status_map.iter().count();
-        let columns_needed = ((sites_count as f32 / sites_area_height as f32).ceil()).max(1.0) as usize;
-
-        let site_columns = Layout::default()
-            .direction(Direction::Horizontal)
-            .flex(ratatui::layout::Flex::Legacy)
-            .constraints(vec![Constraint::Percentage(100 / columns_needed as u16); columns_needed])
-            .split(mid_area);
-
-        let mut site_rects = vec![];
-
-        for (col_idx, col) in site_columns.iter().enumerate() {
-
-            let mut procly : Vec<(String, ProcState)> = global_state.app_state.site_status_map.iter()
-                .map(|x|{
-                    let (a,b) = x.pair();
-                    (a.to_string(),b.to_owned())
-                }).collect();
-
-            procly.sort_by_key(|k| k.0.clone());
-
-            let start_idx = col_idx * sites_area_height as usize;
-            let end_idx = ((col_idx + 1) * sites_area_height as usize).min(sites_count);
-            let items: Vec<ListItem> = procly[start_idx..end_idx].iter().enumerate().map(|(index,(id, state))| {
-
-                let item_rect = ratatui::layout::Rect {
-                    x: col.x,
-                    y: col.y + index as u16 + 1,  // Assuming each ListItem is one line high
-                    width: col.width,
-                    height: 1,  // Assuming each ListItem is one line high
-                };
-
-                site_rects.push((item_rect,id.to_string()));
-
-                let mut s = match state {
-                    &ProcState::Running => Style::default().fg(
-                        if is_dark_theme {
-                            Color::LightGreen
-                        } else {
-                            Color::Green
-                        }
-                    ),
-                    &ProcState::Faulty => Style::default().fg(
-                        if is_dark_theme {
-                                Color::LightMagenta
-                            } else {
-                                Color::Black
-                            }
-                    ),
-                    &ProcState::Starting => Style::default().fg(
-                        if is_dark_theme {
-                                Color::LightGreen
-                            } else {
-                                Color::Green
-                            }
-                    ),
-                    &ProcState::Stopped => Style::default().fg(
-                        if is_dark_theme{
-                                Color::DarkGray
-                            } else {
-                                Color::DarkGray
-                            }
-                    ),
-                    &ProcState::Stopping => Style::default().fg(
-                        if is_dark_theme {
-                                Color::Cyan
-                            } else {
-                                Color::Black
-                            }
-                    ),
-                    &ProcState::Remote => Style::default().fg(
-                        if is_dark_theme {
-                                Color::Cyan
-                            } else {
-                                Color::Blue
-                            }
-                    ),
-                    &ProcState::DirServer => Style::default().fg(
-                        if is_dark_theme {
-                                Color::Cyan
-                            } else {
-                                Color::Cyan
-                            }
-                    ),
-                    &ProcState::Docker => Style::default().fg(
-                        if is_dark_theme {
-                                Color::LightMagenta
-                            } else {
-                                Color::Magenta
-                            }
-                    ),
-                };
-
-                let mut id_style = theme.inner_cloned();
-                if let Some(hovered) = &tui_state.currently_hovered_site {
-                    if hovered == id {
-                        id_style = id_style.add_modifier(Modifier::BOLD);
-                        s = if is_dark_theme { s.bg(Color::Gray) } else { s.bg(Color::Gray) };
-                    }
-                }
-
-
-                let message = ratatui::text::Span::styled(format!(" {id} "),
-                    id_style);
-
-                let status = match state {
-                    &ProcState::Running => ratatui::text::Span::styled(format!(" {:?}",state),s),
-                    &ProcState::Faulty => ratatui::text::Span::styled(format!(" {state:?} (retrying in 5s)"),s),
-                    &ProcState::Starting => ratatui::text::Span::styled(format!(" {:?}",state),s),
-                    &ProcState::Stopped => ratatui::text::Span::styled(format!(" {:?}",state),s),
-                    &ProcState::Stopping => ratatui::text::Span::styled(format!(" {:?}..",state),s),
-                    &ProcState::Remote => ratatui::text::Span::styled(format!(" {:?}",state),s),
-                    &ProcState::DirServer => ratatui::text::Span::styled(format!(" {:?}",state),s),
-                    &ProcState::Docker => ratatui::text::Span::styled(format!(" {:?}",state),s)
-
-
-                };
-
-                ListItem::new(Line::from(vec![
-                    message,
-                    status
-                ]))
-
-            }).collect();
-
-            let sites_list = List::new(items)
-                .block(
-                    Block::new()
-                        .border_style(Style::default().fg(Color::DarkGray).bg(app_bg))
-                        .border_type(BorderType::Rounded)
-                        .borders(Borders::ALL)
-                        .title(" Sites ").title_alignment(Alignment::Left)
-                        .title_style(
-                            if is_dark_theme {
-                                Style::default().fg(Color::Cyan)
-                            } else {
-                                Style::default().fg(Color::Blue)
-                            }
-                        )
-                );
-
-            f.render_widget(sites_list, *col);
-
+    let mut ticker = tokio::time::interval(Duration::from_millis(500));
+    loop {
+        if global_state
+            .app_state
+            .exit
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            break;
         }
 
-        tui_state.site_rects = site_rects;
+        let snapshot = build_snapshot(&global_state).await;
+        print!("\x1b[2J\x1b[H{}", snapshot);
+        let _ = io::stdout().flush();
+
+        ticker.tick().await;
     }
-
-
-
-    let help_bar_chunk = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(3)
-        ])
-        .split(bot_area.clone());
-
-
-
-    let mut help_bar_text = vec![
-        ratatui::text::Span::raw("q: Quit | "),
-        ratatui::text::Span::raw("a: Tgl Sites | "),
-    ];
-
-
-    help_bar_text.push(ratatui::text::Span::raw("s: Start all | "));
-    help_bar_text.push(ratatui::text::Span::raw("z: Stop all | "));
-
-    help_bar_text.push(ratatui::text::Span::raw("↑/↓: Scroll | "));
-
-    if Page::Logs == tui_state.current_page {
-        help_bar_text.push(ratatui::text::Span::raw("c: CLS | "));
-        help_bar_text.push(ratatui::text::Span::raw("tab: Nxt tab "));
-        if tui_state.log_tab_stage.scroll_state.vertical_scroll.is_some() {
-            help_bar_text.push(ratatui::text::Span::raw("| rtrn: Tail "));
-        }
-        help_bar_text.push(ratatui::text::Span::raw("| space: Un/Paus log "));
-        help_bar_text.push(ratatui::text::Span::raw("| l: LogLvl"));
-    } else {
-        help_bar_text.push(ratatui::text::Span::raw("| tab: Tgl page "));
-    }
-
-    help_bar_text.push(ratatui::text::Span::raw("| t: theme"));
-
-    // // DEBUG
-    // help_bar_text.push(ratatui::text::Span::raw(format!("| DBG: {}",
-    //     app_state.dbg
-    // )));
-    let uptime = if let Ok(d) = global_state.uptime() {
-        format_duration(d)
-    } else {
-        String::new()
-    };
-    let current_version = self_update::cargo_crate_version!();
-    let help_bar = Paragraph::new(Line::from(help_bar_text))
-        .style(Style::default().fg(Color::DarkGray).bg(app_bg))
-        .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(format!(" ODD-BOX v{current_version} {uptime} ")).title_style(
-            if is_dark_theme {
-                Style::default().fg(Color::LightYellow)
-            } else {
-                Style::default().fg(Color::Black)
-            }
-        ));
-
-    f.render_widget(help_bar, help_bar_chunk[1]);
-
-
-}
-fn format_duration(d: std::time::Duration) -> String {
-    let total_secs = d.as_secs();
-
-    let days = total_secs / 86400;          // 1 day = 86_400 seconds
-    let hours = (total_secs % 86400) / 3600;
-    let minutes = (total_secs % 3600) / 60;
-    let seconds = total_secs % 60;
-
-    if days > 0 {
-        format!(" - uptime: {} days, {} hours, {} minutes", days, hours, minutes)
-    } else if hours > 0 {
-        format!(" - uptime: {} hours, {} minutes", hours, minutes)
-    } else if minutes > 0 {
-        format!(" - uptime: {} minutes, {} seconds", minutes,seconds)
-    } else {
-        format!(" - uptime: {} seconds", seconds)
-    }
-}
-fn wrap_string(input: &str, max_length: usize) -> Vec<String> {
-    let words = input.split_whitespace();
-    let mut wrapped_lines = Vec::new();
-    let mut current_line = String::new();
-
-    for word in words {
-        if word.len() <= max_length {
-            if !current_line.is_empty() {
-                if current_line.len() + 1 + word.len() > max_length {
-                    wrapped_lines.push(current_line);
-                    current_line = String::new();
-                } else {
-                    current_line.push(' ');
-                }
-            }
-            current_line.push_str(word);
-        } else {
-            if !current_line.is_empty() {
-                wrapped_lines.push(current_line);
-                current_line = String::new();
-            }
-            let chunks = split_string_into_chunks(word, max_length);
-            for chunk in chunks {
-                wrapped_lines.push(chunk);
-            }
-        }
-    }
-
-    // Add any remaining text
-    if !current_line.is_empty() {
-        wrapped_lines.push(current_line);
-    }
-
-    wrapped_lines
-}
-
-fn split_string_into_chunks(s: &str, chunk_size: usize) -> Vec<String> {
-    let mut chunks = Vec::new();
-    let mut start = 0;
-
-    while start < s.len() {
-        let end = if start + chunk_size > s.len() {
-            s.len()
-        } else {
-            let mut end = start + chunk_size;
-            while !s.is_char_boundary(end) {
-                end -= 1;
-            }
-            end
-        };
-        chunks.push(s[start..end].to_string());
-        start = end;
-    }
-
-    chunks
 }

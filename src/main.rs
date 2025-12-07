@@ -6,14 +6,13 @@ use tikv_jemallocator::Jemalloc;
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
-mod cruma;
+pub mod cruma_integration;
 mod configuration;
-mod http_proxy;
-mod proxy;
-mod tcp_proxy;
+mod control;
+mod cruma;
 mod types;
+mod tui;
 use anyhow::bail;
-use anyhow::Context;
 use clap::Parser;
 use configuration::FullyResolvedInProcessSiteConfig;
 use configuration::InProcessSiteConfig;
@@ -22,9 +21,11 @@ use configuration::OddBoxConfiguration;
 use configuration::RemoteSiteConfig;
 use configuration::{ConfigWrapper, LogLevel};
 use core::fmt;
+use anyhow::Context;
 use dashmap::DashMap;
 use global_state::GlobalState;
-use http_proxy::ProcMessage;
+use control::ProcMessage;
+use cruma_integration::{build_config as build_cruma_config, apply_port_offset as apply_cruma_port_offset};
 use notify::RecommendedWatcher;
 use notify::Watcher;
 use std::io::Read;
@@ -35,12 +36,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer;
 use types::args::Args;
-use types::custom_error::*;
 use types::odd_box_event::EventForWebsocketClients;
 use types::odd_box_event::GlobalEvent;
 use types::proc_info::BgTaskInfo;
@@ -49,22 +50,17 @@ use types::proc_info::ProcInfo;
 mod proc_host;
 use tracing_subscriber::util::SubscriberInitExt;
 use types::app_state::ProcState;
-mod api;
 mod logging;
-mod tui;
 
-mod certs;
-mod observer;
 mod self_update;
 mod serde_with;
 mod tcp_pid;
 use lazy_static::lazy_static;
+use std::sync::atomic::{AtomicBool as StdAtomicBool, Ordering as StdOrdering};
 use types::app_state::AppState;
 
 
-mod custom_servers;
 mod docker;
-mod letsencrypt;
 
 #[cfg(test)]
 mod tests;
@@ -81,13 +77,11 @@ pub fn generate_unique_id() -> u64 {
 
 pub mod global_state {
     use std::{
-        sync::{atomic::AtomicU64, Arc},
+        sync::atomic::AtomicU64,
         time::SystemTimeError,
     };
 
     use crate::{
-        certs::DynamicCertResolver,
-        tcp_proxy::{ReverseTcpProxy, ReverseTcpProxyTarget},
         types::odd_box_event::{EventForWebsocketClients, GlobalEvent},
     };
     #[derive(Debug)]
@@ -96,13 +90,11 @@ pub mod global_state {
         pub log_handle: crate::OddLogHandle,
         pub app_state: std::sync::Arc<crate::types::app_state::AppState>,
         pub config: std::sync::Arc<tokio::sync::RwLock<crate::configuration::ConfigWrapper>>,
-        pub proc_broadcaster: tokio::sync::broadcast::Sender<crate::http_proxy::ProcMessage>,
+        pub proc_broadcaster: tokio::sync::broadcast::Sender<crate::control::ProcMessage>,
         pub target_request_counts: dashmap::DashMap<String, AtomicU64>,
-        pub cert_resolver: std::sync::Arc<DynamicCertResolver>,
-        pub reverse_tcp_proxy_target_cache: dashmap::DashMap<String, Arc<ReverseTcpProxyTarget>>,
         pub global_broadcast_channel: tokio::sync::broadcast::Sender<GlobalEvent>,
         pub websockets_broadcast_channel: tokio::sync::broadcast::Sender<EventForWebsocketClients>,
-        pub monitoring_station: crate::observer::obs::MonitoringStation,
+        pub cruma_config: std::sync::Arc<tokio::sync::RwLock<cruma_proxy_lib::types::Configuration>>,
     }
     impl GlobalState {
         pub fn uptime(&self) -> Result<std::time::Duration, SystemTimeError> {
@@ -111,201 +103,31 @@ pub mod global_state {
         pub fn new(
             app_state: std::sync::Arc<crate::types::app_state::AppState>,
             config: std::sync::Arc<tokio::sync::RwLock<crate::configuration::ConfigWrapper>>,
-            tx_to_process_hosts: tokio::sync::broadcast::Sender<crate::http_proxy::ProcMessage>,
-            cert_resolver: std::sync::Arc<DynamicCertResolver>,
+            tx_to_process_hosts: tokio::sync::broadcast::Sender<crate::control::ProcMessage>,
             global_broadcast_channel: tokio::sync::broadcast::Sender<GlobalEvent>,
             websockets_broadcast_channel: tokio::sync::broadcast::Sender<EventForWebsocketClients>,
+            cruma_config: std::sync::Arc<tokio::sync::RwLock<cruma_proxy_lib::types::Configuration>>,
             log_handle: crate::OddLogHandle,
         ) -> Self {
             Self {
-                monitoring_station: crate::observer::obs::MonitoringStation::new(
-                    websockets_broadcast_channel.clone(),
-                ),
                 started_at_time_stamp: std::time::SystemTime::now(),
                 log_handle,
                 app_state,
                 config,
                 proc_broadcaster: tx_to_process_hosts,
                 target_request_counts: dashmap::DashMap::new(),
-                cert_resolver,
-                reverse_tcp_proxy_target_cache: dashmap::DashMap::new(),
                 global_broadcast_channel,
                 websockets_broadcast_channel,
+                cruma_config,
             }
         }
 
-        pub fn invalidate_cache(&self) {
-            self.reverse_tcp_proxy_target_cache.clear();
-        }
-
-        pub fn invalidate_cache_for(&self, host_name: &str) {
-            self.reverse_tcp_proxy_target_cache.remove(host_name);
-        }
-
-        // returns None if the target does not match fully or subdomain.
-        // returns Some(Some(subdomain_name)) if the target matches the subdomain
-        // returns Some(None) if the target matches fully
-        fn filter_fun(
-            req_host_name: &str,
-            target_host_name: &str,
-            allow_subdomains: bool,
-        ) -> Option<Option<String>> {
-            let parsed_name = if req_host_name.contains(":") {
-                req_host_name.split(":").next().expect("if something contains a colon and we split the thing there must be at least one part")
-            } else {
-                req_host_name
-            };
-
-            if target_host_name.eq_ignore_ascii_case(parsed_name) {
-                Some(None)
-            } else if allow_subdomains {
-                match ReverseTcpProxy::get_subdomain(parsed_name, &target_host_name) {
-                    Some(subdomain) => Some(Some(subdomain)),
-                    None => None,
-                }
-            } else {
-                None
-            }
-        }
-
+        /// Legacy proxy lookup removed. Placeholder to keep API surface.
         pub async fn try_find_site(
             &self,
-            pre_filter_hostname: &str,
-        ) -> Option<Arc<ReverseTcpProxyTarget>> {
-            if let Some(pt) = self.reverse_tcp_proxy_target_cache.get(pre_filter_hostname) {
-                let (_k, v) = pt.pair();
-                if let Some(cached_proc_id) = &v.proc_id {
-                    if let Some(_proc_info) = crate::PROC_THREAD_MAP.get(cached_proc_id) {
-                        //tracing::debug!("Cache hit for {pre_filter_hostname}");
-                        return Some(v.clone());
-                    } else {
-                        tracing::trace!(
-                            "Cache miss for {pre_filter_hostname} due to missing proc info"
-                        );
-                    }
-                }
-            } else {
-                tracing::trace!("Cache miss for {pre_filter_hostname}");
-            }
-
-            let mut result = None;
-            let cfg = self.config.read().await;
-            let local_addr = if cfg.use_loopback_ip_for_procs.unwrap_or_default() {
-                "127.0.0.1"
-            } else {
-                "localhost"
-            };
-            for guard in &cfg.docker_containers {
-                let (host_name, x) = guard.pair();
-                //let host_name = x.host_name_label.unwrap_or(format!("{}.odd-box.localhost",x.container_name));
-                let filter_result = Self::filter_fun(pre_filter_hostname, &host_name, true);
-                if filter_result.is_none() {
-                    continue;
-                };
-
-                let sub_domain = filter_result.and_then(|x| x);
-                let rsc = x.generate_remote_config();
-                let t = ReverseTcpProxyTarget {
-                    proc_id: None,
-                    terminate_tls: false,
-                    hosted_target_config: None,
-                    capture_subdomains: true,
-                    forward_wildcard: true,
-                    backends: rsc.backends.clone(),
-                    remote_target_config: Some(rsc),
-                    host_name: host_name.to_string(),
-                    is_hosted: false,
-                    sub_domain: sub_domain,
-                };
-                let shared_result = Arc::new(t);
-                self.reverse_tcp_proxy_target_cache
-                    .insert(pre_filter_hostname.into(), shared_result.clone());
-                result = Some(shared_result);
-                break;
-            }
-
-            for y in cfg.hosted_process.iter().flatten() {
-                let filter_result = Self::filter_fun(
-                    pre_filter_hostname,
-                    &y.host_name,
-                    y.capture_subdomains.unwrap_or_default(),
-                );
-                if filter_result.is_none() {
-                    continue;
-                };
-                let sub_domain = filter_result.and_then(|x| x);
-
-                let port = y.active_port.unwrap_or_default();
-                if port > 0 {
-                    let t = ReverseTcpProxyTarget {
-                        proc_id: Some(y.get_id().clone()),
-                        terminate_tls: y.terminate_tls.unwrap_or_default(),
-                        remote_target_config: None, // we dont need this for hosted processes
-                        hosted_target_config: Some(y.clone()),
-                        capture_subdomains: y.capture_subdomains.unwrap_or_default(),
-                        forward_wildcard: y.forward_subdomains.unwrap_or_default(),
-                        backends: vec![crate::configuration::Backend {
-                            hints: y.hints.clone(),
-
-                            // use dns name to avoid issues where hyper uses ipv6 for 127.0.0.1 since tcp tunnel mode uses ipv4.
-                            // not keeping them the same means the target backend will see different ip's for the same client
-                            // and possibly invalidate sessions in some cases.
-                            address: local_addr.to_string(), //y.host_name.to_owned(), // --- configurable
-                            https: y.https,
-                            port: y.active_port.unwrap_or_default(),
-                        }],
-                        host_name: y.host_name.to_string(),
-                        is_hosted: true,
-                        sub_domain: sub_domain,
-                    };
-                    let shared_result = Arc::new(t);
-                    self.reverse_tcp_proxy_target_cache
-                        .insert(pre_filter_hostname.into(), shared_result.clone());
-                    result = Some(shared_result);
-                    break;
-                } else {
-                    tracing::debug!("the target was found but is not running")
-                }
-            }
-
-            if let Some(x) = &cfg.remote_target {
-                for y in x.iter().filter(|x| {
-                    pre_filter_hostname
-                        .to_uppercase()
-                        .contains(&x.host_name.to_uppercase())
-                }) {
-                    //tracing::warn!("comparing {pre_filter_hostname} with remote target {}",y.host_name);
-                    let filter_result = Self::filter_fun(
-                        pre_filter_hostname,
-                        &y.host_name,
-                        y.capture_subdomains.unwrap_or_default(),
-                    );
-                    if filter_result.is_none() {
-                        continue;
-                    };
-                    let sub_domain = filter_result.and_then(|x| x);
-
-                    let t = ReverseTcpProxyTarget {
-                        proc_id: None,
-                        terminate_tls: y.terminate_tls.unwrap_or_default(),
-                        hosted_target_config: None,
-                        remote_target_config: Some(y.clone()),
-                        capture_subdomains: y.capture_subdomains.unwrap_or_default(),
-                        forward_wildcard: y.forward_subdomains.unwrap_or_default(),
-                        backends: y.backends.clone(),
-                        host_name: y.host_name.to_owned(),
-                        is_hosted: false,
-                        sub_domain: sub_domain,
-                    };
-                    let shared_result = Arc::new(t);
-                    self.reverse_tcp_proxy_target_cache
-                        .insert(pre_filter_hostname.into(), shared_result.clone());
-                    result = Some(shared_result);
-                    break;
-                }
-            }
-
-            result
+            _pre_filter_hostname: &str,
+        ) -> Option<std::sync::Arc<()>> {
+            None
         }
     }
 }
@@ -418,18 +240,6 @@ async fn generic_cleanup_thread(_state: Arc<GlobalState>) {
 
             if every_30_seconds_counter > 30 {
                 every_30_seconds_counter = 0;
-                custom_servers::directory::RESPONSE_CACHE.retain(|_, v| {
-                    let (key, instant, _res) = v;
-                    let elapsed = instant.elapsed();
-                    if elapsed.as_secs() > 30 {
-                        tracing::debug!(
-                            "Dropping cache entry for {} as it is older than 30 seconds",
-                            key
-                        );
-                        return false;
-                    }
-                    true
-                });
             }
         }
         tokio::time::sleep(std::time::Duration::from_secs(1)).await
@@ -598,43 +408,36 @@ async fn main() -> anyhow::Result<()> {
     let inner_state = AppState::new();
 
     let inner_state_arc = std::sync::Arc::new(inner_state);
-    let srv_port: u16 = config.http_port.unwrap_or(8080);
-    let srv_tls_port: u16 = config.tls_port.unwrap_or(4343);
-
-    let mut srv_ip = if let Some(ip) = config.ip {
-        ip.to_string()
-    } else {
-        "127.0.0.1".to_string()
-    };
-
-    // now if srv_ip is ipv6, we need to wrap it in square brackets:
-    if srv_ip.contains(":") {
-        srv_ip = format!("[{}]", srv_ip);
-    }
-
-    let http_bind_addr = format!("{srv_ip}:{srv_port}");
-    let https_bind_addr = format!("{srv_ip}:{srv_tls_port}");
-
-    let http_port = http_bind_addr.parse().context(format!(
-        "Invalid http listen addr configured: '{http_bind_addr}'."
-    ))?;
-    let https_port = https_bind_addr.parse().context(format!(
-        "Invalid https listen addr configured: '{https_bind_addr}'."
-    ))?;
-
-    let enable_lets_encrypt = config.lets_encrypt_account_email.is_some();
-
     let arced_tx = std::sync::Arc::new(proc_msg_tx.clone());
     let shutdown_signal = Arc::new(tokio::sync::Notify::new());
     let shared_config = std::sync::Arc::new(tokio::sync::RwLock::new(config));
+
+    // Build initial cruma configuration from current odd-box config.
+    let cruma_port_offset = std::env::var("ODD_BOX_CRUMA_PORT_OFFSET")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let cruma_cfg_init = {
+        let cfg_guard = shared_config.read().await;
+        let (mut cfg, notes) = build_cruma_config(&cfg_guard)?;
+        if let Err(e) = apply_cruma_port_offset(&mut cfg, cruma_port_offset) {
+            tracing::error!(error=%e, "Failed to apply port offset for cruma config");
+        }
+        if !notes.unsupported.is_empty() {
+            tracing::warn!("cruma config placeholders/unsupported: {:?}", notes.unsupported);
+        }
+        cfg
+    };
+    let cruma_config_arc =
+        std::sync::Arc::new(tokio::sync::RwLock::new(cruma_cfg_init));
 
     let mut global_state = crate::global_state::GlobalState::new(
         inner_state_arc.clone(),
         shared_config.clone(),
         proc_msg_tx.clone(),
-        Arc::new(certs::DynamicCertResolver::new(enable_lets_encrypt)),
         global_event_broadcaster.clone(),
         global_websockets_event_broadcaster.clone(),
+        cruma_config_arc.clone(),
         OddLogHandle::None,
     );
 
@@ -672,41 +475,32 @@ async fn main() -> anyhow::Result<()> {
             )
     );
 
-    let (tui_filter, tui_reload_handle) = tracing_subscriber::reload::Layer::new(
-        EnvFilter::from_default_env()
-            .add_directive(
-                format!("odd_box={}", log_level)
-                    .parse()
-                    .expect("This directive should always work"),
-            )
-            .add_directive(
-                "odd_box::proc_host=trace"
-                    .parse()
-                    .expect("This directive should always work"),
-            )
-            .add_directive(
-                "odd_box::observer=warn"
-                    .parse()
-                    .expect("This directive should always work"),
-            )
-            .add_directive(
-                "quinn_proto=warn"
-                    .parse()
-                    .expect("This directive should always work"),
-            )
-            .add_directive(
-                "hyper_util=warn"
-                    .parse()
-                    .expect("This directive should always work"),
-            )
-            .add_directive(
-                "h2=warn"
-                    .parse()
-                    .expect("This directive should always work"),
-            )
-    );
+    if tui_flag {
+        let (tui_filter, tui_reload_handle) = tracing_subscriber::reload::Layer::new(
+            EnvFilter::from_default_env()
+                .add_directive(
+                    format!("odd_box={}", log_level)
+                        .parse()
+                        .expect("This directive should always work"),
+                )
+                .add_directive(
+                    "odd_box::proc_host=trace"
+                        .parse()
+                        .expect("This directive should always work"),
+                ),
+        );
 
-    if !tui_flag {
+        global_state.log_handle = OddLogHandle::TUI(RwLock::new(tui_reload_handle));
+        tracing_subscriber::registry()
+            .with(logging::TuiLoggerLayer {
+                log_buffer: std::sync::Arc::new(std::sync::Mutex::new(
+                    logging::SharedLogBuffer::new(),
+                )),
+                broadcaster: global_websockets_event_broadcaster.clone(),
+            })
+            .with(tui_filter)
+            .init();
+    } else {
         global_state.log_handle = OddLogHandle::CLI(RwLock::new(cli_reload_handle));
         let fmt_layer = tracing_subscriber::fmt::layer()
             .compact()
@@ -720,25 +514,16 @@ async fn main() -> anyhow::Result<()> {
             ))
             .boxed();
 
-        let subscriber = tracing_subscriber::registry().with(fmt_layer);
-
-        subscriber
+        tracing_subscriber::registry()
+            .with(fmt_layer)
             .with(logging::NonTuiLoggerLayer {
                 broadcaster: global_websockets_event_broadcaster.clone(),
             })
             .with(cli_filter)
             .init();
-    } else {
-        global_state.log_handle = OddLogHandle::TUI(RwLock::new(tui_reload_handle));
     }
 
     let global_state = Arc::new(global_state);
-
-    tokio::task::spawn(crate::letsencrypt::bg_worker_for_lets_encrypt_certs(
-        global_state.clone(),
-    ));
-    tokio::task::spawn(crate::observer::run(global_state.clone()));
-
 
     // Spawn thread cleaner (removes dead threads from the proc_thread_map)
     let cleanup_thread = tokio::spawn(generic_cleanup_thread(global_state.clone()));
@@ -749,41 +534,76 @@ async fn main() -> anyhow::Result<()> {
 
     let mut tui_task: Option<JoinHandle<()>> = None;
 
+    // Capture ctrl-c to shut down cleanly.
+    let cstate = global_state.clone();
+    ctrlc::set_handler(move || {
+        if !CTRL_C_TRIPPED.swap(true, StdOrdering::SeqCst) {
+            tracing::warn!("Ctrl-C received. Shutting down..");
+        } else {
+            tracing::debug!("Ctrl-C received again; shutdown already in progress.");
+        }
+        cstate
+            .app_state
+            .exit
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    })
+    .expect("Error setting Ctrl-C handler");
+
     // Before starting the proxy thread(s) we need to initialize the tracing system and the tui if enabled.
     if tui_flag {
         tui::init();
         tui_task = Some(tokio::spawn(tui::run(
             global_state.clone(),
-            proc_msg_tx,
-            global_websockets_event_broadcaster,
-            tui_filter,
+            proc_msg_tx.clone(),
+            global_websockets_event_broadcaster.clone(),
         )));
-    } else {
-        // From now on, we need to capture ctrl-c and make sure to shut down the application gracefully
-        // as we are about to spawn a bunch of processes that we need to shut down properly.
-        let cstate = global_state.clone();
-        ctrlc::set_handler(move || {
-            tracing::warn!("Ctrl-C received. Shutting down..");
-            cstate
-                .app_state
-                .exit
-                .store(true, std::sync::atomic::Ordering::SeqCst);
-        })
-        .expect("Error setting Ctrl-C handler");
-
-        // ^ Note that we only set this while not in tui mode. In tui mode we have a separate handler for this.
     }
 
 
-    // Now that tracing is initialized we can spawn the main proxy thread
-    let proxy_thread = tokio::spawn(crate::proxy::listen(
-        shared_config.clone(),
-        http_port,
-        https_port,
-        arced_tx.clone(),
-        global_state.clone(),
-        shutdown_signal,
-    ));
+    // Start cruma-based hosting (primary path). Port offset can be used to avoid clashes when legacy listeners are still around.
+    let cruma_task = {
+        let shutdown_for_cruma = shutdown_signal.clone();
+        let state_for_cruma = global_state.clone();
+        tokio::spawn(async move {
+            let cruma_cfg_arc = state_for_cruma.cruma_config.clone();
+
+            let persistence = match cruma_proxy_lib::termination::LocalDiskPersistence::new(
+                &".odd-box-cruma-cache".into(),
+            ) {
+                Ok(p) => std::sync::Arc::new(p),
+                Err(e) => {
+                    tracing::error!(error=%e, "Failed to initialize cruma persistence");
+                    return;
+                }
+            };
+
+            let cancel = CancellationToken::new();
+            let cancel_on_shutdown = cancel.clone();
+            let shutdown_notifier = shutdown_for_cruma.clone();
+            tokio::spawn(async move {
+                shutdown_notifier.notified().await;
+                cancel_on_shutdown.cancel();
+            });
+
+            // Spawn CRUMA tunnel handler using the same configuration as the hosting stack.
+            {
+                let notify = shutdown_for_cruma.clone();
+                let state = state_for_cruma.clone();
+                let cfg_arc = cruma_cfg_arc.clone();
+                tokio::spawn(crate::cruma::cruma_thread(notify, state, cfg_arc));
+            }
+
+            let ct_clone = cancel.clone();
+            if let Err(e) = cruma_proxy_lib::hosting::run_from_config(
+                cruma_cfg_arc,
+                persistence,
+                ct_clone,
+            )
+            .await {
+                tracing::error!(error=%e, "cruma hosting failed");
+            }
+        })
+    };
 
     let mut config_guard = global_state.config.write().await;
 
@@ -909,8 +729,8 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("stopping proxy services..");
     }
 
-    _ = proxy_thread.abort();
-    _ = proxy_thread.await;
+    _ = cruma_task.abort();
+    _ = cruma_task.await;
     _ = cfg_monitor.abort();
     _ = cleanup_thread.abort();
 
@@ -991,7 +811,24 @@ pub async fn docker_thread(state: Arc<GlobalState>) {
             }
             let mut guard = state.config.write().await;
             guard.docker_containers = running_container_targets_dash_map;
+
+            // Keep cruma config in sync with docker-discovered targets.
+            if let Ok((mut cfg, notes)) = build_cruma_config(&guard) {
+                let offset = std::env::var("ODD_BOX_CRUMA_PORT_OFFSET")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                if let Err(e) = apply_cruma_port_offset(&mut cfg, offset) {
+                    tracing::error!(error=%e, "Failed to apply port offset when updating cruma config from docker changes");
+                }
+                if !notes.unsupported.is_empty() {
+                    tracing::warn!("cruma config placeholders/unsupported after docker update: {:?}", notes.unsupported);
+                }
+                let mut cruma_guard = state.cruma_config.write().await;
+                *cruma_guard = cfg;
+            }
         }
         tokio::time::sleep(Duration::from_secs(10)).await;
     }
 }
+static CTRL_C_TRIPPED: StdAtomicBool = StdAtomicBool::new(false);

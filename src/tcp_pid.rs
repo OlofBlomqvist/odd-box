@@ -9,7 +9,7 @@
 // turns out spawning lsof this way is pretty darn fast so just going to do that for now rather than
 // directly reading /proc fs as this will also work on macos
 fn get_pid_via_lsof(ip: &str, port: u16) -> std::io::Result<Option<u32>> {
-    
+
     let my_pid = std::process::id();
     let address = format!("{}:{}", ip, port);
     let output = std::process::Command::new("lsof")
@@ -17,10 +17,10 @@ fn get_pid_via_lsof(ip: &str, port: u16) -> std::io::Result<Option<u32>> {
             "-nPOl",
             &format!("-iTCP@{address}"),
             "-sTCP:ESTABLISHED",
-            "-t", 
+            "-t",
         ]).output()?;
 
-        
+
     if !output.status.success() {
         return Ok(None);
     }
@@ -37,12 +37,13 @@ fn get_pid_via_lsof(ip: &str, port: u16) -> std::io::Result<Option<u32>> {
             if my_pid != pid {
                 return Ok(Some(pid));
             }
-            
-        } 
+
+        }
     }
     Ok(None)
 }
 
+// TODO - this doesnt seem used anymore - we probably would like to either use or remove it
 #[cfg(any(target_os = "linux",target_os = "macos"))]
 pub fn get_process_by_socket(client_socket: &std::net::SocketAddr, _odd_box_socket: &std::net::SocketAddr) -> std::io::Result<Option<(String,i32)>> {
     use sysinfo::{Pid, ProcessRefreshKind, RefreshKind};
@@ -60,10 +61,10 @@ pub fn get_process_by_socket(client_socket: &std::net::SocketAddr, _odd_box_sock
                 }
             }
         }
-    } 
+    }
     Ok(None)
 
-    
+
 }
 
 #[cfg(target_os = "windows")]
