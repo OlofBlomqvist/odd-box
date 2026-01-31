@@ -672,8 +672,14 @@ async fn main() -> anyhow::Result<()> {
     // if in gui mode, run the iced application (blocks on main thread)
     } else if gui_flag {
         tracing::info!("odd-box started successfully. launching GUI...");
+        // Determine theme mode from args
+        let theme_mode = args
+            .theme
+            .as_deref()
+            .map(gui::ThemeMode::from_str)
+            .unwrap_or(gui::ThemeMode::System);
         // Run GUI on main thread - this blocks until window is closed
-        if let Err(e) = gui::run(global_state.clone()) {
+        if let Err(e) = gui::run(global_state.clone(), theme_mode) {
             tracing::error!("GUI error: {:?}", e);
         }
         // Signal exit when GUI closes

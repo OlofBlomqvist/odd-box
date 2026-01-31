@@ -16,6 +16,10 @@ pub struct Args {
     #[arg(long)]
     pub gui: bool,
 
+    /// Force a specific theme for the GUI (light, dark, or system)
+    #[arg(long, value_parser = ["light", "dark", "system"])]
+    pub theme: Option<String>,
+
     /// Updates odd-box to the latest release from github.
     #[arg(long)]
     pub update: bool,
