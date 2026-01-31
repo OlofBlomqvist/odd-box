@@ -38,15 +38,18 @@ async fn build_snapshot(global_state: &GlobalState) -> String {
         writeln!(
             &mut out,
             "Cruma tunnel: {} ({})",
-            assignment.assigned_domain,
-            assignment.welcome_message
+            assignment.assigned_domain, assignment.welcome_message
         )
         .ok();
     } else {
         writeln!(&mut out, "Cruma tunnel: pending assignment").ok();
     }
 
-    let hosted: Vec<_> = cfg.hosted_processes.iter().map(|kv| (kv.key().clone(), kv.value().clone())).collect();
+    let hosted: Vec<_> = cfg
+        .hosted_processes
+        .iter()
+        .map(|kv| (kv.key().clone(), kv.value().clone()))
+        .collect();
     writeln!(&mut out, "Hosted processes ({}):", hosted.len()).ok();
     for (backend_id, proc) in hosted {
         let state = status_map
@@ -68,7 +71,11 @@ async fn build_snapshot(global_state: &GlobalState) -> String {
         .ok();
     }
 
-    let remotes: Vec<_> = cfg.remote_sites.iter().map(|kv| (kv.key().clone(), kv.value().clone())).collect();
+    let remotes: Vec<_> = cfg
+        .remote_sites
+        .iter()
+        .map(|kv| (kv.key().clone(), kv.value().clone()))
+        .collect();
     writeln!(&mut out, "\nRemote sites ({}):", remotes.len()).ok();
     for (backend_id, remote) in remotes {
         let state = status_map
@@ -85,7 +92,11 @@ async fn build_snapshot(global_state: &GlobalState) -> String {
         .ok();
     }
 
-    let dirs: Vec<_> = cfg.static_sites.iter().map(|kv| (kv.key().clone(), kv.value().clone())).collect();
+    let dirs: Vec<_> = cfg
+        .static_sites
+        .iter()
+        .map(|kv| (kv.key().clone(), kv.value().clone()))
+        .collect();
     writeln!(&mut out, "\nStatic sites ({}):", dirs.len()).ok();
     for (backend_id, dir) in dirs {
         let state = status_map
@@ -102,7 +113,11 @@ async fn build_snapshot(global_state: &GlobalState) -> String {
         .ok();
     }
 
-    let docker: Vec<_> = cfg.docker_containers.iter().map(|kv| kv.value().clone()).collect();
+    let docker: Vec<_> = cfg
+        .docker_containers
+        .iter()
+        .map(|kv| kv.value().clone())
+        .collect();
     writeln!(&mut out, "\nDocker ({}):", docker.len()).ok();
     for cont in docker {
         let host = cont.generate_host_name();

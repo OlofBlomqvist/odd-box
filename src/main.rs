@@ -1,38 +1,38 @@
-
-
-pub mod cruma_integration;
 mod configuration;
 mod control;
 mod cruma;
-mod types;
-mod tui;
+pub mod cruma_integration;
 mod gui;
+mod tui;
+mod types;
+use anyhow::Context;
 use anyhow::bail;
+use arc_swap::ArcSwap;
 use clap::Parser;
 use configuration::OddBoxConfigVersion;
 use configuration::{ConfigWrapper, LogLevel};
+use control::ProcMessage;
 use core::fmt;
-use anyhow::Context;
+use cruma_integration::{
+    apply_port_offset as apply_cruma_port_offset, build_config as build_cruma_config,
+};
 use dashmap::DashMap;
 use global_state::GlobalState;
-use control::ProcMessage;
-use arc_swap::ArcSwap;
-use cruma_integration::{build_config as build_cruma_config, apply_port_offset as apply_cruma_port_offset};
 use notify::RecommendedWatcher;
 use notify::Watcher;
 use std::io::Read;
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing_subscriber::filter::LevelFilter;
-use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer;
+use tracing_subscriber::filter::LevelFilter;
+use tracing_subscriber::layer::SubscriberExt;
 use types::args::Args;
 use types::odd_box_event::EventForWebsocketClients;
 use types::odd_box_event::GlobalEvent;
@@ -62,14 +62,9 @@ pub fn generate_unique_id() -> u64 {
 }
 
 pub mod global_state {
-    use std::{
-        sync::atomic::AtomicU64,
-        time::SystemTimeError,
-    };
+    use std::{sync::atomic::AtomicU64, time::SystemTimeError};
 
-    use crate::{
-        types::odd_box_event::{EventForWebsocketClients, GlobalEvent},
-    };
+    use crate::types::odd_box_event::{EventForWebsocketClients, GlobalEvent};
     #[derive(Debug)]
     pub struct GlobalState {
         pub started_at_time_stamp: std::time::SystemTime,
@@ -183,7 +178,9 @@ async fn config_file_monitor(
                         }
                     }
                     notify::EventKind::Remove(_remove_kind) => {
-                        tracing::error!("Configuration file was removed. This is not supported. Please restart odd-box.");
+                        tracing::error!(
+                            "Configuration file was removed. This is not supported. Please restart odd-box."
+                        );
                     }
                     _ => {}
                 }
@@ -270,7 +267,8 @@ fn generate_config(
 
     let cfg = crate::configuration::OddBoxV4Config::example();
     if let Some(file_name) = file_name {
-        let serialized = cfg.to_yaml()
+        let serialized = cfg
+            .to_yaml()
             .map_err(|e| anyhow::anyhow!("Failed to serialize config: {e}"))?;
         let file_path = current_working_dir.join(file_name);
         std::fs::write(&file_path, serialized)?;
@@ -351,7 +349,11 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let gui_flag = args.gui;
-    let tui_flag = if gui_flag { false } else { args.tui.unwrap_or(true) };
+    let tui_flag = if gui_flag {
+        false
+    } else {
+        args.tui.unwrap_or(true)
+    };
 
     if args.init {
         generate_config(Some("odd-box.yaml"), false)?;
@@ -425,12 +427,14 @@ async fn main() -> anyhow::Result<()> {
             tracing::error!(error=%e, "Failed to apply port offset for cruma config");
         }
         if !notes.unsupported.is_empty() {
-            tracing::warn!("cruma config placeholders/unsupported: {:?}", notes.unsupported);
+            tracing::warn!(
+                "cruma config placeholders/unsupported: {:?}",
+                notes.unsupported
+            );
         }
         cfg
     };
-    let cruma_config_arc =
-        std::sync::Arc::new(ArcSwap::from_pointee(cruma_cfg_init));
+    let cruma_config_arc = std::sync::Arc::new(ArcSwap::from_pointee(cruma_cfg_init));
 
     let mut global_state = crate::global_state::GlobalState::new(
         inner_state_arc.clone(),
@@ -473,7 +477,7 @@ async fn main() -> anyhow::Result<()> {
                 "h2=warn"
                     .parse()
                     .expect("This directive should always work"),
-            )
+            ),
     );
 
     if tui_flag {
@@ -560,7 +564,6 @@ async fn main() -> anyhow::Result<()> {
         )));
     }
 
-
     // Start cruma-based hosting (primary path). Port offset can be used to avoid clashes when legacy listeners are still around.
     let cruma_task = {
         let shutdown_for_cruma = shutdown_signal.clone();
@@ -595,12 +598,10 @@ async fn main() -> anyhow::Result<()> {
             }
 
             let ct_clone = cancel.clone();
-            if let Err(e) = cruma_proxy_lib::hosting::run_from_config(
-                cruma_cfg_arc,
-                persistence,
-                ct_clone,
-            )
-            .await {
+            if let Err(e) =
+                cruma_proxy_lib::hosting::run_from_config(cruma_cfg_arc, persistence, ct_clone)
+                    .await
+            {
                 tracing::error!(error=%e, "cruma hosting failed");
             }
         })
@@ -628,8 +629,9 @@ async fn main() -> anyhow::Result<()> {
                     }
                     Err(e) => bail!(
                         "Failed to resolve process configuration for backend '{}':\n{:?}",
-                        backend_id, e
-                    )
+                        backend_id,
+                        e
+                    ),
                 }
             }
             configuration::v4::Backend::Remote(_) => {
@@ -853,7 +855,10 @@ pub async fn docker_thread(state: Arc<GlobalState>) {
                     tracing::error!(error=%e, "Failed to apply port offset when updating cruma config from docker changes");
                 }
                 if !notes.unsupported.is_empty() {
-                    tracing::warn!("cruma config placeholders/unsupported after docker update: {:?}", notes.unsupported);
+                    tracing::warn!(
+                        "cruma config placeholders/unsupported after docker update: {:?}",
+                        notes.unsupported
+                    );
                 }
                 state.cruma_config.store(std::sync::Arc::new(cfg));
             }

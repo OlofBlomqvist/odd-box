@@ -1,16 +1,18 @@
-use std::collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use utoipa::ToSchema;
 
-use crate::{configuration::yaml_air, types::proc_info::ProcId};
 use super::{LogFormat, LogLevel};
+use crate::{configuration::yaml_air, types::proc_info::ProcId};
 
 // ============================================================================
 // V4 Configuration - YAML-based with Frontend/Backend separation
 // ============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, Default, ToSchema, PartialEq, Eq, Hash, JsonSchema,
+)]
 pub enum V4VersionEnum {
     #[default]
     V4,
@@ -30,7 +32,6 @@ pub struct OddBoxV4Config {
     // ========================================================================
     // Global Settings
     // ========================================================================
-
     /// Log level for odd-box itself (trace, debug, info, warn, error)
     #[serde(default = "default_log_level")]
     pub log_level: LogLevel,
@@ -61,14 +62,12 @@ pub struct OddBoxV4Config {
     // ========================================================================
     // ACME / Let's Encrypt
     // ========================================================================
-
     /// ACME configuration for automatic TLS certificates
     pub acme: Option<AcmeConfig>,
 
     // ========================================================================
     // Admin Interface
     // ========================================================================
-
     /// Hostname for the admin UI/API (e.g., "admin.localhost")
     pub admin_api_host: Option<String>,
 
@@ -78,7 +77,6 @@ pub struct OddBoxV4Config {
     // ========================================================================
     // Backends & Frontends
     // ========================================================================
-
     /// Backend definitions (the upstream targets)
     #[serde(default)]
     pub backends: HashMap<String, Backend>,
@@ -231,7 +229,9 @@ pub struct Endpoint {
 }
 
 /// Upstream protocol
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash, JsonSchema, Default)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash, JsonSchema, Default,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
     /// HTTP/1.1
@@ -359,7 +359,9 @@ pub struct DetailedRoute {
 }
 
 /// TLS certificate mode
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash, JsonSchema, Default)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash, JsonSchema, Default,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CertMode {
     /// Use self-signed certificates
@@ -427,27 +429,31 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                 let protocol = hints_to_protocol(proc.hints.as_ref());
 
                 // Convert env_vars from Vec<EnvVar> to HashMap
-                let env: HashMap<String, String> = proc.env_vars
+                let env: HashMap<String, String> = proc
+                    .env_vars
                     .unwrap_or_default()
                     .into_iter()
                     .map(|e| (e.key, e.value))
                     .collect();
 
-                backends.insert(backend_id.clone(), Backend::Process(ProcessBackend {
-                    proc_id: ProcId::new(),
-                    active_port: None,
-                    bin: proc.bin,
-                    args: proc.args.unwrap_or_default(),
-                    dir: proc.dir,
-                    env,
-                    protocol,
-                    https: proc.https.unwrap_or(false),
-                    port: proc.port,
-                    auto_start: proc.auto_start,
-                    exclude_from_start_all: proc.exclude_from_start_all.unwrap_or(false),
-                    log_level: proc.log_level,
-                    log_format: proc.log_format,
-                }));
+                backends.insert(
+                    backend_id.clone(),
+                    Backend::Process(ProcessBackend {
+                        proc_id: ProcId::new(),
+                        active_port: None,
+                        bin: proc.bin,
+                        args: proc.args.unwrap_or_default(),
+                        dir: proc.dir,
+                        env,
+                        protocol,
+                        https: proc.https.unwrap_or(false),
+                        port: proc.port,
+                        auto_start: proc.auto_start,
+                        exclude_from_start_all: proc.exclude_from_start_all.unwrap_or(false),
+                        log_level: proc.log_level,
+                        log_format: proc.log_format,
+                    }),
+                );
 
                 // Create route for this backend
                 let capture_subdomains = proc.capture_subdomains.unwrap_or(false);
@@ -456,13 +462,16 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                 let lets_encrypt = proc.enable_lets_encrypt.unwrap_or(false);
 
                 if capture_subdomains || forward_subdomains || redirect_to_https || lets_encrypt {
-                    routes.insert(proc.host_name, RouteTarget::Detailed(DetailedRoute {
-                        backend: backend_id,
-                        capture_subdomains,
-                        forward_subdomains,
-                        redirect_to_https,
-                        lets_encrypt,
-                    }));
+                    routes.insert(
+                        proc.host_name,
+                        RouteTarget::Detailed(DetailedRoute {
+                            backend: backend_id,
+                            capture_subdomains,
+                            forward_subdomains,
+                            redirect_to_https,
+                            lets_encrypt,
+                        }),
+                    );
                 } else {
                     routes.insert(proc.host_name, RouteTarget::Simple(backend_id));
                 }
@@ -475,33 +484,44 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                 let backend_id = remote.host_name.clone();
 
                 // Convert backends to endpoints
-                let endpoints: Vec<Endpoint> = remote.backends.iter().map(|b| {
-                    Endpoint {
+                let endpoints: Vec<Endpoint> = remote
+                    .backends
+                    .iter()
+                    .map(|b| Endpoint {
                         addr: b.address.clone(),
                         port: if b.port == 0 {
                             if b.https.unwrap_or(false) { 443 } else { 80 }
                         } else {
                             b.port
                         },
-                    }
-                }).collect();
+                    })
+                    .collect();
 
                 // Get protocol from first backend's hints
-                let protocol = remote.backends.first()
+                let protocol = remote
+                    .backends
+                    .first()
                     .and_then(|b| b.hints.as_ref())
                     .map(|h| hints_to_protocol(Some(h)))
                     .unwrap_or(Protocol::H1);
 
-                let https = remote.backends.first()
+                let https = remote
+                    .backends
+                    .first()
                     .and_then(|b| b.https)
                     .unwrap_or(false);
 
-                backends.insert(backend_id.clone(), Backend::Remote(RemoteBackend {
-                    endpoints,
-                    protocol,
-                    https,
-                    keep_original_host_header: remote.keep_original_host_header.unwrap_or(false),
-                }));
+                backends.insert(
+                    backend_id.clone(),
+                    Backend::Remote(RemoteBackend {
+                        endpoints,
+                        protocol,
+                        https,
+                        keep_original_host_header: remote
+                            .keep_original_host_header
+                            .unwrap_or(false),
+                    }),
+                );
 
                 // Create route
                 let capture_subdomains = remote.capture_subdomains.unwrap_or(false);
@@ -510,13 +530,16 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                 let lets_encrypt = remote.enable_lets_encrypt.unwrap_or(false);
 
                 if capture_subdomains || forward_subdomains || redirect_to_https || lets_encrypt {
-                    routes.insert(remote.host_name, RouteTarget::Detailed(DetailedRoute {
-                        backend: backend_id,
-                        capture_subdomains,
-                        forward_subdomains,
-                        redirect_to_https,
-                        lets_encrypt,
-                    }));
+                    routes.insert(
+                        remote.host_name,
+                        RouteTarget::Detailed(DetailedRoute {
+                            backend: backend_id,
+                            capture_subdomains,
+                            forward_subdomains,
+                            redirect_to_https,
+                            lets_encrypt,
+                        }),
+                    );
                 } else {
                     routes.insert(remote.host_name, RouteTarget::Simple(backend_id));
                 }
@@ -528,13 +551,16 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
             for dir in dirs {
                 let backend_id = dir.host_name.clone();
 
-                backends.insert(backend_id.clone(), Backend::Static(StaticBackend {
-                    dir: dir.dir,
-                    index: "index.html".to_string(),
-                    list_dir: dir.enable_directory_browsing.unwrap_or(false),
-                    render_markdown: dir.render_markdown.unwrap_or(false),
-                    cache_max_age: dir.cache_control_max_age_in_seconds,
-                }));
+                backends.insert(
+                    backend_id.clone(),
+                    Backend::Static(StaticBackend {
+                        dir: dir.dir,
+                        index: "index.html".to_string(),
+                        list_dir: dir.enable_directory_browsing.unwrap_or(false),
+                        render_markdown: dir.render_markdown.unwrap_or(false),
+                        cache_max_age: dir.cache_control_max_age_in_seconds,
+                    }),
+                );
 
                 // Create route
                 let capture_subdomains = dir.capture_subdomains.unwrap_or(false);
@@ -542,13 +568,16 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                 let lets_encrypt = dir.enable_lets_encrypt.unwrap_or(false);
 
                 if capture_subdomains || redirect_to_https || lets_encrypt {
-                    routes.insert(dir.host_name, RouteTarget::Detailed(DetailedRoute {
-                        backend: backend_id,
-                        capture_subdomains,
-                        forward_subdomains: false,
-                        redirect_to_https,
-                        lets_encrypt,
-                    }));
+                    routes.insert(
+                        dir.host_name,
+                        RouteTarget::Detailed(DetailedRoute {
+                            backend: backend_id,
+                            capture_subdomains,
+                            forward_subdomains: false,
+                            redirect_to_https,
+                            lets_encrypt,
+                        }),
+                    );
                 } else {
                     routes.insert(dir.host_name, RouteTarget::Simple(backend_id));
                 }
@@ -556,10 +585,8 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
         }
 
         // Convert global env_vars to HashMap
-        let env: HashMap<String, String> = v3.env_vars
-            .into_iter()
-            .map(|e| (e.key, e.value))
-            .collect();
+        let env: HashMap<String, String> =
+            v3.env_vars.into_iter().map(|e| (e.key, e.value)).collect();
 
         // Build frontends
         let http_port = v3.http_port.unwrap_or(8080);
@@ -578,14 +605,19 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
         };
 
         // ACME config
-        let acme = v3.lets_encrypt_account_email.map(|email| AcmeConfig { email });
+        let acme = v3
+            .lets_encrypt_account_email
+            .map(|email| AcmeConfig { email });
 
         Ok(OddBoxV4Config {
             version: V4VersionEnum::V4,
             path: v3.path,
             log_level: v3.log_level.unwrap_or(LogLevel::Info),
             port_range_start: v3.port_range_start,
-            ip: v3.ip.map(|addr| addr.to_string()).unwrap_or_else(default_ip),
+            ip: v3
+                .ip
+                .map(|addr| addr.to_string())
+                .unwrap_or_else(default_ip),
             env,
             root_dir: v3.root_dir,
             default_log_format: v3.default_log_format,
@@ -632,10 +664,13 @@ impl OddBoxV4Config {
 
     /// Write configuration to disk
     pub fn write_to_disk(&self) -> anyhow::Result<()> {
-        let path = self.path.as_ref()
+        let path = self
+            .path
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No path set for configuration"))?;
 
-        let yaml = self.to_yaml()
+        let yaml = self
+            .to_yaml()
             .map_err(|e| anyhow::anyhow!("Failed to serialize config: {}", e))?;
 
         std::fs::write(path, yaml)?;
@@ -644,38 +679,34 @@ impl OddBoxV4Config {
 
     /// Get all process backends
     pub fn process_backends(&self) -> impl Iterator<Item = (&String, &ProcessBackend)> {
-        self.backends.iter().filter_map(|(k, v)| {
-            match v {
-                Backend::Process(p) => Some((k, p)),
-                _ => None,
-            }
+        self.backends.iter().filter_map(|(k, v)| match v {
+            Backend::Process(p) => Some((k, p)),
+            _ => None,
         })
     }
 
     /// Get all remote backends
     pub fn remote_backends(&self) -> impl Iterator<Item = (&String, &RemoteBackend)> {
-        self.backends.iter().filter_map(|(k, v)| {
-            match v {
-                Backend::Remote(r) => Some((k, r)),
-                _ => None,
-            }
+        self.backends.iter().filter_map(|(k, v)| match v {
+            Backend::Remote(r) => Some((k, r)),
+            _ => None,
         })
     }
 
     /// Get all static backends
     pub fn static_backends(&self) -> impl Iterator<Item = (&String, &StaticBackend)> {
-        self.backends.iter().filter_map(|(k, v)| {
-            match v {
-                Backend::Static(s) => Some((k, s)),
-                _ => None,
-            }
+        self.backends.iter().filter_map(|(k, v)| match v {
+            Backend::Static(s) => Some((k, s)),
+            _ => None,
         })
     }
 
     /// Get HTTP routes, returning empty map if no HTTP frontend
     pub fn http_routes(&self) -> &HashMap<String, RouteTarget> {
-        static EMPTY: std::sync::OnceLock<HashMap<String, RouteTarget>> = std::sync::OnceLock::new();
-        self.frontends.http
+        static EMPTY: std::sync::OnceLock<HashMap<String, RouteTarget>> =
+            std::sync::OnceLock::new();
+        self.frontends
+            .http
             .as_ref()
             .map(|f| &f.routes)
             .unwrap_or_else(|| EMPTY.get_or_init(HashMap::new))
@@ -683,7 +714,8 @@ impl OddBoxV4Config {
 
     /// Get HTTPS routes, inheriting from HTTP if configured
     pub fn https_routes(&self) -> &HashMap<String, RouteTarget> {
-        static EMPTY: std::sync::OnceLock<HashMap<String, RouteTarget>> = std::sync::OnceLock::new();
+        static EMPTY: std::sync::OnceLock<HashMap<String, RouteTarget>> =
+            std::sync::OnceLock::new();
 
         if let Some(https) = &self.frontends.https {
             match &https.routes {
@@ -699,50 +731,74 @@ impl OddBoxV4Config {
     pub fn example() -> Self {
         let mut backends = HashMap::new();
 
-        backends.insert("my-app".to_string(), Backend::Process(ProcessBackend {
-            proc_id: ProcId::new(),
-            active_port: None,
-            bin: "node".to_string(),
-            args: vec!["server.js".to_string()],
-            dir: Some("$root_dir/my-app".to_string()),
-            env: [("NODE_ENV".to_string(), "production".to_string())].into(),
-            protocol: Protocol::H1,
-            https: false,
-            port: None,
-            auto_start: Some(true),
-            exclude_from_start_all: false,
-            log_level: None,
-            log_format: None,
-        }));
+        backends.insert(
+            "my-app".to_string(),
+            Backend::Process(ProcessBackend {
+                proc_id: ProcId::new(),
+                active_port: None,
+                bin: "node".to_string(),
+                args: vec!["server.js".to_string()],
+                dir: Some("$root_dir/my-app".to_string()),
+                env: [("NODE_ENV".to_string(), "production".to_string())].into(),
+                protocol: Protocol::H1,
+                https: false,
+                port: None,
+                auto_start: Some(true),
+                exclude_from_start_all: false,
+                log_level: None,
+                log_format: None,
+            }),
+        );
 
-        backends.insert("api-servers".to_string(), Backend::Remote(RemoteBackend {
-            endpoints: vec![
-                Endpoint { addr: "10.0.0.1".to_string(), port: 8080 },
-                Endpoint { addr: "10.0.0.2".to_string(), port: 8080 },
-            ],
-            protocol: Protocol::H2,
-            https: true,
-            keep_original_host_header: false,
-        }));
+        backends.insert(
+            "api-servers".to_string(),
+            Backend::Remote(RemoteBackend {
+                endpoints: vec![
+                    Endpoint {
+                        addr: "10.0.0.1".to_string(),
+                        port: 8080,
+                    },
+                    Endpoint {
+                        addr: "10.0.0.2".to_string(),
+                        port: 8080,
+                    },
+                ],
+                protocol: Protocol::H2,
+                https: true,
+                keep_original_host_header: false,
+            }),
+        );
 
-        backends.insert("docs".to_string(), Backend::Static(StaticBackend {
-            dir: "/var/www/docs".to_string(),
-            index: "index.html".to_string(),
-            list_dir: true,
-            render_markdown: true,
-            cache_max_age: Some(3600),
-        }));
+        backends.insert(
+            "docs".to_string(),
+            Backend::Static(StaticBackend {
+                dir: "/var/www/docs".to_string(),
+                index: "index.html".to_string(),
+                list_dir: true,
+                render_markdown: true,
+                cache_max_age: Some(3600),
+            }),
+        );
 
         let mut routes = HashMap::new();
-        routes.insert("myapp.local".to_string(), RouteTarget::Simple("my-app".to_string()));
-        routes.insert("api.local".to_string(), RouteTarget::Simple("api-servers".to_string()));
-        routes.insert("docs.local".to_string(), RouteTarget::Detailed(DetailedRoute {
-            backend: "docs".to_string(),
-            capture_subdomains: true,
-            forward_subdomains: false,
-            redirect_to_https: true,
-            lets_encrypt: false,
-        }));
+        routes.insert(
+            "myapp.local".to_string(),
+            RouteTarget::Simple("my-app".to_string()),
+        );
+        routes.insert(
+            "api.local".to_string(),
+            RouteTarget::Simple("api-servers".to_string()),
+        );
+        routes.insert(
+            "docs.local".to_string(),
+            RouteTarget::Detailed(DetailedRoute {
+                backend: "docs".to_string(),
+                capture_subdomains: true,
+                forward_subdomains: false,
+                redirect_to_https: true,
+                lets_encrypt: false,
+            }),
+        );
 
         Self {
             version: V4VersionEnum::V4,

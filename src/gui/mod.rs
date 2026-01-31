@@ -1,14 +1,16 @@
 pub mod logs;
 
 use iced::widget::{
-    button, checkbox, column, container, row, scrollable, text, text_input, vertical_rule, Column,
-    Row, Scrollable, Space,
+    Column, Id, Row, Scrollable, Space, button, checkbox, column, container, row, rule, scrollable,
+    text, text_input,
 };
-use iced::{time, Background, Border, Color, Element, Font, Length, Padding, Subscription, Task, Theme};
+use iced::{
+    Border, Color, Element, Font, Length, Padding, Subscription, Task, Theme, system, theme, time,
+};
 use std::sync::Arc;
 use tracing::Level;
 
-use crate::configuration::{self, Protocol};
+use crate::configuration::{self};
 use crate::global_state::GlobalState;
 use crate::types::app_state::ProcState;
 use logs::{LogFilter, SharedLogState};
@@ -20,6 +22,7 @@ pub enum ThemeMode {
     System,
 }
 
+
 impl ThemeMode {
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
@@ -29,17 +32,6 @@ impl ThemeMode {
         }
     }
 
-    fn resolve(&self) -> Theme {
-        match self {
-            ThemeMode::Light => Theme::Light,
-            ThemeMode::Dark => Theme::Dracula,
-            ThemeMode::System => match dark_light::detect() {
-                Ok(dark_light::Mode::Dark) => Theme::Dracula,
-                Ok(dark_light::Mode::Light) => Theme::Light,
-                _ => Theme::Dracula,
-            },
-        }
-    }
 }
 
 pub fn run(
@@ -54,11 +46,18 @@ pub fn run(
         ..Default::default()
     };
 
-    iced::application("odd-box", OddBoxGui::update, OddBoxGui::view)
+    let state_clone = state.clone();
+    let log_state_clone = log_state.clone();
+
+    iced::application(
+        move || OddBoxGui::new(state_clone.clone(), theme_mode, log_state_clone.clone()),
+        OddBoxGui::update,
+        OddBoxGui::view,
+    )
         .theme(OddBoxGui::theme)
         .subscription(OddBoxGui::subscription)
         .window(window_settings)
-        .run_with(move || OddBoxGui::new(state, theme_mode, log_state))
+        .run()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -102,6 +101,7 @@ impl Page {
 #[derive(Debug, Clone)]
 pub enum Message {
     NavigateTo(Page),
+    SystemThemeChanged(theme::Mode),
     // Log filter messages
     LogFilterTextChanged(String),
     LogFilterToggleTrace(bool),
@@ -185,6 +185,7 @@ pub struct OddBoxGui {
     log_state: SharedLogState,
     current_page: Page,
     theme_mode: ThemeMode,
+    system_theme: Option<theme::Mode>,
     // Log filtering
     log_filter: LogFilter,
     // Cached list of known sources
@@ -207,12 +208,21 @@ impl OddBoxGui {
         log_state: SharedLogState,
     ) -> (Self, Task<Message>) {
         let state_clone = state.clone();
+        let mut tasks: Vec<Task<Message>> =
+            vec![Task::perform(fetch_config(state_clone), Message::ConfigUpdated)];
+
+        // On system mode, grab current OS theme (winit-powered)
+        if matches!(theme_mode, ThemeMode::System) {
+            tasks.push(system::theme().map(Message::SystemThemeChanged));
+        }
+
         (
             Self {
                 state,
                 log_state,
                 current_page: Page::Dashboard,
                 theme_mode,
+                system_theme: None,
                 log_filter: LogFilter::new(),
                 known_sources: Vec::new(),
                 cached_log_lines: Vec::new(),
@@ -222,17 +232,13 @@ impl OddBoxGui {
                 log_viewport_height: 600.0, // Default, updated on scroll
                 cached_config: CachedConfig::default(),
             },
-            // Fetch initial config data
-            Task::perform(
-                fetch_config(state_clone),
-                Message::ConfigUpdated,
-            ),
+            Task::batch(tasks),
         )
     }
 
     fn subscription(&self) -> Subscription<Message> {
         // Tick for pages that need live updates
-        match self.current_page {
+        let page_sub = match self.current_page {
             Page::Monitoring => {
                 time::every(std::time::Duration::from_millis(500)).map(|_| Message::Tick)
             }
@@ -241,7 +247,11 @@ impl OddBoxGui {
                 time::every(std::time::Duration::from_millis(1000)).map(|_| Message::Tick)
             }
             _ => Subscription::none(),
-        }
+        };
+
+        let theme_sub = system::theme_changes().map(Message::SystemThemeChanged);
+
+        Subscription::batch(vec![page_sub, theme_sub])
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -252,23 +262,26 @@ impl OddBoxGui {
                     self.refresh_log_cache();
                 }
                 // Trigger config refresh for config-related pages
-                if matches!(page, Page::ManagedProcesses | Page::Backends | Page::Frontends | Page::Dashboard) {
-                    return Task::perform(
-                        fetch_config(self.state.clone()),
-                        Message::ConfigUpdated,
-                    );
+                if matches!(
+                    page,
+                    Page::ManagedProcesses | Page::Backends | Page::Frontends | Page::Dashboard
+                ) {
+                    return Task::perform(fetch_config(self.state.clone()), Message::ConfigUpdated);
                 }
+            }
+            Message::SystemThemeChanged(mode) => {
+                self.system_theme = Some(mode);
             }
             Message::Tick => {
                 if self.current_page == Page::Monitoring {
                     self.refresh_log_cache();
                 }
                 // Refresh config for config-related pages
-                if matches!(self.current_page, Page::ManagedProcesses | Page::Backends | Page::Frontends | Page::Dashboard) {
-                    return Task::perform(
-                        fetch_config(self.state.clone()),
-                        Message::ConfigUpdated,
-                    );
+                if matches!(
+                    self.current_page,
+                    Page::ManagedProcesses | Page::Backends | Page::Frontends | Page::Dashboard
+                ) {
+                    return Task::perform(fetch_config(self.state.clone()), Message::ConfigUpdated);
                 }
             }
             Message::ConfigUpdated(config) => {
@@ -343,10 +356,18 @@ impl OddBoxGui {
             .into_iter()
             .map(|entry| {
                 let (level_str, level_color) = Self::level_display(entry.level);
-                let source = entry.thread.as_ref()
+                let source = entry
+                    .thread
+                    .as_ref()
                     .filter(|t| !t.is_empty())
                     .cloned()
-                    .or_else(|| if entry.source.is_empty() { None } else { Some(entry.source.clone()) })
+                    .or_else(|| {
+                        if entry.source.is_empty() {
+                            None
+                        } else {
+                            Some(entry.source.clone())
+                        }
+                    })
                     .unwrap_or_else(|| "-".to_string());
 
                 CachedLogLine {
@@ -374,7 +395,7 @@ impl OddBoxGui {
 
     fn view(&self) -> Element<'_, Message> {
         let sidebar = self.view_sidebar();
-        let divider = vertical_rule(1);
+        let divider = rule::vertical(1);
         let content = self.view_content();
 
         row![sidebar, divider, content]
@@ -387,8 +408,7 @@ impl OddBoxGui {
         let header = container(
             column![
                 text("odd-box").font(Font::MONOSPACE),
-                text("reverse proxy")
-                    .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                text("reverse proxy").color(self.theme().extended_palette().background.strong.text),
             ]
             .spacing(4),
         )
@@ -409,12 +429,14 @@ impl OddBoxGui {
             .map(|&page| self.nav_button(page))
             .collect();
 
-        let nav = Column::with_children(nav_buttons).spacing(4).padding(Padding {
-            top: 10.0,
-            right: 10.0,
-            bottom: 10.0,
-            left: 10.0,
-        });
+        let nav = Column::with_children(nav_buttons)
+            .spacing(4)
+            .padding(Padding {
+                top: 10.0,
+                right: 10.0,
+                bottom: 10.0,
+                left: 10.0,
+            });
 
         let sidebar_content = column![header, nav]
             .width(Length::Fixed(200.0))
@@ -424,6 +446,7 @@ impl OddBoxGui {
             .style(|theme: &Theme| {
                 let palette = theme.extended_palette();
                 container::Style {
+                    background: Some(palette.background.weak.color.into()),
                     ..Default::default()
                 }
             })
@@ -457,7 +480,7 @@ impl OddBoxGui {
                     palette.primary.weak.color
                 } else {
                     match status {
-                        button::Status::Hovered => palette.background.strong.color,
+                        button::Status::Hovered => palette.background.weak.color,
                         _ => Color::TRANSPARENT,
                     }
                 };
@@ -469,6 +492,7 @@ impl OddBoxGui {
                 };
 
                 button::Style {
+                    background: Some(background.into()),
                     text_color,
                     border: Border {
                         radius: 6.0.into(),
@@ -513,7 +537,7 @@ impl OddBoxGui {
     fn view_monitoring(&self) -> Element<'_, Message> {
         let title_row = row![
             text("Monitoring"),
-            Space::with_width(Length::Fill),
+            Space::new().width(Length::Fill),
             button(text("Clear Logs"))
                 .padding(Padding {
                     top: 6.0,
@@ -553,11 +577,21 @@ impl OddBoxGui {
             .width(Length::Fixed(250.0));
 
         let level_filters = row![
-            checkbox("TRC", self.log_filter.show_trace).on_toggle(Message::LogFilterToggleTrace),
-            checkbox("DBG", self.log_filter.show_debug).on_toggle(Message::LogFilterToggleDebug),
-            checkbox("INF", self.log_filter.show_info).on_toggle(Message::LogFilterToggleInfo),
-            checkbox("WRN", self.log_filter.show_warn).on_toggle(Message::LogFilterToggleWarn),
-            checkbox("ERR", self.log_filter.show_error).on_toggle(Message::LogFilterToggleError),
+            checkbox(self.log_filter.show_trace)
+                .label("TRC")
+                .on_toggle(Message::LogFilterToggleTrace),
+            checkbox(self.log_filter.show_debug)
+                .label("DBG")
+                .on_toggle(Message::LogFilterToggleDebug),
+            checkbox(self.log_filter.show_info)
+                .label("INF")
+                .on_toggle(Message::LogFilterToggleInfo),
+            checkbox(self.log_filter.show_warn)
+                .label("WRN")
+                .on_toggle(Message::LogFilterToggleWarn),
+            checkbox(self.log_filter.show_error)
+                .label("ERR")
+                .on_toggle(Message::LogFilterToggleError),
         ]
         .spacing(12);
 
@@ -569,10 +603,10 @@ impl OddBoxGui {
 
         row![
             search_input,
-            Space::with_width(Length::Fill),
+            Space::new().width(Length::Fill),
             level_filters,
-            Space::with_width(Length::Fixed(20.0)),
-            text(log_count).color(Color::from_rgb(0.5, 0.5, 0.5)),
+            Space::new().width(Length::Fixed(20.0)),
+            text(log_count).color(self.theme().extended_palette().background.strong.text),
         ]
         .spacing(15)
         .align_y(iced::Alignment::Center)
@@ -581,7 +615,7 @@ impl OddBoxGui {
 
     fn view_source_filter(&self) -> Element<'_, Message> {
         if self.known_sources.is_empty() {
-            return Space::with_height(0).into();
+            return Space::new().height(Length::Fixed(0.0)).into();
         }
 
         let mut source_chips: Vec<Element<'_, Message>> = Vec::new();
@@ -599,6 +633,8 @@ impl OddBoxGui {
                     .style(|theme: &Theme, _status| {
                         let palette = theme.extended_palette();
                         button::Style {
+                            background: Some(palette.background.weak.color.into()),
+                            text_color: palette.background.base.text,
                             border: Border {
                                 radius: 4.0.into(),
                                 ..Default::default()
@@ -627,9 +663,14 @@ impl OddBoxGui {
                     let (bg, fg) = if is_selected {
                         (palette.primary.strong.color, palette.primary.strong.text)
                     } else {
-                        (palette.background.strong.color, palette.background.strong.text)
+                        (
+                            palette.background.strong.color,
+                            palette.background.strong.text,
+                        )
                     };
                     button::Style {
+                        background: Some(bg.into()),
+                        text_color: fg,
                         border: Border {
                             radius: 4.0.into(),
                             ..Default::default()
@@ -646,8 +687,7 @@ impl OddBoxGui {
         container(
             column![
                 text("Filter by source:")
-
-                    .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                    .color(self.theme().extended_palette().background.strong.text),
                 chips_row,
             ]
             .spacing(6),
@@ -669,9 +709,7 @@ impl OddBoxGui {
                 "No logs match the current filter"
             };
             return container(
-                text(msg)
-
-                    .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                text(msg).color(self.theme().extended_palette().background.strong.text),
             )
             .padding(20)
             .width(Length::Fill)
@@ -698,25 +736,21 @@ impl OddBoxGui {
 
         // Top spacer
         if top_space_height > 0.0 {
-            rows.push(Space::with_height(Length::Fixed(top_space_height)).into());
+            rows.push(Space::new().height(Length::Fixed(top_space_height)).into());
         }
 
         // Visible log rows
         for line in &self.cached_log_lines[start_idx..end_idx] {
             let row_content = row![
                 text(line.level_str)
-
                     .font(Font::MONOSPACE)
                     .color(line.level_color)
                     .width(Length::Fixed(36.0)),
                 text(truncate_str(&line.source, 18))
-
                     .font(Font::MONOSPACE)
                     .color(Color::from_rgb(0.6, 0.6, 0.6))
                     .width(Length::Fixed(160.0)),
-                text(&line.message)
-
-                    .font(Font::MONOSPACE),
+                text(&line.message).font(Font::MONOSPACE),
             ]
             .spacing(8)
             .height(Length::Fixed(LOG_ROW_HEIGHT));
@@ -726,11 +760,10 @@ impl OddBoxGui {
 
         // Bottom spacer
         if bottom_space_height > 0.0 {
-            rows.push(Space::with_height(Length::Fixed(bottom_space_height)).into());
+            rows.push(Space::new().height(Length::Fixed(bottom_space_height)).into());
         }
 
-        let log_column = Column::with_children(rows)
-            .width(Length::Fill);
+        let log_column = Column::with_children(rows).width(Length::Fill);
 
         scrollable(
             container(log_column)
@@ -744,6 +777,7 @@ impl OddBoxGui {
                 .style(|theme: &Theme| {
                     let palette = theme.extended_palette();
                     container::Style {
+                        background: Some(palette.background.weak.color.into()),
                         border: Border {
                             radius: 4.0.into(),
                             ..Default::default()
@@ -753,7 +787,7 @@ impl OddBoxGui {
                 }),
         )
         .on_scroll(Message::LogScrolled)
-        .id(scrollable::Id::new("logs"))
+        .id(Id::new("logs"))
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -776,11 +810,8 @@ impl OddBoxGui {
             .map(|d| format!("{:.0?}", d))
             .unwrap_or_else(|_| "Unknown".to_string());
 
-        let status_items = column![
-            text("Status: Running"),
-            text(format!("Uptime: {}", uptime)),
-        ]
-        .spacing(8);
+        let status_items =
+            column![text("Status: Running"), text(format!("Uptime: {}", uptime)),].spacing(8);
 
         container(status_items)
             .padding(20)
@@ -788,6 +819,7 @@ impl OddBoxGui {
             .style(|theme: &Theme| {
                 let palette = theme.extended_palette();
                 container::Style {
+                    background: Some(palette.background.weak.color.into()),
                     border: Border {
                         radius: 8.0.into(),
                         ..Default::default()
@@ -800,33 +832,52 @@ impl OddBoxGui {
 
     fn view_processes(&self) -> Element<'_, Message> {
         if self.cached_config.processes.is_empty() {
-            return text("No managed processes configured")
-                .into();
+            return text("No managed processes configured").into();
         }
 
         // Table header
         let header = row![
-            text("Name").font(Font::MONOSPACE).width(Length::FillPortion(2)),
-            text("Binary").font(Font::MONOSPACE).width(Length::FillPortion(2)),
-            text("Port").font(Font::MONOSPACE).width(Length::Fixed(80.0)),
-            text("Protocol").font(Font::MONOSPACE).width(Length::Fixed(80.0)),
-            text("Status").font(Font::MONOSPACE).width(Length::Fixed(100.0)),
-            text("Auto").font(Font::MONOSPACE).width(Length::Fixed(60.0)),
+            text("Name")
+                .font(Font::MONOSPACE)
+                .width(Length::FillPortion(2)),
+            text("Binary")
+                .font(Font::MONOSPACE)
+                .width(Length::FillPortion(2)),
+            text("Port")
+                .font(Font::MONOSPACE)
+                .width(Length::Fixed(80.0)),
+            text("Protocol")
+                .font(Font::MONOSPACE)
+                .width(Length::Fixed(80.0)),
+            text("Status")
+                .font(Font::MONOSPACE)
+                .width(Length::Fixed(100.0)),
+            text("Auto")
+                .font(Font::MONOSPACE)
+                .width(Length::Fixed(60.0)),
         ]
         .spacing(10)
-        .padding(Padding { top: 8.0, right: 10.0, bottom: 8.0, left: 10.0 });
+        .padding(Padding {
+            top: 8.0,
+            right: 10.0,
+            bottom: 8.0,
+            left: 10.0,
+        });
 
         let header_container = container(header)
             .width(Length::Fill)
             .style(|theme: &Theme| {
                 let palette = theme.extended_palette();
                 container::Style {
+                    background: Some(palette.background.weak.color.into()),
                     ..Default::default()
                 }
             });
 
         // Table rows
-        let rows: Vec<Element<'_, Message>> = self.cached_config.processes
+        let rows: Vec<Element<'_, Message>> = self
+            .cached_config
+            .processes
             .iter()
             .map(|proc| {
                 let status_color = match proc.state {
@@ -838,15 +889,33 @@ impl OddBoxGui {
                 };
 
                 row![
-                    text(&proc.name).font(Font::MONOSPACE).width(Length::FillPortion(2)),
-                    text(&proc.bin).font(Font::MONOSPACE).width(Length::FillPortion(2)),
-                    text(&proc.port).font(Font::MONOSPACE).width(Length::Fixed(80.0)),
-                    text(&proc.protocol).font(Font::MONOSPACE).width(Length::Fixed(80.0)),
-                    text(format!("{:?}", proc.state)).font(Font::MONOSPACE).color(status_color).width(Length::Fixed(100.0)),
-                    text(if proc.auto_start { "Yes" } else { "No" }).font(Font::MONOSPACE).width(Length::Fixed(60.0)),
+                    text(&proc.name)
+                        .font(Font::MONOSPACE)
+                        .width(Length::FillPortion(2)),
+                    text(&proc.bin)
+                        .font(Font::MONOSPACE)
+                        .width(Length::FillPortion(2)),
+                    text(&proc.port)
+                        .font(Font::MONOSPACE)
+                        .width(Length::Fixed(80.0)),
+                    text(&proc.protocol)
+                        .font(Font::MONOSPACE)
+                        .width(Length::Fixed(80.0)),
+                    text(format!("{:?}", proc.state))
+                        .font(Font::MONOSPACE)
+                        .color(status_color)
+                        .width(Length::Fixed(100.0)),
+                    text(if proc.auto_start { "Yes" } else { "No" })
+                        .font(Font::MONOSPACE)
+                        .width(Length::Fixed(60.0)),
                 ]
                 .spacing(10)
-                .padding(Padding { top: 6.0, right: 10.0, bottom: 6.0, left: 10.0 })
+                .padding(Padding {
+                    top: 6.0,
+                    right: 10.0,
+                    bottom: 6.0,
+                    left: 10.0,
+                })
                 .into()
             })
             .collect();
@@ -860,7 +929,11 @@ impl OddBoxGui {
             .style(|theme: &Theme| {
                 let palette = theme.extended_palette();
                 container::Style {
-                    border: Border { radius: 8.0.into(), ..Default::default() },
+                    background: Some(palette.background.weak.color.into()),
+                    border: Border {
+                        radius: 8.0.into(),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 }
             })
@@ -873,34 +946,63 @@ impl OddBoxGui {
         // Remote backends section
         if !self.cached_config.remote_backends.is_empty() {
             let header = row![
-                text("Name").font(Font::MONOSPACE).width(Length::FillPortion(2)),
-                text("Endpoints").font(Font::MONOSPACE).width(Length::FillPortion(3)),
-                text("Protocol").font(Font::MONOSPACE).width(Length::Fixed(80.0)),
-                text("HTTPS").font(Font::MONOSPACE).width(Length::Fixed(60.0)),
+                text("Name")
+                    .font(Font::MONOSPACE)
+                    .width(Length::FillPortion(2)),
+                text("Endpoints")
+                    .font(Font::MONOSPACE)
+                    .width(Length::FillPortion(3)),
+                text("Protocol")
+                    .font(Font::MONOSPACE)
+                    .width(Length::Fixed(80.0)),
+                text("HTTPS")
+                    .font(Font::MONOSPACE)
+                    .width(Length::Fixed(60.0)),
             ]
             .spacing(10)
-            .padding(Padding { top: 8.0, right: 10.0, bottom: 8.0, left: 10.0 });
+            .padding(Padding {
+                top: 8.0,
+                right: 10.0,
+                bottom: 8.0,
+                left: 10.0,
+            });
 
             let header_container = container(header)
                 .width(Length::Fill)
                 .style(|theme: &Theme| {
-                    let palette = theme.palette();//.extended_palette();
+                    let palette = theme.extended_palette();
                     container::Style {
+                        background: Some(palette.background.weak.color.into()),
                         ..Default::default()
                     }
                 });
 
-            let rows: Vec<Element<'_, Message>> = self.cached_config.remote_backends
+            let rows: Vec<Element<'_, Message>> = self
+                .cached_config
+                .remote_backends
                 .iter()
                 .map(|backend| {
                     row![
-                        text(&backend.name).font(Font::MONOSPACE).width(Length::FillPortion(2)),
-                        text(&backend.endpoints).font(Font::MONOSPACE).width(Length::FillPortion(3)),
-                        text(&backend.protocol).font(Font::MONOSPACE).width(Length::Fixed(80.0)),
-                        text(if backend.https { "Yes" } else { "No" }).font(Font::MONOSPACE).width(Length::Fixed(60.0)),
+                        text(&backend.name)
+                            .font(Font::MONOSPACE)
+                            .width(Length::FillPortion(2)),
+                        text(&backend.endpoints)
+                            .font(Font::MONOSPACE)
+                            .width(Length::FillPortion(3)),
+                        text(&backend.protocol)
+                            .font(Font::MONOSPACE)
+                            .width(Length::Fixed(80.0)),
+                        text(if backend.https { "Yes" } else { "No" })
+                            .font(Font::MONOSPACE)
+                            .width(Length::Fixed(60.0)),
                     ]
                     .spacing(10)
-                    .padding(Padding { top: 6.0, right: 10.0, bottom: 6.0, left: 10.0 })
+                    .padding(Padding {
+                        top: 6.0,
+                        right: 10.0,
+                        bottom: 6.0,
+                        left: 10.0,
+                    })
                     .into()
                 })
                 .collect();
@@ -912,50 +1014,77 @@ impl OddBoxGui {
             sections.push(
                 column![
                     text("Remote Backends"),
-                    container(table)
-                        .width(Length::Fill)
-                        .style(|theme: &Theme| {
-                            let palette = theme.extended_palette();
-                            container::Style {
-                                border: Border { radius: 8.0.into(), ..Default::default() },
+                    container(table).width(Length::Fill).style(|theme: &Theme| {
+                        let palette = theme.extended_palette();
+                        container::Style {
+                            background: Some(palette.background.weak.color.into()),
+                            border: Border {
+                                radius: 8.0.into(),
                                 ..Default::default()
-                            }
-                        })
+                            },
+                            ..Default::default()
+                        }
+                    })
                 ]
                 .spacing(10)
-                .into()
+                .into(),
             );
         }
 
         // Static backends section
         if !self.cached_config.static_backends.is_empty() {
             let header = row![
-                text("Name").font(Font::MONOSPACE).width(Length::FillPortion(2)),
-                text("Directory").font(Font::MONOSPACE).width(Length::FillPortion(4)),
-                text("List Dir").font(Font::MONOSPACE).width(Length::Fixed(80.0)),
+                text("Name")
+                    .font(Font::MONOSPACE)
+                    .width(Length::FillPortion(2)),
+                text("Directory")
+                    .font(Font::MONOSPACE)
+                    .width(Length::FillPortion(4)),
+                text("List Dir")
+                    .font(Font::MONOSPACE)
+                    .width(Length::Fixed(80.0)),
             ]
             .spacing(10)
-            .padding(Padding { top: 8.0, right: 10.0, bottom: 8.0, left: 10.0 });
+            .padding(Padding {
+                top: 8.0,
+                right: 10.0,
+                bottom: 8.0,
+                left: 10.0,
+            });
 
             let header_container = container(header)
                 .width(Length::Fill)
                 .style(|theme: &Theme| {
                     let palette = theme.extended_palette();
                     container::Style {
+                        background: Some(palette.background.weak.color.into()),
                         ..Default::default()
                     }
                 });
 
-            let rows: Vec<Element<'_, Message>> = self.cached_config.static_backends
+            let rows: Vec<Element<'_, Message>> = self
+                .cached_config
+                .static_backends
                 .iter()
                 .map(|backend| {
                     row![
-                        text(&backend.name).font(Font::MONOSPACE).width(Length::FillPortion(2)),
-                        text(&backend.dir).font(Font::MONOSPACE).width(Length::FillPortion(4)),
-                        text(if backend.list_dir { "Yes" } else { "No" }).font(Font::MONOSPACE).width(Length::Fixed(80.0)),
+                        text(&backend.name)
+                            .font(Font::MONOSPACE)
+                            .width(Length::FillPortion(2)),
+                        text(&backend.dir)
+                            .font(Font::MONOSPACE)
+                            .width(Length::FillPortion(4)),
+                        text(if backend.list_dir { "Yes" } else { "No" })
+                            .font(Font::MONOSPACE)
+                            .width(Length::Fixed(80.0)),
                     ]
                     .spacing(10)
-                    .padding(Padding { top: 6.0, right: 10.0, bottom: 6.0, left: 10.0 })
+                    .padding(Padding {
+                        top: 6.0,
+                        right: 10.0,
+                        bottom: 6.0,
+                        left: 10.0,
+                    })
                     .into()
                 })
                 .collect();
@@ -967,25 +1096,26 @@ impl OddBoxGui {
             sections.push(
                 column![
                     text("Static File Backends"),
-                    container(table)
-                        .width(Length::Fill)
-                        .style(|theme: &Theme| {
-                            let palette = theme.extended_palette();
-                            container::Style {
-                                border: Border { radius: 8.0.into(), ..Default::default() },
+                    container(table).width(Length::Fill).style(|theme: &Theme| {
+                        let palette = theme.extended_palette();
+                        container::Style {
+                            background: Some(palette.background.weak.color.into()),
+                            border: Border {
+                                radius: 8.0.into(),
                                 ..Default::default()
-                            }
-                        })
+                            },
+                            ..Default::default()
+                        }
+                    })
                 ]
                 .spacing(10)
-                .into()
+                .into(),
             );
         }
 
         if sections.is_empty() {
             return text("No backends configured")
-
-                .color(Color::from_rgb(0.5, 0.5, 0.5))
+                .color(self.theme().extended_palette().background.strong.text)
                 .into();
         }
 
@@ -995,37 +1125,68 @@ impl OddBoxGui {
     fn view_frontends(&self) -> Element<'_, Message> {
         if self.cached_config.routes.is_empty() {
             return text("No routes configured")
-                .color(Color::from_rgb(0.5, 0.5, 0.5))
+                .color(self.theme().extended_palette().background.strong.text)
                 .into();
         }
 
         // Table header
         let header = row![
-            text("Hostname").font(Font::MONOSPACE).width(Length::FillPortion(3)),
-            text("Backend").font(Font::MONOSPACE).width(Length::FillPortion(2)),
-            text("HTTPS Redirect").font(Font::MONOSPACE).width(Length::Fixed(120.0)),
-            text("Subdomains").font(Font::MONOSPACE).width(Length::Fixed(100.0)),
+            text("Hostname")
+                .font(Font::MONOSPACE)
+                .width(Length::FillPortion(3)),
+            text("Backend")
+                .font(Font::MONOSPACE)
+                .width(Length::FillPortion(2)),
+            text("HTTPS Redirect")
+                .font(Font::MONOSPACE)
+                .width(Length::Fixed(120.0)),
+            text("Subdomains")
+                .font(Font::MONOSPACE)
+                .width(Length::Fixed(100.0)),
         ]
         .spacing(10)
-        .padding(Padding { top: 8.0, right: 10.0, bottom: 8.0, left: 10.0 });
+        .padding(Padding {
+            top: 8.0,
+            right: 10.0,
+            bottom: 8.0,
+            left: 10.0,
+        });
 
         let header_container = container(header)
             .width(Length::Fill)
             .style(container::rounded_box);
 
         // Table rows
-        let rows: Vec<Element<'_, Message>> = self.cached_config.routes
+        let rows: Vec<Element<'_, Message>> = self
+            .cached_config
+            .routes
             .iter()
             .map(|route| {
                 row![
-                    text(&route.hostname).font(Font::MONOSPACE).width(Length::FillPortion(3)),
-                    text(&route.backend).font(Font::MONOSPACE).width(Length::FillPortion(2)),
-                    text(if route.https_redirect { "Yes" } else { "No" }).font(Font::MONOSPACE).width(Length::Fixed(120.0)),
-                    text(if route.capture_subdomains { "Yes" } else { "No" }).font(Font::MONOSPACE).width(Length::Fixed(100.0)),
+                    text(&route.hostname)
+                        .font(Font::MONOSPACE)
+                        .width(Length::FillPortion(3)),
+                    text(&route.backend)
+                        .font(Font::MONOSPACE)
+                        .width(Length::FillPortion(2)),
+                    text(if route.https_redirect { "Yes" } else { "No" })
+                        .font(Font::MONOSPACE)
+                        .width(Length::Fixed(120.0)),
+                    text(if route.capture_subdomains {
+                        "Yes"
+                    } else {
+                        "No"
+                    })
+                    .font(Font::MONOSPACE)
+                    .width(Length::Fixed(100.0)),
                 ]
                 .spacing(10)
-                .padding(Padding { top: 6.0, right: 10.0, bottom: 6.0, left: 10.0 })
-
+                .padding(Padding {
+                    top: 6.0,
+                    right: 10.0,
+                    bottom: 6.0,
+                    left: 10.0,
+                })
                 .into()
             })
             .collect();
@@ -1036,21 +1197,37 @@ impl OddBoxGui {
 
         container(table)
             .width(Length::Fill)
+            .style(|theme: &Theme| {
+                let palette = theme.extended_palette();
+                container::Style {
+                    background: Some(palette.background.weak.color.into()),
+                    border: Border {
+                        radius: 8.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            })
             .into()
     }
 
     fn view_placeholder(&self, description: &'static str) -> Element<'_, Message> {
-        container(
-            text(description)
-                .color(Color::from_rgb(0.5, 0.5, 0.5)),
-        )
-        .padding(20)
-        .width(Length::Fill)
-        .into()
+        container(text(description).color(self.theme().extended_palette().background.strong.text))
+            .padding(20)
+            .width(Length::Fill)
+            .into()
     }
 
     fn theme(&self) -> Theme {
-        self.theme_mode.resolve()
+        match self.theme_mode {
+            ThemeMode::Light => Theme::Light,
+            ThemeMode::Dark => Theme::Dracula,
+            ThemeMode::System => match self.system_theme {
+                Some(theme::Mode::Light) => Theme::Light,
+                Some(theme::Mode::Dark) => Theme::Dracula,
+                _ => Theme::Dracula,
+            },
+        }
     }
 }
 

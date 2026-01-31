@@ -1,24 +1,24 @@
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use utoipa::ToSchema;
-use std::sync::Arc;
 
-#[derive(Debug,PartialEq,Clone,serde::Serialize,ToSchema)]
+#[derive(Debug, PartialEq, Clone, serde::Serialize, ToSchema)]
 pub enum ProcState {
     Faulty,
-    Stopped,    
+    Stopped,
     Starting,
     Stopping,
     Running,
     Remote,
     DirServer,
-    Docker
+    Docker,
 }
 
 #[derive(Debug)]
 pub struct AppState {
     pub enable_global_traffic_inspection: AtomicBool,
     pub exit: AtomicBool,
-    pub site_status_map: Arc<dashmap::DashMap<String,ProcState>>,
+    pub site_status_map: Arc<dashmap::DashMap<String, ProcState>>,
     pub cruma_assignment: Arc<tokio::sync::RwLock<Option<CrumaAssignedDomain>>>,
 }
 
@@ -29,7 +29,6 @@ pub struct CrumaAssignedDomain {
 }
 
 impl AppState {
-
     pub fn new() -> AppState {
         let result = AppState {
             enable_global_traffic_inspection: AtomicBool::new(false),
@@ -39,9 +38,6 @@ impl AppState {
             //view_mode: ViewMode::Console,
         };
 
-        
         result
     }
-
-
 }

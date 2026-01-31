@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::num::NonZeroU16;
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use cruma_proxy_lib::types::*;
 
 use crate::configuration::{ConfigWrapper, v4};
@@ -136,9 +136,11 @@ pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, Build
                 match backend {
                     v4::Backend::Process(proc) => {
                         // Get port from active_port or configured port
-                        let port = proc.active_port
-                            .or(proc.port)
-                            .unwrap_or(if proc.https { 443 } else { 80 });
+                        let port = proc.active_port.or(proc.port).unwrap_or(if proc.https {
+                            443
+                        } else {
+                            80
+                        });
 
                         if let Some(ep) = to_endpoint(loopback_addr, port) {
                             let web_backend = WebBackend {
@@ -158,7 +160,9 @@ pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, Build
                     }
 
                     v4::Backend::Remote(remote) => {
-                        let endpoints: Vec<Endpoint> = remote.endpoints.iter()
+                        let endpoints: Vec<Endpoint> = remote
+                            .endpoints
+                            .iter()
                             .filter_map(|ep| to_endpoint(&ep.addr, ep.port))
                             .collect();
 
@@ -225,7 +229,9 @@ pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, Build
         let backend_id = WebBackendId(format!("docker::{}", host));
 
         if cont.port == 0 {
-            notes.unsupported.push(format!("Docker target '{}' has no port", host));
+            notes
+                .unsupported
+                .push(format!("Docker target '{}' has no port", host));
             continue;
         }
 
@@ -241,11 +247,23 @@ pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, Build
         };
 
         // Convert docker hints to protocol
-        let protocol = if cont.hints.iter().any(|h| matches!(h, crate::configuration::Hint::H2)) {
+        let protocol = if cont
+            .hints
+            .iter()
+            .any(|h| matches!(h, crate::configuration::Hint::H2))
+        {
             HttpUpstreamProto::H2
-        } else if cont.hints.iter().any(|h| matches!(h, crate::configuration::Hint::H2CPK)) {
+        } else if cont
+            .hints
+            .iter()
+            .any(|h| matches!(h, crate::configuration::Hint::H2CPK))
+        {
             HttpUpstreamProto::H2CPK
-        } else if cont.hints.iter().any(|h| matches!(h, crate::configuration::Hint::H2C)) {
+        } else if cont
+            .hints
+            .iter()
+            .any(|h| matches!(h, crate::configuration::Hint::H2C))
+        {
             HttpUpstreamProto::H2C
         } else {
             HttpUpstreamProto::H11
@@ -300,7 +318,9 @@ pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, Build
 
     // Determine TLS cert mode from config
     let cert_mode = match cfg.frontends.https.as_ref().map(|h| &h.cert) {
-        Some(v4::CertMode::Acme) => CertMode::AcmeAlpn { cert_target: Default::default() },
+        Some(v4::CertMode::Acme) => CertMode::AcmeAlpn {
+            cert_target: Default::default(),
+        },
         _ => CertMode::SelfSigned,
     };
 

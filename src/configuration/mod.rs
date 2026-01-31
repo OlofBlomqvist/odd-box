@@ -17,21 +17,20 @@ pub mod v4;
 
 pub mod yaml_air;
 
-use std::sync::Arc;
 use anyhow::bail;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use utoipa::ToSchema;
 
 // Re-export the latest config version
 pub use v4::*;
 // Also re-export V3 types for backwards compatibility during migration
-pub use v3::{RemoteSiteConfig, Backend, Hint};
+pub use v3::{Backend, Hint, RemoteSiteConfig};
 
 pub use v4::OddBoxV4Config as OddBoxConfig;
 
 use crate::types::proc_info::ProcId;
-
 
 pub mod reload;
 
@@ -45,37 +44,50 @@ pub trait OddBoxConfiguration<T> {
     }
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub enum AnyOddBoxConfig {
-    #[allow(dead_code)]Legacy(legacy::OddBoxLegacyConfig),
+    #[allow(dead_code)]
+    Legacy(legacy::OddBoxLegacyConfig),
     V1(v1::OddBoxV1Config),
     V2(v2::OddBoxV2Config),
     V3(v3::OddBoxV3Config),
     V4(v4::OddBoxV4Config),
 }
 
-
-#[derive(Debug, Clone, Serialize, Deserialize,ToSchema,PartialEq, Eq, Hash, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash, schemars::JsonSchema,
+)]
 pub struct EnvVar {
     pub key: String,
     pub value: String,
 }
 
-#[derive(Serialize,Deserialize,Debug,Clone,ToSchema,PartialEq, Eq, Hash, schemars::JsonSchema, Default)]
+#[derive(
+    Serialize,
+    Deserialize,
+    Debug,
+    Clone,
+    ToSchema,
+    PartialEq,
+    Eq,
+    Hash,
+    schemars::JsonSchema,
+    Default,
+)]
 #[allow(non_camel_case_types)]
 pub enum LogFormat {
     #[default]
     standard,
-    dotnet
+    dotnet,
 }
 
-#[derive(Debug,Serialize,Clone,ToSchema, PartialEq, Eq, Hash, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Clone, ToSchema, PartialEq, Eq, Hash, schemars::JsonSchema)]
 pub enum LogLevel {
     Trace,
     Debug,
     Info,
     Warn,
-    Error
+    Error,
 }
 
 impl<'de> Deserialize<'de> for LogLevel {
@@ -111,20 +123,28 @@ impl<'de> Deserialize<'de> for LogLevel {
     }
 }
 
-
-#[derive(Debug,Clone,Serialize,Deserialize,Default,ToSchema,PartialEq, Eq, Hash, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    Default,
+    ToSchema,
+    PartialEq,
+    Eq,
+    Hash,
+    schemars::JsonSchema,
+)]
 pub enum OddBoxConfigVersion {
-    #[default] Unmarked,
+    #[default]
+    Unmarked,
     V1,
     V2,
     V3,
-    V4
+    V4,
 }
 
-
-
 impl AnyOddBoxConfig {
-
     /// Parse configuration content (auto-detects YAML vs TOML)
     pub fn parse(content: &str) -> Result<AnyOddBoxConfig, String> {
         // Try YAML first (V4 format) - check for YAML indicators
@@ -140,22 +160,22 @@ impl AnyOddBoxConfig {
         // Try TOML formats (V3 and earlier)
         let v3_result = toml::from_str::<v3::OddBoxV3Config>(content);
         if let Ok(v3_config) = v3_result {
-            return Ok(AnyOddBoxConfig::V3(v3_config))
+            return Ok(AnyOddBoxConfig::V3(v3_config));
         };
 
         let v2_result = toml::from_str::<v2::OddBoxV2Config>(content);
         if let Ok(v2_config) = v2_result {
-            return Ok(AnyOddBoxConfig::V2(v2_config))
+            return Ok(AnyOddBoxConfig::V2(v2_config));
         };
 
         let v1_result = toml::from_str::<v1::OddBoxV1Config>(content);
         if let Ok(v1_config) = v1_result {
-            return Ok(AnyOddBoxConfig::V1(v1_config))
+            return Ok(AnyOddBoxConfig::V1(v1_config));
         };
 
         let legacy_result = toml::from_str::<legacy::OddBoxLegacyConfig>(&content);
         if let Ok(legacy_config) = legacy_result {
-            return Ok(AnyOddBoxConfig::Legacy(legacy_config))
+            return Ok(AnyOddBoxConfig::Legacy(legacy_config));
         };
 
         // Try YAML as last resort
@@ -164,16 +184,32 @@ impl AnyOddBoxConfig {
         }
 
         if content.contains("version: V4") || content.contains("version: v4") {
-            Err(format!("invalid v4 (YAML) configuration file.\n{}",
-                serde_yaml::from_str::<v4::OddBoxV4Config>(content).unwrap_err().to_string()))
+            Err(format!(
+                "invalid v4 (YAML) configuration file.\n{}",
+                serde_yaml::from_str::<v4::OddBoxV4Config>(content)
+                    .unwrap_err()
+                    .to_string()
+            ))
         } else if content.contains("version = \"V3\"") {
-            Err(format!("invalid v3 configuration file.\n{}", v3_result.unwrap_err().to_string()))
+            Err(format!(
+                "invalid v3 configuration file.\n{}",
+                v3_result.unwrap_err().to_string()
+            ))
         } else if content.contains("version = \"V2\"") {
-            Err(format!("invalid v2 configuration file.\n{}", v2_result.unwrap_err().to_string()))
+            Err(format!(
+                "invalid v2 configuration file.\n{}",
+                v2_result.unwrap_err().to_string()
+            ))
         } else if content.contains("version = \"V1\"") {
-            Err(format!("invalid v1 configuration file.\n{}", v1_result.unwrap_err().to_string()))
+            Err(format!(
+                "invalid v1 configuration file.\n{}",
+                v1_result.unwrap_err().to_string()
+            ))
         } else {
-            Err(format!("invalid (legacy) configuration file.\n{}", legacy_result.unwrap_err().to_string()))
+            Err(format!(
+                "invalid (legacy) configuration file.\n{}",
+                legacy_result.unwrap_err().to_string()
+            ))
         }
     }
 
@@ -199,7 +235,16 @@ impl AnyOddBoxConfig {
     }
 
     // Result<(validated_config, original_version, was_upgraded), error>
-    pub fn try_upgrade_to_latest_version(&self) -> Result<(crate::configuration::OddBoxConfig, OddBoxConfigVersion, bool), String> {
+    pub fn try_upgrade_to_latest_version(
+        &self,
+    ) -> Result<
+        (
+            crate::configuration::OddBoxConfig,
+            OddBoxConfigVersion,
+            bool,
+        ),
+        String,
+    > {
         match self {
             AnyOddBoxConfig::Legacy(legacy_config) => {
                 let v1: v1::OddBoxV1Config = legacy_config.to_owned().try_into()?;
@@ -207,32 +252,28 @@ impl AnyOddBoxConfig {
                 let v3: v3::OddBoxV3Config = v2.to_owned().try_into()?;
                 let v4: v4::OddBoxV4Config = v3.try_into()?;
                 Ok((v4, OddBoxConfigVersion::Unmarked, true))
-            },
+            }
             AnyOddBoxConfig::V1(v1_config) => {
                 let v2: v2::OddBoxV2Config = v1_config.to_owned().try_into()?;
                 let v3: v3::OddBoxV3Config = v2.to_owned().try_into()?;
                 let v4: v4::OddBoxV4Config = v3.try_into()?;
                 Ok((v4, OddBoxConfigVersion::V1, true))
-            },
+            }
             AnyOddBoxConfig::V2(v2) => {
                 let v3: v3::OddBoxV3Config = v2.to_owned().try_into()?;
                 let v4: v4::OddBoxV4Config = v3.try_into()?;
                 Ok((v4, OddBoxConfigVersion::V2, true))
-            },
+            }
             AnyOddBoxConfig::V3(v3) => {
                 let v4: v4::OddBoxV4Config = v3.to_owned().try_into()?;
                 Ok((v4, OddBoxConfigVersion::V3, true))
-            },
-            AnyOddBoxConfig::V4(v4) => {
-                Ok((v4.clone(), OddBoxConfigVersion::V4, false))
             }
+            AnyOddBoxConfig::V4(v4) => Ok((v4.clone(), OddBoxConfigVersion::V4, false)),
         }
     }
 }
 
-
-
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct ConfigWrapper {
     internal_configuration: crate::configuration::OddBoxConfig,
     /// Process backends keyed by backend ID (which is also the hostname for routes)
@@ -244,9 +285,8 @@ pub struct ConfigWrapper {
     /// Docker containers discovered at runtime
     pub docker_containers: DashMap<String, crate::docker::ContainerProxyTarget>,
     pub wrapper_cache_map_is_dirty: bool,
-    pub internal_version: u64
+    pub internal_version: u64,
 }
-
 
 impl std::ops::Deref for ConfigWrapper {
     type Target = crate::configuration::OddBoxConfig;
@@ -260,13 +300,11 @@ impl std::ops::DerefMut for ConfigWrapper {
     }
 }
 
-
 // This is meant to simplify the process of upgrading from one configuration version to another.
 // It is also used as a runtime-cache for the configuration such that one can change the config
 // during runtime without having to save it to disk, and so that it becomes easier to
 // work with from code in general..
 impl ConfigWrapper {
-
     /// Creates a new ConfigWrapper from the latest version of a configuration file,
     /// initializing the DashMaps from the backends in the config.
     pub fn new(config: crate::configuration::OddBoxConfig) -> Self {
@@ -296,7 +334,7 @@ impl ConfigWrapper {
             remote_sites,
             static_sites,
             wrapper_cache_map_is_dirty: false,
-            docker_containers: DashMap::new()
+            docker_containers: DashMap::new(),
         }
     }
 
@@ -357,7 +395,10 @@ impl ConfigWrapper {
         let path = std::path::Path::new(cfg_path);
         // If the file exists, canonicalize it. Otherwise, canonicalize the parent dir and append the filename.
         let full_path = if path.exists() {
-            path.canonicalize()?.to_str().unwrap_or_default().to_string()
+            path.canonicalize()?
+                .to_str()
+                .unwrap_or_default()
+                .to_string()
         } else if let Some(parent) = path.parent() {
             let parent_canonical = if parent.as_os_str().is_empty() {
                 std::env::current_dir()?
@@ -365,7 +406,11 @@ impl ConfigWrapper {
                 parent.canonicalize()?
             };
             let filename = path.file_name().unwrap_or_default();
-            parent_canonical.join(filename).to_str().unwrap_or_default().to_string()
+            parent_canonical
+                .join(filename)
+                .to_str()
+                .unwrap_or_default()
+                .to_string()
         } else {
             cfg_path.to_string()
         };
@@ -376,7 +421,9 @@ impl ConfigWrapper {
     pub fn is_valid(&self) -> anyhow::Result<()> {
         // Check global env vars don't include PORT
         if self.env.contains_key("PORT") || self.env.contains_key("port") {
-            anyhow::bail!("Invalid configuration. You cannot use 'port' as a global environment variable");
+            anyhow::bail!(
+                "Invalid configuration. You cannot use 'port' as a global environment variable"
+            );
         }
 
         let mut route_hosts = std::collections::HashMap::new();
@@ -419,10 +466,7 @@ impl ConfigWrapper {
         for (id, backend) in &self.backends {
             if let v4::Backend::Process(p) = backend {
                 if let Some(port) = p.port {
-                    ports
-                        .entry(port)
-                        .or_insert_with(Vec::new)
-                        .push(id.clone());
+                    ports.entry(port).or_insert_with(Vec::new).push(id.clone());
                 }
 
                 // Check for PORT env var mismatch
@@ -462,15 +506,16 @@ impl ConfigWrapper {
         Ok(())
     }
 
-
     pub fn get_parent_path(&self) -> anyhow::Result<String> {
         // todo - use cache and clear on path change
         // if let Some(pre_resolved) = &self.1 {
         //     return Ok(pre_resolved.to_string())
         // }
-        let p = self.path.clone().ok_or(anyhow::anyhow!(String::from("Failed to resolve path.")))?;
-        if let Some(directory_path_str) =
-            std::path::Path::new(&p)
+        let p = self
+            .path
+            .clone()
+            .ok_or(anyhow::anyhow!(String::from("Failed to resolve path.")))?;
+        if let Some(directory_path_str) = std::path::Path::new(&p)
             .parent()
             .map(|p| p.to_str().unwrap_or_default())
         {
@@ -485,36 +530,40 @@ impl ConfigWrapper {
                 //self.1 = Some(xx.clone());
                 Ok(xx)
             }
-
         } else {
             bail!(format!("Failed to resolve $cfg_dir"));
         }
     }
 
-
-
-
     pub fn busy_ports(&self) -> Vec<(ProcId, u16)> {
-        self.hosted_processes.iter().flat_map(|entry| {
-            let p = entry.value();
-            let mut items = Vec::new();
+        self.hosted_processes
+            .iter()
+            .flat_map(|entry| {
+                let p = entry.value();
+                let mut items = Vec::new();
 
-            // manually set ports need to be marked as busy even if the process is not running
-            if let Some(port) = p.port {
-                items.push((p.proc_id.clone(), port));
-            }
+                // manually set ports need to be marked as busy even if the process is not running
+                if let Some(port) = p.port {
+                    items.push((p.proc_id.clone(), port));
+                }
 
-            // active ports means that there is a loop active for this process using that port
-            if let Some(port) = p.active_port {
-                items.push((p.proc_id.clone(), port));
-            }
+                // active ports means that there is a loop active for this process using that port
+                if let Some(port) = p.active_port {
+                    items.push((p.proc_id.clone(), port));
+                }
 
-            items
-        }).collect()
+                items
+            })
+            .collect()
     }
 
-    pub async fn find_and_set_unused_port(selfy: &mut Self, proc: &mut v4::ProcessBackend) -> anyhow::Result<u16> {
-        let used_ports: Vec<u16> = selfy.hosted_processes.iter()
+    pub async fn find_and_set_unused_port(
+        selfy: &mut Self,
+        proc: &mut v4::ProcessBackend,
+    ) -> anyhow::Result<u16> {
+        let used_ports: Vec<u16> = selfy
+            .hosted_processes
+            .iter()
             .filter_map(|entry| entry.value().port)
             .collect();
 
@@ -522,7 +571,7 @@ impl ConfigWrapper {
             if used_ports.contains(&manually_chosen_port) {
                 bail!("The port configured for this backend is already in use..")
             } else {
-                return Ok(manually_chosen_port)
+                return Ok(manually_chosen_port);
             }
         }
 
@@ -531,39 +580,52 @@ impl ConfigWrapper {
     }
 
     /// Add or replace a process backend
-    pub async fn add_or_replace_process_backend(&mut self, id: &str, backend: v4::ProcessBackend, _state: Arc<crate::GlobalState>) -> anyhow::Result<()> {
+    pub async fn add_or_replace_process_backend(
+        &mut self,
+        id: &str,
+        backend: v4::ProcessBackend,
+        _state: Arc<crate::GlobalState>,
+    ) -> anyhow::Result<()> {
         // Update the DashMap
-        self.hosted_processes.insert(id.to_string(), backend.clone());
+        self.hosted_processes
+            .insert(id.to_string(), backend.clone());
 
         // Update the internal configuration
-        self.internal_configuration.backends.insert(
-            id.to_string(),
-            v4::Backend::Process(backend),
-        );
+        self.internal_configuration
+            .backends
+            .insert(id.to_string(), v4::Backend::Process(backend));
 
         self.write_to_disk()
     }
 
     /// Add or replace a static backend
-    pub async fn add_or_replace_static_backend(&mut self, id: &str, backend: v4::StaticBackend, _state: Arc<crate::GlobalState>) -> anyhow::Result<()> {
+    pub async fn add_or_replace_static_backend(
+        &mut self,
+        id: &str,
+        backend: v4::StaticBackend,
+        _state: Arc<crate::GlobalState>,
+    ) -> anyhow::Result<()> {
         self.static_sites.insert(id.to_string(), backend.clone());
 
-        self.internal_configuration.backends.insert(
-            id.to_string(),
-            v4::Backend::Static(backend),
-        );
+        self.internal_configuration
+            .backends
+            .insert(id.to_string(), v4::Backend::Static(backend));
 
         self.write_to_disk()
     }
 
     /// Add or replace a remote backend
-    pub async fn add_or_replace_remote_backend(&mut self, id: &str, backend: v4::RemoteBackend, _state: Arc<crate::GlobalState>) -> anyhow::Result<()> {
+    pub async fn add_or_replace_remote_backend(
+        &mut self,
+        id: &str,
+        backend: v4::RemoteBackend,
+        _state: Arc<crate::GlobalState>,
+    ) -> anyhow::Result<()> {
         self.remote_sites.insert(id.to_string(), backend.clone());
 
-        self.internal_configuration.backends.insert(
-            id.to_string(),
-            v4::Backend::Remote(backend),
-        );
+        self.internal_configuration
+            .backends
+            .insert(id.to_string(), v4::Backend::Remote(backend));
 
         self.write_to_disk()
     }
@@ -573,42 +635,46 @@ impl ConfigWrapper {
             Ok(listener) => {
                 drop(listener);
                 true
-            },
-            Err(_) => {
-                false
-            },
+            }
+            Err(_) => false,
         }
     }
 
     pub fn get_random_free_port() -> Option<u16> {
         match std::net::TcpListener::bind(("127.0.0.1", 0)) {
-            Ok(listener) => {
-                match listener.local_addr() {
-                    Ok(l) => Some(l.port()),
-                    _ => None
-                }
+            Ok(listener) => match listener.local_addr() {
+                Ok(l) => Some(l.port()),
+                _ => None,
             },
             Err(e) => {
-                tracing::warn!("{:?}",e);
+                tracing::warn!("{:?}", e);
                 None
-            },
+            }
         }
     }
 
     /// Set the active port for a process backend
-    pub fn set_active_port(&mut self, backend_id: &str, proc: &mut v4::ProcessBackend) -> anyhow::Result<u16> {
+    pub fn set_active_port(
+        &mut self,
+        backend_id: &str,
+        proc: &mut v4::ProcessBackend,
+    ) -> anyhow::Result<u16> {
         let mut selected_port = proc.active_port;
 
         // ports in use or configured for use by other backends
-        let unavailable_ports: Vec<(ProcId, u16)> = self.busy_ports()
+        let unavailable_ports: Vec<(ProcId, u16)> = self
+            .busy_ports()
             .into_iter()
             .filter(|x| x.0 != proc.proc_id)
             .collect();
 
         if let Some(currently_selected_port) = selected_port {
-            if !unavailable_ports.iter().any(|x| x.1 == currently_selected_port) {
+            if !unavailable_ports
+                .iter()
+                .any(|x| x.1 == currently_selected_port)
+            {
                 if Self::port_is_free(currently_selected_port) {
-                    return Ok(currently_selected_port)
+                    return Ok(currently_selected_port);
                 } else {
                     selected_port = None;
                 }
@@ -621,20 +687,42 @@ impl ConfigWrapper {
                 selected_port = Self::get_random_free_port()
             } else {
                 if let Some(taken_by) = unavailable_ports.iter().find(|x| x.1 == preferred_port) {
-                    tracing::warn!("[{}] The configured port '{}' is unavailable (configured for another backend: '{}')..", backend_id, preferred_port, taken_by.1);
+                    tracing::warn!(
+                        "[{}] The configured port '{}' is unavailable (configured for another backend: '{}')..",
+                        backend_id,
+                        preferred_port,
+                        taken_by.1
+                    );
                 } else {
-                    tracing::info!("[{}] Starting on port '{}' as configured for the process!", backend_id, preferred_port);
+                    tracing::info!(
+                        "[{}] Starting on port '{}' as configured for the process!",
+                        backend_id,
+                        preferred_port
+                    );
                     selected_port = Some(preferred_port);
                 }
             }
         } else if let Some(value) = proc.env.get("PORT").or_else(|| proc.env.get("port")) {
             if let Some(taken_by) = unavailable_ports.iter().find(|x| x.1.to_string() == *value) {
-                tracing::warn!("[{}] The configured port (via env var in cfg) '{}' is unavailable (configured for another backend: '{}')..", backend_id, value, taken_by.1);
+                tracing::warn!(
+                    "[{}] The configured port (via env var in cfg) '{}' is unavailable (configured for another backend: '{}')..",
+                    backend_id,
+                    value,
+                    taken_by.1
+                );
             } else if let Ok(spbev) = value.parse::<u16>() {
-                tracing::info!("[{}] Starting on port '{}' as selected via a configured environment variable for port!", backend_id, value);
+                tracing::info!(
+                    "[{}] Starting on port '{}' as selected via a configured environment variable for port!",
+                    backend_id,
+                    value
+                );
                 selected_port = Some(spbev)
             } else {
-                tracing::info!("[{}] The env var for port was configured to '{}' which is not a valid u16, ignoring.", backend_id, value);
+                tracing::info!(
+                    "[{}] The env var for port was configured to '{}' which is not a valid u16, ignoring.",
+                    backend_id,
+                    value
+                );
             }
         }
 
@@ -647,12 +735,16 @@ impl ConfigWrapper {
                 if unavailable.contains(&inner_selected_port) {
                     inner_selected_port += 1;
                 } else if Self::port_is_free(inner_selected_port) {
-                    break
+                    break;
                 } else {
                     inner_selected_port += 1;
                 }
             }
-            tracing::trace!("[{}] Using the first available port found (starting from the configured start port: {min_auto_port}) ---> '{}'", backend_id, inner_selected_port);
+            tracing::trace!(
+                "[{}] Using the first available port found (starting from the configured start port: {min_auto_port}) ---> '{}'",
+                backend_id,
+                inner_selected_port
+            );
             selected_port = Some(inner_selected_port);
         }
 
@@ -662,11 +754,16 @@ impl ConfigWrapper {
             if let Some(mut entry) = self.hosted_processes.get_mut(backend_id) {
                 entry.active_port = Some(sp);
             } else {
-                tracing::error!("[{}] Could not find backend in hosted_processes DashMap.. This is a bug in odd-box!", backend_id);
+                tracing::error!(
+                    "[{}] Could not find backend in hosted_processes DashMap.. This is a bug in odd-box!",
+                    backend_id
+                );
             }
 
             // Also update in the internal config
-            if let Some(v4::Backend::Process(p)) = self.internal_configuration.backends.get_mut(backend_id) {
+            if let Some(v4::Backend::Process(p)) =
+                self.internal_configuration.backends.get_mut(backend_id)
+            {
                 p.active_port = Some(sp);
             }
         }
@@ -679,11 +776,21 @@ impl ConfigWrapper {
     }
 
     /// Resolve a static backend configuration with variable substitution
-    pub fn resolve_static_backend(&self, item: &v4::StaticBackend) -> anyhow::Result<v4::StaticBackend> {
+    pub fn resolve_static_backend(
+        &self,
+        item: &v4::StaticBackend,
+    ) -> anyhow::Result<v4::StaticBackend> {
         let mut resolved = item.clone();
 
-        let resolved_home_dir_path = dirs::home_dir().ok_or(anyhow::anyhow!(String::from("Failed to resolve home directory.")))?;
-        let resolved_home_dir_str = resolved_home_dir_path.to_str().ok_or(anyhow::anyhow!(String::from("Failed to parse home directory.")))?;
+        let resolved_home_dir_path = dirs::home_dir().ok_or(anyhow::anyhow!(String::from(
+            "Failed to resolve home directory."
+        )))?;
+        let resolved_home_dir_str =
+            resolved_home_dir_path
+                .to_str()
+                .ok_or(anyhow::anyhow!(String::from(
+                    "Failed to parse home directory."
+                )))?;
 
         let cfg_dir = self.get_parent_path()?;
 
@@ -704,19 +811,20 @@ impl ConfigWrapper {
     fn resolve_root_dir(&self, cfg_dir: &str, home_dir: &str) -> anyhow::Result<String> {
         if let Some(rd) = &self.root_dir {
             if rd.contains("$root_dir") {
-                anyhow::bail!("it is clearly not a good idea to use $root_dir in the configuration of root dir...")
+                anyhow::bail!(
+                    "it is clearly not a good idea to use $root_dir in the configuration of root dir..."
+                )
             }
 
-            let rd_with_vars_replaced = rd
-                .replace("$cfg_dir", cfg_dir)
-                .replace("~", home_dir);
+            let rd_with_vars_replaced = rd.replace("$cfg_dir", cfg_dir).replace("~", home_dir);
 
             match std::fs::canonicalize(&rd_with_vars_replaced) {
-                Ok(resolved_path) => {
-                    Ok(resolved_path.display().to_string().replace("\\\\?\\", ""))
-                }
+                Ok(resolved_path) => Ok(resolved_path.display().to_string().replace("\\\\?\\", "")),
                 Err(e) => {
-                    anyhow::bail!(format!("root_dir item in configuration ({rd}) resolved to this: '{rd_with_vars_replaced}' - error: {}", e));
+                    anyhow::bail!(format!(
+                        "root_dir item in configuration ({rd}) resolved to this: '{rd_with_vars_replaced}' - error: {}",
+                        e
+                    ));
                 }
             }
         } else {
@@ -727,9 +835,20 @@ impl ConfigWrapper {
 
     /// Resolve a process backend configuration with variable substitution.
     /// This MUST be called by proc_host prior to starting a process.
-    pub fn resolve_process_backend(&self, backend_id: &str, proc: &v4::ProcessBackend) -> anyhow::Result<ResolvedProcessBackend> {
-        let resolved_home_dir_path = dirs::home_dir().ok_or(anyhow::anyhow!(String::from("Failed to resolve home directory.")))?;
-        let resolved_home_dir_str = resolved_home_dir_path.to_str().ok_or(anyhow::anyhow!(String::from("Failed to parse home directory.")))?;
+    pub fn resolve_process_backend(
+        &self,
+        backend_id: &str,
+        proc: &v4::ProcessBackend,
+    ) -> anyhow::Result<ResolvedProcessBackend> {
+        let resolved_home_dir_path = dirs::home_dir().ok_or(anyhow::anyhow!(String::from(
+            "Failed to resolve home directory."
+        )))?;
+        let resolved_home_dir_str =
+            resolved_home_dir_path
+                .to_str()
+                .ok_or(anyhow::anyhow!(String::from(
+                    "Failed to parse home directory."
+                )))?;
 
         let cfg_dir = self.get_parent_path()?;
         let root_dir = self.resolve_root_dir(&cfg_dir, resolved_home_dir_str)?;
@@ -745,8 +864,13 @@ impl ConfigWrapper {
         let resolved_bin = with_vars(&proc.bin);
 
         // Convert env HashMap to Vec<EnvVar> for compatibility
-        let env_vars: Vec<EnvVar> = proc.env.iter()
-            .map(|(k, v)| EnvVar { key: k.clone(), value: v.clone() })
+        let env_vars: Vec<EnvVar> = proc
+            .env
+            .iter()
+            .map(|(k, v)| EnvVar {
+                key: k.clone(),
+                value: v.clone(),
+            })
             .collect();
 
         Ok(ResolvedProcessBackend {

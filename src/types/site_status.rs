@@ -3,26 +3,24 @@ use utoipa::ToSchema;
 
 use super::{app_state::ProcState, proc_info::ProcId};
 
-#[derive(Clone,Debug,ToSchema,Serialize,Deserialize)]
+#[derive(Clone, Debug, ToSchema, Serialize, Deserialize)]
 pub struct SiteStatusEvent {
     pub host_name: String,
     pub state: State,
-    pub id : ProcId
+    pub id: ProcId,
 }
 
-
-#[derive(Debug,PartialEq,Clone,serde::Serialize,ToSchema,Deserialize)]
+#[derive(Debug, PartialEq, Clone, serde::Serialize, ToSchema, Deserialize)]
 pub enum State {
     Faulty,
-    Stopped,    
+    Stopped,
     Starting,
     Stopping,
     Running,
     Remote,
     DirServer,
-    Docker
+    Docker,
 }
-
 
 impl State {
     pub fn from_procstate(procstate: &ProcState) -> State {
@@ -34,7 +32,7 @@ impl State {
             ProcState::Running => State::Running,
             ProcState::Remote => State::Remote,
             ProcState::DirServer => State::DirServer,
-            ProcState::Docker => State::Docker
+            ProcState::Docker => State::Docker,
         }
     }
 }
