@@ -28,10 +28,23 @@ fn fmt_state(state: ProcState) -> &'static str {
 async fn build_snapshot(global_state: &GlobalState) -> String {
     let status_map = global_state.app_state.site_status_map.clone();
     let cfg = global_state.config.read().await;
+    let cruma_assignment = global_state.app_state.cruma_assignment.read().await.clone();
 
     let mut out = String::new();
     writeln!(&mut out, "odd-box status (read-only)").ok();
     writeln!(&mut out, "=======================").ok();
+
+    if let Some(assignment) = cruma_assignment {
+        writeln!(
+            &mut out,
+            "Cruma tunnel: {} ({})",
+            assignment.assigned_domain,
+            assignment.welcome_message
+        )
+        .ok();
+    } else {
+        writeln!(&mut out, "Cruma tunnel: pending assignment").ok();
+    }
 
     let hosted: Vec<_> = cfg.hosted_processes.iter().map(|kv| kv.value().clone()).collect();
     writeln!(&mut out, "Hosted processes ({}):", hosted.len()).ok();

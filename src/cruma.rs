@@ -77,6 +77,13 @@ pub async fn cruma_thread(
                             cruma_tunnels_lib::AgentEvent::AnonymousTunnelAssigned { assigned_domain, welcome_message }
                             | cruma_tunnels_lib::AgentEvent::AuthenticatedTunnelAssigned { assigned_domain, welcome_message } => {
                                     tracing::info!(assigned_domain, welcome_message);
+                                    {
+                                        let mut slot = state.app_state.cruma_assignment.write().await;
+                                        *slot = Some(crate::types::app_state::CrumaAssignedDomain {
+                                            assigned_domain,
+                                            welcome_message,
+                                        });
+                                    }
                                 },
                                 evt => {
                                     tracing::info!("Received event from server: {:#?}", evt);
@@ -119,15 +126,30 @@ pub async fn handle_stream(
     cruma_conf: Arc<ArcSwap<cruma_proxy_lib::types::Configuration>>,
 ) -> anyhow::Result<()> {
 
-    // TODO: dont recreate per stream
     let terminator = cruma_proxy_lib::termination::Terminator::new(p.clone(), cruma_conf.clone());
     let proxy_service = ProxyService::new(cruma_conf,terminator);
 
-    if cruma_stream.is_tls() {
-        // proxy_service.proxy_traffic(s, client_addr);
-        todo! ()
+    let preface = match &cruma_stream {
+        IncomingCrumaTlsStream::Quic { preface, .. } |
+        IncomingCrumaTlsStream::Http2 { preface, .. } => preface.clone()
+    };
+
+
+
+
+    match if cruma_stream.is_tls() {
+        let eport = _state.config.read().await.tls_port.unwrap_or(4343);
+        proxy_service.terminate_and_proxy(cruma_stream, eport, preface.src.parse()?).await
     } else {
-        todo!()
+        let eport = _state.config.read().await.http_port.unwrap_or(8080);
+        proxy_service.proxy_non_tls(cruma_stream, eport, preface.src.parse()?).await
+    } {
+        Ok(_) => {
+            tracing::info!("Successfully proxied connection for {}", preface.src);
+        }
+        Err(e) => {
+            tracing::error!(error=%e, "Failed to proxy connection for {}", preface.src);
+        }
     }
 
     Ok(())
