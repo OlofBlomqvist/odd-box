@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use cruma_proxy_lib::{proxying::ProxyService, termination::*};
 use cruma_tunnels_lib::IncomingCrumaTlsStream;
-use tokio::sync::RwLock;
 
 use crate::global_state::GlobalState;
 
@@ -44,13 +44,15 @@ pub async fn extract_allowed_domain_names(state: Arc<GlobalState>) -> Vec<String
 pub async fn cruma_thread(
     notify: Arc<tokio::sync::Notify>,
     state: Arc<GlobalState>,
-    cruma_conf: Arc<RwLock<cruma_proxy_lib::types::Configuration>>,
+    cruma_conf: Arc<ArcSwap<cruma_proxy_lib::types::Configuration>>,
 ) -> anyhow::Result<()> {
     let ct = tokio_util::sync::CancellationToken::new();
     use cruma_tunnels_lib::*;
     let config = AgentRuntimeConfig::default(AgentCredentials::anonymous())?;
     let port = state.config.read().await.tls_port.unwrap_or(4343);
-    let mut runtime = agent_runtime::start_agent_runtime(config, ct.clone()).await?;
+    let reconnect = Arc::new(tokio::sync::Notify::new());
+    let mut runtime =
+        agent_runtime::start_agent_runtime(reconnect, config, ct.clone()).await?;
 
     let mut events = runtime.subscribe();
     let p = Arc::new(
@@ -114,7 +116,7 @@ pub async fn handle_stream(
     p: Arc<LocalDiskPersistence>,
     cruma_stream: IncomingCrumaTlsStream,
     port: u16,
-    cruma_conf: Arc<RwLock<cruma_proxy_lib::types::Configuration>>,
+    cruma_conf: Arc<ArcSwap<cruma_proxy_lib::types::Configuration>>,
 ) -> anyhow::Result<()> {
 
     // TODO: dont recreate per stream

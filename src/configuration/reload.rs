@@ -189,8 +189,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
     drop(guard);
 
     if let Some(new_cruma_cfg) = rebuilt_cruma_config {
-        let mut cruma_guard = global_state.cruma_config.write().await;
-        *cruma_guard = new_cruma_cfg;
+        global_state.cruma_config.store(std::sync::Arc::new(new_cruma_cfg));
     }
 
     

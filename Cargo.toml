@@ -2,18 +2,19 @@
 name = "odd-box"
 description = "a dead simple reverse proxy server and web server"
 version = "0.1.13-RC2"
-edition = "2021"
+edition = "2024"
 authors = ["Olof Blomqvist <olof@twnet.se>"]
 repository = "https://github.com/OlofBlomqvist/odd-box"
 license-file = "LICENSE"
 
 [dependencies]
 anyhow = "1.0"
+arc-swap = "1.7"
 bollard = "0.18"
 chrono = { version = "0.4", features= ["serde"] }
 clap = { version="4.4", features=["derive"]}
-cruma-tunnels-lib = { path = "../umbra-yurei/cruma-sdk/cruma-tunnels-lib"}
-cruma-proxy-lib = { path = "../umbra-yurei/cruma-sdk/cruma-proxy-lib", features = ["hosting"]}
+cruma-tunnels-lib = { path = "/Users/olof/repos/uy/cruma-sdk/cruma-tunnels-lib"}
+cruma-proxy-lib = { path = "/Users/olof/repos/uy/cruma-sdk/cruma-proxy-lib"}
 dashmap = "6.0"
 lazy_static = "1.4"
 notify = "6.1"

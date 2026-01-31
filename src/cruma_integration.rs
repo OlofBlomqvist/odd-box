@@ -71,6 +71,7 @@ fn respond_route(name: String, pat: HostPattern, status: u16, body: &str) -> Htt
         target: Target::Respond {
             status,
             body: Some(body.as_bytes().to_vec()),
+            content_type: None,
         },
     }
 }
@@ -270,6 +271,7 @@ pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, Build
             target: Target::Respond {
                 status: 404,
                 body: None,
+                content_type: None,
             },
         });
     }
@@ -301,6 +303,7 @@ pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, Build
         listeners,
         web_backends,
         tcp_backends: HashMap::new(),
+        acme: AcmeAccountConfig::from_env(),
     };
 
     notes

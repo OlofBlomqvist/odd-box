@@ -25,6 +25,7 @@ use anyhow::Context;
 use dashmap::DashMap;
 use global_state::GlobalState;
 use control::ProcMessage;
+use arc_swap::ArcSwap;
 use cruma_integration::{build_config as build_cruma_config, apply_port_offset as apply_cruma_port_offset};
 use notify::RecommendedWatcher;
 use notify::Watcher;
@@ -94,7 +95,7 @@ pub mod global_state {
         pub target_request_counts: dashmap::DashMap<String, AtomicU64>,
         pub global_broadcast_channel: tokio::sync::broadcast::Sender<GlobalEvent>,
         pub websockets_broadcast_channel: tokio::sync::broadcast::Sender<EventForWebsocketClients>,
-        pub cruma_config: std::sync::Arc<tokio::sync::RwLock<cruma_proxy_lib::types::Configuration>>,
+        pub cruma_config: std::sync::Arc<arc_swap::ArcSwap<cruma_proxy_lib::types::Configuration>>,
     }
     impl GlobalState {
         pub fn uptime(&self) -> Result<std::time::Duration, SystemTimeError> {
@@ -106,7 +107,7 @@ pub mod global_state {
             tx_to_process_hosts: tokio::sync::broadcast::Sender<crate::control::ProcMessage>,
             global_broadcast_channel: tokio::sync::broadcast::Sender<GlobalEvent>,
             websockets_broadcast_channel: tokio::sync::broadcast::Sender<EventForWebsocketClients>,
-            cruma_config: std::sync::Arc<tokio::sync::RwLock<cruma_proxy_lib::types::Configuration>>,
+            cruma_config: std::sync::Arc<arc_swap::ArcSwap<cruma_proxy_lib::types::Configuration>>,
             log_handle: crate::OddLogHandle,
         ) -> Self {
             Self {
@@ -429,7 +430,7 @@ async fn main() -> anyhow::Result<()> {
         cfg
     };
     let cruma_config_arc =
-        std::sync::Arc::new(tokio::sync::RwLock::new(cruma_cfg_init));
+        std::sync::Arc::new(ArcSwap::from_pointee(cruma_cfg_init));
 
     let mut global_state = crate::global_state::GlobalState::new(
         inner_state_arc.clone(),
@@ -824,8 +825,7 @@ pub async fn docker_thread(state: Arc<GlobalState>) {
                 if !notes.unsupported.is_empty() {
                     tracing::warn!("cruma config placeholders/unsupported after docker update: {:?}", notes.unsupported);
                 }
-                let mut cruma_guard = state.cruma_config.write().await;
-                *cruma_guard = cfg;
+                state.cruma_config.store(std::sync::Arc::new(cfg));
             }
         }
         tokio::time::sleep(Duration::from_secs(10)).await;

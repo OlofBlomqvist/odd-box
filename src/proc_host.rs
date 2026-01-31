@@ -327,8 +327,7 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
                     if !notes.unsupported.is_empty() {
                         tracing::warn!("cruma config placeholders/unsupported after port change: {:?}", notes.unsupported);
                     }
-                    let mut cruma_guard = state.cruma_config.write().await;
-                    *cruma_guard = cfg;
+                    state.cruma_config.store(Arc::new(cfg));
                 }
             }
         }
