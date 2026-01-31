@@ -7,6 +7,8 @@ use cruma_proxy_lib::types::*;
 use crate::configuration::{ConfigWrapper, Hint};
 use crate::docker::ContainerProxyTarget;
 
+const DEFAULT_404_HTML: &[u8] = include_bytes!("assets/404.html");
+
 #[derive(Debug, Default, Clone)]
 pub struct BuildNotes {
     pub unsupported: Vec<String>,
@@ -62,6 +64,7 @@ fn http_route(name: String, pat: HostPattern, backend: WebBackendId) -> HttpRout
     }
 }
 
+
 fn respond_route(name: String, pat: HostPattern, status: u16, body: &str) -> HttpRoute {
     HttpRoute {
         name,
@@ -72,6 +75,35 @@ fn respond_route(name: String, pat: HostPattern, status: u16, body: &str) -> Htt
             status,
             body: Some(body.as_bytes().to_vec()),
             content_type: None,
+        },
+    }
+}
+
+fn serve_dir_route(
+    name: String,
+    pat: HostPattern,
+    directory: String,
+    list_dir: bool,
+    render_markdown: bool,
+    cache_control_max_age_in_seconds: Option<u64>,
+) -> HttpRoute {
+    let mut middlewares = Vec::new();
+    if let Some(max_age) = cache_control_max_age_in_seconds {
+        middlewares.push(HttpMiddleware::AddRespHeader {
+            name: "Cache-Control".to_string(),
+            value: format!("max-age={max_age}"),
+        });
+    }
+    HttpRoute {
+        name,
+        priority: 0,
+        filter: HttpMatch::Host { hosts: vec![pat] },
+        middlewares,
+        target: Target::ServeDir {
+            directory,
+            index: Some("index.html".to_string()),
+            list_dir,
+            render_markdown,
         },
     }
 }
@@ -190,19 +222,34 @@ pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, Build
         ));
     }
 
-    // Dir servers are not implemented in cruma_proxy_lib; respond with 501 for now.
+    // Dir servers -> ServeDir routes (static hosting).
     if let Some(dir_servers) = &cfg.dir_server {
         for dir in dir_servers {
-            // TODO: implement static hosting via cruma backends instead of placeholder.
-            http_routes.push(respond_route(
+            let resolved_dir = match cfg.resolve_dir_server_configuration(dir) {
+                Ok(resolved) => resolved,
+                Err(err) => {
+                    notes.unsupported.push(format!(
+                        "dir_server '{}' could not resolve directory: {err}",
+                        dir.host_name
+                    ));
+                    continue;
+                }
+            };
+
+            if dir.enable_lets_encrypt.unwrap_or(false) {
+                notes.unsupported.push(format!(
+                    "dir_server '{}' enable_lets_encrypt not mapped in cruma",
+                    dir.host_name
+                ));
+            }
+
+            http_routes.push(serve_dir_route(
                 dir.host_name.clone(),
                 host_pattern(&dir.host_name, dir.capture_subdomains),
-                501,
-                "dir_server not yet supported via cruma proxy",
-            ));
-            notes.unsupported.push(format!(
-                "dir_server '{}' routed to placeholder 501 response",
-                dir.host_name
+                resolved_dir.dir,
+                dir.enable_directory_browsing.unwrap_or(false),
+                dir.render_markdown.unwrap_or(false),
+                dir.cache_control_max_age_in_seconds,
             ));
         }
     }
@@ -262,19 +309,17 @@ pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, Build
         ));
     }
 
-    if http_routes.is_empty() {
-        http_routes.push(HttpRoute {
-            name: "fallback-404".into(),
-            priority: 0,
-            filter: HttpMatch::Any,
-            middlewares: Vec::new(),
-            target: Target::Respond {
-                status: 404,
-                body: None,
-                content_type: None,
-            },
-        });
-    }
+    http_routes.push(HttpRoute {
+        name: "fallback-404".into(),
+        priority: 0,
+        filter: HttpMatch::Any,
+        middlewares: Vec::new(),
+        target: Target::Respond {
+            status: 404,
+            body: Some(DEFAULT_404_HTML.to_vec()),
+            content_type: Some("text/html; charset=utf-8".to_string()),
+        },
+    });
 
     let http_routes = NonEmptyVec(http_routes);
 

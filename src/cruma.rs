@@ -122,7 +122,7 @@ pub async fn handle_stream(
     _state: Arc<GlobalState>,
     p: Arc<LocalDiskPersistence>,
     cruma_stream: IncomingCrumaTlsStream,
-    port: u16,
+    port: u16, // we dont care about this atm
     cruma_conf: Arc<ArcSwap<cruma_proxy_lib::types::Configuration>>,
 ) -> anyhow::Result<()> {
 
@@ -134,13 +134,12 @@ pub async fn handle_stream(
         IncomingCrumaTlsStream::Http2 { preface, .. } => preface.clone()
     };
 
-
-
-
     match if cruma_stream.is_tls() {
-        let eport = _state.config.read().await.tls_port.unwrap_or(4343);
-        proxy_service.terminate_and_proxy(cruma_stream, eport, preface.src.parse()?).await
+        // If we are receiving tls streams in here, we need to terminate it ourselves prior to proxying.
+        proxy_service.terminate_and_proxy(cruma_stream, port, preface.src.parse()?).await
     } else {
+        // Although our connection with cruma is TLS encrypted, we can still get non-TLS streams forwarded to us.
+        // This means they were terminated on the cruma.io servers, so we need to proxy them as non-TL here.
         let eport = _state.config.read().await.http_port.unwrap_or(8080);
         proxy_service.proxy_non_tls(cruma_stream, eport, preface.src.parse()?).await
     } {
