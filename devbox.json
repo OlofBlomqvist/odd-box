@@ -1,27 +1,23 @@
 {
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.13.6/.schema/devbox.schema.json",
   "packages": [
-    "rustup@latest",
-    "libiconv@latest",
-    "nodejs@18",
-    "python@latest",
-    "caddy@latest"
+    "cmake@latest",
+    "xdotool@latest",
+    "stdenv.cc.cc.lib",
+    "gcc@latest"
   ],
   "shell": {
     "init_hook": [
-      "projectDir=$(dirname $(readlink -f \"$0\"))",
-      "rustupHomeDir=\"$projectDir\"/.rustup",
-      "mkdir -p $rustupHomeDir",
-      "export RUSTUP_HOME=$rustupHomeDir",
-      "export LIBRARY_PATH=$LIBRARY_PATH:\"$projectDir/nix/profile/default/lib\"",
-      "rustup default stable",
-      "cargo fetch",
-      "echo 'heeeeey yooo!' > /dev/null"
+      "export LD_LIBRARY_PATH=./.devbox/nix/profile/default/lib",
+      "echo 'Welcome to devbox!' > /dev/null"
     ],
     "scripts": {
-      "test":          "cargo test -- --show-output",
-      "start":         "cargo run",
-      "start-release": "cargo run --release",
-      "build-docs":    "cargo doc"
+      "test": [
+        "echo \"Error: no test specified\" && exit 1"
+      ],
+      "build": [
+        "cargo build"
+      ]
     }
   }
 }

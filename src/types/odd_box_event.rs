@@ -26,26 +26,8 @@ pub enum EventForWebsocketClients {
     SentReqToBackend(u64,String),
     ReceivedResFromBackend(u64,String),
     Unknown(u64,String)
-    
-}
 
-#[derive(Debug, Clone, Serialize)]
-pub struct HTTPRequestEvent {
-    pub method: String,
-    pub path: String,
-    pub headers: Vec<(String, String)>,
-    pub body: String,
-    pub version: String
 }
-
-#[derive(Debug, Clone, Serialize)]
-pub struct HTTPResponseEvent {
-    pub status_code: u16,
-    pub headers: Vec<(String, String)>,
-    pub body: String,
-    pub version: String
-}
-
 
 #[derive(Debug, Clone, Serialize)]
 pub enum TCPEvent {

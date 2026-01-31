@@ -10,21 +10,21 @@ use crate::global_state::GlobalState;
 pub async fn extract_allowed_domain_names(state: Arc<GlobalState>) -> Vec<String> {
     let odd_box_config = state.config.read().await.clone();
 
+    // In V4, the DashMap key is the backend_id which serves as the hostname
     let hosted_domain_names = odd_box_config
         .hosted_processes
         .iter()
-        .map(|x| x.host_name.clone())
+        .map(|x| x.key().clone())
         .collect::<Vec<String>>();
     let remote_domains = odd_box_config
         .remote_sites
         .iter()
-        .map(|x| x.host_name.clone())
+        .map(|x| x.key().clone())
         .collect::<Vec<String>>();
     let dir_site_domains = odd_box_config
-        .dir_server
+        .static_sites
         .iter()
-        .flatten()
-        .map(|x| x.host_name.clone())
+        .map(|x| x.key().clone())
         .collect::<Vec<String>>();
     let docker_containers = odd_box_config
         .docker_containers
@@ -49,9 +49,13 @@ pub async fn cruma_thread(
     let ct = tokio_util::sync::CancellationToken::new();
     use cruma_tunnels_lib::*;
     let config = AgentRuntimeConfig::default(AgentCredentials::anonymous())?;
-    let port = state.config.read().await.tls_port.unwrap_or(4343);
+    // Get TLS port from frontends config
+    let port = state.config.read().await.frontends.https
+        .as_ref()
+        .map(|h| h.port)
+        .unwrap_or(4343);
     let reconnect = Arc::new(tokio::sync::Notify::new());
-    let mut runtime =
+    let runtime =
         agent_runtime::start_agent_runtime(reconnect, config, ct.clone()).await?;
 
     let mut events = runtime.subscribe();
@@ -139,8 +143,11 @@ pub async fn handle_stream(
         proxy_service.terminate_and_proxy(cruma_stream, port, preface.src.parse()?).await
     } else {
         // Although our connection with cruma is TLS encrypted, we can still get non-TLS streams forwarded to us.
-        // This means they were terminated on the cruma.io servers, so we need to proxy them as non-TL here.
-        let eport = _state.config.read().await.http_port.unwrap_or(8080);
+        // This means they were terminated on the cruma.io servers, so we need to proxy them as non-TLS here.
+        let eport = _state.config.read().await.frontends.http
+            .as_ref()
+            .map(|h| h.port)
+            .unwrap_or(8080);
         proxy_service.proxy_non_tls(cruma_stream, eport, preface.src.parse()?).await
     } {
         Ok(_) => {

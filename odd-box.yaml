@@ -1,0 +1,170 @@
+version: V4
+log_level: Trace
+port_range_start: 6666
+ip: 0.0.0.0
+env: {}
+root_dir: "~"
+default_log_format: standard
+auto_start: true
+
+acme:
+  email: olof@twnet.se
+
+admin_api_host: null
+admin_api_password: null
+
+backends:
+
+  py.localtest.me:
+    type: process
+    bin: python
+
+    args:
+      - -m
+      - http.server
+      - $port
+
+    dir: null
+    env: {}
+    protocol: h1
+    https: false
+    port: null
+    auto_start: false
+    exclude_from_start_all: false
+    log_level: null
+    log_format: null
+
+  images.local:
+    type: remote
+
+    endpoints:
+
+      - addr: images.bookvisit.com
+        port: 443
+
+    protocol: h1
+    https: true
+    keep_original_host_header: false
+
+  odd-box-docs.localhost:
+    type: static
+    dir: $cfg_dir/docs/book
+    index: index.html
+    list_dir: true
+    render_markdown: true
+    cache_max_age: null
+
+  caddy.localtest.me:
+    type: process
+    bin: /nix/store/n9xlfadcp7avgi4w87w41k8vnnyi4hm8-user-environment/bin/caddy
+
+    args:
+      - run
+      - --config
+      - ./CaddyTest1
+      - --adapter
+      - caddyfile
+
+    dir: .
+    env: {}
+    protocol: h2
+    https: false
+    port: 9999
+    auto_start: false
+    exclude_from_start_all: false
+    log_level: null
+    log_format: null
+
+  lobsters.localtest.me:
+    type: remote
+
+    endpoints:
+
+      - addr: lobste.rs
+        port: 443
+
+    protocol: h1
+    https: true
+    keep_original_host_header: false
+
+  test2.localhost:
+    type: remote
+
+    endpoints:
+
+      - addr: localhost
+        port: 9999
+
+    protocol: h1
+    https: false
+    keep_original_host_header: false
+
+  bqkj2lqhctbm6nzbjx233t74sdbwauq7u62mvisauumadkssst4a.tun.cruma.io:
+    type: static
+    dir: $cfg_dir/temp
+    index: index.html
+    list_dir: true
+    render_markdown: true
+    cache_max_age: 3600
+
+  nginx.localhost:
+    type: process
+    bin: podman
+
+    args:
+      - run
+      - --replace
+      - --quiet
+      - -p$port:80
+      - --name
+      - odd-nginx
+      - nginx
+
+    dir: null
+    env: {}
+    protocol: h1
+    https: false
+    port: null
+    auto_start: false
+    exclude_from_start_all: false
+    log_level: null
+    log_format: null
+
+  home.cruma.io:
+    type: remote
+
+    endpoints:
+
+      - addr: localhost
+        port: 5555
+
+    protocol: h1
+    https: false
+    keep_original_host_header: false
+
+frontends:
+
+  http:
+    port: 8080
+
+    routes:
+      lobsters.localtest.me: lobsters.localtest.me
+      py.localtest.me: py.localtest.me
+      bqkj2lqhctbm6nzbjx233t74sdbwauq7u62mvisauumadkssst4a.tun.cruma.io: bqkj2lqhctbm6nzbjx233t74sdbwauq7u62mvisauumadkssst4a.tun.cruma.io
+      home.cruma.io: home.cruma.io
+      caddy.localtest.me: caddy.localtest.me
+      test2.localhost: test2.localhost
+      odd-box-docs.localhost: odd-box-docs.localhost
+      nginx.localhost: nginx.localhost
+
+      images.local:
+        backend: images.local
+        capture_subdomains: false
+        forward_subdomains: false
+        redirect_to_https: true
+        lets_encrypt: false
+
+  https:
+    port: 4343
+    cert: self_signed
+    routes: inherit

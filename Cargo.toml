@@ -23,7 +23,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json","rust
 schemars = { version = "0.8", features = ["chrono"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde_with = "3.12"
+serde_yaml = "0.9"
+serde_pretty_yaml = "0.9.37"
 sysinfo = "0.33"
 self_update = { version = "0.42", default-features = false, features = ["rustls"] }
 time = {version="0.3",features=["macros","formatting","parsing"]}
@@ -38,15 +39,13 @@ dirs = "5.0"
 rustls = { version = "0.23", features = ["ring","std","tls12"], default-features = false}
 ctrlc = "3.4"
 which = "6.0"
+iced = { version = "0.13", features = ["tokio"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.58.0", features = ["Win32","Win32_Foundation","Win32_System","Win32_System_Console","Win32_NetworkManagement_IpHelper"] }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal"] }
-
-[target.'cfg(not(target_env = "msvc"))'.dependencies]
-tikv-jemallocator = { version = "0.6.0" }
 
 [profile.release]
 opt-level = 'z'     # Optimize for size

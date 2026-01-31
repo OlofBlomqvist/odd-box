@@ -3,10 +3,8 @@ use std::sync::{atomic::AtomicBool, Weak};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::configuration::FullyResolvedInProcessSiteConfig;
 
-
-#[derive(Eq,PartialEq,Debug,Clone,Hash, Serialize, Deserialize, ToSchema)]
+#[derive(Eq,PartialEq,Debug,Clone,Hash, Serialize, Deserialize, ToSchema, Default)]
 pub struct ProcId { pub id: String }
 impl ProcId {
     pub fn new() -> Self {
@@ -19,11 +17,11 @@ impl ProcId {
 
 #[derive(Debug)]
 pub struct ProcInfo {
-    pub liveness_ptr : Weak<AtomicBool>,
-    pub config : FullyResolvedInProcessSiteConfig,
-    pub pid : Option<String>,
-    pub marked_for_removal : bool,
-    pub started_at_time_stamp : std::time::SystemTime
+    pub liveness_ptr: Weak<AtomicBool>,
+    pub backend_id: String,
+    pub pid: Option<String>,
+    pub marked_for_removal: bool,
+    pub started_at_time_stamp: std::time::SystemTime
 }
 
 #[derive(Debug)]

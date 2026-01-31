@@ -1,10 +1,4 @@
-#![warn(unused_extern_crates)]
-#[cfg(not(target_env = "msvc"))]
-use tikv_jemallocator::Jemalloc;
 
-#[cfg(not(target_env = "msvc"))]
-#[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
 
 pub mod cruma_integration;
 mod configuration;
@@ -12,13 +6,10 @@ mod control;
 mod cruma;
 mod types;
 mod tui;
+mod gui;
 use anyhow::bail;
 use clap::Parser;
-use configuration::FullyResolvedInProcessSiteConfig;
-use configuration::InProcessSiteConfig;
 use configuration::OddBoxConfigVersion;
-use configuration::OddBoxConfiguration;
-use configuration::RemoteSiteConfig;
 use configuration::{ConfigWrapper, LogLevel};
 use core::fmt;
 use anyhow::Context;
@@ -54,17 +45,11 @@ use types::app_state::ProcState;
 mod logging;
 
 mod self_update;
-mod serde_with;
-mod tcp_pid;
 use lazy_static::lazy_static;
 use std::sync::atomic::{AtomicBool as StdAtomicBool, Ordering as StdOrdering};
 use types::app_state::AppState;
 
-
 mod docker;
-
-#[cfg(test)]
-mod tests;
 
 lazy_static! {
     static ref PROC_THREAD_MAP: Arc<DashMap<ProcId, ProcInfo>> = Arc::new(DashMap::new());
@@ -250,10 +235,9 @@ async fn generic_cleanup_thread(_state: Arc<GlobalState>) {
 fn generate_config(
     file_name: Option<&str>,
     fill_example: bool,
-) -> anyhow::Result<crate::configuration::OddBoxV3Config> {
+) -> anyhow::Result<crate::configuration::OddBoxV4Config> {
     let current_working_dir = std::env::current_dir()?;
     if let Some(file_name) = file_name {
-        let current_working_dir = std::env::current_dir()?;
         let file_path = current_working_dir.join(file_name);
         if std::path::Path::exists(std::path::Path::new(file_name)) {
             return Err(anyhow::anyhow!(format!(
@@ -261,40 +245,38 @@ fn generate_config(
             )));
         }
     }
-    if fill_example == false {
-        let mut init_cfg = include_str!("./init-cfg.toml").to_string();
+    if !fill_example {
+        // Load the YAML init config
+        let mut init_cfg = include_str!("./init-cfg.yaml").to_string();
 
         if cfg!(target_os = "macos") {
             // mac os allows for binding to lower ports without root, so we can use the default ports.
-            // notably it only allows it when binding to 0.0.0.0 so we need to change the ip to
             init_cfg = init_cfg
-                .replace("ip = \"127.0.0.1\" ", "ip = \"0.0.0.0\" ")
-                .replace("tls_port = 4343", "tls_port = 443")
-                .replace("http_port = 8080", "http_port = 80");
+                .replace("ip: 127.0.0.1", "ip: 0.0.0.0")
+                .replace("port: 4343", "port: 443")
+                .replace("port: 8080", "port: 80");
         }
 
-        let cfg = configuration::AnyOddBoxConfig::parse(&init_cfg)
+        let cfg = configuration::v4::OddBoxV4Config::parse_yaml(&init_cfg)
             .map_err(|e| anyhow::anyhow!(format!("Failed to parse initial configuration: {e}")))?;
-        match cfg {
-            configuration::AnyOddBoxConfig::V3(parsed_config) => {
-                if let Some(file_name) = file_name {
-                    let file_path = current_working_dir.join(file_name);
-                    std::fs::write(&file_path, init_cfg)?;
-                    tracing::info!("Configuration file written to {file_path:?}");
-                }
-                return Ok(parsed_config);
-            }
-            _ => return Err(anyhow::anyhow!("Failed to parse initial configuration")),
+
+        if let Some(file_name) = file_name {
+            let file_path = current_working_dir.join(file_name);
+            std::fs::write(&file_path, init_cfg)?;
+            tracing::info!("Configuration file written to {file_path:?}");
         }
+        return Ok(cfg);
     }
-    let cfg = crate::configuration::OddBoxV3Config::example();
+
+    let cfg = crate::configuration::OddBoxV4Config::example();
     if let Some(file_name) = file_name {
-        let serialized = cfg.to_string()?;
+        let serialized = cfg.to_yaml()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize config: {e}"))?;
         let file_path = current_working_dir.join(file_name);
         std::fs::write(&file_path, serialized)?;
         tracing::info!("Configuration file written to {file_path:?}");
     }
-    return Ok(cfg);
+    Ok(cfg)
 }
 
 // (validated_cfg, original_version)
@@ -304,7 +286,12 @@ fn initialize_configuration(
     let cfg_path = if let Some(cfg) = &args.configuration {
         cfg.to_string()
     } else {
-        if std::fs::metadata("odd-box.toml").is_ok() {
+        // Prefer YAML files (V4+), fall back to TOML (V3 and earlier)
+        if std::fs::metadata("odd-box.yaml").is_ok() {
+            "odd-box.yaml".to_owned()
+        } else if std::fs::metadata("oddbox.yaml").is_ok() {
+            "oddbox.yaml".to_owned()
+        } else if std::fs::metadata("odd-box.toml").is_ok() {
             "odd-box.toml".to_owned()
         } else if std::fs::metadata("oddbox.toml").is_ok() {
             "oddbox.toml".to_owned()
@@ -350,7 +337,7 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     if args.config_schema {
-        let schema = schemars::schema_for!(crate::configuration::OddBoxV3Config);
+        let schema = schemars::schema_for!(crate::configuration::OddBoxV4Config);
         println!(
             "{}",
             serde_json::to_string_pretty(&schema).expect("schema should be serializable")
@@ -363,42 +350,55 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let tui_flag = args.tui.unwrap_or(true);
+    let gui_flag = args.gui;
+    let tui_flag = if gui_flag { false } else { args.tui.unwrap_or(true) };
 
     if args.init {
-        generate_config(Some("odd-box.toml"), false)?;
+        generate_config(Some("odd-box.yaml"), false)?;
         return Ok(());
     }
 
-    let (config, _original_version, was_upgraded) = initialize_configuration(&args)?;
+    let (mut config, _original_version, was_upgraded) = initialize_configuration(&args)?;
 
     if was_upgraded {
-        println!("Detected outdated configuration file - updating to latest version");
+        println!("Detected outdated configuration file - updating to latest version (YAML)");
         let original_path = config
             .path
             .clone()
             .expect("original configuration file should exist");
+
+        // Backup the old config file
         let mut i = 1;
-        let mut new_path = format!("{original_path}.backup{i}");
-        while std::fs::exists(&new_path).is_ok_and(|x| x == true) {
+        let mut backup_path = format!("{original_path}.backup{i}");
+        while std::fs::exists(&backup_path).is_ok_and(|x| x == true) {
             i += 1;
-            new_path = format!("{original_path}.backup{i}");
+            backup_path = format!("{original_path}.backup{i}");
         }
-        std::fs::copy(original_path, new_path)?;
+        std::fs::copy(&original_path, &backup_path)?;
+        println!("  Backed up old config to: {backup_path}");
+
+        // Change the config path to .yaml if it was .toml
+        let yaml_path = if original_path.ends_with(".toml") {
+            original_path.replace(".toml", ".yaml")
+        } else {
+            format!("{}.yaml", original_path)
+        };
+
+        // Update the config's internal path to the new YAML path
+        config.set_disk_path(&yaml_path)?;
         config.write_to_disk()?;
+        println!("  Saved new V4 config to: {yaml_path}");
     }
 
-    let cloned_procs = config.hosted_process.clone();
-    let cloned_remotes = config.remote_target.clone();
-    let cloned_custom_dir = config.dir_server.clone();
+    // Clone backends for process spawning
+    let cloned_backends = config.backends.clone();
 
     let log_level: LevelFilter = match config.log_level {
-        Some(LogLevel::Info) => LevelFilter::INFO,
-        Some(LogLevel::Error) => LevelFilter::ERROR,
-        Some(LogLevel::Warn) => LevelFilter::WARN,
-        Some(LogLevel::Trace) => LevelFilter::TRACE,
-        Some(LogLevel::Debug) => LevelFilter::DEBUG,
-        _ => LevelFilter::INFO,
+        LogLevel::Info => LevelFilter::INFO,
+        LogLevel::Error => LevelFilter::ERROR,
+        LogLevel::Warn => LevelFilter::WARN,
+        LogLevel::Trace => LevelFilter::TRACE,
+        LogLevel::Debug => LevelFilter::DEBUG,
     };
 
     let global_event_broadcaster = tokio::sync::broadcast::Sender::<GlobalEvent>::new(1024);
@@ -606,33 +606,42 @@ async fn main() -> anyhow::Result<()> {
         })
     };
 
-    let mut config_guard = global_state.config.write().await;
+    let config_guard = global_state.config.read().await;
 
-    // Add any remotes to the site list
-    for x in cloned_remotes.iter().flatten() {
-        inner_state_arc
-            .site_status_map
-            .insert(x.host_name.to_owned(), ProcState::Remote);
-    }
+    // Add backends to the site status map based on their type
+    for (backend_id, backend) in &cloned_backends {
+        match backend {
+            configuration::v4::Backend::Process(proc) => {
+                // Resolve and spawn process host
+                match config_guard.resolve_process_backend(backend_id, proc) {
+                    Ok(resolved) => {
+                        // Add to site status as stopped initially
+                        inner_state_arc
+                            .site_status_map
+                            .insert(backend_id.clone(), ProcState::Stopped);
 
-    // Add any hosted dirs to site list
-    for x in cloned_custom_dir.iter().flatten() {
-        inner_state_arc
-            .site_status_map
-            .insert(x.host_name.to_owned(), ProcState::DirServer);
-    }
-
-    // And spawn the hosted process worker loops
-    for x in cloned_procs.iter().flatten() {
-        match config_guard.resolve_process_configuration(&x) {
-            Ok(x) => {
-                tokio::task::spawn(proc_host::host(
-                    x,
-                    arced_tx.subscribe(),
-                    global_state.clone(),
-                ));
+                        tokio::task::spawn(proc_host::host(
+                            resolved,
+                            arced_tx.subscribe(),
+                            global_state.clone(),
+                        ));
+                    }
+                    Err(e) => bail!(
+                        "Failed to resolve process configuration for backend '{}':\n{:?}",
+                        backend_id, e
+                    )
+                }
             }
-            Err(e) => bail!("Failed to resolve process configuration for:\n=====================================================\n{:?}.\n=====================================================\n\nThe error was: {:?}",x,e)
+            configuration::v4::Backend::Remote(_) => {
+                inner_state_arc
+                    .site_status_map
+                    .insert(backend_id.clone(), ProcState::Remote);
+            }
+            configuration::v4::Backend::Static(_) => {
+                inner_state_arc
+                    .site_status_map
+                    .insert(backend_id.clone(), ProcState::DirServer);
+            }
         }
     }
 
@@ -660,6 +669,15 @@ async fn main() -> anyhow::Result<()> {
     // if in tui mode, we can just hang around until the tui thread exits.
     if let Some(tt) = tui_task {
         _ = tt.await;
+    // if in gui mode, run the iced application (blocks on main thread)
+    } else if gui_flag {
+        tracing::info!("odd-box started successfully. launching GUI...");
+        // Run GUI on main thread - this blocks until window is closed
+        if let Err(e) = gui::run(global_state.clone()) {
+            tracing::error!("GUI error: {:?}", e);
+        }
+        // Signal exit when GUI closes
+        global_state.app_state.exit.store(true, Ordering::SeqCst);
     // otherwise we will wait for the exit signal set by ctrl-c
     } else {
         tracing::info!("odd-box started successfully. use ctrl-c to quit.");
@@ -670,7 +688,7 @@ async fn main() -> anyhow::Result<()> {
 
     // ^ Note that after this point when the application has been running in TUI mode, we can no longer use tracing as the subscriber
     //   writes to the TUI buffers, and so we must now use println from here on out.
-    if tui_flag {
+    if tui_flag || gui_flag {
         println!("odd-box is shutting down.. waiting for processes to stop..");
     } else {
         tracing::warn!("odd-box is shutting down.. waiting for processes to stop..");
@@ -682,7 +700,7 @@ async fn main() -> anyhow::Result<()> {
     while arced_tx.receiver_count() > 0 {
         if i > 30 {
             if PROC_THREAD_MAP.is_empty() {
-                if tui_flag {
+                if tui_flag || gui_flag {
                     eprintln!(
                         "Shutdown sequence completed with warning: mismatch between PTM and ATX.."
                     )
@@ -697,7 +715,7 @@ async fn main() -> anyhow::Result<()> {
 
             for (name, pid) in PROC_THREAD_MAP.iter().filter_map(|x| {
                 if let Some(pid) = &x.pid {
-                    Some((x.config.host_name.clone(), pid.clone()))
+                    Some((x.backend_id.clone(), pid.clone()))
                 } else {
                     None
                 }
@@ -705,7 +723,7 @@ async fn main() -> anyhow::Result<()> {
                 awaited_processed.push(format!("- {} (pid: {})", name, pid))
             }
 
-            if tui_flag {
+            if tui_flag || gui_flag {
                 println!("Waiting for processes to die..");
                 println!("{}", awaited_processed.join("\n"));
             } else {
@@ -722,7 +740,7 @@ async fn main() -> anyhow::Result<()> {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
-    if tui_flag {
+    if tui_flag || gui_flag {
         println!("shutdown sequence for hosted processes completed successfully");
         println!("stopping proxy services..");
     } else {
@@ -735,7 +753,7 @@ async fn main() -> anyhow::Result<()> {
     _ = cfg_monitor.abort();
     _ = cleanup_thread.abort();
 
-    if tui_flag {
+    if tui_flag || gui_flag {
         println!("odd-box exited successfully");
     } else {
         tracing::info!("odd-box exited successfully");

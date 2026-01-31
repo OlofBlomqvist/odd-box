@@ -1,0 +1,27 @@
+# odd-box configuration file (V4)
+# See https://github.com/OlofBlomqvist/odd-box for documentation
+
+version: V4
+
+# Global settings
+log_level: info
+port_range_start: 4200
+ip: 127.0.0.1
+auto_start: true
+
+# Global environment variables (available to all process backends)
+env: {}
+
+# Backends define your upstream targets
+backends: {}
+
+# Frontends define how traffic reaches your backends
+frontends:
+  http:
+    port: 8080
+    routes: {}
+
+  https:
+    port: 4343
+    cert: self_signed
+    routes: inherit

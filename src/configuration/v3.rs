@@ -319,13 +319,8 @@ impl InProcessSiteConfig {
         };
 
 
-        let local_addr = {
-            if state.config.read().await.use_loopback_ip_for_procs.unwrap_or_default() {
-                "127.0.0.1"
-            } else {
-                "localhost"
-            }
-        };
+        // Always use loopback address for process backends
+        let local_addr = "127.0.0.1";
         
 
         let backends = vec![Backend {

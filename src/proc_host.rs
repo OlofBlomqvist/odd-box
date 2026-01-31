@@ -111,8 +111,8 @@ fn wait_with_deadline(child: &mut Child, dur: Duration) -> io::Result<Option<Exi
 
 
 pub async fn host(
-    mut resolved_proc: crate::configuration::FullyResolvedInProcessSiteConfig,
-    mut rcv:tokio::sync::broadcast::Receiver<ProcMessage>,
+    mut resolved_proc: crate::configuration::ResolvedProcessBackend,
+    mut rcv: tokio::sync::broadcast::Receiver<ProcMessage>,
     state: Arc<GlobalState>
 ) {
 
@@ -121,7 +121,7 @@ pub async fn host(
     crate::PROC_THREAD_MAP.insert(resolved_proc.proc_id.clone(), crate::types::proc_info::ProcInfo {
         started_at_time_stamp: std::time::SystemTime::now(),
         marked_for_removal: false,
-        config: resolved_proc.clone(),
+        backend_id: resolved_proc.backend_id.clone(),
         pid: None,
         liveness_ptr: std::sync::Arc::<AtomicBool>::downgrade(&my_arc)
     });
@@ -133,23 +133,21 @@ pub async fn host(
 
     // if auto_start is not set in the config, we assume that user wants to start site automatically like before
     let mut enabled = {
-        // if auto_start is at all set for the specific process, use that value, otherwise use the global value
-        // and otherwise fallback to assume that the site should be started automatically.
         match resolved_proc.auto_start {
             Some(v) => v,
             None => {
                 let guard = state.config.read().await;
-                guard.auto_start.unwrap_or(true)
+                guard.auto_start
             }
         }
     };
 
-    let excluded_from_auto_start = resolved_proc.excluded_from_start_all;
+    let excluded_from_auto_start = resolved_proc.exclude_from_start_all;
 
     let mut initialized = false;
-    let domsplit = resolved_proc.host_name.split(".").collect::<Vec<&str>>();
+    let domsplit = resolved_proc.backend_id.split(".").collect::<Vec<&str>>();
 
-    let mut acceptable_names = vec![resolved_proc.host_name.clone()];
+    let mut acceptable_names = vec![resolved_proc.backend_id.clone()];
 
     if domsplit.len() > 0 {
         acceptable_names.push(domsplit[0].to_owned());
@@ -224,8 +222,8 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
                 Some(mut item) => {
                     item.pid = None;
                     if item.marked_for_removal {
-                        tracing::warn!("Detected mark of removal, leaving main loop for {}",resolved_proc.host_name);
-                        state.app_state.site_status_map.remove(&resolved_proc.host_name);
+                        tracing::warn!("Detected mark of removal, leaving main loop for {}",resolved_proc.backend_id);
+                        state.app_state.site_status_map.remove(&resolved_proc.backend_id);
                         break;
                     }
                 },
@@ -241,29 +239,29 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
         let exit = state.app_state.exit.load(std::sync::atomic::Ordering::SeqCst) == true;
 
         if exit {
-            _ = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopped,"stop due to exit");
-            tracing::debug!("exiting host for {}",&resolved_proc.host_name);
+            _ = update_status(&previous_update,&resolved_proc.backend_id, &my_id,&state,ProcState::Stopped,"stop due to exit");
+            tracing::debug!("exiting host for {}",&resolved_proc.backend_id);
             break
         }
 
         if initialized == false {
-            previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopped,"stopping due to init false");
+            previous_update = update_status(&previous_update,&resolved_proc.backend_id, &my_id,&state,ProcState::Stopped,"stopping due to init false");
             initialized = true;
         } else {
-            previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopped,"stopped due to init true");
+            previous_update = update_status(&previous_update,&resolved_proc.backend_id, &my_id,&state,ProcState::Stopped,"stopped due to init true");
         }
 
         let is_enabled_before = enabled == true;
 
         while let Ok(msg) = rcv.try_recv() {
             match msg {
-                ProcMessage::StartAll if excluded_from_auto_start => tracing::debug!("Refusing to start {} as thru the start all command as it is disabled",&resolved_proc.host_name),
-                ProcMessage::Start(s) if excluded_from_auto_start && s == "all" => tracing::debug!("Refusing to start {} as thru the start all command as it is disabled",&resolved_proc.host_name),
+                ProcMessage::StartAll if excluded_from_auto_start => tracing::debug!("Refusing to start {} as thru the start all command as it is disabled",&resolved_proc.backend_id),
+                ProcMessage::Start(s) if excluded_from_auto_start && s == "all" => tracing::debug!("Refusing to start {} as thru the start all command as it is disabled",&resolved_proc.backend_id),
 
                 ProcMessage::Delete(s,sender) => {
                     if acceptable_names.contains(&s) {
-                        tracing::warn!("[{}] Dropping due to having been deleted by proxy.", resolved_proc.host_name);
-                        state.app_state.site_status_map.remove(&resolved_proc.host_name);
+                        tracing::warn!("[{}] Dropping due to having been deleted by proxy.", resolved_proc.backend_id);
+                        state.app_state.site_status_map.remove(&resolved_proc.backend_id);
                         match sender.send(0).await {
                             Ok(_) => {},
                             Err(e) => {tracing::warn!("Failed to send confirmation to proxy service that we stopped! {e:?}")
@@ -291,9 +289,9 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
 
         if !enabled {
             if enabled != is_enabled_before {
-                tracing::info!("[{}] Disabled via command from proxy service",&resolved_proc.host_name);
+                tracing::info!("[{}] Disabled via command from proxy service",&resolved_proc.backend_id);
                 {
-                    previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopped,"stopped due to enabled != is_enabled_before");
+                    previous_update = update_status(&previous_update,&resolved_proc.backend_id, &my_id,&state,ProcState::Stopped,"stopped due to enabled != is_enabled_before");
                 }
             }
             continue;
@@ -301,33 +299,45 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
 
 
         if enabled != is_enabled_before {
-            tracing::info!("[{}] Enabled via command from proxy service",&resolved_proc.host_name);
+            tracing::info!("[{}] Enabled via command from proxy service",&resolved_proc.backend_id);
         }
 
-
-        // just to make sure we havnt messed up timing-wise and selected the same port for two different processes
+        // just to make sure we haven't messed up timing-wise and selected the same port for two different processes
         // we will always call this function to get a new port (or keep the old one if we are the only one using it)
 
         let previous_port = resolved_proc.active_port;
         let mut guard = state.config.write().await;
-        if let Ok(p) = guard.set_active_port(&mut resolved_proc) {
-            let changed = Some(p) != previous_port;
-            resolved_proc.active_port = Some(p);
 
-            if changed {
-                // Keep the cruma runtime in sync with newly assigned ports.
-                if let Ok((mut cfg, notes)) = build_cruma_config(&guard) {
-                    let offset = std::env::var("ODD_BOX_CRUMA_PORT_OFFSET")
-                        .ok()
-                        .and_then(|v| v.parse().ok())
-                        .unwrap_or(0);
-                    if let Err(e) = apply_cruma_port_offset(&mut cfg, offset) {
-                        tracing::error!(error=%e, "Failed to apply port offset to cruma config after port change");
+        // Get the ProcessBackend from the DashMap, create a copy, and drop the reference
+        let proc_backend_opt = guard.hosted_processes.get(&resolved_proc.backend_id)
+            .map(|entry| {
+                let mut proc_backend = entry.clone();
+                proc_backend.active_port = resolved_proc.active_port;
+                proc_backend.port = resolved_proc.port;
+                proc_backend
+            });
+
+        // Now we can safely call set_active_port without holding a reference to the DashMap
+        if let Some(mut proc_backend) = proc_backend_opt {
+            if let Ok(p) = guard.set_active_port(&resolved_proc.backend_id, &mut proc_backend) {
+                let changed = Some(p) != previous_port;
+                resolved_proc.active_port = Some(p);
+
+                if changed {
+                    // Keep the cruma runtime in sync with newly assigned ports.
+                    if let Ok((mut cfg, notes)) = build_cruma_config(&guard) {
+                        let offset = std::env::var("ODD_BOX_CRUMA_PORT_OFFSET")
+                            .ok()
+                            .and_then(|v| v.parse().ok())
+                            .unwrap_or(0);
+                        if let Err(e) = apply_cruma_port_offset(&mut cfg, offset) {
+                            tracing::error!(error=%e, "Failed to apply port offset to cruma config after port change");
+                        }
+                        if !notes.unsupported.is_empty() {
+                            tracing::warn!("cruma config placeholders/unsupported after port change: {:?}", notes.unsupported);
+                        }
+                        state.cruma_config.store(Arc::new(cfg));
                     }
-                    if !notes.unsupported.is_empty() {
-                        tracing::warn!("cruma config placeholders/unsupported after port change: {:?}", notes.unsupported);
-                    }
-                    state.cruma_config.store(Arc::new(cfg));
                 }
             }
         }
@@ -335,7 +345,7 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
 
         if resolved_proc.active_port.is_none() {
             let ms = 3000;
-            tracing::warn!("[{}] No usable port found. Waiting for {}ms before retrying..",&resolved_proc.host_name,ms);
+            tracing::warn!("[{}] No usable port found. Waiting for {}ms before retrying..",&resolved_proc.backend_id,ms);
             tokio::time::sleep(Duration::from_millis(ms)).await;
             continue;
         }
@@ -348,13 +358,13 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
 
         let (global_min_loglevel,_global_default_log_format) = {
             let guard = state.config.read().await;
-            (guard.log_level.clone().unwrap_or(LogLevel::Info),guard.default_log_format.clone())
+            (guard.log_level.clone(),guard.default_log_format.clone())
         };
 
         let do_initial_trace = if let Some(ref ll) = resolved_proc.log_level { ll == &LogLevel::Trace } else { global_min_loglevel == LogLevel::Trace };
 
         if do_initial_trace {
-            tracing::trace!("[{}] Executing command '{}' in directory '{}'",resolved_proc.host_name,resolved_proc.bin,workdir);
+            tracing::trace!("[{}] Executing command '{}' in directory '{}'",resolved_proc.backend_id,resolved_proc.bin,workdir);
         }
 
 
@@ -362,8 +372,8 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
             missing_bin = false;
             p
         } else {
-            tracing::error!("Failed to resolve path of binary for site: '{}' - workdir: {}, bin: {}",&resolved_proc.host_name,workdir,resolved_proc.bin);
-            previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Faulty,"faulty since we could not resolve bin path");
+            tracing::error!("Failed to resolve path of binary for site: '{}' - workdir: {}, bin: {}",&resolved_proc.backend_id,workdir,resolved_proc.bin);
+            previous_update = update_status(&previous_update,&resolved_proc.backend_id, &my_id,&state,ProcState::Faulty,"faulty since we could not resolve bin path");
             missing_bin = true;
             continue
         };
@@ -373,18 +383,18 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
 
         {
             let state_guard = state.config.read().await;
-            for kvp in &state_guard.env_vars.clone() {
+            for (key, value) in &state_guard.env {
                 if do_initial_trace {
-                    tracing::trace!("[{}] ADDING GLOBAL ENV VAR '{}': {}", &resolved_proc.host_name,&kvp.key,&kvp.value);
+                    tracing::trace!("[{}] ADDING GLOBAL ENV VAR '{}': {}", &resolved_proc.backend_id, key, value);
                 }
-                process_specific_environment_variables.insert(kvp.key.clone(), kvp.value.clone());
+                process_specific_environment_variables.insert(key.clone(), value.clone());
             }
         }
 
         // more specific env vars should override globals
-        for kvp in resolved_proc.env_vars.iter().flatten() {
+        for kvp in &resolved_proc.env_vars {
             if do_initial_trace {
-                tracing::trace!("[{}] ADDING ENV VAR '{}': {}", &resolved_proc.host_name,&kvp.key,&kvp.value);
+                tracing::trace!("[{}] ADDING ENV VAR '{}': {}", &resolved_proc.backend_id,&kvp.key,&kvp.value);
             }
             process_specific_environment_variables.insert(kvp.key.clone(), kvp.value.clone());
         }
@@ -395,14 +405,14 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
         process_specific_environment_variables.insert("PORT".into(), port.clone());
 
 
-        let mut pre_resolved_args = resolved_proc.args.clone().unwrap_or_default();
+        let mut pre_resolved_args = resolved_proc.args.clone();
 
         for p in &mut pre_resolved_args {
             *p = p.replace("$port",&port);
         }
 
 
-        previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Starting,"starting!");
+        previous_update = update_status(&previous_update,&resolved_proc.backend_id, &my_id,&state,ProcState::Starting,"starting!");
 
         const _CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -437,7 +447,7 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
             Ok(mut child) => {
 
 
-                previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Running,"running!");
+                previous_update = update_status(&previous_update,&resolved_proc.backend_id, &my_id,&state,ProcState::Running,"running!");
 
                 {
                     let entry = crate::PROC_THREAD_MAP.get_mut(&resolved_proc.proc_id);
@@ -445,7 +455,6 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
                         Some(mut item) => {
                             item.pid = Some(child.id().to_string());
                             item.started_at_time_stamp = std::time::SystemTime::now();
-                            item.config.active_port = resolved_proc.active_port;
                         },
                         None => {
                             tracing::warn!("Something has gone very wrong! A thread is missing from the global thread map.. this is a bug in odd-box.")
@@ -461,19 +470,16 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
 
                 let stdout_reader = std::io::BufReader::new(stdout);
                 let stderr_reader = std::io::BufReader::new(stderr);
-                let procname = resolved_proc.host_name.clone();
+                let procname = resolved_proc.backend_id.clone();
                 let reclone = re.clone();
 
 
                 let (_global_min_loglevel,global_default_log_format) = {
                     let guard = state.config.read().await;
-                    (guard.log_level.clone().unwrap_or(LogLevel::Info),guard.default_log_format.clone())
+                    (guard.log_level.clone(),guard.default_log_format.clone())
                 };
 
                 let logformat = resolved_proc.log_format.clone().unwrap_or(global_default_log_format);
-
-
-                // --- USE THE DEAFULT GLOBAL LOG FORMNAT!!!
 
                 // note: global min loglevel IS NOT supposed to be used as default for processes - processes should always default to info
                 let proc_loglevel = resolved_proc.log_level.clone().unwrap_or(LogLevel::Info);
@@ -545,7 +551,7 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
                     }
                 });
 
-                let procname = resolved_proc.host_name.clone();
+                let procname = resolved_proc.backend_id.clone();
                 _ = std::thread::Builder::new().name(format!("{procname}")).spawn(move || {
                     for line in std::io::BufRead::lines(stderr_reader) {
                         if let Ok(line) = line{
@@ -560,15 +566,15 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
 
                     let exit = state.app_state.exit.load(std::sync::atomic::Ordering::SeqCst) == true;
                     if exit {
-                        tracing::info!("[{}] Stopping due to app exit", resolved_proc.host_name);
-                        previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopping,"stopping..exiting");
+                        tracing::info!("[{}] Stopping due to app exit", resolved_proc.backend_id);
+                        previous_update = update_status(&previous_update,&resolved_proc.backend_id, &my_id,&state,ProcState::Stopping,"stopping..exiting");
                         kill_process_and_its_children(child);
                         break
                     }
 
                     let live_proc_config = {
                         let entry = state.config.read().await;
-                        let config = entry.hosted_processes.get(&resolved_proc.host_name);
+                        let config = entry.hosted_processes.get(&resolved_proc.backend_id);
                         if let Some(c) = config {
                             Some(c.clone())
                         } else {
@@ -577,25 +583,25 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
                     };
 
                     if let Some(live_proc_config) = live_proc_config {
-                        if live_proc_config.get_id() != &resolved_proc.proc_id {
-                            tracing::warn!("[{}] Stopping due to having been replaced by a new process with the same name", resolved_proc.host_name);
-                            previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopping,"stopping due to being replaced");
+                        if live_proc_config.proc_id != resolved_proc.proc_id {
+                            tracing::warn!("[{}] Stopping due to having been replaced by a new process with the same name", resolved_proc.backend_id);
+                            previous_update = update_status(&previous_update,&resolved_proc.backend_id, &my_id,&state,ProcState::Stopping,"stopping due to being replaced");
                             kill_process_and_its_children(child);
                             break
                         }
-                        resolved_proc.log_format = live_proc_config.log_format;
-                        resolved_proc.log_level = live_proc_config.log_level;
+                        resolved_proc.log_format = live_proc_config.log_format.clone();
+                        resolved_proc.log_level = live_proc_config.log_level.clone();
                     }
 
-                    previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Running,"running!!");
+                    previous_update = update_status(&previous_update,&resolved_proc.backend_id, &my_id,&state,ProcState::Running,"running!!");
 
 
                     while let Ok(msg) = rcv.try_recv() {
                         match msg {
                             ProcMessage::Delete(s,sender) => {
                                 if acceptable_names.contains(&s) {
-                                    tracing::warn!("[{}] Dropping due to having been deleted by proxy.", resolved_proc.host_name);
-                                    state.app_state.site_status_map.remove(&resolved_proc.host_name);
+                                    tracing::warn!("[{}] Dropping due to having been deleted by proxy.", resolved_proc.backend_id);
+                                    state.app_state.site_status_map.remove(&resolved_proc.backend_id);
                                     if let Some(mut stdin) = child.stdin.take() {
                                         _ = stdin.write_all(b"q");
                                     }
@@ -632,8 +638,8 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
                         match entry {
                             Some(item) => {
                                 if item.marked_for_removal {
-                                    tracing::warn!("Detected mark of removal, leaving main loop for {}",resolved_proc.host_name);
-                                    _ = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopping,"stopping due to marked for removal");
+                                    tracing::warn!("Detected mark of removal, leaving main loop for {}",resolved_proc.backend_id);
+                                    _ = update_status(&previous_update,&resolved_proc.backend_id, &my_id,&state,ProcState::Stopping,"stopping due to marked for removal");
                                     if let Some(mut stdin) = child.stdin.take() {
                                         _ = stdin.write_all(b"q");
                                     }
@@ -649,10 +655,10 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
 
 
                     if !enabled {
-                        tracing::warn!("[{}] Stopping due to having been disabled by proxy.", resolved_proc.host_name);
+                        tracing::warn!("[{}] Stopping due to having been disabled by proxy.", resolved_proc.backend_id);
                         // note: we just send q here because some apps like iisexpress requires it
 
-                        previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopping,"stopping because not enabled");
+                        previous_update = update_status(&previous_update,&resolved_proc.backend_id, &my_id,&state,ProcState::Stopping,"stopping because not enabled");
 
                         if let Some(mut stdin) = child.stdin.take() {
                             _ = stdin.write_all(b"q");
@@ -663,12 +669,12 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
 
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
-                previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Stopped,"stopped!!");
+                previous_update = update_status(&previous_update,&resolved_proc.backend_id, &my_id,&state,ProcState::Stopped,"stopped!!");
 
             },
             Err(e) => {
-                tracing::info!("[{}] Failed to start! {e:?}",resolved_proc.host_name);
-                previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Faulty,"something is wrong");
+                tracing::info!("[{}] Failed to start! {e:?}",resolved_proc.backend_id);
+                previous_update = update_status(&previous_update,&resolved_proc.backend_id, &my_id,&state,ProcState::Faulty,"something is wrong");
 
 
             },
@@ -676,11 +682,11 @@ pub fn kill_process_and_its_children(parent: std::process::Child) {
 
         if enabled {
             if !state.app_state.exit.load(std::sync::atomic::Ordering::SeqCst) {
-                tracing::warn!("[{}] Stopped unexpectedly.. Will automatically restart the process in 5 seconds unless stopped.",resolved_proc.host_name);
-                previous_update = update_status(&previous_update,&resolved_proc.host_name, &my_id,&state,ProcState::Faulty,"something is wrong with the process..");
+                tracing::warn!("[{}] Stopped unexpectedly.. Will automatically restart the process in 5 seconds unless stopped.",resolved_proc.backend_id);
+                previous_update = update_status(&previous_update,&resolved_proc.backend_id, &my_id,&state,ProcState::Faulty,"something is wrong with the process..");
                 time_to_sleep_ms_after_each_iteration = 5000; // wait 5 seconds before restarting but NOT in here as we have a lock
             } else {
-                tracing::info!("[{}] Stopped due to exit signal. Bye!",resolved_proc.host_name);
+                tracing::info!("[{}] Stopped due to exit signal. Bye!",resolved_proc.backend_id);
                 break
             }
         }
@@ -732,12 +738,6 @@ fn update_status(previous:&ProcState,x:&str,id:&ProcId,g:&Arc<GlobalState>,s:Pro
             //tracing::warn!("emitting for {x:?} because there was no previous item in the site status map");
             true
         };
-
-    // let emit = emit && match s {
-    //     ProcState::Stopped => true,
-    //     ProcState::Running => true,
-    //     _ => false
-    // };
 
     if emit {
 

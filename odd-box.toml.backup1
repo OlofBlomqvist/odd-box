@@ -1,0 +1,100 @@
+#:schema https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/odd-box-schema-v3.0.json
+version = "V3"
+alpn = false
+http_port = 8080
+tls_port = 4343
+ip = "0.0.0.0"
+auto_start = true
+root_dir = "~"
+log_level = "Trace"
+port_range_start = 6666
+default_log_format = "standard"
+env_vars = []
+#odd_box_password = "changeme2"
+
+lets_encrypt_account_email = "olof@twnet.se" 
+
+[[remote_target]]
+host_name = "home.cruma.io"
+backends = [ { address = "localhost", port = 5555, https = false }  ]
+enable_lets_encrypt = false
+terminate_http = true
+terminate_tls = true
+
+# note: remotes are by default going to be http(s) terminated in order to use
+# the correct host header or sni based on the backend address.
+# local ones (127.0.0.1/localhost) will NOT be terminated by default unless
+# you explicitly set keep_original_host_header or terminate_http.
+[[remote_target]]
+host_name = "lobsters.localtest.me"
+#keep_original_host_header = false
+backends = [
+	{ https = true, address="lobste.rs", port=443}
+]
+
+[[remote_target]]
+host_name = "test2.localhost"
+backends = [
+	{ https = false, address="localhost", port=9999 }
+]
+
+[[remote_target]]
+host_name = "images.local"
+redirect_to_https = true
+backends = [
+	{ https = true, address="images.bookvisit.com", port=443 }
+]
+
+[[hosted_process]]
+host_name = "py.localtest.me"
+bin = "python"
+args = [
+  "-m", 
+  "http.server", 
+  "$port"]
+auto_start = false
+
+[[hosted_process]]
+host_name = "nginx.localhost"
+bin = "podman"
+args = [
+  "run", 
+  "--replace", 
+  "--quiet", 
+  "-p$port:80", 
+  "--name", 
+  "odd-nginx", 
+  "nginx"]
+auto_start = false
+
+[[hosted_process]]
+host_name = "caddy.localtest.me"
+dir = "."
+bin = "/nix/store/n9xlfadcp7avgi4w87w41k8vnnyi4hm8-user-environment/bin/caddy"
+hints = [
+'H2', 'H2CPK', 'H1'
+]
+args = [
+  "run", 
+  "--config", 
+  "./CaddyTest1", 
+  "--adapter", 
+  "caddyfile"]
+auto_start = false
+https = false
+port = 9999
+terminate_tls = false
+terminate_http = false
+
+[[dir_server]]
+host_name = "bqkj2lqhctbm6nzbjx233t74sdbwauq7u62mvisauumadkssst4a.tun.cruma.io"
+dir = "$cfg_dir/temp"
+enable_directory_browsing = true
+render_markdown = true
+cache_control_max_age_in_seconds = 3600
+
+[[dir_server]]
+host_name = "odd-box-docs.localhost"
+dir = "$cfg_dir/docs/book"
+enable_directory_browsing = true
+render_markdown = true

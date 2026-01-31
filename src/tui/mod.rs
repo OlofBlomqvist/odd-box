@@ -46,11 +46,11 @@ async fn build_snapshot(global_state: &GlobalState) -> String {
         writeln!(&mut out, "Cruma tunnel: pending assignment").ok();
     }
 
-    let hosted: Vec<_> = cfg.hosted_processes.iter().map(|kv| kv.value().clone()).collect();
+    let hosted: Vec<_> = cfg.hosted_processes.iter().map(|kv| (kv.key().clone(), kv.value().clone())).collect();
     writeln!(&mut out, "Hosted processes ({}):", hosted.len()).ok();
-    for proc in hosted {
+    for (backend_id, proc) in hosted {
         let state = status_map
-            .get(&proc.host_name)
+            .get(&backend_id)
             .map(|v| v.value().clone())
             .unwrap_or(ProcState::Stopped);
         let port = proc
@@ -61,41 +61,41 @@ async fn build_snapshot(global_state: &GlobalState) -> String {
         writeln!(
             &mut out,
             " - {:<30} {:<10} port: {}",
-            proc.host_name,
+            backend_id,
             fmt_state(state),
             port
         )
         .ok();
     }
 
-    let remotes: Vec<_> = cfg.remote_sites.iter().map(|kv| kv.value().clone()).collect();
+    let remotes: Vec<_> = cfg.remote_sites.iter().map(|kv| (kv.key().clone(), kv.value().clone())).collect();
     writeln!(&mut out, "\nRemote sites ({}):", remotes.len()).ok();
-    for remote in remotes {
+    for (backend_id, remote) in remotes {
         let state = status_map
-            .get(&remote.host_name)
+            .get(&backend_id)
             .map(|v| v.value().clone())
             .unwrap_or(ProcState::Remote);
         writeln!(
             &mut out,
-            " - {:<30} {:<10} backends: {}",
-            remote.host_name,
+            " - {:<30} {:<10} endpoints: {}",
+            backend_id,
             fmt_state(state),
-            remote.backends.len()
+            remote.endpoints.len()
         )
         .ok();
     }
 
-    let dirs: Vec<_> = cfg.dir_server.clone().unwrap_or_default();
-    writeln!(&mut out, "\nDir servers ({}):", dirs.len()).ok();
-    for dir in dirs {
+    let dirs: Vec<_> = cfg.static_sites.iter().map(|kv| (kv.key().clone(), kv.value().clone())).collect();
+    writeln!(&mut out, "\nStatic sites ({}):", dirs.len()).ok();
+    for (backend_id, dir) in dirs {
         let state = status_map
-            .get(&dir.host_name)
+            .get(&backend_id)
             .map(|v| v.value().clone())
             .unwrap_or(ProcState::DirServer);
         writeln!(
             &mut out,
             " - {:<30} {:<10} dir: {}",
-            dir.host_name,
+            backend_id,
             fmt_state(state),
             dir.dir
         )
