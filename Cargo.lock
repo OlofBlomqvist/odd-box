@@ -3782,6 +3782,7 @@ dependencies = [
  "lazy_static",
  "nix 0.29.0",
  "notify",
+ "parking_lot 0.12.5",
  "regex",
  "reqwest",
  "rustls",

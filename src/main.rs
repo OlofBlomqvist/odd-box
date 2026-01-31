@@ -678,8 +678,14 @@ async fn main() -> anyhow::Result<()> {
             .as_deref()
             .map(gui::ThemeMode::from_str)
             .unwrap_or(gui::ThemeMode::System);
+        // Create log state and start collector
+        let log_state = gui::logs::create_shared(10000);
+        let _log_collector = gui::logs::spawn_collector(
+            log_state.clone(),
+            global_websockets_event_broadcaster.subscribe(),
+        );
         // Run GUI on main thread - this blocks until window is closed
-        if let Err(e) = gui::run(global_state.clone(), theme_mode) {
+        if let Err(e) = gui::run(global_state.clone(), theme_mode, log_state) {
             tracing::error!("GUI error: {:?}", e);
         }
         // Signal exit when GUI closes
