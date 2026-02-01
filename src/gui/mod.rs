@@ -1,19 +1,17 @@
 pub mod logs;
+mod pages;
 
 use iced::widget::{
-    Column, Row, Scrollable, Space, button, checkbox, column, container, row, rule, scrollable,
-    text, text_input,
+    Column, Scrollable, button, column, container, row, rule, text,
 };
 use iced::{
     Border, Color, Element, Font, Length, Padding, Subscription, Task, Theme, system, theme, time,
 };
 use std::sync::Arc;
-use tracing::Level;
 
-use crate::configuration::{self};
 use crate::global_state::GlobalState;
-use crate::types::app_state::ProcState;
 use logs::{LogFilter, SharedLogState};
+use pages::{fetch_config, CachedConfig, CachedLogLine};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeMode {
@@ -41,7 +39,7 @@ pub fn run(
 ) -> iced::Result {
     let window_settings = iced::window::Settings {
         size: iced::Size::new(1200.0, 800.0),
-        min_size: Some(iced::Size::new(600.0, 400.0)),
+        min_size: Some(iced::Size::new(1200.0, 400.0)),
         decorations: true, // Use native window decorations (KDE/GNOME title bar)
         ..Default::default()
     };
@@ -98,17 +96,45 @@ impl Page {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogLevelPreset {
+    #[default]
+    All,
+    DebugAndAbove,
+    InfoAndAbove,
+    WarnAndAbove,
+    ErrorOnly,
+}
+
+impl LogLevelPreset {
+    pub const ALL: [LogLevelPreset; 5] = [
+        LogLevelPreset::All,
+        LogLevelPreset::DebugAndAbove,
+        LogLevelPreset::InfoAndAbove,
+        LogLevelPreset::WarnAndAbove,
+        LogLevelPreset::ErrorOnly,
+    ];
+}
+
+impl std::fmt::Display for LogLevelPreset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LogLevelPreset::All => write!(f, "All Levels"),
+            LogLevelPreset::DebugAndAbove => write!(f, "Debug+"),
+            LogLevelPreset::InfoAndAbove => write!(f, "Info+"),
+            LogLevelPreset::WarnAndAbove => write!(f, "Warn+"),
+            LogLevelPreset::ErrorOnly => write!(f, "Errors"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     NavigateTo(Page),
     SystemThemeChanged(theme::Mode),
     // Log filter messages
     LogFilterTextChanged(String),
-    LogFilterToggleTrace(bool),
-    LogFilterToggleDebug(bool),
-    LogFilterToggleInfo(bool),
-    LogFilterToggleWarn(bool),
-    LogFilterToggleError(bool),
+    LogLevelPresetChanged(LogLevelPreset),
     LogFilterToggleSource(String, bool),
     LogFilterClearSources,
     LogsClear,
@@ -118,89 +144,33 @@ pub enum Message {
     Tick,
     // Config data updated
     ConfigUpdated(CachedConfig),
-}
-
-/// Maximum number of log entries to render (for performance)
-const MAX_RENDERED_LOGS: usize = 1000;
-
-/// Cached/pre-rendered log line for performance
-#[derive(Clone)]
-struct CachedLogLine {
-    id: u64,
-    level_str: &'static str,
-    level_color: Color,
-    source: String,
-    timestamp_str: String,
-    message: String,
-}
-
-/// Cached process info for display
-#[derive(Clone, Debug)]
-struct CachedProcess {
-    name: String,
-    bin: String,
-    port: String,
-    protocol: String,
-    state: ProcState,
-    auto_start: bool,
-}
-
-/// Cached remote backend info for display
-#[derive(Clone, Debug)]
-struct CachedRemoteBackend {
-    name: String,
-    endpoints: String,
-    protocol: String,
-    https: bool,
-}
-
-/// Cached static backend info for display
-#[derive(Clone, Debug)]
-struct CachedStaticBackend {
-    name: String,
-    dir: String,
-    list_dir: bool,
-}
-
-/// Cached route info for display
-#[derive(Clone, Debug)]
-struct CachedRoute {
-    hostname: String,
-    backend: String,
-    https_redirect: bool,
-    capture_subdomains: bool,
-}
-
-/// All cached config data
-#[derive(Clone, Debug, Default)]
-struct CachedConfig {
-    processes: Vec<CachedProcess>,
-    remote_backends: Vec<CachedRemoteBackend>,
-    static_backends: Vec<CachedStaticBackend>,
-    routes: Vec<CachedRoute>,
+    // Process control
+    ProcessStart(String),
+    ProcessStop(String),
 }
 
 pub struct OddBoxGui {
-    state: Arc<GlobalState>,
-    log_state: SharedLogState,
+    pub(in crate::gui) state: Arc<GlobalState>,
+    pub(in crate::gui) log_state: SharedLogState,
     current_page: Page,
     theme_mode: ThemeMode,
     system_theme: Option<theme::Mode>,
     // Log filtering
-    log_filter: LogFilter,
+    pub(in crate::gui) log_filter: LogFilter,
+    pub(in crate::gui) log_level_preset: LogLevelPreset,
     // Cached list of known sources
-    known_sources: Vec<String>,
+    pub(in crate::gui) known_sources: Vec<String>,
     // Cached filtered log lines for performance
-    cached_log_lines: Vec<CachedLogLine>,
-    last_log_count: usize,
-    total_log_count: usize,
+    pub(in crate::gui) cached_log_lines: Vec<CachedLogLine>,
+    pub(in crate::gui) last_log_count: usize,
+    pub(in crate::gui) total_log_count: usize,
     // Track last seen log ID to avoid unnecessary rebuilds
-    last_seen_log_id: Option<u64>,
+    pub(in crate::gui) last_seen_log_id: Option<u64>,
     // Log display options
-    log_wrap_enabled: bool,
-    log_auto_tail: bool,
+    pub(in crate::gui) log_wrap_enabled: bool,
+    pub(in crate::gui) log_auto_tail: bool,
     // Cached config data
-    cached_config: CachedConfig,
+    pub(in crate::gui) cached_config: CachedConfig,
 }
 
 impl OddBoxGui {
@@ -226,6 +196,7 @@ impl OddBoxGui {
                 theme_mode,
                 system_theme: None,
                 log_filter: LogFilter::new(),
+                log_level_preset: LogLevelPreset::All,
                 known_sources: Vec::new(),
                 cached_log_lines: Vec::new(),
                 last_log_count: 0,
@@ -294,24 +265,46 @@ impl OddBoxGui {
                 self.log_filter.text = text;
                 self.refresh_log_cache(true);
             }
-            Message::LogFilterToggleTrace(enabled) => {
-                self.log_filter.show_trace = enabled;
-                self.refresh_log_cache(true);
-            }
-            Message::LogFilterToggleDebug(enabled) => {
-                self.log_filter.show_debug = enabled;
-                self.refresh_log_cache(true);
-            }
-            Message::LogFilterToggleInfo(enabled) => {
-                self.log_filter.show_info = enabled;
-                self.refresh_log_cache(true);
-            }
-            Message::LogFilterToggleWarn(enabled) => {
-                self.log_filter.show_warn = enabled;
-                self.refresh_log_cache(true);
-            }
-            Message::LogFilterToggleError(enabled) => {
-                self.log_filter.show_error = enabled;
+            Message::LogLevelPresetChanged(preset) => {
+                self.log_level_preset = preset;
+                // Apply preset to log filter
+                match preset {
+                    LogLevelPreset::All => {
+                        self.log_filter.show_trace = true;
+                        self.log_filter.show_debug = true;
+                        self.log_filter.show_info = true;
+                        self.log_filter.show_warn = true;
+                        self.log_filter.show_error = true;
+                    }
+                    LogLevelPreset::DebugAndAbove => {
+                        self.log_filter.show_trace = false;
+                        self.log_filter.show_debug = true;
+                        self.log_filter.show_info = true;
+                        self.log_filter.show_warn = true;
+                        self.log_filter.show_error = true;
+                    }
+                    LogLevelPreset::InfoAndAbove => {
+                        self.log_filter.show_trace = false;
+                        self.log_filter.show_debug = false;
+                        self.log_filter.show_info = true;
+                        self.log_filter.show_warn = true;
+                        self.log_filter.show_error = true;
+                    }
+                    LogLevelPreset::WarnAndAbove => {
+                        self.log_filter.show_trace = false;
+                        self.log_filter.show_debug = false;
+                        self.log_filter.show_info = false;
+                        self.log_filter.show_warn = true;
+                        self.log_filter.show_error = true;
+                    }
+                    LogLevelPreset::ErrorOnly => {
+                        self.log_filter.show_trace = false;
+                        self.log_filter.show_debug = false;
+                        self.log_filter.show_info = false;
+                        self.log_filter.show_warn = false;
+                        self.log_filter.show_error = true;
+                    }
+                }
                 self.refresh_log_cache(true);
             }
             Message::LogFilterToggleSource(source, enabled) => {
@@ -339,76 +332,20 @@ impl OddBoxGui {
             Message::LogToggleAutoTail(enabled) => {
                 self.log_auto_tail = enabled;
             }
+            Message::ProcessStart(name) => {
+                let _ = self
+                    .state
+                    .proc_broadcaster
+                    .send(crate::control::ProcMessage::Start(name));
+            }
+            Message::ProcessStop(name) => {
+                let _ = self
+                    .state
+                    .proc_broadcaster
+                    .send(crate::control::ProcMessage::Stop(name));
+            }
         }
         Task::none()
-    }
-
-    /// Refresh the log cache. Returns true if new logs were added.
-    fn refresh_log_cache(&mut self, force: bool) -> bool {
-        let state = self.log_state.read();
-
-        // Early-out if nothing changed and not forced
-        let current_last_id = state.last_id();
-        if !force && current_last_id == self.last_seen_log_id {
-            return false;
-        }
-        let had_new_logs = current_last_id != self.last_seen_log_id;
-        self.last_seen_log_id = current_last_id;
-
-        // Update known sources
-        let sources = state.known_sources().clone();
-        let mut sources_vec: Vec<String> = sources.into_iter().collect();
-        sources_vec.sort();
-        self.known_sources = sources_vec;
-
-        self.total_log_count = state.len();
-
-        // Apply filter and cache results
-        let filtered = self.log_filter.apply(state.entries());
-
-        self.cached_log_lines = filtered
-            .into_iter()
-            .map(|entry| {
-                let (level_str, level_color) = Self::level_display(entry.level);
-                let source = entry
-                    .thread
-                    .as_ref()
-                    .filter(|t| !t.is_empty())
-                    .cloned()
-                    .or_else(|| {
-                        if entry.source.is_empty() {
-                            None
-                        } else {
-                            Some(entry.source.clone())
-                        }
-                    })
-                    .unwrap_or_else(|| "-".to_string());
-
-                let timestamp_str = entry.timestamp.format("%H:%M:%S%.3f").to_string();
-
-                CachedLogLine {
-                    id: entry.id,
-                    level_str,
-                    level_color,
-                    source,
-                    timestamp_str,
-                    message: entry.message.clone(),
-                }
-            })
-            .collect();
-
-        self.last_log_count = self.cached_log_lines.len();
-        had_new_logs
-    }
-
-    fn level_display(level: Level) -> (&'static str, Color) {
-        match level {
-            Level::TRACE => ("TRC", Color::from_rgb(0.6, 0.6, 0.6)),
-            Level::DEBUG => ("DBG", Color::from_rgb(0.4, 0.7, 1.0)),
-            Level::INFO => ("INF", Color::from_rgb(0.4, 0.85, 0.4)),
-            Level::WARN => ("WRN", Color::from_rgb(1.0, 0.8, 0.3)),
-            Level::ERROR => ("ERR", Color::from_rgb(1.0, 0.4, 0.4)),
-        }
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -552,728 +489,6 @@ impl OddBoxGui {
         }
     }
 
-    fn view_monitoring(&self) -> Element<'_, Message> {
-        let title_row = row![
-            text("Monitoring"),
-            Space::new().width(Length::Fill),
-            button(text("Clear Logs"))
-                .padding(Padding {
-                    top: 6.0,
-                    right: 12.0,
-                    bottom: 6.0,
-                    left: 12.0,
-                })
-                .on_press(Message::LogsClear),
-        ]
-        .align_y(iced::Alignment::Center);
-
-        // Filter controls
-        let filter_bar = self.view_log_filter_bar();
-
-        // Source filter
-        let source_filter = self.view_source_filter();
-
-        // Log entries
-        let log_entries = self.view_log_entries();
-
-        let content = column![title_row, filter_bar, source_filter, log_entries]
-            .spacing(15)
-            .padding(30)
-            .width(Length::Fill)
-            .height(Length::Fill);
-
-        container(content)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-    }
-
-    fn view_log_filter_bar(&self) -> Element<'_, Message> {
-        let search_input = text_input("Search logs...", &self.log_filter.text)
-            .on_input(Message::LogFilterTextChanged)
-            .padding(8)
-            .width(Length::Fixed(250.0));
-
-        let level_filters = row![
-            checkbox(self.log_filter.show_trace)
-                .label("TRC")
-                .on_toggle(Message::LogFilterToggleTrace),
-            checkbox(self.log_filter.show_debug)
-                .label("DBG")
-                .on_toggle(Message::LogFilterToggleDebug),
-            checkbox(self.log_filter.show_info)
-                .label("INF")
-                .on_toggle(Message::LogFilterToggleInfo),
-            checkbox(self.log_filter.show_warn)
-                .label("WRN")
-                .on_toggle(Message::LogFilterToggleWarn),
-            checkbox(self.log_filter.show_error)
-                .label("ERR")
-                .on_toggle(Message::LogFilterToggleError),
-        ]
-        .spacing(12);
-
-        let wrap_toggle = checkbox(self.log_wrap_enabled)
-            .label("Wrap")
-            .on_toggle(Message::LogToggleWrap);
-
-        let tail_toggle = checkbox(self.log_auto_tail)
-            .label("Tail")
-            .on_toggle(Message::LogToggleAutoTail);
-
-        let log_count = if self.has_active_filter() {
-            format!("{} / {} logs", self.last_log_count, self.total_log_count)
-        } else {
-            format!("{} logs", self.total_log_count)
-        };
-
-        row![
-            search_input,
-            Space::new().width(Length::Fill),
-            level_filters,
-            Space::new().width(Length::Fixed(20.0)),
-            wrap_toggle,
-            tail_toggle,
-            Space::new().width(Length::Fixed(20.0)),
-            text(log_count).color(self.theme().extended_palette().background.strong.text),
-        ]
-        .spacing(15)
-        .align_y(iced::Alignment::Center)
-        .into()
-    }
-
-    fn view_source_filter(&self) -> Element<'_, Message> {
-        if self.known_sources.is_empty() {
-            return Space::new().height(Length::Fixed(0.0)).into();
-        }
-
-        let mut source_chips: Vec<Element<'_, Message>> = Vec::new();
-
-        // Add "Clear" button if any sources are selected
-        if !self.log_filter.sources.is_empty() {
-            source_chips.push(
-                button(text("Clear"))
-                    .padding(Padding {
-                        top: 4.0,
-                        right: 8.0,
-                        bottom: 4.0,
-                        left: 8.0,
-                    })
-                    .style(|theme: &Theme, _status| {
-                        let palette = theme.extended_palette();
-                        button::Style {
-                            background: Some(palette.background.weak.color.into()),
-                            text_color: palette.background.base.text,
-                            border: Border {
-                                radius: 4.0.into(),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        }
-                    })
-                    .on_press(Message::LogFilterClearSources)
-                    .into(),
-            );
-        }
-
-        // Add source chips
-        for source in &self.known_sources {
-            let is_selected = self.log_filter.sources.contains(source);
-            let source_clone = source.clone();
-            let chip = button(text(source.as_str()))
-                .padding(Padding {
-                    top: 4.0,
-                    right: 8.0,
-                    bottom: 4.0,
-                    left: 8.0,
-                })
-                .style(move |theme: &Theme, _status| {
-                    let palette = theme.extended_palette();
-                    let (bg, fg) = if is_selected {
-                        (palette.primary.strong.color, palette.primary.strong.text)
-                    } else {
-                        (
-                            palette.background.strong.color,
-                            palette.background.strong.text,
-                        )
-                    };
-                    button::Style {
-                        background: Some(bg.into()),
-                        text_color: fg,
-                        border: Border {
-                            radius: 4.0.into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    }
-                })
-                .on_press(Message::LogFilterToggleSource(source_clone, !is_selected));
-            source_chips.push(chip.into());
-        }
-
-        let chips_row = Row::with_children(source_chips).spacing(6).wrap();
-
-        container(
-            column![
-                text("Filter by source:")
-                    .color(self.theme().extended_palette().background.strong.text),
-                chips_row,
-            ]
-            .spacing(6),
-        )
-        .padding(Padding {
-            top: 5.0,
-            right: 0.0,
-            bottom: 5.0,
-            left: 0.0,
-        })
-        .into()
-    }
-
-    fn view_log_entries(&self) -> Element<'_, Message> {
-        if self.cached_log_lines.is_empty() {
-            let msg = if self.total_log_count == 0 {
-                "No logs yet..."
-            } else {
-                "No logs match the current filter"
-            };
-            return container(
-                text(msg).color(self.theme().extended_palette().background.strong.text),
-            )
-            .padding(20)
-            .width(Length::Fill)
-            .into();
-        }
-
-        // Limit rendered entries for performance (show most recent)
-        let total_filtered = self.cached_log_lines.len();
-        let skip_count = total_filtered.saturating_sub(MAX_RENDERED_LOGS);
-        let entries_to_render = self.cached_log_lines.iter().skip(skip_count);
-
-        let muted_color = Color::from_rgb(0.5, 0.5, 0.5);
-
-        // Build log entries with metadata row above message
-        let rows: Vec<Element<'_, Message>> = entries_to_render
-            .map(|line| {
-                // Metadata row: level, source, timestamp
-                let metadata_row = row![
-                    text(line.level_str)
-                        .font(Font::MONOSPACE)
-                        .color(line.level_color),
-                    text(&line.source)
-                        .font(Font::MONOSPACE)
-                        .color(muted_color),
-                    text(&line.timestamp_str)
-                        .font(Font::MONOSPACE)
-                        .color(muted_color),
-                ]
-                .spacing(12);
-
-                // Message content
-                let message_widget: Element<'_, Message> = if self.log_wrap_enabled {
-                    text(&line.message)
-                        .font(Font::MONOSPACE)
-                        .wrapping(text::Wrapping::Word)
-                        .into()
-                } else {
-                    // Handle multi-line messages without wrapping
-                    let message_lines: Vec<&str> = line.message.lines().collect();
-                    if message_lines.len() > 1 {
-                        let line_elements: Vec<Element<'_, Message>> = message_lines
-                            .into_iter()
-                            .map(|msg_line| {
-                                text(msg_line)
-                                    .font(Font::MONOSPACE)
-                                    .wrapping(text::Wrapping::None)
-                                    .into()
-                            })
-                            .collect();
-                        Column::with_children(line_elements).spacing(1).into()
-                    } else {
-                        text(&line.message)
-                            .font(Font::MONOSPACE)
-                            .wrapping(text::Wrapping::None)
-                            .into()
-                    }
-                };
-
-                // Stack metadata above message
-                column![metadata_row, message_widget]
-                    .spacing(2)
-                    .into()
-            })
-            .collect();
-
-        let log_column = Column::with_children(rows).spacing(12);
-
-        // Container for log content
-        let log_container = container(log_column).padding(Padding {
-            top: 10.0,
-            right: 15.0,
-            bottom: 10.0,
-            left: 15.0,
-        });
-
-        // Add truncation notice if needed
-        let content: Element<'_, Message> = if skip_count > 0 {
-            let notice = container(
-                text(format!(
-                    "Showing last {} of {} entries",
-                    MAX_RENDERED_LOGS, total_filtered
-                ))
-                .color(muted_color),
-            )
-            .padding(Padding {
-                top: 5.0,
-                right: 15.0,
-                bottom: 5.0,
-                left: 15.0,
-            });
-            column![notice, log_container].into()
-        } else {
-            log_container.into()
-        };
-
-        let mut scroller = if self.log_wrap_enabled {
-            Scrollable::new(container(content).width(Length::Fill))
-                .width(Length::Fill)
-                .height(Length::Fill)
-        } else {
-            Scrollable::new(container(content).width(Length::Shrink))
-                .direction(scrollable::Direction::Both {
-                    vertical: scrollable::Scrollbar::default(),
-                    horizontal: scrollable::Scrollbar::default(),
-                })
-                .width(Length::Fill)
-                .height(Length::Fill)
-        };
-
-        // Anchor to bottom when auto-tail is enabled
-        if self.log_auto_tail {
-            scroller = scroller.anchor_bottom();
-        }
-
-        scroller.into()
-    }
-
-    fn has_active_filter(&self) -> bool {
-        !self.log_filter.text.is_empty()
-            || !self.log_filter.sources.is_empty()
-            || !self.log_filter.show_trace
-            || !self.log_filter.show_debug
-            || !self.log_filter.show_info
-            || !self.log_filter.show_warn
-            || !self.log_filter.show_error
-    }
-
-    fn view_dashboard(&self) -> Element<'_, Message> {
-        let uptime = self
-            .state
-            .uptime()
-            .map(|d| format!("{:.0?}", d))
-            .unwrap_or_else(|_| "Unknown".to_string());
-
-        let status_items =
-            column![text("Status: Running"), text(format!("Uptime: {}", uptime)),].spacing(8);
-
-        container(status_items)
-            .padding(20)
-            .width(Length::Fill)
-            .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
-                container::Style {
-                    background: Some(palette.background.weak.color.into()),
-                    border: Border {
-                        radius: 8.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }
-            })
-            .into()
-    }
-
-    fn view_processes(&self) -> Element<'_, Message> {
-        if self.cached_config.processes.is_empty() {
-            return text("No managed processes configured").into();
-        }
-
-        // Table header
-        let header = row![
-            text("Name")
-                .font(Font::MONOSPACE)
-                .width(Length::FillPortion(2)),
-            text("Binary")
-                .font(Font::MONOSPACE)
-                .width(Length::FillPortion(2)),
-            text("Port")
-                .font(Font::MONOSPACE)
-                .width(Length::Fixed(80.0)),
-            text("Protocol")
-                .font(Font::MONOSPACE)
-                .width(Length::Fixed(80.0)),
-            text("Status")
-                .font(Font::MONOSPACE)
-                .width(Length::Fixed(100.0)),
-            text("Auto")
-                .font(Font::MONOSPACE)
-                .width(Length::Fixed(60.0)),
-        ]
-        .spacing(10)
-        .padding(Padding {
-            top: 8.0,
-            right: 10.0,
-            bottom: 8.0,
-            left: 10.0,
-        });
-
-        let header_container = container(header)
-            .width(Length::Fill)
-            .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
-                container::Style {
-                    background: Some(palette.background.weak.color.into()),
-                    ..Default::default()
-                }
-            });
-
-        // Table rows
-        let rows: Vec<Element<'_, Message>> = self
-            .cached_config
-            .processes
-            .iter()
-            .map(|proc| {
-                let status_color = match proc.state {
-                    ProcState::Running => Color::from_rgb(0.4, 0.85, 0.4),
-                    ProcState::Starting | ProcState::Stopping => Color::from_rgb(1.0, 0.8, 0.3),
-                    ProcState::Stopped => Color::from_rgb(0.5, 0.5, 0.5),
-                    ProcState::Faulty => Color::from_rgb(1.0, 0.4, 0.4),
-                    _ => Color::from_rgb(0.6, 0.6, 0.6),
-                };
-
-                row![
-                    text(&proc.name)
-                        .font(Font::MONOSPACE)
-                        .width(Length::FillPortion(2)),
-                    text(&proc.bin)
-                        .font(Font::MONOSPACE)
-                        .width(Length::FillPortion(2)),
-                    text(&proc.port)
-                        .font(Font::MONOSPACE)
-                        .width(Length::Fixed(80.0)),
-                    text(&proc.protocol)
-                        .font(Font::MONOSPACE)
-                        .width(Length::Fixed(80.0)),
-                    text(format!("{:?}", proc.state))
-                        .font(Font::MONOSPACE)
-                        .color(status_color)
-                        .width(Length::Fixed(100.0)),
-                    text(if proc.auto_start { "Yes" } else { "No" })
-                        .font(Font::MONOSPACE)
-                        .width(Length::Fixed(60.0)),
-                ]
-                .spacing(10)
-                .padding(Padding {
-                    top: 6.0,
-                    right: 10.0,
-                    bottom: 6.0,
-                    left: 10.0,
-                })
-                .into()
-            })
-            .collect();
-
-        let table = column![header_container]
-            .push(Column::with_children(rows).spacing(2))
-            .width(Length::Fill);
-
-        container(table)
-            .width(Length::Fill)
-            .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
-                container::Style {
-                    background: Some(palette.background.weak.color.into()),
-                    border: Border {
-                        radius: 8.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }
-            })
-            .into()
-    }
-
-    fn view_backends(&self) -> Element<'_, Message> {
-        let mut sections: Vec<Element<'_, Message>> = Vec::new();
-
-        // Remote backends section
-        if !self.cached_config.remote_backends.is_empty() {
-            let header = row![
-                text("Name")
-                    .font(Font::MONOSPACE)
-                    .width(Length::FillPortion(2)),
-                text("Endpoints")
-                    .font(Font::MONOSPACE)
-                    .width(Length::FillPortion(3)),
-                text("Protocol")
-                    .font(Font::MONOSPACE)
-                    .width(Length::Fixed(80.0)),
-                text("HTTPS")
-                    .font(Font::MONOSPACE)
-                    .width(Length::Fixed(60.0)),
-            ]
-            .spacing(10)
-            .padding(Padding {
-                top: 8.0,
-                right: 10.0,
-                bottom: 8.0,
-                left: 10.0,
-            });
-
-            let header_container = container(header)
-                .width(Length::Fill)
-                .style(|theme: &Theme| {
-                    let palette = theme.extended_palette();
-                    container::Style {
-                        background: Some(palette.background.weak.color.into()),
-                        ..Default::default()
-                    }
-                });
-
-            let rows: Vec<Element<'_, Message>> = self
-                .cached_config
-                .remote_backends
-                .iter()
-                .map(|backend| {
-                    row![
-                        text(&backend.name)
-                            .font(Font::MONOSPACE)
-                            .width(Length::FillPortion(2)),
-                        text(&backend.endpoints)
-                            .font(Font::MONOSPACE)
-                            .width(Length::FillPortion(3)),
-                        text(&backend.protocol)
-                            .font(Font::MONOSPACE)
-                            .width(Length::Fixed(80.0)),
-                        text(if backend.https { "Yes" } else { "No" })
-                            .font(Font::MONOSPACE)
-                            .width(Length::Fixed(60.0)),
-                    ]
-                    .spacing(10)
-                    .padding(Padding {
-                        top: 6.0,
-                        right: 10.0,
-                        bottom: 6.0,
-                        left: 10.0,
-                    })
-                    .into()
-                })
-                .collect();
-
-            let table = column![header_container]
-                .push(Column::with_children(rows).spacing(2))
-                .width(Length::Fill);
-
-            sections.push(
-                column![
-                    text("Remote Backends"),
-                    container(table).width(Length::Fill).style(|theme: &Theme| {
-                        let palette = theme.extended_palette();
-                        container::Style {
-                            background: Some(palette.background.weak.color.into()),
-                            border: Border {
-                                radius: 8.0.into(),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        }
-                    })
-                ]
-                .spacing(10)
-                .into(),
-            );
-        }
-
-        // Static backends section
-        if !self.cached_config.static_backends.is_empty() {
-            let header = row![
-                text("Name")
-                    .font(Font::MONOSPACE)
-                    .width(Length::FillPortion(2)),
-                text("Directory")
-                    .font(Font::MONOSPACE)
-                    .width(Length::FillPortion(4)),
-                text("List Dir")
-                    .font(Font::MONOSPACE)
-                    .width(Length::Fixed(80.0)),
-            ]
-            .spacing(10)
-            .padding(Padding {
-                top: 8.0,
-                right: 10.0,
-                bottom: 8.0,
-                left: 10.0,
-            });
-
-            let header_container = container(header)
-                .width(Length::Fill)
-                .style(|theme: &Theme| {
-                    let palette = theme.extended_palette();
-                    container::Style {
-                        background: Some(palette.background.weak.color.into()),
-                        ..Default::default()
-                    }
-                });
-
-            let rows: Vec<Element<'_, Message>> = self
-                .cached_config
-                .static_backends
-                .iter()
-                .map(|backend| {
-                    row![
-                        text(&backend.name)
-                            .font(Font::MONOSPACE)
-                            .width(Length::FillPortion(2)),
-                        text(&backend.dir)
-                            .font(Font::MONOSPACE)
-                            .width(Length::FillPortion(4)),
-                        text(if backend.list_dir { "Yes" } else { "No" })
-                            .font(Font::MONOSPACE)
-                            .width(Length::Fixed(80.0)),
-                    ]
-                    .spacing(10)
-                    .padding(Padding {
-                        top: 6.0,
-                        right: 10.0,
-                        bottom: 6.0,
-                        left: 10.0,
-                    })
-                    .into()
-                })
-                .collect();
-
-            let table = column![header_container]
-                .push(Column::with_children(rows).spacing(2))
-                .width(Length::Fill);
-
-            sections.push(
-                column![
-                    text("Static File Backends"),
-                    container(table).width(Length::Fill).style(|theme: &Theme| {
-                        let palette = theme.extended_palette();
-                        container::Style {
-                            background: Some(palette.background.weak.color.into()),
-                            border: Border {
-                                radius: 8.0.into(),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        }
-                    })
-                ]
-                .spacing(10)
-                .into(),
-            );
-        }
-
-        if sections.is_empty() {
-            return text("No backends configured")
-                .color(self.theme().extended_palette().background.strong.text)
-                .into();
-        }
-
-        Column::with_children(sections).spacing(20).into()
-    }
-
-    fn view_frontends(&self) -> Element<'_, Message> {
-        if self.cached_config.routes.is_empty() {
-            return text("No routes configured")
-                .color(self.theme().extended_palette().background.strong.text)
-                .into();
-        }
-
-        // Table header
-        let header = row![
-            text("Hostname")
-                .font(Font::MONOSPACE)
-                .width(Length::FillPortion(3)),
-            text("Backend")
-                .font(Font::MONOSPACE)
-                .width(Length::FillPortion(2)),
-            text("HTTPS Redirect")
-                .font(Font::MONOSPACE)
-                .width(Length::Fixed(120.0)),
-            text("Subdomains")
-                .font(Font::MONOSPACE)
-                .width(Length::Fixed(100.0)),
-        ]
-        .spacing(10)
-        .padding(Padding {
-            top: 8.0,
-            right: 10.0,
-            bottom: 8.0,
-            left: 10.0,
-        });
-
-        let header_container = container(header)
-            .width(Length::Fill)
-            .style(container::rounded_box);
-
-        // Table rows
-        let rows: Vec<Element<'_, Message>> = self
-            .cached_config
-            .routes
-            .iter()
-            .map(|route| {
-                row![
-                    text(&route.hostname)
-                        .font(Font::MONOSPACE)
-                        .width(Length::FillPortion(3)),
-                    text(&route.backend)
-                        .font(Font::MONOSPACE)
-                        .width(Length::FillPortion(2)),
-                    text(if route.https_redirect { "Yes" } else { "No" })
-                        .font(Font::MONOSPACE)
-                        .width(Length::Fixed(120.0)),
-                    text(if route.capture_subdomains {
-                        "Yes"
-                    } else {
-                        "No"
-                    })
-                    .font(Font::MONOSPACE)
-                    .width(Length::Fixed(100.0)),
-                ]
-                .spacing(10)
-                .padding(Padding {
-                    top: 6.0,
-                    right: 10.0,
-                    bottom: 6.0,
-                    left: 10.0,
-                })
-                .into()
-            })
-            .collect();
-
-        let table = column![header_container]
-            .push(Column::with_children(rows).spacing(2))
-            .width(Length::Fill);
-
-        container(table)
-            .width(Length::Fill)
-            .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
-                container::Style {
-                    background: Some(palette.background.weak.color.into()),
-                    border: Border {
-                        radius: 8.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }
-            })
-            .into()
-    }
-
     fn view_placeholder(&self, description: &'static str) -> Element<'_, Message> {
         container(text(description).color(self.theme().extended_palette().background.strong.text))
             .padding(20)
@@ -1281,7 +496,7 @@ impl OddBoxGui {
             .into()
     }
 
-    fn theme(&self) -> Theme {
+    pub(crate) fn theme(&self) -> Theme {
         match self.theme_mode {
             ThemeMode::Light => Theme::Light,
             ThemeMode::Dark => Theme::Dracula,
@@ -1291,118 +506,5 @@ impl OddBoxGui {
                 _ => Theme::Dracula,
             },
         }
-    }
-}
-
-/// Async function to fetch configuration data
-async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
-    let config_guard = state.config.read().await;
-    let status_map = &state.app_state.site_status_map;
-
-    // Fetch processes
-    let mut processes: Vec<CachedProcess> = config_guard
-        .hosted_processes
-        .iter()
-        .map(|entry| {
-            let name = entry.key().clone();
-            let proc = entry.value();
-            let state = status_map
-                .get(&name)
-                .map(|v| v.value().clone())
-                .unwrap_or(ProcState::Stopped);
-            let port = proc
-                .active_port
-                .or(proc.port)
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| "-".to_string());
-            CachedProcess {
-                name,
-                bin: proc.bin.clone(),
-                port,
-                protocol: format!("{:?}", proc.protocol),
-                state,
-                auto_start: proc.auto_start.unwrap_or(true),
-            }
-        })
-        .collect();
-    processes.sort_by(|a, b| a.name.cmp(&b.name));
-
-    // Fetch remote backends
-    let mut remote_backends: Vec<CachedRemoteBackend> = config_guard
-        .remote_sites
-        .iter()
-        .map(|entry| {
-            let name = entry.key().clone();
-            let remote = entry.value();
-            let endpoints = remote
-                .endpoints
-                .iter()
-                .map(|e| format!("{}:{}", e.addr, e.port))
-                .collect::<Vec<_>>()
-                .join(", ");
-            CachedRemoteBackend {
-                name,
-                endpoints,
-                protocol: format!("{:?}", remote.protocol),
-                https: remote.https,
-            }
-        })
-        .collect();
-    remote_backends.sort_by(|a, b| a.name.cmp(&b.name));
-
-    // Fetch static backends
-    let mut static_backends: Vec<CachedStaticBackend> = config_guard
-        .static_sites
-        .iter()
-        .map(|entry| {
-            let name = entry.key().clone();
-            let static_site = entry.value();
-            CachedStaticBackend {
-                name,
-                dir: static_site.dir.clone(),
-                list_dir: static_site.list_dir,
-            }
-        })
-        .collect();
-    static_backends.sort_by(|a, b| a.name.cmp(&b.name));
-
-    // Fetch routes from frontends
-    let mut routes: Vec<CachedRoute> = Vec::new();
-
-    // Get routes from HTTP frontend
-    if let Some(http) = &config_guard.frontends.http {
-        for (hostname, target) in &http.routes {
-            routes.push(CachedRoute {
-                hostname: hostname.clone(),
-                backend: target.backend_id().to_string(),
-                https_redirect: target.redirect_to_https(),
-                capture_subdomains: target.capture_subdomains(),
-            });
-        }
-    }
-
-    // Add any HTTPS-only routes
-    if let Some(https) = &config_guard.frontends.https {
-        if let Some(configuration::HttpsRoutes::Explicit(https_routes)) = &https.routes {
-            for (hostname, target) in https_routes {
-                // Only add if not already in the list from HTTP
-                if !routes.iter().any(|r| r.hostname == *hostname) {
-                    routes.push(CachedRoute {
-                        hostname: hostname.clone(),
-                        backend: target.backend_id().to_string(),
-                        https_redirect: false,
-                        capture_subdomains: target.capture_subdomains(),
-                    });
-                }
-            }
-        }
-    }
-    routes.sort_by(|a, b| a.hostname.cmp(&b.hostname));
-
-    CachedConfig {
-        processes,
-        remote_backends,
-        static_backends,
-        routes,
     }
 }
