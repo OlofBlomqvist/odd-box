@@ -7,7 +7,6 @@ use serde::Serialize;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::vec;
-use utoipa::ToSchema;
 
 use super::EnvVar;
 use super::LogFormat;
@@ -17,7 +16,7 @@ use super::LogLevel;
 /// Both unencrypted (http) and encrypted (https) connections are supported, either self-signed or thru lets-encrypt.
 /// You can specify rules for how the cache should behave, and you can also specify rules for how the files should be served.
 #[derive(
-    Debug, Clone, Serialize, Deserialize, ToSchema, Hash, JsonSchema, PartialEq, Eq, Default,
+    Debug, Clone, Serialize, Deserialize, Hash, JsonSchema, PartialEq, Eq, Default,
 )]
 pub struct DirServer {
     pub dir: String,
@@ -38,7 +37,7 @@ pub struct DirServer {
 }
 
 // note: there is no implementation using these yet..
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, JsonSchema, PartialEq, Eq)]
 pub struct ReqRule {
     /// The max age in seconds for the cache. If this is set to None, the cache will be disabled.
     /// This setting causes odd-box to add a Cache-Control header to the response.
@@ -50,7 +49,7 @@ pub struct ReqRule {
     pub allow_directory_browsing: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, JsonSchema)]
 pub struct InProcessSiteConfig {
     #[serde(skip, default = "crate::types::proc_info::ProcId::new")]
     proc_id: ProcId,
@@ -112,7 +111,7 @@ impl InProcessSiteConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
 pub struct FullyResolvedInProcessSiteConfig {
     pub excluded_from_start_all: bool,
     pub proc_id: ProcId,
@@ -179,7 +178,7 @@ fn compare_option_log_format(a: &Option<LogFormat>, b: &Option<LogFormat>) -> bo
     result
 }
 
-#[derive(Debug, Eq, PartialEq, Hash, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[derive(Debug, Eq, PartialEq, Hash, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum Hint {
     /// Server supports http2 over tls
     H2,
@@ -193,7 +192,7 @@ pub enum Hint {
     H3,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Eq, PartialEq, Hash, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash, JsonSchema)]
 pub struct Backend {
     pub address: String,
     /// This can be zero in case the backend is a hosted process, in which case we will need to resolve the current active_port
@@ -203,7 +202,7 @@ pub struct Backend {
     pub hints: Option<Vec<Hint>>,
 }
 
-#[derive(Debug, Hash, Clone, Serialize, Deserialize, ToSchema, JsonSchema, Default)]
+#[derive(Debug, Hash, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct RemoteSiteConfig {
     pub host_name: String,
     pub backends: Vec<Backend>,
@@ -400,7 +399,6 @@ impl RemoteSiteConfig {
     Serialize,
     Deserialize,
     Default,
-    ToSchema,
     PartialEq,
     Eq,
     Hash,
@@ -411,14 +409,14 @@ pub enum V3VersionEnum {
     V3,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
 pub struct OddBoxV3Config {
     #[serde(skip)]
     // only used internally by odd-box to keep track of where the configuration file is located
     pub path: Option<String>,
 
     /// The schema version - you do not normally need to set this, it is set automatically when you save the configuration.
-    #[schema(value_type = String)]
+    //#[schema(value_type = String)]
     pub version: V3VersionEnum,
 
     /// Optionally configure the $root_dir variable which you can use in environment variables, paths and other settings.
@@ -436,7 +434,7 @@ pub struct OddBoxV3Config {
     pub port_range_start: u16,
     #[serde(default = "default_log_format")]
     pub default_log_format: LogFormat,
-    #[schema(value_type = String)]
+    //#[schema(value_type = String)]
     pub ip: Option<IpAddr>,
     /// The port on which to listen for http requests. Defaults to 8080.
     #[serde(default = "default_http_port_8080")]

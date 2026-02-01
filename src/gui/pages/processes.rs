@@ -1,11 +1,11 @@
 use iced::widget::{button, row, text};
 use iced::{Border, Color, Element, Font, Padding, Theme};
 
+use crate::global_state::ProcState;
 use crate::gui::components::{
     Column as TableColumn, Table,
     table::{bool_cell, colored_text_cell, text_cell},
 };
-use crate::types::app_state::ProcState;
 
 use super::super::{Message, OddBoxGui};
 

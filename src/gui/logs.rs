@@ -2,11 +2,14 @@ use chrono::{DateTime, Local};
 use parking_lot::RwLock;
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
-use tokio::sync::broadcast;
 use tracing::Level;
 
-use crate::logging::LogMsg;
-use crate::types::odd_box_event::EventForWebsocketClients;
+pub struct LogMsg {
+    pub lvl: Level,
+    pub msg: String,
+    pub src: String,
+    pub thread: Option<String>,
+}
 
 /// A single log entry with all metadata
 #[derive(Debug, Clone)]
@@ -129,28 +132,11 @@ pub fn create_shared(max_entries: usize) -> SharedLogState {
 
 /// Spawn a background task that consumes log messages from the broadcast channel
 pub fn spawn_collector(
-    log_state: SharedLogState,
-    mut receiver: broadcast::Receiver<EventForWebsocketClients>,
+    log_state: SharedLogState
 ) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        loop {
-            match receiver.recv().await {
-                Ok(EventForWebsocketClients::Log(msg)) => {
-                    log_state.write().push(msg);
-                }
-                Ok(_) => {
-                    // Ignore non-log events
-                }
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!("Log collector lagged, missed {} messages", n);
-                }
-                Err(broadcast::error::RecvError::Closed) => {
-                    tracing::debug!("Log broadcast channel closed");
-                    break;
-                }
-            }
-        }
-    })
+    // TODO: i dont think we should have channels for this but impl a real tracing
+    // subscriber sort of thing?
+    todo!()
 }
 
 /// Filter criteria for log display

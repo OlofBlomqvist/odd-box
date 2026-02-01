@@ -1,7 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use utoipa::ToSchema;
 
 use super::{LogFormat, LogLevel};
 use crate::{configuration::yaml_air, types::proc_info::ProcId};
@@ -11,7 +10,7 @@ use crate::{configuration::yaml_air, types::proc_info::ProcId};
 // ============================================================================
 
 #[derive(
-    Debug, Clone, Serialize, Deserialize, Default, ToSchema, PartialEq, Eq, Hash, JsonSchema,
+    Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash, JsonSchema,
 )]
 pub enum V4VersionEnum {
     #[default]
@@ -19,8 +18,9 @@ pub enum V4VersionEnum {
 }
 
 /// Root configuration structure for odd-box V4
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct OddBoxV4Config {
+
     /// Schema version marker
     #[serde(default)]
     pub version: V4VersionEnum,
@@ -60,12 +60,6 @@ pub struct OddBoxV4Config {
     pub auto_start: bool,
 
     // ========================================================================
-    // ACME / Let's Encrypt
-    // ========================================================================
-    /// ACME configuration for automatic TLS certificates
-    pub acme: Option<AcmeConfig>,
-
-    // ========================================================================
     // Admin Interface
     // ========================================================================
     /// Hostname for the admin UI/API (e.g., "admin.localhost")
@@ -86,22 +80,13 @@ pub struct OddBoxV4Config {
     pub frontends: Frontends,
 }
 
-// ============================================================================
-// ACME Configuration
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash, JsonSchema)]
-pub struct AcmeConfig {
-    /// Email address for Let's Encrypt account
-    pub email: String,
-}
 
 // ============================================================================
 // Backend Types
 // ============================================================================
 
 /// A backend defines an upstream target that can receive proxied requests
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Backend {
     /// A process managed by odd-box
@@ -129,15 +114,11 @@ impl Backend {
 }
 
 /// A process backend - odd-box spawns and manages this process
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ProcessBackend {
     /// Internal process ID (not serialized)
     #[serde(skip, default = "ProcId::new")]
     pub proc_id: ProcId,
-
-    /// Currently active port (runtime state, not serialized)
-    #[serde(skip)]
-    pub active_port: Option<u16>,
 
     /// Binary to execute
     pub bin: String,
@@ -179,7 +160,7 @@ pub struct ProcessBackend {
 }
 
 /// A remote backend - proxy to external server(s)
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct RemoteBackend {
     /// List of upstream endpoints (for load balancing)
     pub endpoints: Vec<Endpoint>,
@@ -198,7 +179,7 @@ pub struct RemoteBackend {
 }
 
 /// A static file backend - serve files from a directory
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
 pub struct StaticBackend {
     /// Directory to serve files from
     pub dir: String,
@@ -220,7 +201,7 @@ pub struct StaticBackend {
 }
 
 /// An upstream endpoint (address + port)
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
 pub struct Endpoint {
     /// Hostname or IP address
     pub addr: String,
@@ -230,7 +211,7 @@ pub struct Endpoint {
 
 /// Upstream protocol
 #[derive(
-    Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash, JsonSchema, Default,
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default,
 )]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
@@ -250,7 +231,7 @@ pub enum Protocol {
 // ============================================================================
 
 /// Frontend definitions - the listeners
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, JsonSchema)]
 pub struct Frontends {
     /// HTTP listener configuration
     pub http: Option<HttpFrontend>,
@@ -260,7 +241,7 @@ pub struct Frontends {
 }
 
 /// HTTP frontend listener
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct HttpFrontend {
     /// Port to listen on (default: 80)
     #[serde(default = "default_http_port")]
@@ -272,7 +253,7 @@ pub struct HttpFrontend {
 }
 
 /// HTTPS frontend listener
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct HttpsFrontend {
     /// Port to listen on (default: 443)
     #[serde(default = "default_https_port")]
@@ -287,7 +268,7 @@ pub struct HttpsFrontend {
 }
 
 /// HTTPS route configuration - either inherit from HTTP or define explicitly
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(untagged)]
 pub enum HttpsRoutes {
     /// Inherit routes from HTTP frontend
@@ -296,14 +277,14 @@ pub enum HttpsRoutes {
     Explicit(HashMap<String, RouteTarget>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
 pub enum InheritMarker {
     #[serde(rename = "inherit")]
     Inherit,
 }
 
 /// A route target - can be a simple backend name or detailed config
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(untagged)]
 pub enum RouteTarget {
     /// Simple backend reference by name
@@ -336,7 +317,7 @@ impl RouteTarget {
 }
 
 /// Detailed route configuration with additional options
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
 pub struct DetailedRoute {
     /// Backend to route to
     pub backend: String,
@@ -360,7 +341,7 @@ pub struct DetailedRoute {
 
 /// TLS certificate mode
 #[derive(
-    Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash, JsonSchema, Default,
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum CertMode {
@@ -440,7 +421,6 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                     backend_id.clone(),
                     Backend::Process(ProcessBackend {
                         proc_id: ProcId::new(),
-                        active_port: None,
                         bin: proc.bin,
                         args: proc.args.unwrap_or_default(),
                         dir: proc.dir,
@@ -604,10 +584,6 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
             }),
         };
 
-        // ACME config
-        let acme = v3
-            .lets_encrypt_account_email
-            .map(|email| AcmeConfig { email });
 
         Ok(OddBoxV4Config {
             version: V4VersionEnum::V4,
@@ -622,7 +598,6 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
             root_dir: v3.root_dir,
             default_log_format: v3.default_log_format,
             auto_start: v3.auto_start.unwrap_or(true),
-            acme,
             admin_api_host: v3.odd_box_url,
             admin_api_password: v3.odd_box_password,
             backends,
@@ -735,7 +710,6 @@ impl OddBoxV4Config {
             "my-app".to_string(),
             Backend::Process(ProcessBackend {
                 proc_id: ProcId::new(),
-                active_port: None,
                 bin: "node".to_string(),
                 args: vec!["server.js".to_string()],
                 dir: Some("$root_dir/my-app".to_string()),
@@ -810,9 +784,6 @@ impl OddBoxV4Config {
             root_dir: Some("~".to_string()),
             default_log_format: LogFormat::standard,
             auto_start: true,
-            acme: Some(AcmeConfig {
-                email: "you@example.com".to_string(),
-            }),
             admin_api_host: Some("admin.localhost".to_string()),
             admin_api_password: None,
             backends,

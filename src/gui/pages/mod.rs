@@ -9,8 +9,7 @@ pub(super) use monitoring::CachedLogLine;
 use std::sync::Arc;
 
 use crate::configuration;
-use crate::global_state::GlobalState;
-use crate::types::app_state::ProcState;
+use crate::global_state::{GlobalState, ProcState};
 
 /// Cached process info for display
 #[derive(Clone, Debug)]
@@ -61,7 +60,7 @@ pub struct CachedConfig {
 /// Async function to fetch configuration data
 pub async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
     let config_guard = state.config.read().await;
-    let status_map = &state.app_state.site_status_map;
+    let status_map = &state.site_status_map;
 
     // Fetch processes
     let mut processes: Vec<CachedProcess> = config_guard
@@ -74,11 +73,7 @@ pub async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
                 .get(&name)
                 .map(|v| v.value().clone())
                 .unwrap_or(ProcState::Stopped);
-            let port = proc
-                .active_port
-                .or(proc.port)
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| "-".to_string());
+            let port = "<placeholder:fixme>".to_string(); // TODO - this is a placeholder for the actual port number
             CachedProcess {
                 name,
                 bin: proc.bin.clone(),

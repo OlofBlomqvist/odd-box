@@ -6,13 +6,20 @@ use iced::widget::{
     Column, Id, Scrollable, button, column, container, image, row, scrollable, text,
 };
 use iced::{
-    Border, Color, Element, Font, Length, Padding, Subscription, Task, Theme, system, theme, time,
+    Application, Background, Border, Color, Element, Font, Length, Padding, Subscription, Task, Theme, system, theme, time
 };
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 use crate::global_state::GlobalState;
 use logs::{LogFilter, SharedLogState};
 use pages::{CachedConfig, CachedLogLine, fetch_config};
+
+static SIDEBAR_LOGO: LazyLock<iced::widget::image::Handle> = LazyLock::new(|| {
+    iced::widget::image::Handle::from_bytes(
+        &include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/ob3.png"))[..],
+    )
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeMode {
@@ -40,6 +47,8 @@ pub fn run(
         size: iced::Size::new(1200.0, 800.0),
         min_size: Some(iced::Size::new(1200.0, 400.0)),
         decorations: true, // Use native window decorations (KDE/GNOME title bar)
+        blur: true,
+        transparent: true,
         ..Default::default()
     };
 
@@ -51,6 +60,12 @@ pub fn run(
         OddBoxGui::update,
         OddBoxGui::view,
     )
+    .style(|state: _, theme: &Theme| {
+        theme::Style {
+            background_color: Color::TRANSPARENT,
+            text_color: theme.palette().text,
+        }
+    })
     .theme(OddBoxGui::theme)
     .subscription(OddBoxGui::subscription)
     .window(window_settings)
@@ -86,6 +101,7 @@ impl Page {
         match self {
             Page::Dashboard => "⌂",
             Page::CrumaIngress => "⇄",
+
             Page::Monitoring => "◉",
             Page::Statistics => "▤",
             Page::Backends => "⬚",
@@ -156,13 +172,14 @@ pub struct OddBoxGui {
     theme_mode: ThemeMode,
     system_theme: Option<theme::Mode>,
     log_is_at_bottom: bool,
+    log_view_rev: u64,
     // Log filtering
     pub(in crate::gui) log_filter: LogFilter,
     pub(in crate::gui) log_level_preset: LogLevelPreset,
     // Cached list of known sources
     pub(in crate::gui) known_sources: Vec<String>,
     // Cached filtered log lines for performance
-    pub(in crate::gui) cached_log_lines: Vec<CachedLogLine>,
+    pub(in crate::gui) cached_log_lines: Arc<Vec<CachedLogLine>>,
     pub(in crate::gui) last_log_count: usize,
     pub(in crate::gui) total_log_count: usize,
     // Track last seen log ID to avoid unnecessary rebuilds
@@ -247,10 +264,11 @@ impl OddBoxGui {
                 theme_mode,
                 system_theme: None,
                 log_is_at_bottom: true,
+                log_view_rev: 0,
                 log_filter,
                 log_level_preset,
                 known_sources: Vec::new(),
-                cached_log_lines: Vec::new(),
+                cached_log_lines: Arc::new(Vec::new()),
                 last_log_count: 0,
                 total_log_count: 0,
                 last_seen_log_id: None,
@@ -346,13 +364,15 @@ impl OddBoxGui {
             }
             Message::LogsClear => {
                 self.log_state.write().clear();
-                self.cached_log_lines.clear();
+                self.cached_log_lines = Arc::new(Vec::new());
                 self.last_log_count = 0;
                 self.total_log_count = 0;
                 self.last_seen_log_id = None;
+                self.log_view_rev = self.log_view_rev.wrapping_add(1);
             }
             Message::LogToggleWrap(enabled) => {
                 self.log_wrap_enabled = enabled;
+                self.log_view_rev = self.log_view_rev.wrapping_add(1);
             }
             Message::LogToggleAutoTail(enabled) => {
                 self.log_auto_tail = enabled;
@@ -362,16 +382,10 @@ impl OddBoxGui {
                 }
             }
             Message::ProcessStart(name) => {
-                let _ = self
-                    .state
-                    .proc_broadcaster
-                    .send(crate::control::ProcMessage::Start(name));
+                todo!("somehow get a hold of whichever proc_host is responsible for this process and tell it to enable+start it")
             }
             Message::ProcessStop(name) => {
-                let _ = self
-                    .state
-                    .proc_broadcaster
-                    .send(crate::control::ProcMessage::Stop(name));
+                todo!("somehow get a hold of whichever proc_host is responsible for this process and tell it to disable+stop it")
             }
         }
         Task::none()
@@ -390,7 +404,7 @@ impl OddBoxGui {
         .style(|theme: &Theme| {
             let palette = theme.extended_palette();
             container::Style {
-                background: Some(palette.background.base.color.into()),
+                background: Some(Background::Color(Color::TRANSPARENT)),//Some(palette.background.base.color.into()),
                 ..Default::default()
             }
         })
@@ -400,28 +414,24 @@ impl OddBoxGui {
     }
 
     fn view_sidebar(&self) -> Element<'_, Message> {
-        let logo = image(iced::widget::image::Handle::from_bytes(
-            &include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/ob3.png"))[..],
-        ))
-        .width(Length::Fixed(28.0))
-        .height(Length::Fixed(28.0));
+        let logo = image(SIDEBAR_LOGO.clone()).expand(true);
 
         let header = container(
             row![
                 logo,
-                column![
-                    text("odd-box")
-                        .font(Font::MONOSPACE)
-                        .style(|theme: &Theme| iced::widget::text::Style {
-                            color: Some(theme.extended_palette().primary.base.color),
-                            ..Default::default()
-                        }),
-                    text("reverse proxy").style(|theme: &Theme| iced::widget::text::Style {
-                        color: Some(theme.extended_palette().background.weak.text),
-                        ..Default::default()
-                    }),
-                ]
-                .spacing(4)
+                // column![
+                //     text("ODD-BOX")
+                //         .font(Font::MONOSPACE)
+                //         .style(|theme: &Theme| iced::widget::text::Style {
+                //             color: Some(theme.extended_palette().primary.base.color),
+                //             ..Default::default()
+                //         }),
+                //     text("Reverse Proxy").style(|theme: &Theme| iced::widget::text::Style {
+                //         color: Some(theme.extended_palette().background.weak.text),
+                //         ..Default::default()
+                //     }),
+                // ]
+                // .spacing(4)
             ]
             .spacing(10)
             .align_y(iced::Alignment::Center),
@@ -460,7 +470,7 @@ impl OddBoxGui {
             .style(|theme: &Theme| {
                 let palette = theme.extended_palette();
                 container::Style {
-                    background: Some(palette.background.weaker.color.into()),
+                    background: Some(Background::Color(Color::TRANSPARENT)), //Some(palette.background.weaker.color.into()),
                     ..Default::default()
                 }
             })

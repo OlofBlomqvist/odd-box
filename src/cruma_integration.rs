@@ -135,12 +135,9 @@ pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, Build
 
                 match backend {
                     v4::Backend::Process(proc) => {
-                        // Get port from active_port or configured port
-                        let port = proc.active_port.or(proc.port).unwrap_or(if proc.https {
-                            443
-                        } else {
-                            80
-                        });
+
+                        // TODO
+                        let port = 443;
 
                         if let Some(ep) = to_endpoint(loopback_addr, port) {
                             let web_backend = WebBackend {
@@ -360,45 +357,4 @@ pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, Build
     }
 
     Ok((config, notes))
-}
-
-/// Offset listener ports to avoid clashes when running alongside the legacy stack.
-pub fn apply_port_offset(cfg: &mut Configuration, offset: u16) -> anyhow::Result<()> {
-    if offset == 0 {
-        return Ok(());
-    }
-
-    for listener in cfg.listeners.iter_mut() {
-        match listener {
-            Listener::Http(h) => {
-                h.port = NonZeroU16::new(
-                    h.port
-                        .get()
-                        .checked_add(offset)
-                        .context("http port offset overflow")?,
-                )
-                .context("http port became zero after offset")?;
-            }
-            Listener::Tls(tls) => {
-                tls.port = NonZeroU16::new(
-                    tls.port
-                        .get()
-                        .checked_add(offset)
-                        .context("tls port offset overflow")?,
-                )
-                .context("tls port became zero after offset")?;
-            }
-            Listener::Tcp(tcp) => {
-                tcp.port = NonZeroU16::new(
-                    tcp.port
-                        .get()
-                        .checked_add(offset)
-                        .context("tcp port offset overflow")?,
-                )
-                .context("tcp port became zero after offset")?;
-            }
-        }
-    }
-
-    Ok(())
 }

@@ -34,12 +34,11 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version="0.3", features=[ "env-filter","std","fmt","time"] }
 uuid = { version = "1.10", features = ["v4"] }
-utoipa = "5.3"
 dirs = "5.0"
 rustls = { version = "0.23", features = ["ring","std","tls12"], default-features = false}
 ctrlc = "3.4"
 which = "6.0"
-iced = { version = "0.14", features = ["smol", "image"] }
+iced = { version = "0.14", features = ["smol", "image", "lazy"] }
 parking_lot = "0.12"
 
 [target.'cfg(target_os = "windows")'.dependencies]

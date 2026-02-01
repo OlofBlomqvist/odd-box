@@ -2,11 +2,8 @@ use std::fmt::Write as _;
 use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::Duration;
-
-use crate::control::ProcMessage;
+use crate::global_state::ProcState;
 use crate::global_state::GlobalState;
-use crate::types::app_state::ProcState;
-use crate::types::odd_box_event::EventForWebsocketClients;
 
 pub fn init() {
     println!("Starting odd-box TUI (press Ctrl+C to exit)...");
@@ -26,9 +23,9 @@ fn fmt_state(state: ProcState) -> &'static str {
 }
 
 async fn build_snapshot(global_state: &GlobalState) -> String {
-    let status_map = global_state.app_state.site_status_map.clone();
+    let status_map = global_state.site_status_map.clone();
     let cfg = global_state.config.read().await;
-    let cruma_assignment = global_state.app_state.cruma_assignment.read().await.clone();
+    let cruma_assignment = global_state.cruma_assignment.read().await.clone();
 
     let mut out = String::new();
     writeln!(&mut out, "odd-box status (read-only)").ok();
@@ -56,11 +53,7 @@ async fn build_snapshot(global_state: &GlobalState) -> String {
             .get(&backend_id)
             .map(|v| v.value().clone())
             .unwrap_or(ProcState::Stopped);
-        let port = proc
-            .active_port
-            .or(proc.port)
-            .map(|p| p.to_string())
-            .unwrap_or_else(|| "-".into());
+        let port = "<placeholder:fixme>"; // todo: get actual currently selected port
         writeln!(
             &mut out,
             " - {:<30} {:<10} port: {}",
@@ -139,14 +132,11 @@ async fn build_snapshot(global_state: &GlobalState) -> String {
 }
 
 pub async fn run(
-    global_state: Arc<GlobalState>,
-    _tx: tokio::sync::broadcast::Sender<ProcMessage>,
-    _trace_msg_broadcaster: tokio::sync::broadcast::Sender<EventForWebsocketClients>,
+    global_state: Arc<GlobalState>
 ) {
     let mut ticker = tokio::time::interval(Duration::from_millis(500));
     loop {
         if global_state
-            .app_state
             .exit
             .load(std::sync::atomic::Ordering::SeqCst)
         {

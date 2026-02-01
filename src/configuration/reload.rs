@@ -7,12 +7,10 @@ use tracing_subscriber::EnvFilter;
 
 use crate::{
     configuration::{LogLevel, v4},
-    cruma_integration::{
-        apply_port_offset as apply_cruma_port_offset, build_config as build_cruma_config,
+    cruma_integration::{ build_config as build_cruma_config,
     },
-    global_state::GlobalState,
-    proc_host,
-    types::app_state::ProcState,
+    global_state::{GlobalState, ProcState},
+    proc_host
 };
 
 use super::{AnyOddBoxConfig, ConfigWrapper};
@@ -37,7 +35,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
             let (a, b, _) = configuration
                 .try_upgrade_to_latest_version()
                 .expect("configuration upgrade failed. this is a bug in odd-box");
-            (ConfigWrapper::new(a), b)
+            (ConfigWrapper::new(a,active_configuration.path.clone()), b)
         }
         Err(e) => anyhow::bail!(e),
     };
@@ -45,12 +43,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
     new_configuration.internal_version = active_configuration.internal_version + 1;
 
     new_configuration.is_valid()?;
-    new_configuration.set_disk_path(
-        &active_configuration
-            .path
-            .clone()
-            .ok_or(anyhow::Error::msg("cfg path not valid"))?,
-    )?;
+
 
     if new_configuration.eq(&active_configuration) {
         trace!("Configuration has not changed, skipping reload");
@@ -58,10 +51,6 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
     } else {
         warn!("Configuration has changed on disk, reloading");
     }
-
-    // Check if ACME email changed
-    let has_changed_acme_email = new_configuration.acme.as_ref().map(|a| &a.email)
-        != active_configuration.acme.as_ref().map(|a| &a.email);
 
     // Collect all new process backends
     let mut all_cloned_new_procs: Vec<(String, v4::ProcessBackend)> = new_configuration
@@ -74,14 +63,15 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
     let cloned_modified_procs: Vec<(String, v4::ProcessBackend)> = all_cloned_new_procs
         .iter_mut()
         .filter_map(|(backend_id, new_proc_conf)| {
-            let is_running = crate::PROC_THREAD_MAP
-                .iter()
-                .any(|y| &y.backend_id == backend_id);
+
+            // TODO: instead of just true for is_running, we need to find out if there actually is a proc_host running
+            // for this backend_id.. now we just always say true and kill even when it has the current config..
+            let is_running = true;
+
+
             if is_running {
                 // Check if the process backend exists in active config and compare
                 if let Some(active_proc) = active_configuration.hosted_processes.get(backend_id) {
-                    // Preserve active_port from existing process
-                    new_proc_conf.active_port = active_proc.active_port;
 
                     // Compare the configs (excluding active_port since we just synced it)
                     if active_proc.value() == new_proc_conf {
@@ -118,7 +108,11 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
 
     new_configuration.reload_dashmaps();
 
-    for mut x in crate::PROC_THREAD_MAP.iter_mut() {
+    // TODO : actually iterate through wherever we have info regarding running processes?
+    for mut x in vec![crate::types::proc_info::ProcInfo {
+        liveness_ptr: todo!(), backend_id: todo!(), pid: todo!(),
+        marked_for_removal: todo!(), started_at_time_stamp: todo!()
+    }] {
         if cloned_modified_procs
             .iter()
             .any(|(id, _)| id == &x.backend_id)
@@ -144,17 +138,19 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
 
     loop {
         {
-            if crate::PROC_THREAD_MAP.iter().any(|x| x.marked_for_removal) {
-                info!("Waiting for all marked processes to exit before starting new ones");
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                continue;
-            }
+            // TODO: actually iterate through active proc_hosts and wait for them to exit prior
+            // to continuing with adding new ones
+            // if crate::PROC_THREAD_MAP.iter().any(|x| x.marked_for_removal) {
+            //     info!("Waiting for all marked processes to exit before starting new ones");
+            //     tokio::time::sleep(Duration::from_millis(500)).await;
+            //     continue;
+            // }
         }
         break;
     }
 
     // note - we must not clear here as it would cause update event to be sent for unchanged processes
-    global_state.app_state.site_status_map.retain(|k, v| {
+    global_state.site_status_map.retain(|k, v| {
         match v {
             // keep remotes that exist in the new config
             ProcState::Remote => cloned_rems.iter().any(|(id, _)| id == k),
@@ -177,7 +173,6 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
     // Add any remotes to the site list (doesn't matter if they already exist, they just get replaced)
     for (backend_id, _) in &cloned_rems {
         global_state
-            .app_state
             .site_status_map
             .insert(backend_id.clone(), ProcState::Remote);
     }
@@ -185,7 +180,6 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
     // Add any hosted dirs to site list (doesn't matter if they already exist, they just get replaced)
     for (backend_id, _) in &cloned_dirs {
         global_state
-            .app_state
             .site_status_map
             .insert(backend_id.clone(), ProcState::DirServer);
     }
@@ -194,9 +188,8 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
     for (backend_id, proc) in cloned_modified_procs {
         match new_configuration.resolve_process_backend(&backend_id, &proc) {
             Ok(resolved) => {
-                tokio::task::spawn(proc_host::host(
+                tokio::task::spawn(proc_host::ProcHost::host(
                     resolved,
-                    global_state.proc_broadcaster.subscribe(),
                     global_state.clone(),
                 ));
             }
@@ -215,9 +208,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
         .unwrap_or(0);
     let rebuilt_cruma_config = match build_cruma_config(&new_configuration) {
         Ok((mut cfg, notes)) => {
-            if let Err(e) = apply_cruma_port_offset(&mut cfg, cruma_port_offset) {
-                tracing::error!(error=%e, "Failed to apply port offset to cruma config during reload");
-            }
+
             if !notes.unsupported.is_empty() {
                 tracing::warn!(
                     "cruma config placeholders/unsupported after reload: {:?}",
@@ -288,12 +279,6 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
             tracing::error!("NO LOG HANDLE EXISTS!!")
         }
     };
-
-    if has_changed_acme_email {
-        tracing::warn!(
-            "ACME configuration changed, but legacy cert handling is disabled in cruma-only mode."
-        );
-    }
 
     info!("Configuration reloaded successfully.");
     Ok(())

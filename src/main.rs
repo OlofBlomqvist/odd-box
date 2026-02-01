@@ -1,8 +1,8 @@
 mod configuration;
-mod control;
 mod cruma;
 pub mod cruma_integration;
 mod gui;
+mod process_registry;
 mod tui;
 mod types;
 use anyhow::Context;
@@ -11,10 +11,8 @@ use arc_swap::ArcSwap;
 use clap::Parser;
 use configuration::OddBoxConfigVersion;
 use configuration::{ConfigWrapper, LogLevel};
-use control::ProcMessage;
 use core::fmt;
-use cruma_integration::{
-    apply_port_offset as apply_cruma_port_offset, build_config as build_cruma_config,
+use cruma_integration::{ build_config as build_cruma_config,
 };
 use dashmap::DashMap;
 use global_state::GlobalState;
@@ -23,7 +21,6 @@ use notify::Watcher;
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -34,71 +31,69 @@ use tracing_subscriber::Layer;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use types::args::Args;
-use types::odd_box_event::EventForWebsocketClients;
-use types::odd_box_event::GlobalEvent;
-use types::proc_info::BgTaskInfo;
-use types::proc_info::ProcId;
-use types::proc_info::ProcInfo;
 mod proc_host;
 use tracing_subscriber::util::SubscriberInitExt;
-use types::app_state::ProcState;
-mod logging;
-
 mod self_update;
 use lazy_static::lazy_static;
 use std::sync::atomic::{AtomicBool as StdAtomicBool, Ordering as StdOrdering};
-use types::app_state::AppState;
 
 mod docker;
 
-lazy_static! {
-    static ref PROC_THREAD_MAP: Arc<DashMap<ProcId, ProcInfo>> = Arc::new(DashMap::new());
-    static ref BG_WORKER_THREAD_MAP: Arc<DashMap<String, BgTaskInfo>> = Arc::new(DashMap::new());
-}
-
-static REQUEST_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
-pub fn generate_unique_id() -> u64 {
-    REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
-}
-
 pub mod global_state {
-    use std::{sync::atomic::AtomicU64, time::SystemTimeError};
+    use std::{sync::{Arc, atomic::{AtomicBool, AtomicU64}}, time::SystemTimeError};
 
-    use crate::types::odd_box_event::{EventForWebsocketClients, GlobalEvent};
+    #[derive(Debug, PartialEq, Clone)]
+    pub enum ProcState {
+        Faulty,
+        Stopped,
+        Starting,
+        Stopping,
+        Running,
+        Remote,
+        DirServer,
+        Docker,
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct CrumaAssignedDomain {
+        pub assigned_domain: String,
+        pub welcome_message: String,
+    }
+
     #[derive(Debug)]
     pub struct GlobalState {
+
+        pub enable_global_traffic_inspection: AtomicBool,
+        pub exit: AtomicBool,
+        pub site_status_map: Arc<dashmap::DashMap<String, ProcState>>,
+        pub cruma_assignment: Arc<tokio::sync::RwLock<Option<CrumaAssignedDomain>>>,
+
+
         pub started_at_time_stamp: std::time::SystemTime,
         pub log_handle: crate::OddLogHandle,
-        pub app_state: std::sync::Arc<crate::types::app_state::AppState>,
         pub config: std::sync::Arc<tokio::sync::RwLock<crate::configuration::ConfigWrapper>>,
-        pub proc_broadcaster: tokio::sync::broadcast::Sender<crate::control::ProcMessage>,
-        pub target_request_counts: dashmap::DashMap<String, AtomicU64>,
-        pub global_broadcast_channel: tokio::sync::broadcast::Sender<GlobalEvent>,
-        pub websockets_broadcast_channel: tokio::sync::broadcast::Sender<EventForWebsocketClients>,
-        pub cruma_config: std::sync::Arc<arc_swap::ArcSwap<cruma_proxy_lib::types::Configuration>>,
+        pub target_request_counts: dashmap::DashMap<String, AtomicU64>,        pub cruma_config: std::sync::Arc<arc_swap::ArcSwap<cruma_proxy_lib::types::Configuration>>,
     }
     impl GlobalState {
         pub fn uptime(&self) -> Result<std::time::Duration, SystemTimeError> {
             self.started_at_time_stamp.elapsed()
         }
         pub fn new(
-            app_state: std::sync::Arc<crate::types::app_state::AppState>,
             config: std::sync::Arc<tokio::sync::RwLock<crate::configuration::ConfigWrapper>>,
-            tx_to_process_hosts: tokio::sync::broadcast::Sender<crate::control::ProcMessage>,
-            global_broadcast_channel: tokio::sync::broadcast::Sender<GlobalEvent>,
-            websockets_broadcast_channel: tokio::sync::broadcast::Sender<EventForWebsocketClients>,
             cruma_config: std::sync::Arc<arc_swap::ArcSwap<cruma_proxy_lib::types::Configuration>>,
             log_handle: crate::OddLogHandle,
         ) -> Self {
             Self {
+
+                enable_global_traffic_inspection: AtomicBool::new(false),
+                site_status_map: Arc::new(dashmap::DashMap::new()),
+                exit: AtomicBool::new(false),
+                cruma_assignment: Arc::new(tokio::sync::RwLock::new(None)),
+
                 started_at_time_stamp: std::time::SystemTime::now(),
                 log_handle,
-                app_state,
                 config,
-                proc_broadcaster: tx_to_process_hosts,
                 target_request_counts: dashmap::DashMap::new(),
-                global_broadcast_channel,
-                websockets_broadcast_channel,
                 cruma_config,
             }
         }
@@ -149,7 +144,7 @@ async fn config_file_monitor(
     watcher.watch(Path::new(&cfg_path), notify::RecursiveMode::Recursive)?;
 
     loop {
-        let exit_requested_clone = &global_state.app_state.exit;
+        let exit_requested_clone = &global_state.exit;
 
         if exit_requested_clone.load(Ordering::Relaxed) {
             break;
@@ -202,32 +197,6 @@ async fn config_file_monitor(
     Ok(())
 }
 
-async fn generic_cleanup_thread(_state: Arc<GlobalState>) {
-    let liveness_token: Arc<bool> = Arc::new(true);
-    crate::BG_WORKER_THREAD_MAP.insert(
-        "The Janitor".into(),
-        BgTaskInfo {
-            liveness_ptr: Arc::downgrade(&liveness_token),
-            status: "Managing active tasks..".into(),
-        },
-    );
-
-    let mut every_30_seconds_counter = 0;
-
-    loop {
-        {
-            every_30_seconds_counter += 1;
-
-            PROC_THREAD_MAP.retain(|_k, v| v.liveness_ptr.upgrade().is_some());
-            BG_WORKER_THREAD_MAP.retain(|_k, v| v.liveness_ptr.upgrade().is_some());
-
-            if every_30_seconds_counter > 30 {
-                every_30_seconds_counter = 0;
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await
-    }
-}
 
 fn generate_config(
     file_name: Option<&str>,
@@ -305,19 +274,18 @@ fn initialize_configuration(
     file.read_to_string(&mut contents)
         .with_context(|| format!("failed to read data from configuration file {cfg_path:?}"))?;
 
-    let (mut config, original_version, was_upgraded) =
+    let (config, original_version, was_upgraded) =
         match configuration::AnyOddBoxConfig::parse(&contents) {
             Ok(configuration) => {
                 let (a, b, c) = configuration
                     .try_upgrade_to_latest_version()
                     .expect("configuration upgrade failed. this is a bug in odd-box");
-                (ConfigWrapper::new(a), b, c)
+                (ConfigWrapper::new(a, Some(cfg_path.clone())), b, c)
             }
             Err(e) => anyhow::bail!(e),
         };
 
     config.is_valid()?;
-    config.set_disk_path(&cfg_path)?;
 
     Ok((config, original_version, was_upgraded))
 }
@@ -403,29 +371,13 @@ async fn main() -> anyhow::Result<()> {
         LogLevel::Debug => LevelFilter::DEBUG,
     };
 
-    let global_event_broadcaster = tokio::sync::broadcast::Sender::<GlobalEvent>::new(1024);
-    let global_websockets_event_broadcaster =
-        tokio::sync::broadcast::Sender::<EventForWebsocketClients>::new(1024);
-
-    let (proc_msg_tx, _) = tokio::sync::broadcast::channel::<ProcMessage>(100);
-    let inner_state = AppState::new();
-
-    let inner_state_arc = std::sync::Arc::new(inner_state);
-    let arced_tx = std::sync::Arc::new(proc_msg_tx.clone());
     let shutdown_signal = Arc::new(tokio::sync::Notify::new());
     let shared_config = std::sync::Arc::new(tokio::sync::RwLock::new(config));
 
-    // Build initial cruma configuration from current odd-box config.
-    let cruma_port_offset = std::env::var("ODD_BOX_CRUMA_PORT_OFFSET")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
     let cruma_cfg_init = {
         let cfg_guard = shared_config.read().await;
-        let (mut cfg, notes) = build_cruma_config(&cfg_guard)?;
-        if let Err(e) = apply_cruma_port_offset(&mut cfg, cruma_port_offset) {
-            tracing::error!(error=%e, "Failed to apply port offset for cruma config");
-        }
+        let (cfg, notes) = build_cruma_config(&cfg_guard)?;
+
         if !notes.unsupported.is_empty() {
             tracing::warn!(
                 "cruma config placeholders/unsupported: {:?}",
@@ -437,11 +389,7 @@ async fn main() -> anyhow::Result<()> {
     let cruma_config_arc = std::sync::Arc::new(ArcSwap::from_pointee(cruma_cfg_init));
 
     let mut global_state = crate::global_state::GlobalState::new(
-        inner_state_arc.clone(),
         shared_config.clone(),
-        proc_msg_tx.clone(),
-        global_event_broadcaster.clone(),
-        global_websockets_event_broadcaster.clone(),
         cruma_config_arc.clone(),
         OddLogHandle::None,
     );
@@ -497,12 +445,6 @@ async fn main() -> anyhow::Result<()> {
 
         global_state.log_handle = OddLogHandle::TUI(RwLock::new(tui_reload_handle));
         tracing_subscriber::registry()
-            .with(logging::TuiLoggerLayer {
-                log_buffer: std::sync::Arc::new(std::sync::Mutex::new(
-                    logging::SharedLogBuffer::new(),
-                )),
-                broadcaster: global_websockets_event_broadcaster.clone(),
-            })
             .with(tui_filter)
             .init();
     } else {
@@ -521,17 +463,12 @@ async fn main() -> anyhow::Result<()> {
 
         tracing_subscriber::registry()
             .with(fmt_layer)
-            .with(logging::NonTuiLoggerLayer {
-                broadcaster: global_websockets_event_broadcaster.clone(),
-            })
             .with(cli_filter)
             .init();
     }
 
     let global_state = Arc::new(global_state);
 
-    // Spawn thread cleaner (removes dead threads from the proc_thread_map)
-    let cleanup_thread = tokio::spawn(generic_cleanup_thread(global_state.clone()));
     let cfg_monitor = tokio::spawn(config_file_monitor(
         shared_config.clone(),
         global_state.clone(),
@@ -548,7 +485,6 @@ async fn main() -> anyhow::Result<()> {
             tracing::debug!("Ctrl-C received again; shutdown already in progress.");
         }
         cstate
-            .app_state
             .exit
             .store(true, std::sync::atomic::Ordering::SeqCst);
     })
@@ -558,9 +494,7 @@ async fn main() -> anyhow::Result<()> {
     if tui_flag {
         tui::init();
         tui_task = Some(tokio::spawn(tui::run(
-            global_state.clone(),
-            proc_msg_tx.clone(),
-            global_websockets_event_broadcaster.clone(),
+            global_state.clone()
         )));
     }
 
@@ -617,13 +551,12 @@ async fn main() -> anyhow::Result<()> {
                 match config_guard.resolve_process_backend(backend_id, proc) {
                     Ok(resolved) => {
                         // Add to site status as stopped initially
-                        inner_state_arc
+                        global_state
                             .site_status_map
-                            .insert(backend_id.clone(), ProcState::Stopped);
+                            .insert(backend_id.clone(), crate::global_state::ProcState::Stopped);
 
-                        tokio::task::spawn(proc_host::host(
+                        tokio::task::spawn(proc_host::ProcHost::host(
                             resolved,
-                            arced_tx.subscribe(),
                             global_state.clone(),
                         ));
                     }
@@ -635,14 +568,14 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             configuration::v4::Backend::Remote(_) => {
-                inner_state_arc
+                global_state
                     .site_status_map
-                    .insert(backend_id.clone(), ProcState::Remote);
+                    .insert(backend_id.clone(), crate::global_state::ProcState::Remote);
             }
             configuration::v4::Backend::Static(_) => {
-                inner_state_arc
+                global_state
                     .site_status_map
-                    .insert(backend_id.clone(), ProcState::DirServer);
+                    .insert(backend_id.clone(), crate::global_state::ProcState::DirServer);
             }
         }
     }
@@ -650,23 +583,6 @@ async fn main() -> anyhow::Result<()> {
     drop(config_guard);
 
     tokio::task::spawn(docker_thread(global_state.clone()));
-
-    // // if on a released/stable version, we notify the user when there is a later stable version
-    // // available for them to update to. current_is_latest will not include any -rc,-pre or -dev releases
-    // // and so we wont run this unless user is also on stable.
-    // if !self_update::current_version().contains("-") {
-    //     match self_update::current_is_latest().await {
-    //         Err(e) => {
-    //             tracing::warn!("It was not possible to retrieve information regarding the latest available version of odd-box: {e:?}");
-    //         },
-    //         Ok(Some(v)) => {
-    //             tracing::info!("There is a newer version of odd-box available - please consider upgrading to {v:?}. For unmanaged installations you can run 'odd-box --update' otherwise see your package manager for upgrade instructions.");
-    //         },
-    //         Ok(None) => {
-    //             tracing::info!("You are running the latest version of odd-box :D");
-    //         }
-    //     }
-    // }
 
     // if in tui mode, we can just hang around until the tui thread exits.
     if let Some(tt) = tui_task {
@@ -682,20 +598,19 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or(gui::ThemeMode::System);
         // Create log state and start collector
         let log_state = gui::logs::create_shared(1000);
-        let _log_collector = gui::logs::spawn_collector(
-            log_state.clone(),
-            global_websockets_event_broadcaster.subscribe(),
-        );
+        // let _log_collector = gui::logs::spawn_collector(
+        //     log_state.clone(),
+        // );
         // Run GUI on main thread - this blocks until window is closed
         if let Err(e) = gui::run(global_state.clone(), theme_mode, log_state) {
             tracing::error!("GUI error: {:?}", e);
         }
         // Signal exit when GUI closes
-        global_state.app_state.exit.store(true, Ordering::SeqCst);
+        global_state.exit.store(true, Ordering::SeqCst);
     // otherwise we will wait for the exit signal set by ctrl-c
     } else {
         tracing::info!("odd-box started successfully. use ctrl-c to quit.");
-        while global_state.app_state.exit.load(Ordering::Relaxed) == false {
+        while global_state.exit.load(Ordering::Relaxed) == false {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }
@@ -708,51 +623,6 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("odd-box is shutting down.. waiting for processes to stop..");
     }
 
-    // All worker loops listen for messages thru these channels. We need for wait until they have stopped their processes
-    // before we can safely exit the application.
-    let mut i = 0;
-    while arced_tx.receiver_count() > 0 {
-        if i > 30 {
-            if PROC_THREAD_MAP.is_empty() {
-                if tui_flag || gui_flag {
-                    eprintln!(
-                        "Shutdown sequence completed with warning: mismatch between PTM and ATX.."
-                    )
-                } else {
-                    tracing::warn!(
-                        "Shutdown sequence completed with warning: mismatch between PTM and ATX.."
-                    )
-                }
-                break;
-            }
-            let mut awaited_processed = vec![];
-
-            for (name, pid) in PROC_THREAD_MAP.iter().filter_map(|x| {
-                if let Some(pid) = &x.pid {
-                    Some((x.backend_id.clone(), pid.clone()))
-                } else {
-                    None
-                }
-            }) {
-                awaited_processed.push(format!("- {} (pid: {})", name, pid))
-            }
-
-            if tui_flag || gui_flag {
-                println!("Waiting for processes to die..");
-                println!("{}", awaited_processed.join("\n"));
-            } else {
-                tracing::warn!("Waiting for hosted processes to die..");
-                for p in awaited_processed {
-                    tracing::warn!("{p}");
-                }
-            }
-
-            i = 0;
-        } else {
-            i += 1;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
 
     if tui_flag || gui_flag {
         println!("shutdown sequence for hosted processes completed successfully");
@@ -765,7 +635,6 @@ async fn main() -> anyhow::Result<()> {
     _ = cruma_task.abort();
     _ = cruma_task.await;
     _ = cfg_monitor.abort();
-    _ = cleanup_thread.abort();
 
     if tui_flag || gui_flag {
         println!("odd-box exited successfully");
@@ -779,16 +648,13 @@ async fn main() -> anyhow::Result<()> {
 type CliLogHandle = tracing_subscriber::reload::Handle<
     EnvFilter,
     tracing_subscriber::layer::Layered<
-        logging::NonTuiLoggerLayer,
-        tracing_subscriber::layer::Layered<
-            Box<dyn Layer<tracing_subscriber::Registry> + Send + Sync>,
-            tracing_subscriber::Registry,
-        >,
+        Box<dyn Layer<tracing_subscriber::Registry> + Send + Sync>,
+        tracing_subscriber::Registry,
     >,
 >;
 type TuiLogHandle = tracing_subscriber::reload::Handle<
     EnvFilter,
-    tracing_subscriber::layer::Layered<logging::TuiLoggerLayer, tracing_subscriber::Registry>,
+    tracing_subscriber::Registry,
 >;
 
 pub enum OddLogHandle {
@@ -803,22 +669,6 @@ impl fmt::Debug for OddLogHandle {
     }
 }
 
-// fn get_user_confirmation(prompt: &str) -> bool {
-//     let mut input = String::new();
-//     loop {
-//         print!("{} (y/n)", prompt);
-//         std::io::stdout().flush().unwrap();
-//         input.clear();
-//         std::io::stdin().read_line(&mut input).unwrap();
-//         match input.trim().to_lowercase().as_str() {
-//             "y" => return true,
-//             "n" => return false,
-//             _ => {
-//                 println!("Invalid input. Please enter 'y' or 'n'.");
-//             }
-//         }
-//     }
-// }
 
 // we could probably subscribe to the docker socket instead of having this stupid loop..
 // this does however seem to work fine and is rather simple, so keeping it for now :)
@@ -832,28 +682,21 @@ pub async fn docker_thread(state: Arc<GlobalState>) {
             for x in running_container_targets {
                 running_container_targets_dash_map.insert(x.generate_host_name(), x);
             }
-            state.app_state.site_status_map.retain(|a, b| {
-                b != &ProcState::Docker || running_container_targets_dash_map.contains_key(a)
+            state.site_status_map.retain(|a, b| {
+                b != &crate::global_state::ProcState::Docker || running_container_targets_dash_map.contains_key(a)
             });
             for guard in &running_container_targets_dash_map {
                 let (host_name, _) = guard.pair();
                 state
-                    .app_state
                     .site_status_map
-                    .insert(host_name.to_string(), ProcState::Docker);
+                    .insert(host_name.to_string(), crate::global_state::ProcState::Docker);
             }
             let mut guard = state.config.write().await;
             guard.docker_containers = running_container_targets_dash_map;
 
             // Keep cruma config in sync with docker-discovered targets.
             if let Ok((mut cfg, notes)) = build_cruma_config(&guard) {
-                let offset = std::env::var("ODD_BOX_CRUMA_PORT_OFFSET")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(0);
-                if let Err(e) = apply_cruma_port_offset(&mut cfg, offset) {
-                    tracing::error!(error=%e, "Failed to apply port offset when updating cruma config from docker changes");
-                }
+
                 if !notes.unsupported.is_empty() {
                     tracing::warn!(
                         "cruma config placeholders/unsupported after docker update: {:?}",

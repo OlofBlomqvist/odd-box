@@ -21,7 +21,6 @@ use anyhow::bail;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use utoipa::ToSchema;
 
 // Re-export the latest config version
 pub use v4::*;
@@ -55,7 +54,7 @@ pub enum AnyOddBoxConfig {
 }
 
 #[derive(
-    Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq, Hash, schemars::JsonSchema,
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, schemars::JsonSchema,
 )]
 pub struct EnvVar {
     pub key: String,
@@ -67,7 +66,6 @@ pub struct EnvVar {
     Deserialize,
     Debug,
     Clone,
-    ToSchema,
     PartialEq,
     Eq,
     Hash,
@@ -81,7 +79,7 @@ pub enum LogFormat {
     dotnet,
 }
 
-#[derive(Debug, Serialize, Clone, ToSchema, PartialEq, Eq, Hash, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq, Hash, schemars::JsonSchema)]
 pub enum LogLevel {
     Trace,
     Debug,
@@ -129,7 +127,6 @@ impl<'de> Deserialize<'de> for LogLevel {
     Serialize,
     Deserialize,
     Default,
-    ToSchema,
     PartialEq,
     Eq,
     Hash,
@@ -286,6 +283,7 @@ pub struct ConfigWrapper {
     pub docker_containers: DashMap<String, crate::docker::ContainerProxyTarget>,
     pub wrapper_cache_map_is_dirty: bool,
     pub internal_version: u64,
+    pub path: Option<String>,
 }
 
 impl std::ops::Deref for ConfigWrapper {
@@ -307,7 +305,7 @@ impl std::ops::DerefMut for ConfigWrapper {
 impl ConfigWrapper {
     /// Creates a new ConfigWrapper from the latest version of a configuration file,
     /// initializing the DashMaps from the backends in the config.
-    pub fn new(config: crate::configuration::OddBoxConfig) -> Self {
+    pub fn new(config: crate::configuration::OddBoxConfig, path: Option<String>) -> Self {
         let hosted_processes = DashMap::new();
         let remote_sites = DashMap::new();
         let static_sites = DashMap::new();
@@ -328,6 +326,7 @@ impl ConfigWrapper {
         }
 
         ConfigWrapper {
+            path,
             internal_version: 0,
             internal_configuration: config,
             hosted_processes,
@@ -535,50 +534,6 @@ impl ConfigWrapper {
         }
     }
 
-    pub fn busy_ports(&self) -> Vec<(ProcId, u16)> {
-        self.hosted_processes
-            .iter()
-            .flat_map(|entry| {
-                let p = entry.value();
-                let mut items = Vec::new();
-
-                // manually set ports need to be marked as busy even if the process is not running
-                if let Some(port) = p.port {
-                    items.push((p.proc_id.clone(), port));
-                }
-
-                // active ports means that there is a loop active for this process using that port
-                if let Some(port) = p.active_port {
-                    items.push((p.proc_id.clone(), port));
-                }
-
-                items
-            })
-            .collect()
-    }
-
-    pub async fn find_and_set_unused_port(
-        selfy: &mut Self,
-        proc: &mut v4::ProcessBackend,
-    ) -> anyhow::Result<u16> {
-        let used_ports: Vec<u16> = selfy
-            .hosted_processes
-            .iter()
-            .filter_map(|entry| entry.value().port)
-            .collect();
-
-        if let Some(manually_chosen_port) = proc.port {
-            if used_ports.contains(&manually_chosen_port) {
-                bail!("The port configured for this backend is already in use..")
-            } else {
-                return Ok(manually_chosen_port);
-            }
-        }
-
-        // if nothing is running and user has not selected any specific one, use the first port from the start range
-        Ok(selfy.port_range_start)
-    }
-
     /// Add or replace a process backend
     pub async fn add_or_replace_process_backend(
         &mut self,
@@ -650,128 +605,6 @@ impl ConfigWrapper {
                 tracing::warn!("{:?}", e);
                 None
             }
-        }
-    }
-
-    /// Set the active port for a process backend
-    pub fn set_active_port(
-        &mut self,
-        backend_id: &str,
-        proc: &mut v4::ProcessBackend,
-    ) -> anyhow::Result<u16> {
-        let mut selected_port = proc.active_port;
-
-        // ports in use or configured for use by other backends
-        let unavailable_ports: Vec<(ProcId, u16)> = self
-            .busy_ports()
-            .into_iter()
-            .filter(|x| x.0 != proc.proc_id)
-            .collect();
-
-        if let Some(currently_selected_port) = selected_port {
-            if !unavailable_ports
-                .iter()
-                .any(|x| x.1 == currently_selected_port)
-            {
-                if Self::port_is_free(currently_selected_port) {
-                    return Ok(currently_selected_port);
-                } else {
-                    selected_port = None;
-                }
-            }
-        }
-
-        // decide which port to use (ie. which port to add as the environment variable PORT)
-        if let Some(preferred_port) = proc.port {
-            if preferred_port == 0 {
-                selected_port = Self::get_random_free_port()
-            } else {
-                if let Some(taken_by) = unavailable_ports.iter().find(|x| x.1 == preferred_port) {
-                    tracing::warn!(
-                        "[{}] The configured port '{}' is unavailable (configured for another backend: '{}')..",
-                        backend_id,
-                        preferred_port,
-                        taken_by.1
-                    );
-                } else {
-                    tracing::info!(
-                        "[{}] Starting on port '{}' as configured for the process!",
-                        backend_id,
-                        preferred_port
-                    );
-                    selected_port = Some(preferred_port);
-                }
-            }
-        } else if let Some(value) = proc.env.get("PORT").or_else(|| proc.env.get("port")) {
-            if let Some(taken_by) = unavailable_ports.iter().find(|x| x.1.to_string() == *value) {
-                tracing::warn!(
-                    "[{}] The configured port (via env var in cfg) '{}' is unavailable (configured for another backend: '{}')..",
-                    backend_id,
-                    value,
-                    taken_by.1
-                );
-            } else if let Ok(spbev) = value.parse::<u16>() {
-                tracing::info!(
-                    "[{}] Starting on port '{}' as selected via a configured environment variable for port!",
-                    backend_id,
-                    value
-                );
-                selected_port = Some(spbev)
-            } else {
-                tracing::info!(
-                    "[{}] The env var for port was configured to '{}' which is not a valid u16, ignoring.",
-                    backend_id,
-                    value
-                );
-            }
-        }
-
-        // if no port manually specified, find the first available port
-        if selected_port.is_none() {
-            let min_auto_port = self.port_range_start;
-            let unavailable: Vec<u16> = unavailable_ports.iter().map(|x| x.1).collect();
-            let mut inner_selected_port = min_auto_port;
-            loop {
-                if unavailable.contains(&inner_selected_port) {
-                    inner_selected_port += 1;
-                } else if Self::port_is_free(inner_selected_port) {
-                    break;
-                } else {
-                    inner_selected_port += 1;
-                }
-            }
-            tracing::trace!(
-                "[{}] Using the first available port found (starting from the configured start port: {min_auto_port}) ---> '{}'",
-                backend_id,
-                inner_selected_port
-            );
-            selected_port = Some(inner_selected_port);
-        }
-
-        // mark this process as using this port
-        if let Some(sp) = selected_port {
-            // Update in the DashMap
-            if let Some(mut entry) = self.hosted_processes.get_mut(backend_id) {
-                entry.active_port = Some(sp);
-            } else {
-                tracing::error!(
-                    "[{}] Could not find backend in hosted_processes DashMap.. This is a bug in odd-box!",
-                    backend_id
-                );
-            }
-
-            // Also update in the internal config
-            if let Some(v4::Backend::Process(p)) =
-                self.internal_configuration.backends.get_mut(backend_id)
-            {
-                p.active_port = Some(sp);
-            }
-        }
-
-        if let Some(p) = selected_port {
-            Ok(p)
-        } else {
-            bail!("Failed to find a port for the process..")
         }
     }
 
@@ -876,7 +709,6 @@ impl ConfigWrapper {
         Ok(ResolvedProcessBackend {
             backend_id: backend_id.to_string(),
             proc_id: proc.proc_id.clone(),
-            active_port: proc.active_port,
             bin: resolved_bin,
             args: resolved_args,
             dir: resolved_dir,
@@ -892,12 +724,24 @@ impl ConfigWrapper {
     }
 }
 
+pub fn get_random_free_port() -> Option<u16> {
+    match std::net::TcpListener::bind(("127.0.0.1", 0)) {
+        Ok(listener) => match listener.local_addr() {
+            Ok(l) => Some(l.port()),
+            _ => None,
+        },
+        Err(e) => {
+            tracing::warn!("{:?}", e);
+            None
+        }
+    }
+}
+
 /// A fully resolved process backend configuration ready for execution
 #[derive(Debug, Clone)]
 pub struct ResolvedProcessBackend {
     pub backend_id: String,
     pub proc_id: ProcId,
-    pub active_port: Option<u16>,
     pub bin: String,
     pub args: Vec<String>,
     pub dir: Option<String>,

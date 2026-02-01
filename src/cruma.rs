@@ -86,8 +86,8 @@ pub async fn cruma_thread(
                         | cruma_tunnels_lib::AgentEvent::AuthenticatedTunnelAssigned { assigned_domain, welcome_message } => {
                                 tracing::info!(assigned_domain, welcome_message);
                                 {
-                                    let mut slot = state.app_state.cruma_assignment.write().await;
-                                    *slot = Some(crate::types::app_state::CrumaAssignedDomain {
+                                    let mut slot = state.cruma_assignment.write().await;
+                                    *slot = Some(crate::global_state::CrumaAssignedDomain {
                                         assigned_domain,
                                         welcome_message,
                                     });

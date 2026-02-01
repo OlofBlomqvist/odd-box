@@ -1,8 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use utoipa::ToSchema;
 
-#[derive(Debug, PartialEq, Clone, serde::Serialize, ToSchema)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ProcState {
     Faulty,
     Stopped,
@@ -14,18 +13,18 @@ pub enum ProcState {
     Docker,
 }
 
+#[derive(Debug, Clone)]
+pub struct CrumaAssignedDomain {
+    pub assigned_domain: String,
+    pub welcome_message: String,
+}
+
 #[derive(Debug)]
 pub struct AppState {
     pub enable_global_traffic_inspection: AtomicBool,
     pub exit: AtomicBool,
     pub site_status_map: Arc<dashmap::DashMap<String, ProcState>>,
     pub cruma_assignment: Arc<tokio::sync::RwLock<Option<CrumaAssignedDomain>>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct CrumaAssignedDomain {
-    pub assigned_domain: String,
-    pub welcome_message: String,
 }
 
 impl AppState {

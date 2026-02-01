@@ -1,8 +1,10 @@
 use iced::widget::{
-    Column, Row, Scrollable, Space, button, checkbox, column, container, pick_list, row,
+    Column, Row, Scrollable, Space, button, checkbox, column, container, lazy, pick_list, row,
     scrollable, text, text_input,
 };
 use iced::{Border, Color, Element, Font, Length, Padding, Theme};
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 use tracing::Level;
 
 use super::super::{LogLevelPreset, Message, OddBoxGui};
@@ -256,111 +258,134 @@ impl OddBoxGui {
             .into();
         }
 
-        // Limit rendered entries for performance (show most recent)
-        let total_filtered = self.cached_log_lines.len();
-        let skip_count = total_filtered.saturating_sub(MAX_RENDERED_LOGS);
-        let entries_to_render = self.cached_log_lines.iter().skip(skip_count);
+        #[derive(Clone)]
+        struct LogEntriesDep {
+            rev: u64,
+            wrap: bool,
+            lines: Arc<Vec<CachedLogLine>>,
+        }
 
-        // Build log entries with metadata row above message
-        let rows: Vec<Element<'_, Message>> = entries_to_render
-            .map(|line| {
-                // Metadata row: level, source, timestamp
-                let metadata_row = row![
-                    text(line.level_str)
-                        .font(Font::MONOSPACE)
-                        .color(line.level_color),
-                    text(&line.source)
-                        .font(Font::MONOSPACE)
-                        .style(|theme: &Theme| iced::widget::text::Style {
-                            color: Some(theme.extended_palette().background.weak.text),
-                            ..Default::default()
-                        }),
-                    text(&line.timestamp_str)
-                        .font(Font::MONOSPACE)
-                        .style(|theme: &Theme| iced::widget::text::Style {
-                            color: Some(theme.extended_palette().background.weak.text),
-                            ..Default::default()
-                        }),
-                ]
-                .spacing(12);
+        impl Hash for LogEntriesDep {
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                self.rev.hash(state);
+                self.wrap.hash(state);
+                // `lines` are only used for rendering; hashing them would defeat the purpose.
+            }
+        }
 
-                // Message content
-                let message_widget: Element<'_, Message> = if self.log_wrap_enabled {
-                    text(&line.message)
-                        .font(Font::MONOSPACE)
-                        .style(|theme: &Theme| iced::widget::text::Style {
-                            color: Some(theme.extended_palette().background.base.text),
-                            ..Default::default()
-                        })
-                        .wrapping(text::Wrapping::Word)
-                        .into()
-                } else {
-                    // Handle multi-line messages without wrapping
-                    let message_lines: Vec<&str> = line.message.lines().collect();
-                    if message_lines.len() > 1 {
-                        let line_elements: Vec<Element<'_, Message>> = message_lines
-                            .into_iter()
-                            .map(|msg_line| {
-                                text(msg_line)
-                                    .font(Font::MONOSPACE)
-                                    .style(|theme: &Theme| iced::widget::text::Style {
-                                        color: Some(theme.extended_palette().background.base.text),
-                                        ..Default::default()
-                                    })
-                                    .wrapping(text::Wrapping::None)
-                                    .into()
-                            })
-                            .collect();
-                        Column::with_children(line_elements).spacing(1).into()
-                    } else {
-                        text(&line.message)
+        let dep = LogEntriesDep {
+            rev: self.log_view_rev,
+            wrap: self.log_wrap_enabled,
+            lines: self.cached_log_lines.clone(),
+        };
+
+        let content: Element<'_, Message> = lazy(dep, |dep| {
+            // Limit rendered entries for performance (show most recent)
+            let total_filtered = dep.lines.len();
+            let skip_count = total_filtered.saturating_sub(MAX_RENDERED_LOGS);
+            let entries_to_render = dep.lines.iter().skip(skip_count);
+
+            // Build log entries with metadata row above message
+            let rows: Vec<Element<'static, Message>> = entries_to_render
+                .map(|line| {
+                    let metadata_row = row![
+                        text(line.level_str)
+                            .font(Font::MONOSPACE)
+                            .color(line.level_color),
+                        text(line.source.clone())
+                            .font(Font::MONOSPACE)
+                            .style(|theme: &Theme| iced::widget::text::Style {
+                                color: Some(theme.extended_palette().background.weak.text),
+                                ..Default::default()
+                            }),
+                        text(line.timestamp_str.clone())
+                            .font(Font::MONOSPACE)
+                            .style(|theme: &Theme| iced::widget::text::Style {
+                                color: Some(theme.extended_palette().background.weak.text),
+                                ..Default::default()
+                            }),
+                    ]
+                    .spacing(12);
+
+                    let message_widget: Element<'static, Message> = if dep.wrap {
+                        text(line.message.clone())
                             .font(Font::MONOSPACE)
                             .style(|theme: &Theme| iced::widget::text::Style {
                                 color: Some(theme.extended_palette().background.base.text),
                                 ..Default::default()
                             })
-                            .wrapping(text::Wrapping::None)
+                            .wrapping(text::Wrapping::Word)
                             .into()
-                    }
-                };
+                    } else {
+                        let message_lines: Vec<&str> = line.message.lines().collect();
+                        if message_lines.len() > 1 {
+                            let line_elements: Vec<Element<'static, Message>> = message_lines
+                                .into_iter()
+                                .map(|msg_line| {
+                                    text(msg_line.to_string())
+                                        .font(Font::MONOSPACE)
+                                        .style(|theme: &Theme| iced::widget::text::Style {
+                                            color: Some(
+                                                theme.extended_palette().background.base.text,
+                                            ),
+                                            ..Default::default()
+                                        })
+                                        .wrapping(text::Wrapping::None)
+                                        .into()
+                                })
+                                .collect();
+                            Column::with_children(line_elements).spacing(1).into()
+                        } else {
+                            text(line.message.clone())
+                                .font(Font::MONOSPACE)
+                                .style(|theme: &Theme| iced::widget::text::Style {
+                                    color: Some(theme.extended_palette().background.base.text),
+                                    ..Default::default()
+                                })
+                                .wrapping(text::Wrapping::None)
+                                .into()
+                        }
+                    };
 
-                // Stack metadata above message
-                column![metadata_row, message_widget].spacing(2).into()
-            })
-            .collect();
+                    column![metadata_row, message_widget].spacing(2).into()
+                })
+                .collect();
 
-        let log_column = Column::with_children(rows).spacing(12);
+            let log_column = Column::with_children(rows).spacing(12);
 
-        // Container for log content
-        let log_container = container(log_column).padding(Padding {
-            top: 10.0,
-            right: 15.0,
-            bottom: 10.0,
-            left: 15.0,
-        });
+            let log_container: Element<'static, Message> = container(log_column)
+                .padding(Padding {
+                    top: 10.0,
+                    right: 15.0,
+                    bottom: 10.0,
+                    left: 15.0,
+                })
+                .into();
 
-        // Add truncation notice if needed
-        let content: Element<'_, Message> = if skip_count > 0 {
-            let notice = container(
-                text(format!(
-                    "Showing last {} of {} entries",
-                    MAX_RENDERED_LOGS, total_filtered
-                ))
-                .style(|theme: &Theme| iced::widget::text::Style {
-                    color: Some(theme.extended_palette().background.weak.text),
-                    ..Default::default()
-                }),
-            )
-            .padding(Padding {
-                top: 5.0,
-                right: 15.0,
-                bottom: 5.0,
-                left: 15.0,
-            });
-            column![notice, log_container].into()
-        } else {
-            log_container.into()
-        };
+            if skip_count > 0 {
+                let notice = container(
+                    text(format!(
+                        "Showing last {} of {} entries",
+                        MAX_RENDERED_LOGS, total_filtered
+                    ))
+                    .style(|theme: &Theme| iced::widget::text::Style {
+                        color: Some(theme.extended_palette().background.weak.text),
+                        ..Default::default()
+                    }),
+                )
+                .padding(Padding {
+                    top: 5.0,
+                    right: 15.0,
+                    bottom: 5.0,
+                    left: 15.0,
+                });
+                let content: Element<'static, Message> = column![notice, log_container].into();
+                content
+            } else {
+                log_container
+            }
+        })
+        .into();
 
         let mut scroller = if self.log_wrap_enabled {
             Scrollable::new(container(content).width(Length::Fill))
@@ -402,10 +427,11 @@ impl OddBoxGui {
 
         // Early-out if nothing changed and not forced
         let current_last_id = state.last_id();
-        if !force && current_last_id == self.last_seen_log_id {
+        let previous_last_id = self.last_seen_log_id;
+        if !force && current_last_id == previous_last_id {
             return false;
         }
-        let had_new_logs = current_last_id != self.last_seen_log_id;
+        let had_new_logs = current_last_id != previous_last_id;
         self.last_seen_log_id = current_last_id;
 
         // Update known sources
@@ -417,11 +443,81 @@ impl OddBoxGui {
         self.total_log_count = state.len();
 
         // Apply filter and cache results
-        let filtered = self.log_filter.apply(state.entries());
+        if force || previous_last_id.is_none() {
+            let filtered = self.log_filter.apply(state.entries());
+            let filtered_len = filtered.len();
+            let to_render = filtered
+                .into_iter()
+                .skip(filtered_len.saturating_sub(MAX_RENDERED_LOGS));
 
-        self.cached_log_lines = filtered
-            .into_iter()
-            .map(|entry| {
+            self.cached_log_lines = Arc::new(
+                to_render
+                    .map(|entry| {
+                        let (level_str, level_color) = Self::level_display(entry.level);
+                        let source = entry
+                            .thread
+                            .as_ref()
+                            .filter(|t| !t.is_empty())
+                            .cloned()
+                            .or_else(|| {
+                                if entry.source.is_empty() {
+                                    None
+                                } else {
+                                    Some(entry.source.clone())
+                                }
+                            })
+                            .unwrap_or_else(|| "-".to_string());
+
+                        let timestamp_str = entry.timestamp.format("%H:%M:%S%.3f").to_string();
+
+                        CachedLogLine {
+                            id: entry.id,
+                            level_str,
+                            level_color,
+                            source,
+                            timestamp_str,
+                            message: entry.message.clone(),
+                        }
+                    })
+                    .collect(),
+            );
+
+            self.last_log_count = filtered_len;
+            self.log_view_rev = self.log_view_rev.wrapping_add(1);
+        } else if had_new_logs {
+            // Incremental update: only process new entries since `previous_last_id`.
+            let mut new_entries = Vec::new();
+            let mut found_previous = false;
+
+            for entry in state.entries().iter().rev() {
+                if Some(entry.id) == previous_last_id {
+                    found_previous = true;
+                    break;
+                }
+                new_entries.push(entry);
+            }
+
+            if !found_previous {
+                // We lost track (e.g. rotation or clear). Fall back to a full rebuild.
+                drop(state);
+                return self.refresh_log_cache(true);
+            }
+
+            new_entries.reverse();
+
+            let mut added_any = false;
+            let mut next = Vec::with_capacity(
+                self.cached_log_lines
+                    .len()
+                    .saturating_add(new_entries.len()),
+            );
+            next.extend(self.cached_log_lines.iter().cloned());
+
+            for entry in new_entries {
+                if !self.log_filter.matches(entry) {
+                    continue;
+                }
+
                 let (level_str, level_color) = Self::level_display(entry.level);
                 let source = entry
                     .thread
@@ -439,18 +535,30 @@ impl OddBoxGui {
 
                 let timestamp_str = entry.timestamp.format("%H:%M:%S%.3f").to_string();
 
-                CachedLogLine {
+                next.push(CachedLogLine {
                     id: entry.id,
                     level_str,
                     level_color,
                     source,
                     timestamp_str,
                     message: entry.message.clone(),
-                }
-            })
-            .collect();
+                });
+                self.last_log_count = self.last_log_count.saturating_add(1);
+                added_any = true;
+            }
 
-        self.last_log_count = self.cached_log_lines.len();
+            if next.len() > MAX_RENDERED_LOGS {
+                let drain = next.len() - MAX_RENDERED_LOGS;
+                next.drain(0..drain);
+                added_any = true;
+            }
+
+            if added_any {
+                self.cached_log_lines = Arc::new(next);
+                self.log_view_rev = self.log_view_rev.wrapping_add(1);
+            }
+        }
+
         had_new_logs
     }
 

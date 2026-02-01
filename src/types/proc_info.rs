@@ -1,9 +1,8 @@
 use std::sync::{Weak, atomic::AtomicBool};
 
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
-#[derive(Eq, PartialEq, Debug, Clone, Hash, Serialize, Deserialize, ToSchema, Default)]
+#[derive(Eq, PartialEq, Debug, Clone, Hash, Default, Serialize, Deserialize)]
 pub struct ProcId {
     pub id: String,
 }
@@ -25,10 +24,4 @@ pub struct ProcInfo {
     pub pid: Option<String>,
     pub marked_for_removal: bool,
     pub started_at_time_stamp: std::time::SystemTime,
-}
-
-#[derive(Debug)]
-pub struct BgTaskInfo {
-    pub liveness_ptr: Weak<bool>,
-    pub status: String,
 }
