@@ -1,7 +1,8 @@
 pub mod logs;
 
+use iced::widget::scrollable::{AutoScroll, Rail, Scroller, Status};
 use iced::widget::{
-    Column, Id, Row, Scrollable, Space, button, checkbox, column, container, row, rule, scrollable,
+    Column, Row, Scrollable, Space, button, checkbox, column, container, row, rule, scrollable,
     text, text_input,
 };
 use iced::{
@@ -112,10 +113,9 @@ pub enum Message {
     LogFilterToggleSource(String, bool),
     LogFilterClearSources,
     LogsClear,
+    LogToggleWrap(bool),
     // Tick for refreshing log view
     Tick,
-    // Virtual scroll tracking
-    LogScrolled(scrollable::Viewport),
     // Config data updated
     ConfigUpdated(CachedConfig),
 }
@@ -176,10 +176,6 @@ struct CachedConfig {
     routes: Vec<CachedRoute>,
 }
 
-/// Constants for virtual scrolling
-const LOG_ROW_HEIGHT: f32 = 18.0;
-const LOG_VIEWPORT_BUFFER: usize = 5; // Extra rows above/below visible area
-
 pub struct OddBoxGui {
     state: Arc<GlobalState>,
     log_state: SharedLogState,
@@ -194,9 +190,8 @@ pub struct OddBoxGui {
     cached_log_lines: Vec<CachedLogLine>,
     last_log_count: usize,
     total_log_count: usize,
-    // Virtual scroll state
-    log_scroll_offset: f32,
-    log_viewport_height: f32,
+    // Log display options
+    log_wrap_enabled: bool,
     // Cached config data
     cached_config: CachedConfig,
 }
@@ -228,8 +223,7 @@ impl OddBoxGui {
                 cached_log_lines: Vec::new(),
                 last_log_count: 0,
                 total_log_count: 0,
-                log_scroll_offset: 0.0,
-                log_viewport_height: 600.0, // Default, updated on scroll
+                log_wrap_enabled: false,
                 cached_config: CachedConfig::default(),
             },
             Task::batch(tasks),
@@ -328,11 +322,9 @@ impl OddBoxGui {
                 self.cached_log_lines.clear();
                 self.last_log_count = 0;
                 self.total_log_count = 0;
-                self.log_scroll_offset = 0.0;
             }
-            Message::LogScrolled(viewport) => {
-                self.log_scroll_offset = viewport.absolute_offset().y;
-                self.log_viewport_height = viewport.bounds().height;
+            Message::LogToggleWrap(enabled) => {
+                self.log_wrap_enabled = enabled;
             }
         }
         Task::none()
@@ -595,6 +587,10 @@ impl OddBoxGui {
         ]
         .spacing(12);
 
+        let wrap_toggle = checkbox(self.log_wrap_enabled)
+            .label("Wrap")
+            .on_toggle(Message::LogToggleWrap);
+
         let log_count = if self.has_active_filter() {
             format!("{} / {} logs", self.last_log_count, self.total_log_count)
         } else {
@@ -605,6 +601,8 @@ impl OddBoxGui {
             search_input,
             Space::new().width(Length::Fill),
             level_filters,
+            Space::new().width(Length::Fixed(20.0)),
+            wrap_toggle,
             Space::new().width(Length::Fixed(20.0)),
             text(log_count).color(self.theme().extended_palette().background.strong.text),
         ]
@@ -716,81 +714,93 @@ impl OddBoxGui {
             .into();
         }
 
-        let total_items = self.cached_log_lines.len();
+        // Build all log rows
+        let rows: Vec<Element<'_, Message>> = self
+            .cached_log_lines
+            .iter()
+            .map(|line| {
+                // Create the message content - handle multi-line messages
+                let message_lines: Vec<&str> = line.message.lines().collect();
+                let has_multiple_lines = message_lines.len() > 1;
 
-        // Calculate visible range
-        let first_visible = (self.log_scroll_offset / LOG_ROW_HEIGHT).floor() as usize;
-        let visible_count = (self.log_viewport_height / LOG_ROW_HEIGHT).ceil() as usize + 1;
+                let message_widget: Element<'_, Message> = if self.log_wrap_enabled {
+                    // Wrapping mode: just use the full message with word wrapping
+                    text(&line.message)
+                        .font(Font::MONOSPACE)
+                        .wrapping(text::Wrapping::Word)
+                        .into()
+                } else if has_multiple_lines {
+                    // No wrapping + multiple lines: stack each line vertically
+                    let line_elements: Vec<Element<'_, Message>> = message_lines
+                        .into_iter()
+                        .map(|msg_line| {
+                            text(msg_line)
+                                .font(Font::MONOSPACE)
+                                .wrapping(text::Wrapping::None)
+                                .into()
+                        })
+                        .collect();
+                    Column::with_children(line_elements).spacing(2).into()
+                } else {
+                    // No wrapping + single line: simple text
+                    text(&line.message)
+                        .font(Font::MONOSPACE)
+                        .wrapping(text::Wrapping::None)
+                        .into()
+                };
 
-        // Add buffer and clamp to valid range
-        let start_idx = first_visible.saturating_sub(LOG_VIEWPORT_BUFFER);
-        let end_idx = (first_visible + visible_count + LOG_VIEWPORT_BUFFER).min(total_items);
+                let row_content = row![
+                    text(line.level_str)
+                        .font(Font::MONOSPACE)
+                        .color(line.level_color)
+                        .width(Length::Fixed(36.0)),
+                    text(truncate_str(&line.source, 18))
+                        .font(Font::MONOSPACE)
+                        .color(Color::from_rgb(0.6, 0.6, 0.6))
+                        .width(Length::Fixed(160.0)),
+                    message_widget,
+                ]
+                .spacing(8);
 
-        // Space above visible items
-        let top_space_height = start_idx as f32 * LOG_ROW_HEIGHT;
-        // Space below visible items
-        let bottom_space_height = (total_items - end_idx) as f32 * LOG_ROW_HEIGHT;
+                row_content.into()
+            })
+            .collect();
 
-        // Build only the visible rows
-        let mut rows: Vec<Element<'_, Message>> = Vec::with_capacity(end_idx - start_idx + 2);
+        let log_column = Column::with_children(rows).spacing(4);
 
-        // Top spacer
-        if top_space_height > 0.0 {
-            rows.push(Space::new().height(Length::Fixed(top_space_height)).into());
-        }
+        // Container for log content
+        let log_container = container(log_column)
+            .padding(Padding {
+                top: 10.0,
+                right: 15.0,
+                bottom: 10.0,
+                left: 15.0,
+            })
+            .style(|theme: &Theme| {
+                let palette = theme.extended_palette();
+                container::Style {
+                    //background: Some(palette.background.weak.color.into()),
+                    ..Default::default()
+                }
+            });
 
-        // Visible log rows
-        for line in &self.cached_log_lines[start_idx..end_idx] {
-            let row_content = row![
-                text(line.level_str)
-                    .font(Font::MONOSPACE)
-                    .color(line.level_color)
-                    .width(Length::Fixed(36.0)),
-                text(truncate_str(&line.source, 18))
-                    .font(Font::MONOSPACE)
-                    .color(Color::from_rgb(0.6, 0.6, 0.6))
-                    .width(Length::Fixed(160.0)),
-                text(&line.message).font(Font::MONOSPACE),
-            ]
-            .spacing(8)
-            .height(Length::Fixed(LOG_ROW_HEIGHT));
-
-            rows.push(row_content.into());
-        }
-
-        // Bottom spacer
-        if bottom_space_height > 0.0 {
-            rows.push(Space::new().height(Length::Fixed(bottom_space_height)).into());
-        }
-
-        let log_column = Column::with_children(rows).width(Length::Fill);
-
-        scrollable(
-            container(log_column)
-                .padding(Padding {
-                    top: 10.0,
-                    right: 15.0,
-                    bottom: 10.0,
-                    left: 15.0,
+        if self.log_wrap_enabled {
+            // Vertical-only scrolling when wrapping is enabled
+            Scrollable::new(log_container.width(Length::Fill))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else {
+            // Both horizontal and vertical scrolling when wrapping is disabled
+            Scrollable::new(log_container.width(Length::Shrink))
+                .direction(scrollable::Direction::Both {
+                    vertical: scrollable::Scrollbar::default(),
+                    horizontal: scrollable::Scrollbar::default(),
                 })
                 .width(Length::Fill)
-                .style(|theme: &Theme| {
-                    let palette = theme.extended_palette();
-                    container::Style {
-                        background: Some(palette.background.weak.color.into()),
-                        border: Border {
-                            radius: 4.0.into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    }
-                }),
-        )
-        .on_scroll(Message::LogScrolled)
-        .id(Id::new("logs"))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+                .height(Length::Fill)
+                .into()
+        }
     }
 
     fn has_active_filter(&self) -> bool {
