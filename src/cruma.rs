@@ -94,7 +94,7 @@ pub async fn cruma_thread(
                                 }
                             },
                             evt => {
-                                tracing::info!("Received event from server: {:#?}", evt);
+                                tracing::trace!("Received event from server: {:#?}", evt);
                             }
                     }
                 },

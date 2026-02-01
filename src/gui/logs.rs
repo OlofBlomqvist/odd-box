@@ -1,3 +1,4 @@
+use chrono::{DateTime, Local};
 use parking_lot::RwLock;
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
@@ -11,7 +12,7 @@ use crate::types::odd_box_event::EventForWebsocketClients;
 #[derive(Debug, Clone)]
 pub struct LogEntry {
     pub id: u64,
-    pub timestamp: std::time::Instant,
+    pub timestamp: DateTime<Local>,
     pub level: Level,
     pub message: String,
     pub source: String,
@@ -22,7 +23,7 @@ impl From<(u64, LogMsg)> for LogEntry {
     fn from((id, msg): (u64, LogMsg)) -> Self {
         Self {
             id,
-            timestamp: std::time::Instant::now(),
+            timestamp: Local::now(),
             level: msg.lvl,
             message: msg.msg,
             source: msg.src,
@@ -97,6 +98,11 @@ impl LogState {
     /// Clear all entries
     pub fn clear(&mut self) {
         self.entries.clear();
+    }
+
+    /// Get the ID of the most recent entry (for change detection)
+    pub fn last_id(&self) -> Option<u64> {
+        self.entries.back().map(|e| e.id)
     }
 
     /// Get max entries setting

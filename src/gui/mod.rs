@@ -1,6 +1,5 @@
 pub mod logs;
 
-use iced::widget::scrollable::{AutoScroll, Rail, Scroller, Status};
 use iced::widget::{
     Column, Row, Scrollable, Space, button, checkbox, column, container, row, rule, scrollable,
     text, text_input,
@@ -114,11 +113,15 @@ pub enum Message {
     LogFilterClearSources,
     LogsClear,
     LogToggleWrap(bool),
+    LogToggleAutoTail(bool),
     // Tick for refreshing log view
     Tick,
     // Config data updated
     ConfigUpdated(CachedConfig),
 }
+
+/// Maximum number of log entries to render (for performance)
+const MAX_RENDERED_LOGS: usize = 1000;
 
 /// Cached/pre-rendered log line for performance
 #[derive(Clone)]
@@ -127,6 +130,7 @@ struct CachedLogLine {
     level_str: &'static str,
     level_color: Color,
     source: String,
+    timestamp_str: String,
     message: String,
 }
 
@@ -190,8 +194,11 @@ pub struct OddBoxGui {
     cached_log_lines: Vec<CachedLogLine>,
     last_log_count: usize,
     total_log_count: usize,
+    // Track last seen log ID to avoid unnecessary rebuilds
+    last_seen_log_id: Option<u64>,
     // Log display options
     log_wrap_enabled: bool,
+    log_auto_tail: bool,
     // Cached config data
     cached_config: CachedConfig,
 }
@@ -223,7 +230,9 @@ impl OddBoxGui {
                 cached_log_lines: Vec::new(),
                 last_log_count: 0,
                 total_log_count: 0,
+                last_seen_log_id: None,
                 log_wrap_enabled: false,
+                log_auto_tail: true, // Auto-tail enabled by default
                 cached_config: CachedConfig::default(),
             },
             Task::batch(tasks),
@@ -253,7 +262,7 @@ impl OddBoxGui {
             Message::NavigateTo(page) => {
                 self.current_page = page;
                 if page == Page::Monitoring {
-                    self.refresh_log_cache();
+                    self.refresh_log_cache(true);
                 }
                 // Trigger config refresh for config-related pages
                 if matches!(
@@ -268,7 +277,7 @@ impl OddBoxGui {
             }
             Message::Tick => {
                 if self.current_page == Page::Monitoring {
-                    self.refresh_log_cache();
+                    self.refresh_log_cache(false);
                 }
                 // Refresh config for config-related pages
                 if matches!(
@@ -283,27 +292,27 @@ impl OddBoxGui {
             }
             Message::LogFilterTextChanged(text) => {
                 self.log_filter.text = text;
-                self.refresh_log_cache();
+                self.refresh_log_cache(true);
             }
             Message::LogFilterToggleTrace(enabled) => {
                 self.log_filter.show_trace = enabled;
-                self.refresh_log_cache();
+                self.refresh_log_cache(true);
             }
             Message::LogFilterToggleDebug(enabled) => {
                 self.log_filter.show_debug = enabled;
-                self.refresh_log_cache();
+                self.refresh_log_cache(true);
             }
             Message::LogFilterToggleInfo(enabled) => {
                 self.log_filter.show_info = enabled;
-                self.refresh_log_cache();
+                self.refresh_log_cache(true);
             }
             Message::LogFilterToggleWarn(enabled) => {
                 self.log_filter.show_warn = enabled;
-                self.refresh_log_cache();
+                self.refresh_log_cache(true);
             }
             Message::LogFilterToggleError(enabled) => {
                 self.log_filter.show_error = enabled;
-                self.refresh_log_cache();
+                self.refresh_log_cache(true);
             }
             Message::LogFilterToggleSource(source, enabled) => {
                 if enabled {
@@ -311,27 +320,40 @@ impl OddBoxGui {
                 } else {
                     self.log_filter.sources.remove(&source);
                 }
-                self.refresh_log_cache();
+                self.refresh_log_cache(true);
             }
             Message::LogFilterClearSources => {
                 self.log_filter.sources.clear();
-                self.refresh_log_cache();
+                self.refresh_log_cache(true);
             }
             Message::LogsClear => {
                 self.log_state.write().clear();
                 self.cached_log_lines.clear();
                 self.last_log_count = 0;
                 self.total_log_count = 0;
+                self.last_seen_log_id = None;
             }
             Message::LogToggleWrap(enabled) => {
                 self.log_wrap_enabled = enabled;
+            }
+            Message::LogToggleAutoTail(enabled) => {
+                self.log_auto_tail = enabled;
             }
         }
         Task::none()
     }
 
-    fn refresh_log_cache(&mut self) {
+    /// Refresh the log cache. Returns true if new logs were added.
+    fn refresh_log_cache(&mut self, force: bool) -> bool {
         let state = self.log_state.read();
+
+        // Early-out if nothing changed and not forced
+        let current_last_id = state.last_id();
+        if !force && current_last_id == self.last_seen_log_id {
+            return false;
+        }
+        let had_new_logs = current_last_id != self.last_seen_log_id;
+        self.last_seen_log_id = current_last_id;
 
         // Update known sources
         let sources = state.known_sources().clone();
@@ -341,7 +363,7 @@ impl OddBoxGui {
 
         self.total_log_count = state.len();
 
-        // Apply filter and cache results (no limit - virtual scroll handles large lists)
+        // Apply filter and cache results
         let filtered = self.log_filter.apply(state.entries());
 
         self.cached_log_lines = filtered
@@ -362,17 +384,21 @@ impl OddBoxGui {
                     })
                     .unwrap_or_else(|| "-".to_string());
 
+                let timestamp_str = entry.timestamp.format("%H:%M:%S%.3f").to_string();
+
                 CachedLogLine {
                     id: entry.id,
                     level_str,
                     level_color,
                     source,
+                    timestamp_str,
                     message: entry.message.clone(),
                 }
             })
             .collect();
 
         self.last_log_count = self.cached_log_lines.len();
+        had_new_logs
     }
 
     fn level_display(level: Level) -> (&'static str, Color) {
@@ -591,6 +617,10 @@ impl OddBoxGui {
             .label("Wrap")
             .on_toggle(Message::LogToggleWrap);
 
+        let tail_toggle = checkbox(self.log_auto_tail)
+            .label("Tail")
+            .on_toggle(Message::LogToggleAutoTail);
+
         let log_count = if self.has_active_filter() {
             format!("{} / {} logs", self.last_log_count, self.total_log_count)
         } else {
@@ -603,6 +633,7 @@ impl OddBoxGui {
             level_filters,
             Space::new().width(Length::Fixed(20.0)),
             wrap_toggle,
+            tail_toggle,
             Space::new().width(Length::Fixed(20.0)),
             text(log_count).color(self.theme().extended_palette().background.strong.text),
         ]
@@ -714,93 +745,115 @@ impl OddBoxGui {
             .into();
         }
 
-        // Build all log rows
-        let rows: Vec<Element<'_, Message>> = self
-            .cached_log_lines
-            .iter()
-            .map(|line| {
-                // Create the message content - handle multi-line messages
-                let message_lines: Vec<&str> = line.message.lines().collect();
-                let has_multiple_lines = message_lines.len() > 1;
+        // Limit rendered entries for performance (show most recent)
+        let total_filtered = self.cached_log_lines.len();
+        let skip_count = total_filtered.saturating_sub(MAX_RENDERED_LOGS);
+        let entries_to_render = self.cached_log_lines.iter().skip(skip_count);
 
+        let muted_color = Color::from_rgb(0.5, 0.5, 0.5);
+
+        // Build log entries with metadata row above message
+        let rows: Vec<Element<'_, Message>> = entries_to_render
+            .map(|line| {
+                // Metadata row: level, source, timestamp
+                let metadata_row = row![
+                    text(line.level_str)
+                        .font(Font::MONOSPACE)
+                        .color(line.level_color),
+                    text(&line.source)
+                        .font(Font::MONOSPACE)
+                        .color(muted_color),
+                    text(&line.timestamp_str)
+                        .font(Font::MONOSPACE)
+                        .color(muted_color),
+                ]
+                .spacing(12);
+
+                // Message content
                 let message_widget: Element<'_, Message> = if self.log_wrap_enabled {
-                    // Wrapping mode: just use the full message with word wrapping
                     text(&line.message)
                         .font(Font::MONOSPACE)
                         .wrapping(text::Wrapping::Word)
                         .into()
-                } else if has_multiple_lines {
-                    // No wrapping + multiple lines: stack each line vertically
-                    let line_elements: Vec<Element<'_, Message>> = message_lines
-                        .into_iter()
-                        .map(|msg_line| {
-                            text(msg_line)
-                                .font(Font::MONOSPACE)
-                                .wrapping(text::Wrapping::None)
-                                .into()
-                        })
-                        .collect();
-                    Column::with_children(line_elements).spacing(2).into()
                 } else {
-                    // No wrapping + single line: simple text
-                    text(&line.message)
-                        .font(Font::MONOSPACE)
-                        .wrapping(text::Wrapping::None)
-                        .into()
+                    // Handle multi-line messages without wrapping
+                    let message_lines: Vec<&str> = line.message.lines().collect();
+                    if message_lines.len() > 1 {
+                        let line_elements: Vec<Element<'_, Message>> = message_lines
+                            .into_iter()
+                            .map(|msg_line| {
+                                text(msg_line)
+                                    .font(Font::MONOSPACE)
+                                    .wrapping(text::Wrapping::None)
+                                    .into()
+                            })
+                            .collect();
+                        Column::with_children(line_elements).spacing(1).into()
+                    } else {
+                        text(&line.message)
+                            .font(Font::MONOSPACE)
+                            .wrapping(text::Wrapping::None)
+                            .into()
+                    }
                 };
 
-                let row_content = row![
-                    text(line.level_str)
-                        .font(Font::MONOSPACE)
-                        .color(line.level_color)
-                        .width(Length::Fixed(36.0)),
-                    text(truncate_str(&line.source, 18))
-                        .font(Font::MONOSPACE)
-                        .color(Color::from_rgb(0.6, 0.6, 0.6))
-                        .width(Length::Fixed(160.0)),
-                    message_widget,
-                ]
-                .spacing(8);
-
-                row_content.into()
+                // Stack metadata above message
+                column![metadata_row, message_widget]
+                    .spacing(2)
+                    .into()
             })
             .collect();
 
-        let log_column = Column::with_children(rows).spacing(4);
+        let log_column = Column::with_children(rows).spacing(12);
 
         // Container for log content
-        let log_container = container(log_column)
-            .padding(Padding {
-                top: 10.0,
-                right: 15.0,
-                bottom: 10.0,
-                left: 15.0,
-            })
-            .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
-                container::Style {
-                    //background: Some(palette.background.weak.color.into()),
-                    ..Default::default()
-                }
-            });
+        let log_container = container(log_column).padding(Padding {
+            top: 10.0,
+            right: 15.0,
+            bottom: 10.0,
+            left: 15.0,
+        });
 
-        if self.log_wrap_enabled {
-            // Vertical-only scrolling when wrapping is enabled
-            Scrollable::new(log_container.width(Length::Fill))
+        // Add truncation notice if needed
+        let content: Element<'_, Message> = if skip_count > 0 {
+            let notice = container(
+                text(format!(
+                    "Showing last {} of {} entries",
+                    MAX_RENDERED_LOGS, total_filtered
+                ))
+                .color(muted_color),
+            )
+            .padding(Padding {
+                top: 5.0,
+                right: 15.0,
+                bottom: 5.0,
+                left: 15.0,
+            });
+            column![notice, log_container].into()
+        } else {
+            log_container.into()
+        };
+
+        let mut scroller = if self.log_wrap_enabled {
+            Scrollable::new(container(content).width(Length::Fill))
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .into()
         } else {
-            // Both horizontal and vertical scrolling when wrapping is disabled
-            Scrollable::new(log_container.width(Length::Shrink))
+            Scrollable::new(container(content).width(Length::Shrink))
                 .direction(scrollable::Direction::Both {
                     vertical: scrollable::Scrollbar::default(),
                     horizontal: scrollable::Scrollbar::default(),
                 })
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .into()
+        };
+
+        // Anchor to bottom when auto-tail is enabled
+        if self.log_auto_tail {
+            scroller = scroller.anchor_bottom();
         }
+
+        scroller.into()
     }
 
     fn has_active_filter(&self) -> bool {
@@ -1238,14 +1291,6 @@ impl OddBoxGui {
                 _ => Theme::Dracula,
             },
         }
-    }
-}
-
-fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        format!("{:<width$}", s, width = max_len)
-    } else {
-        format!("{}...", &s[..max_len.saturating_sub(3)])
     }
 }
 
