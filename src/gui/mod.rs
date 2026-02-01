@@ -1,9 +1,8 @@
+pub mod components;
 pub mod logs;
 mod pages;
 
-use iced::widget::{
-    Column, Scrollable, button, column, container, row, rule, text,
-};
+use iced::widget::{Column, Scrollable, button, column, container, row, text};
 use iced::{
     Border, Color, Element, Font, Length, Padding, Subscription, Task, Theme, system, theme, time,
 };
@@ -350,10 +349,14 @@ impl OddBoxGui {
 
     fn view(&self) -> Element<'_, Message> {
         let sidebar = self.view_sidebar();
-        let divider = rule::vertical(1);
         let content = self.view_content();
 
-        row![sidebar, divider, content]
+        // Main layout with dark background
+        container(row![sidebar, content].width(Length::Fill).height(Length::Fill))
+            .style(|_theme: &Theme| container::Style {
+                background: Some(Color::from_rgb(0.11, 0.11, 0.13).into()),
+                ..Default::default()
+            })
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -362,8 +365,10 @@ impl OddBoxGui {
     fn view_sidebar(&self) -> Element<'_, Message> {
         let header = container(
             column![
-                text("odd-box").font(Font::MONOSPACE),
-                text("reverse proxy").color(self.theme().extended_palette().background.strong.text),
+                text("odd-box")
+                    .font(Font::MONOSPACE)
+                    .color(Color::from_rgb(0.9, 0.9, 0.9)),
+                text("reverse proxy").color(Color::from_rgb(0.5, 0.5, 0.55)),
             ]
             .spacing(4),
         )
@@ -397,13 +402,11 @@ impl OddBoxGui {
             .width(Length::Fixed(200.0))
             .height(Length::Fill);
 
+        // Dark sidebar background
         container(sidebar_content)
-            .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
-                container::Style {
-                    background: Some(palette.background.weak.color.into()),
-                    ..Default::default()
-                }
+            .style(|_theme: &Theme| container::Style {
+                background: Some(Color::from_rgb(0.10, 0.10, 0.12).into()),
+                ..Default::default()
             })
             .width(Length::Fixed(200.0))
             .height(Length::Fill)
@@ -428,22 +431,21 @@ impl OddBoxGui {
                 bottom: 10.0,
                 left: 12.0,
             })
-            .style(move |theme: &Theme, status| {
-                let palette = theme.extended_palette();
-
-                let background = if is_active {
-                    palette.primary.weak.color
+            .style(move |_theme: &Theme, status| {
+                let (background, text_color) = if is_active {
+                    // Active: accent color
+                    (
+                        Color::from_rgb(0.55, 0.35, 0.75),
+                        Color::from_rgb(1.0, 1.0, 1.0),
+                    )
                 } else {
                     match status {
-                        button::Status::Hovered => palette.background.weak.color,
-                        _ => Color::TRANSPARENT,
+                        button::Status::Hovered => (
+                            Color::from_rgb(0.15, 0.15, 0.18),
+                            Color::from_rgb(0.85, 0.85, 0.85),
+                        ),
+                        _ => (Color::TRANSPARENT, Color::from_rgb(0.7, 0.7, 0.7)),
                     }
-                };
-
-                let text_color = if is_active {
-                    palette.primary.weak.text
-                } else {
-                    palette.background.base.text
                 };
 
                 button::Style {
@@ -476,7 +478,9 @@ impl OddBoxGui {
         if self.current_page == Page::Monitoring {
             page_content
         } else {
-            let page_title = text(self.current_page.title());
+            let page_title = text(self.current_page.title())
+                .size(20)
+                .color(Color::from_rgb(0.9, 0.9, 0.9));
             let content = column![page_title, page_content]
                 .spacing(20)
                 .padding(30)
@@ -490,7 +494,7 @@ impl OddBoxGui {
     }
 
     fn view_placeholder(&self, description: &'static str) -> Element<'_, Message> {
-        container(text(description).color(self.theme().extended_palette().background.strong.text))
+        container(text(description).color(Color::from_rgb(0.5, 0.5, 0.55)))
             .padding(20)
             .width(Length::Fill)
             .into()

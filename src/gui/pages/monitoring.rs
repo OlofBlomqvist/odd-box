@@ -2,7 +2,7 @@ use iced::widget::{
     Column, Row, Scrollable, Space, button, checkbox, column, container, pick_list, row,
     scrollable, text, text_input,
 };
-use iced::{Color, Element, Font, Length, Padding, Theme};
+use iced::{Border, Color, Element, Font, Length, Padding, Theme};
 use tracing::Level;
 
 use super::super::{LogLevelPreset, Message, OddBoxGui};
@@ -24,14 +24,32 @@ pub(in crate::gui) struct CachedLogLine {
 impl OddBoxGui {
     pub(in crate::gui) fn view_monitoring(&self) -> Element<'_, Message> {
         let title_row = row![
-            text("Monitoring"),
+            text("Monitoring")
+                .size(20)
+                .color(Color::from_rgb(0.9, 0.9, 0.9)),
             Space::new().width(Length::Fill),
-            button(text("Clear Logs"))
+            button(text("Clear Logs").color(Color::from_rgb(0.9, 0.9, 0.9)))
                 .padding(Padding {
                     top: 6.0,
                     right: 12.0,
                     bottom: 6.0,
                     left: 12.0,
+                })
+                .style(|_theme: &Theme, status| {
+                    let bg = match status {
+                        button::Status::Hovered => Color::from_rgb(0.25, 0.25, 0.28),
+                        _ => Color::from_rgb(0.18, 0.18, 0.20),
+                    };
+                    button::Style {
+                        background: Some(bg.into()),
+                        text_color: Color::from_rgb(0.9, 0.9, 0.9),
+                        border: Border {
+                            radius: 4.0.into(),
+                            width: 1.0,
+                            color: Color::from_rgb(0.25, 0.25, 0.28),
+                        },
+                        ..Default::default()
+                    }
                 })
                 .on_press(Message::LogsClear),
         ]
@@ -99,7 +117,7 @@ impl OddBoxGui {
             wrap_toggle,
             tail_toggle,
             Space::new().width(Length::Fixed(20.0)),
-            text(log_count).color(self.theme().extended_palette().background.strong.text),
+            text(log_count).color(Color::from_rgb(0.5, 0.5, 0.55)),
         ]
         .spacing(15)
         .align_y(iced::Alignment::Center)
@@ -116,19 +134,22 @@ impl OddBoxGui {
         // Add "Clear" button if any sources are selected
         if !self.log_filter.sources.is_empty() {
             source_chips.push(
-                button(text("Clear"))
+                button(text("Clear").color(Color::from_rgb(0.8, 0.8, 0.8)))
                     .padding(Padding {
                         top: 4.0,
                         right: 8.0,
                         bottom: 4.0,
                         left: 8.0,
                     })
-                    .style(|theme: &Theme, _status| {
-                        let palette = theme.extended_palette();
+                    .style(|_theme: &Theme, status| {
+                        let bg = match status {
+                            button::Status::Hovered => Color::from_rgb(0.22, 0.22, 0.25),
+                            _ => Color::from_rgb(0.18, 0.18, 0.20),
+                        };
                         iced::widget::button::Style {
-                            background: Some(palette.background.weak.color.into()),
-                            text_color: palette.background.base.text,
-                            border: iced::Border {
+                            background: Some(bg.into()),
+                            text_color: Color::from_rgb(0.8, 0.8, 0.8),
+                            border: Border {
                                 radius: 4.0.into(),
                                 ..Default::default()
                             },
@@ -144,34 +165,41 @@ impl OddBoxGui {
         for source in &self.known_sources {
             let is_selected = self.log_filter.sources.contains(source);
             let source_clone = source.clone();
-            let chip = button(text(source.as_str()))
-                .padding(Padding {
-                    top: 4.0,
-                    right: 8.0,
-                    bottom: 4.0,
-                    left: 8.0,
-                })
-                .style(move |theme: &Theme, _status| {
-                    let palette = theme.extended_palette();
-                    let (bg, fg) = if is_selected {
-                        (palette.primary.strong.color, palette.primary.strong.text)
-                    } else {
-                        (
-                            palette.background.strong.color,
-                            palette.background.strong.text,
-                        )
-                    };
-                    iced::widget::button::Style {
-                        background: Some(bg.into()),
-                        text_color: fg,
-                        border: iced::Border {
-                            radius: 4.0.into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
+            let chip = button(text(source.as_str()).color(if is_selected {
+                Color::WHITE
+            } else {
+                Color::from_rgb(0.75, 0.75, 0.75)
+            }))
+            .padding(Padding {
+                top: 4.0,
+                right: 8.0,
+                bottom: 4.0,
+                left: 8.0,
+            })
+            .style(move |_theme: &Theme, status| {
+                let bg = if is_selected {
+                    Color::from_rgb(0.55, 0.35, 0.75)
+                } else {
+                    match status {
+                        button::Status::Hovered => Color::from_rgb(0.22, 0.22, 0.25),
+                        _ => Color::from_rgb(0.16, 0.16, 0.18),
                     }
-                })
-                .on_press(Message::LogFilterToggleSource(source_clone, !is_selected));
+                };
+                iced::widget::button::Style {
+                    background: Some(bg.into()),
+                    text_color: if is_selected {
+                        Color::WHITE
+                    } else {
+                        Color::from_rgb(0.75, 0.75, 0.75)
+                    },
+                    border: Border {
+                        radius: 4.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            })
+            .on_press(Message::LogFilterToggleSource(source_clone, !is_selected));
             source_chips.push(chip.into());
         }
 
@@ -179,8 +207,7 @@ impl OddBoxGui {
 
         container(
             column![
-                text("Filter by source:")
-                    .color(self.theme().extended_palette().background.strong.text),
+                text("Filter by source:").color(Color::from_rgb(0.5, 0.5, 0.55)),
                 chips_row,
             ]
             .spacing(6),
@@ -201,12 +228,10 @@ impl OddBoxGui {
             } else {
                 "No logs match the current filter"
             };
-            return container(
-                text(msg).color(self.theme().extended_palette().background.strong.text),
-            )
-            .padding(20)
-            .width(Length::Fill)
-            .into();
+            return container(text(msg).color(Color::from_rgb(0.5, 0.5, 0.55)))
+                .padding(20)
+                .width(Length::Fill)
+                .into();
         }
 
         // Limit rendered entries for performance (show most recent)
@@ -214,7 +239,8 @@ impl OddBoxGui {
         let skip_count = total_filtered.saturating_sub(MAX_RENDERED_LOGS);
         let entries_to_render = self.cached_log_lines.iter().skip(skip_count);
 
-        let muted_color = Color::from_rgb(0.5, 0.5, 0.5);
+        let muted_color = Color::from_rgb(0.45, 0.45, 0.5);
+        let message_color = Color::from_rgb(0.85, 0.85, 0.85);
 
         // Build log entries with metadata row above message
         let rows: Vec<Element<'_, Message>> = entries_to_render
@@ -237,6 +263,7 @@ impl OddBoxGui {
                 let message_widget: Element<'_, Message> = if self.log_wrap_enabled {
                     text(&line.message)
                         .font(Font::MONOSPACE)
+                        .color(message_color)
                         .wrapping(text::Wrapping::Word)
                         .into()
                 } else {
@@ -248,6 +275,7 @@ impl OddBoxGui {
                             .map(|msg_line| {
                                 text(msg_line)
                                     .font(Font::MONOSPACE)
+                                    .color(message_color)
                                     .wrapping(text::Wrapping::None)
                                     .into()
                             })
@@ -256,6 +284,7 @@ impl OddBoxGui {
                     } else {
                         text(&line.message)
                             .font(Font::MONOSPACE)
+                            .color(message_color)
                             .wrapping(text::Wrapping::None)
                             .into()
                     }
@@ -386,7 +415,7 @@ impl OddBoxGui {
 
     pub(in crate::gui) fn level_display(level: Level) -> (&'static str, Color) {
         match level {
-            Level::TRACE => ("TRC", Color::from_rgb(0.6, 0.6, 0.6)),
+            Level::TRACE => ("TRC", Color::from_rgb(0.5, 0.5, 0.55)),
             Level::DEBUG => ("DBG", Color::from_rgb(0.4, 0.7, 1.0)),
             Level::INFO => ("INF", Color::from_rgb(0.4, 0.85, 0.4)),
             Level::WARN => ("WRN", Color::from_rgb(1.0, 0.8, 0.3)),
