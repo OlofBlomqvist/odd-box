@@ -2,8 +2,8 @@ use iced::widget::{button, row, text};
 use iced::{Border, Color, Element, Font, Padding, Theme};
 
 use crate::gui::components::{
-    table::{bool_cell, colored_text_cell, text_cell},
     Column as TableColumn, Table,
+    table::{bool_cell, colored_text_cell, text_cell},
 };
 use crate::types::app_state::ProcState;
 

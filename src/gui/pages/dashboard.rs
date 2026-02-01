@@ -13,21 +13,27 @@ impl OddBoxGui {
 
         let status_items = column![
             text("Status: Running").color(Color::from_rgb(0.4, 0.8, 0.4)),
-            text(format!("Uptime: {}", uptime)).color(Color::from_rgb(0.8, 0.8, 0.8)),
+            text(format!("Uptime: {}", uptime)).style(|theme: &Theme| iced::widget::text::Style {
+                color: Some(theme.extended_palette().background.weak.text),
+                ..Default::default()
+            }),
         ]
         .spacing(8);
 
         container(status_items)
             .padding(20)
             .width(Length::Fill)
-            .style(|_theme: &Theme| container::Style {
-                background: Some(Color::from_rgb(0.14, 0.14, 0.16).into()),
-                border: Border {
-                    radius: 6.0.into(),
-                    width: 1.0,
-                    color: Color::from_rgb(0.2, 0.2, 0.22),
-                },
-                ..Default::default()
+            .style(|theme: &Theme| {
+                let palette = theme.extended_palette();
+                container::Style {
+                    background: Some(palette.background.weaker.color.into()),
+                    border: Border {
+                        radius: 6.0.into(),
+                        width: 1.0,
+                        color: palette.background.strong.color,
+                    },
+                    ..Default::default()
+                }
             })
             .into()
     }

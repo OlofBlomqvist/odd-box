@@ -681,7 +681,7 @@ async fn main() -> anyhow::Result<()> {
             .map(gui::ThemeMode::from_str)
             .unwrap_or(gui::ThemeMode::System);
         // Create log state and start collector
-        let log_state = gui::logs::create_shared(10000);
+        let log_state = gui::logs::create_shared(1000);
         let _log_collector = gui::logs::spawn_collector(
             log_state.clone(),
             global_websockets_event_broadcaster.subscribe(),

@@ -2,7 +2,9 @@ pub mod components;
 pub mod logs;
 mod pages;
 
-use iced::widget::{Column, Scrollable, button, column, container, row, text};
+use iced::widget::{
+    Column, Id, Scrollable, button, column, container, image, row, scrollable, text,
+};
 use iced::{
     Border, Color, Element, Font, Length, Padding, Subscription, Task, Theme, system, theme, time,
 };
@@ -10,7 +12,7 @@ use std::sync::Arc;
 
 use crate::global_state::GlobalState;
 use logs::{LogFilter, SharedLogState};
-use pages::{fetch_config, CachedConfig, CachedLogLine};
+use pages::{CachedConfig, CachedLogLine, fetch_config};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeMode {
@@ -18,7 +20,6 @@ pub enum ThemeMode {
     Dark,
     System,
 }
-
 
 impl ThemeMode {
     pub fn from_str(s: &str) -> Self {
@@ -28,7 +29,6 @@ impl ThemeMode {
             _ => ThemeMode::System,
         }
     }
-
 }
 
 pub fn run(
@@ -51,10 +51,10 @@ pub fn run(
         OddBoxGui::update,
         OddBoxGui::view,
     )
-        .theme(OddBoxGui::theme)
-        .subscription(OddBoxGui::subscription)
-        .window(window_settings)
-        .run()
+    .theme(OddBoxGui::theme)
+    .subscription(OddBoxGui::subscription)
+    .window(window_settings)
+    .run()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -97,9 +97,9 @@ impl Page {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LogLevelPreset {
-    #[default]
     All,
     DebugAndAbove,
+    #[default]
     InfoAndAbove,
     WarnAndAbove,
     ErrorOnly,
@@ -131,6 +131,7 @@ impl std::fmt::Display for LogLevelPreset {
 pub enum Message {
     NavigateTo(Page),
     SystemThemeChanged(theme::Mode),
+    LogViewportChanged(scrollable::Viewport),
     // Log filter messages
     LogFilterTextChanged(String),
     LogLevelPresetChanged(LogLevelPreset),
@@ -154,6 +155,7 @@ pub struct OddBoxGui {
     current_page: Page,
     theme_mode: ThemeMode,
     system_theme: Option<theme::Mode>,
+    log_is_at_bottom: bool,
     // Log filtering
     pub(in crate::gui) log_filter: LogFilter,
     pub(in crate::gui) log_level_preset: LogLevelPreset,
@@ -172,20 +174,70 @@ pub struct OddBoxGui {
     pub(in crate::gui) cached_config: CachedConfig,
 }
 
+fn log_scroll_id() -> Id {
+    Id::new("odd_box_log_scroll")
+}
+
 impl OddBoxGui {
+    fn apply_log_level_preset(filter: &mut LogFilter, preset: LogLevelPreset) {
+        match preset {
+            LogLevelPreset::All => {
+                filter.show_trace = true;
+                filter.show_debug = true;
+                filter.show_info = true;
+                filter.show_warn = true;
+                filter.show_error = true;
+            }
+            LogLevelPreset::DebugAndAbove => {
+                filter.show_trace = false;
+                filter.show_debug = true;
+                filter.show_info = true;
+                filter.show_warn = true;
+                filter.show_error = true;
+            }
+            LogLevelPreset::InfoAndAbove => {
+                filter.show_trace = false;
+                filter.show_debug = false;
+                filter.show_info = true;
+                filter.show_warn = true;
+                filter.show_error = true;
+            }
+            LogLevelPreset::WarnAndAbove => {
+                filter.show_trace = false;
+                filter.show_debug = false;
+                filter.show_info = false;
+                filter.show_warn = true;
+                filter.show_error = true;
+            }
+            LogLevelPreset::ErrorOnly => {
+                filter.show_trace = false;
+                filter.show_debug = false;
+                filter.show_info = false;
+                filter.show_warn = false;
+                filter.show_error = true;
+            }
+        }
+    }
+
     fn new(
         state: Arc<GlobalState>,
         theme_mode: ThemeMode,
         log_state: SharedLogState,
     ) -> (Self, Task<Message>) {
         let state_clone = state.clone();
-        let mut tasks: Vec<Task<Message>> =
-            vec![Task::perform(fetch_config(state_clone), Message::ConfigUpdated)];
+        let mut tasks: Vec<Task<Message>> = vec![Task::perform(
+            fetch_config(state_clone),
+            Message::ConfigUpdated,
+        )];
 
         // On system mode, grab current OS theme (winit-powered)
         if matches!(theme_mode, ThemeMode::System) {
             tasks.push(system::theme().map(Message::SystemThemeChanged));
         }
+
+        let mut log_filter = LogFilter::new();
+        let log_level_preset = LogLevelPreset::InfoAndAbove;
+        Self::apply_log_level_preset(&mut log_filter, log_level_preset);
 
         (
             Self {
@@ -194,8 +246,9 @@ impl OddBoxGui {
                 current_page: Page::Dashboard,
                 theme_mode,
                 system_theme: None,
-                log_filter: LogFilter::new(),
-                log_level_preset: LogLevelPreset::All,
+                log_is_at_bottom: true,
+                log_filter,
+                log_level_preset,
                 known_sources: Vec::new(),
                 cached_log_lines: Vec::new(),
                 last_log_count: 0,
@@ -245,6 +298,16 @@ impl OddBoxGui {
             Message::SystemThemeChanged(mode) => {
                 self.system_theme = Some(mode);
             }
+            Message::LogViewportChanged(viewport) => {
+                let bounds = viewport.bounds();
+                let content_bounds = viewport.content_bounds();
+
+                let max_scroll_y = (content_bounds.height - bounds.height).max(0.0);
+                let current_y = viewport.absolute_offset().y;
+
+                // Allow a small tolerance for rounding/layout differences.
+                self.log_is_at_bottom = max_scroll_y - current_y <= 4.0;
+            }
             Message::Tick => {
                 if self.current_page == Page::Monitoring {
                     self.refresh_log_cache(false);
@@ -266,44 +329,7 @@ impl OddBoxGui {
             }
             Message::LogLevelPresetChanged(preset) => {
                 self.log_level_preset = preset;
-                // Apply preset to log filter
-                match preset {
-                    LogLevelPreset::All => {
-                        self.log_filter.show_trace = true;
-                        self.log_filter.show_debug = true;
-                        self.log_filter.show_info = true;
-                        self.log_filter.show_warn = true;
-                        self.log_filter.show_error = true;
-                    }
-                    LogLevelPreset::DebugAndAbove => {
-                        self.log_filter.show_trace = false;
-                        self.log_filter.show_debug = true;
-                        self.log_filter.show_info = true;
-                        self.log_filter.show_warn = true;
-                        self.log_filter.show_error = true;
-                    }
-                    LogLevelPreset::InfoAndAbove => {
-                        self.log_filter.show_trace = false;
-                        self.log_filter.show_debug = false;
-                        self.log_filter.show_info = true;
-                        self.log_filter.show_warn = true;
-                        self.log_filter.show_error = true;
-                    }
-                    LogLevelPreset::WarnAndAbove => {
-                        self.log_filter.show_trace = false;
-                        self.log_filter.show_debug = false;
-                        self.log_filter.show_info = false;
-                        self.log_filter.show_warn = true;
-                        self.log_filter.show_error = true;
-                    }
-                    LogLevelPreset::ErrorOnly => {
-                        self.log_filter.show_trace = false;
-                        self.log_filter.show_debug = false;
-                        self.log_filter.show_info = false;
-                        self.log_filter.show_warn = false;
-                        self.log_filter.show_error = true;
-                    }
-                }
+                Self::apply_log_level_preset(&mut self.log_filter, preset);
                 self.refresh_log_cache(true);
             }
             Message::LogFilterToggleSource(source, enabled) => {
@@ -330,6 +356,10 @@ impl OddBoxGui {
             }
             Message::LogToggleAutoTail(enabled) => {
                 self.log_auto_tail = enabled;
+                if enabled {
+                    self.log_is_at_bottom = true;
+                    return iced::widget::operation::snap_to_end::<Message>(log_scroll_id());
+                }
             }
             Message::ProcessStart(name) => {
                 let _ = self
@@ -351,26 +381,50 @@ impl OddBoxGui {
         let sidebar = self.view_sidebar();
         let content = self.view_content();
 
-        // Main layout with dark background
-        container(row![sidebar, content].width(Length::Fill).height(Length::Fill))
-            .style(|_theme: &Theme| container::Style {
-                background: Some(Color::from_rgb(0.11, 0.11, 0.13).into()),
+        // Main layout
+        container(
+            row![sidebar, content]
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .style(|theme: &Theme| {
+            let palette = theme.extended_palette();
+            container::Style {
+                background: Some(palette.background.base.color.into()),
                 ..Default::default()
-            })
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+            }
+        })
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
     fn view_sidebar(&self) -> Element<'_, Message> {
+        let logo = image(iced::widget::image::Handle::from_bytes(
+            &include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/ob3.png"))[..],
+        ))
+        .width(Length::Fixed(28.0))
+        .height(Length::Fixed(28.0));
+
         let header = container(
-            column![
-                text("odd-box")
-                    .font(Font::MONOSPACE)
-                    .color(Color::from_rgb(0.9, 0.9, 0.9)),
-                text("reverse proxy").color(Color::from_rgb(0.5, 0.5, 0.55)),
+            row![
+                logo,
+                column![
+                    text("odd-box")
+                        .font(Font::MONOSPACE)
+                        .style(|theme: &Theme| iced::widget::text::Style {
+                            color: Some(theme.extended_palette().primary.base.color),
+                            ..Default::default()
+                        }),
+                    text("reverse proxy").style(|theme: &Theme| iced::widget::text::Style {
+                        color: Some(theme.extended_palette().background.weak.text),
+                        ..Default::default()
+                    }),
+                ]
+                .spacing(4)
             ]
-            .spacing(4),
+            .spacing(10)
+            .align_y(iced::Alignment::Center),
         )
         .padding(Padding::new(20.0));
 
@@ -402,11 +456,13 @@ impl OddBoxGui {
             .width(Length::Fixed(200.0))
             .height(Length::Fill);
 
-        // Dark sidebar background
         container(sidebar_content)
-            .style(|_theme: &Theme| container::Style {
-                background: Some(Color::from_rgb(0.10, 0.10, 0.12).into()),
-                ..Default::default()
+            .style(|theme: &Theme| {
+                let palette = theme.extended_palette();
+                container::Style {
+                    background: Some(palette.background.weaker.color.into()),
+                    ..Default::default()
+                }
             })
             .width(Length::Fixed(200.0))
             .height(Length::Fill)
@@ -431,20 +487,17 @@ impl OddBoxGui {
                 bottom: 10.0,
                 left: 12.0,
             })
-            .style(move |_theme: &Theme, status| {
+            .style(move |theme: &Theme, status| {
+                let palette = theme.extended_palette();
+
                 let (background, text_color) = if is_active {
-                    // Active: accent color
-                    (
-                        Color::from_rgb(0.55, 0.35, 0.75),
-                        Color::from_rgb(1.0, 1.0, 1.0),
-                    )
+                    (palette.primary.strong.color, palette.primary.strong.text)
                 } else {
                     match status {
-                        button::Status::Hovered => (
-                            Color::from_rgb(0.15, 0.15, 0.18),
-                            Color::from_rgb(0.85, 0.85, 0.85),
-                        ),
-                        _ => (Color::TRANSPARENT, Color::from_rgb(0.7, 0.7, 0.7)),
+                        button::Status::Hovered => {
+                            (palette.background.weak.color, palette.background.weak.text)
+                        }
+                        _ => (Color::TRANSPARENT, palette.background.weak.text),
                     }
                 };
 
@@ -478,9 +531,7 @@ impl OddBoxGui {
         if self.current_page == Page::Monitoring {
             page_content
         } else {
-            let page_title = text(self.current_page.title())
-                .size(20)
-                .color(Color::from_rgb(0.9, 0.9, 0.9));
+            let page_title = text(self.current_page.title()).size(20);
             let content = column![page_title, page_content]
                 .spacing(20)
                 .padding(30)
@@ -494,10 +545,15 @@ impl OddBoxGui {
     }
 
     fn view_placeholder(&self, description: &'static str) -> Element<'_, Message> {
-        container(text(description).color(Color::from_rgb(0.5, 0.5, 0.55)))
-            .padding(20)
-            .width(Length::Fill)
-            .into()
+        container(
+            text(description).style(|theme: &Theme| iced::widget::text::Style {
+                color: Some(theme.extended_palette().background.weak.text),
+                ..Default::default()
+            }),
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .into()
     }
 
     pub(crate) fn theme(&self) -> Theme {

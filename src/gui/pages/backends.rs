@@ -1,11 +1,11 @@
 use clap::builder::styling::RgbColor;
 use iced::theme::palette;
-use iced::widget::{column, text, Column};
+use iced::widget::{Column, column, text};
 use iced::{Color, Element};
 
 use crate::gui::components::{
-    table::{bool_cell, text_cell},
     Column as TableColumn, Table,
+    table::{bool_cell, text_cell},
 };
 
 use super::super::{Message, OddBoxGui};
@@ -35,14 +35,17 @@ impl OddBoxGui {
             }
 
             sections.push(
-                column![text("Remote Backends").color(Color {
-                    r: 155.0,
-                    g: 155.0,
-                    b: 0.0,
-                    a: 1.0,
-                }), table.build()]
-                    .spacing(10)
-                    .into(),
+                column![
+                    text("Remote Backends").color(Color {
+                        r: 155.0,
+                        g: 155.0,
+                        b: 0.0,
+                        a: 1.0,
+                    }),
+                    table.build()
+                ]
+                .spacing(10)
+                .into(),
             );
         }
 

@@ -1,6 +1,5 @@
 use iced::border;
-use iced::theme::Style;
-use iced::widget::{column, container, text, Column as IcedColumn, Row};
+use iced::widget::{Column as IcedColumn, Row, column, container, text};
 use iced::{Border, Color, Element, Font, Length, Padding, Theme};
 
 /// Column width specification
@@ -98,12 +97,10 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
                         font.weight = iced::font::Weight::Bold;
                         font
                     })
-                    .style(|theme: &Theme|
-                        iced::widget::text::Style {
-                            color: Some(theme.palette().warning),
-                            ..Default::default()
-                        }
-                    )
+                    .style(|theme: &Theme| iced::widget::text::Style {
+                        color: Some(theme.palette().warning),
+                        ..Default::default()
+                    })
                     .width(col.width)
                     .into()
             })
@@ -114,17 +111,19 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
             .padding(self.header_padding)
             .align_y(iced::Alignment::Center);
 
-        // Dark header background
         let header_container: Element<'a, M> = container(header_row)
             .width(Length::Fill)
-            .style(|_theme: &Theme| container::Style {
-                background: Some(Color::from_rgb(0.12, 0.12, 0.14).into()),
-                border: Border {
-                    radius: border::top(6.0),
-                    width: 0.0,
-                    color: Color::TRANSPARENT,
-                },
-                ..Default::default()
+            .style(|theme: &Theme| {
+                let palette = theme.extended_palette();
+                container::Style {
+                    background: Some(palette.background.weak.color.into()),
+                    border: Border {
+                        radius: border::top(6.0),
+                        width: 0.0,
+                        color: Color::TRANSPARENT,
+                    },
+                    ..Default::default()
+                }
             })
             .into();
 
@@ -141,11 +140,7 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
                 let row_cells: Vec<Element<'a, M>> = cells
                     .into_iter()
                     .zip(self.columns.iter())
-                    .map(|(cell, col)| {
-                        container(cell)
-                            .width(col.width)
-                            .into()
-                    })
+                    .map(|(cell, col)| container(cell).width(col.width).into())
                     .collect();
 
                 let data_row = Row::with_children(row_cells)
@@ -155,12 +150,12 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
 
                 container(data_row)
                     .width(Length::Fill)
-                    .style(move |_theme: &Theme| {
-                        // Alternating dark backgrounds
+                    .style(move |theme: &Theme| {
+                        let palette = theme.extended_palette();
                         let bg = if is_even {
-                            Color::from_rgb(0.16, 0.16, 0.18)
+                            palette.background.weakest.color
                         } else {
-                            Color::from_rgb(0.13, 0.13, 0.15)
+                            palette.background.weaker.color
                         };
                         let radius = if is_last {
                             border::bottom(6.0)
@@ -189,14 +184,17 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
         // Wrap in outer container with subtle border
         container(table_content)
             .width(Length::Fill)
-            .style(|_theme: &Theme| container::Style {
-                background: None,
-                border: Border {
-                    radius: 6.0.into(),
-                    width: 1.0,
-                    color: Color::from_rgb(0.2, 0.2, 0.22),
-                },
-                ..Default::default()
+            .style(|theme: &Theme| {
+                let palette = theme.extended_palette();
+                container::Style {
+                    background: None,
+                    border: Border {
+                        radius: 6.0.into(),
+                        width: 1.0,
+                        color: palette.background.strong.color,
+                    },
+                    ..Default::default()
+                }
             })
             .into()
     }
@@ -206,7 +204,10 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
 pub fn text_cell<'a, M: 'a>(content: impl ToString) -> Element<'a, M> {
     text(content.to_string())
         .font(Font::MONOSPACE)
-        .color(Color::from_rgb(0.9, 0.9, 0.9))
+        .style(|theme: &Theme| iced::widget::text::Style {
+            color: Some(theme.extended_palette().background.base.text),
+            ..Default::default()
+        })
         .into()
 }
 
@@ -225,8 +226,5 @@ pub fn bool_cell<'a, M: 'a>(value: bool) -> Element<'a, M> {
     } else {
         ("No", Color::from_rgb(0.5, 0.5, 0.5))
     };
-    text(label)
-        .font(Font::MONOSPACE)
-        .color(color)
-        .into()
+    text(label).font(Font::MONOSPACE).color(color).into()
 }

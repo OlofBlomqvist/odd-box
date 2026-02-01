@@ -1,9 +1,9 @@
-use iced::widget::text;
 use iced::Element;
+use iced::widget::text;
 
 use crate::gui::components::{
-    table::{bool_cell, text_cell},
     Column as TableColumn, Table,
+    table::{bool_cell, text_cell},
 };
 
 use super::super::{Message, OddBoxGui};

@@ -42,11 +42,8 @@ You can also build it yourself, or install it using brew, cargo, nix or devbox; 
 ### Screenshot(s)
 
 **odd-box v0.1.2:**
-![Screenshot of oddbox v0.1.2](/screenshot.jpg)
-
-**odd-box web-ui v0.1.8:**
-![Screenshot of oddbox v0.1.8](/webui-screenshot.jpg)
-
+![Screenshot of oddbox v0.1.2](/tui-screenshot.jpg)
+ 
 
 
 ## Getting Started
