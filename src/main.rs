@@ -2,7 +2,7 @@ mod configuration;
 mod cruma;
 pub mod cruma_integration;
 mod gui;
-mod process_registry;
+pub mod process_registry;
 mod tui;
 mod types;
 use anyhow::Context;
@@ -14,7 +14,6 @@ use configuration::{ConfigWrapper, LogLevel};
 use core::fmt;
 use cruma_integration::{ build_config as build_cruma_config,
 };
-use dashmap::DashMap;
 use global_state::GlobalState;
 use notify::RecommendedWatcher;
 use notify::Watcher;
@@ -65,14 +64,15 @@ pub mod global_state {
 
         pub enable_global_traffic_inspection: AtomicBool,
         pub exit: AtomicBool,
-        pub site_status_map: Arc<dashmap::DashMap<String, ProcState>>,
+        pub process_registry: Arc<crate::process_registry::ProcessRegistry>,
         pub cruma_assignment: Arc<tokio::sync::RwLock<Option<CrumaAssignedDomain>>>,
 
 
         pub started_at_time_stamp: std::time::SystemTime,
         pub log_handle: crate::OddLogHandle,
         pub config: std::sync::Arc<tokio::sync::RwLock<crate::configuration::ConfigWrapper>>,
-        pub target_request_counts: dashmap::DashMap<String, AtomicU64>,        pub cruma_config: std::sync::Arc<arc_swap::ArcSwap<cruma_proxy_lib::types::Configuration>>,
+        pub target_request_counts: dashmap::DashMap<String, AtomicU64>,
+        pub cruma_config: std::sync::Arc<arc_swap::ArcSwap<cruma_proxy_lib::types::Configuration>>,
     }
     impl GlobalState {
         pub fn uptime(&self) -> Result<std::time::Duration, SystemTimeError> {
@@ -86,7 +86,7 @@ pub mod global_state {
             Self {
 
                 enable_global_traffic_inspection: AtomicBool::new(false),
-                site_status_map: Arc::new(dashmap::DashMap::new()),
+                process_registry: Arc::new(crate::process_registry::ProcessRegistry::new()),
                 exit: AtomicBool::new(false),
                 cruma_assignment: Arc::new(tokio::sync::RwLock::new(None)),
 
@@ -543,21 +543,27 @@ async fn main() -> anyhow::Result<()> {
 
     let config_guard = global_state.config.read().await;
 
-    // Add backends to the site status map based on their type
+    // Add backends to the process registry based on their type
     for (backend_id, backend) in &cloned_backends {
         match backend {
             configuration::v4::Backend::Process(proc) => {
                 // Resolve and spawn process host
                 match config_guard.resolve_process_backend(backend_id, proc) {
                     Ok(resolved) => {
-                        // Add to site status as stopped initially
-                        global_state
-                            .site_status_map
-                            .insert(backend_id.clone(), crate::global_state::ProcState::Stopped);
-
-                        tokio::task::spawn(proc_host::ProcHost::host(
+                        // Create token externally and register before spawning
+                        let token = CancellationToken::new();
+                        let enabled = resolved.auto_start.unwrap_or(config_guard.auto_start);
+                        global_state.process_registry.register_host(
+                            backend_id.clone(),
+                            token.clone(),
+                            crate::global_state::ProcState::Stopped,
+                            enabled,
+                            resolved.port,
+                        );
+                        tokio::task::spawn(proc_host::host(
                             resolved,
-                            global_state.clone(),
+                            global_state.process_registry.clone(),
+                            token,
                         ));
                     }
                     Err(e) => bail!(
@@ -569,13 +575,13 @@ async fn main() -> anyhow::Result<()> {
             }
             configuration::v4::Backend::Remote(_) => {
                 global_state
-                    .site_status_map
-                    .insert(backend_id.clone(), crate::global_state::ProcState::Remote);
+                    .process_registry
+                    .register_backend(backend_id.clone(), crate::global_state::ProcState::Remote);
             }
             configuration::v4::Backend::Static(_) => {
                 global_state
-                    .site_status_map
-                    .insert(backend_id.clone(), crate::global_state::ProcState::DirServer);
+                    .process_registry
+                    .register_backend(backend_id.clone(), crate::global_state::ProcState::DirServer);
             }
         }
     }
@@ -623,6 +629,32 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("odd-box is shutting down.. waiting for processes to stop..");
     }
 
+    // Mark all proc_hosts for removal and wait for them to exit
+    global_state.process_registry.mark_all_for_removal();
+
+    // Wait for all proc_hosts to exit (tokens to be cancelled)
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        global_state.process_registry.cleanup_finished();
+        let snapshot = global_state.process_registry.snapshot();
+        let remaining: Vec<_> = snapshot
+            .entries
+            .iter()
+            .filter(|e| e.is_marked_for_removal() && !e.is_cancelled())
+            .collect();
+        if remaining.is_empty() {
+            break;
+        }
+        if tokio::time::Instant::now() > deadline {
+            if tui_flag || gui_flag {
+                println!("Timeout waiting for {} processes to stop", remaining.len());
+            } else {
+                tracing::warn!("Timeout waiting for {} processes to stop", remaining.len());
+            }
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 
     if tui_flag || gui_flag {
         println!("shutdown sequence for hosted processes completed successfully");
@@ -678,24 +710,36 @@ pub async fn docker_thread(state: Arc<GlobalState>) {
             let running_container_targets = docker::get_container_proxy_targets(&docker)
                 .await
                 .unwrap_or_default();
-            let running_container_targets_dash_map = DashMap::new();
+            let running_container_targets_dash_map = dashmap::DashMap::new();
             for x in running_container_targets {
                 running_container_targets_dash_map.insert(x.generate_host_name(), x);
             }
-            state.site_status_map.retain(|a, b| {
-                b != &crate::global_state::ProcState::Docker || running_container_targets_dash_map.contains_key(a)
-            });
+
+            // Mark removed docker containers in the registry
+            {
+                let snapshot = state.process_registry.snapshot();
+                for entry in &snapshot.entries {
+                    if entry.proc_state() == crate::global_state::ProcState::Docker
+                        && !running_container_targets_dash_map.contains_key(&entry.backend_id)
+                    {
+                        state.process_registry.mark_for_removal(&entry.backend_id);
+                    }
+                }
+            }
+            state.process_registry.cleanup_finished();
+
+            // Register running docker containers
             for guard in &running_container_targets_dash_map {
                 let (host_name, _) = guard.pair();
                 state
-                    .site_status_map
-                    .insert(host_name.to_string(), crate::global_state::ProcState::Docker);
+                    .process_registry
+                    .register_backend(host_name.to_string(), crate::global_state::ProcState::Docker);
             }
             let mut guard = state.config.write().await;
             guard.docker_containers = running_container_targets_dash_map;
 
             // Keep cruma config in sync with docker-discovered targets.
-            if let Ok((mut cfg, notes)) = build_cruma_config(&guard) {
+            if let Ok((cfg, notes)) = build_cruma_config(&guard) {
 
                 if !notes.unsupported.is_empty() {
                     tracing::warn!(

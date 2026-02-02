@@ -60,7 +60,7 @@ pub struct CachedConfig {
 /// Async function to fetch configuration data
 pub async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
     let config_guard = state.config.read().await;
-    let status_map = &state.site_status_map;
+    let snapshot = state.process_registry.snapshot();
 
     // Fetch processes
     let mut processes: Vec<CachedProcess> = config_guard
@@ -69,17 +69,20 @@ pub async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
         .map(|entry| {
             let name = entry.key().clone();
             let proc = entry.value();
-            let state = status_map
-                .get(&name)
-                .map(|v| v.value().clone())
+            let handle = snapshot.get(&name);
+            let proc_state = handle
+                .map(|h| h.proc_state())
                 .unwrap_or(ProcState::Stopped);
-            let port = "<placeholder:fixme>".to_string(); // TODO - this is a placeholder for the actual port number
+            let port = handle
+                .and_then(|h| h.active_port())
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "-".to_string());
             CachedProcess {
                 name,
                 bin: proc.bin.clone(),
                 port,
                 protocol: format!("{:?}", proc.protocol),
-                state,
+                state: proc_state,
                 auto_start: proc.auto_start.unwrap_or(true),
             }
         })

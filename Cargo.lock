@@ -8190,8 +8190,3 @@ dependencies = [
  "syn 2.0.114",
  "winnow",
 ]
-
-[[patch.unused]]
-name = "winit"
-version = "0.30.8"
-source = "git+https://github.com/rust-windowing/winit?tag=v0.30.8#58402b58cf660e236e825b36287a8fc2abfb1f5d"

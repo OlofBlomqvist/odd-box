@@ -23,7 +23,7 @@ fn fmt_state(state: ProcState) -> &'static str {
 }
 
 async fn build_snapshot(global_state: &GlobalState) -> String {
-    let status_map = global_state.site_status_map.clone();
+    let snapshot = global_state.process_registry.snapshot();
     let cfg = global_state.config.read().await;
     let cruma_assignment = global_state.cruma_assignment.read().await.clone();
 
@@ -48,12 +48,15 @@ async fn build_snapshot(global_state: &GlobalState) -> String {
         .map(|kv| (kv.key().clone(), kv.value().clone()))
         .collect();
     writeln!(&mut out, "Hosted processes ({}):", hosted.len()).ok();
-    for (backend_id, proc) in hosted {
-        let state = status_map
-            .get(&backend_id)
-            .map(|v| v.value().clone())
+    for (backend_id, _proc) in hosted {
+        let handle = snapshot.get(&backend_id);
+        let state = handle
+            .map(|h| h.proc_state())
             .unwrap_or(ProcState::Stopped);
-        let port = "<placeholder:fixme>"; // todo: get actual currently selected port
+        let port = handle
+            .and_then(|h| h.active_port())
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "-".to_string());
         writeln!(
             &mut out,
             " - {:<30} {:<10} port: {}",
@@ -71,9 +74,8 @@ async fn build_snapshot(global_state: &GlobalState) -> String {
         .collect();
     writeln!(&mut out, "\nRemote sites ({}):", remotes.len()).ok();
     for (backend_id, remote) in remotes {
-        let state = status_map
-            .get(&backend_id)
-            .map(|v| v.value().clone())
+        let state = snapshot
+            .state_of(&backend_id)
             .unwrap_or(ProcState::Remote);
         writeln!(
             &mut out,
@@ -92,9 +94,8 @@ async fn build_snapshot(global_state: &GlobalState) -> String {
         .collect();
     writeln!(&mut out, "\nStatic sites ({}):", dirs.len()).ok();
     for (backend_id, dir) in dirs {
-        let state = status_map
-            .get(&backend_id)
-            .map(|v| v.value().clone())
+        let state = snapshot
+            .state_of(&backend_id)
             .unwrap_or(ProcState::DirServer);
         writeln!(
             &mut out,
@@ -114,9 +115,8 @@ async fn build_snapshot(global_state: &GlobalState) -> String {
     writeln!(&mut out, "\nDocker ({}):", docker.len()).ok();
     for cont in docker {
         let host = cont.generate_host_name();
-        let state = status_map
-            .get(&host)
-            .map(|v| v.value().clone())
+        let state = snapshot
+            .state_of(&host)
             .unwrap_or(ProcState::Docker);
         writeln!(
             &mut out,

@@ -394,10 +394,10 @@ impl OddBoxGui {
                 }
             }
             Message::ProcessStart(name) => {
-                todo!("somehow get a hold of whichever proc_host is responsible for this process and tell it to enable+start it")
+                self.state.process_registry.set_enabled(&name, true);
             }
             Message::ProcessStop(name) => {
-                todo!("somehow get a hold of whichever proc_host is responsible for this process and tell it to disable+stop it")
+                self.state.process_registry.set_enabled(&name, false);
             }
         }
         Task::none()

@@ -5,11 +5,13 @@ use std::{io::Read, sync::Arc, time::Duration};
 use tracing::{info, level_filters::LevelFilter, trace, warn};
 use tracing_subscriber::EnvFilter;
 
+use tokio_util::sync::CancellationToken;
+
 use crate::{
     configuration::{LogLevel, v4},
     cruma_integration::{ build_config as build_cruma_config,
     },
-    global_state::{GlobalState, ProcState},
+    global_state::GlobalState,
     proc_host
 };
 
@@ -108,89 +110,81 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
 
     new_configuration.reload_dashmaps();
 
-    // TODO : actually iterate through wherever we have info regarding running processes?
-    for mut x in vec![crate::types::proc_info::ProcInfo {
-        liveness_ptr: todo!(), backend_id: todo!(), pid: todo!(),
-        marked_for_removal: todo!(), started_at_time_stamp: todo!()
-    }] {
-        if cloned_modified_procs
-            .iter()
-            .any(|(id, _)| id == &x.backend_id)
-        {
-            info!(
-                "Marking process {} for removal as it has changed",
-                x.backend_id
-            );
-            x.marked_for_removal = true;
-        } else if new_configuration
-            .hosted_processes
-            .contains_key(&x.backend_id)
-        {
-            // Process is still in new configuration but hasn't changed
-        } else {
-            info!(
-                "Marking process {} for removal as it is no longer in the configuration",
-                x.backend_id
-            );
-            x.marked_for_removal = true;
-        }
-    }
-
-    loop {
-        {
-            // TODO: actually iterate through active proc_hosts and wait for them to exit prior
-            // to continuing with adding new ones
-            // if crate::PROC_THREAD_MAP.iter().any(|x| x.marked_for_removal) {
-            //     info!("Waiting for all marked processes to exit before starting new ones");
-            //     tokio::time::sleep(Duration::from_millis(500)).await;
-            //     continue;
-            // }
-        }
-        break;
-    }
-
-    // note - we must not clear here as it would cause update event to be sent for unchanged processes
-    global_state.site_status_map.retain(|k, v| {
-        match v {
-            // keep remotes that exist in the new config
-            ProcState::Remote => cloned_rems.iter().any(|(id, _)| id == k),
-            // keep dir servers and such that exist in the new config
-            ProcState::DirServer => cloned_dirs.iter().any(|(id, _)| id == k),
-            // keep procs -
-            // all other statuses can only mean they are hosted processes
-            _ => {
-                if new_configuration.hosted_processes.contains_key(k) {
-                    tracing::warn!("retaining proc : {k:?}");
-                    true
-                } else {
-                    tracing::warn!("removing proc from site status map: {k:?}");
+    // Mark removed backends in the process registry and collect tokens to wait on
+    let mut tokens_to_wait: Vec<CancellationToken> = Vec::new();
+    {
+        let snapshot = global_state.process_registry.snapshot();
+        for entry in &snapshot.entries {
+            let should_remove = match entry.proc_state() {
+                crate::global_state::ProcState::Remote => {
+                    !cloned_rems.iter().any(|(id, _)| id == &entry.backend_id)
+                }
+                crate::global_state::ProcState::DirServer => {
+                    !cloned_dirs.iter().any(|(id, _)| id == &entry.backend_id)
+                }
+                crate::global_state::ProcState::Docker => {
+                    // Docker entries are managed by docker_thread, don't touch them here
                     false
+                }
+                _ => {
+                    // Process backends - mark for removal if config changed or removed
+                    if cloned_modified_procs.iter().any(|(id, _)| id == &entry.backend_id) {
+                        info!("Marking process {} for removal as it has changed", entry.backend_id);
+                        true
+                    } else if !new_configuration.hosted_processes.contains_key(&entry.backend_id) {
+                        info!("Marking process {} for removal as it is no longer in the configuration", entry.backend_id);
+                        true
+                    } else {
+                        false
+                    }
+                }
+            };
+            if should_remove {
+                if let Some(token) = global_state.process_registry.mark_for_removal(&entry.backend_id) {
+                    tokens_to_wait.push(token);
                 }
             }
         }
-    });
+    }
 
-    // Add any remotes to the site list (doesn't matter if they already exist, they just get replaced)
+    // Wait for marked proc_hosts to exit before spawning replacements
+    for token in tokens_to_wait {
+        let _ = tokio::time::timeout(Duration::from_secs(10), token.cancelled()).await;
+    }
+    global_state.process_registry.cleanup_finished();
+
+    // Register any new remotes
     for (backend_id, _) in &cloned_rems {
         global_state
-            .site_status_map
-            .insert(backend_id.clone(), ProcState::Remote);
+            .process_registry
+            .register_backend(backend_id.clone(), crate::global_state::ProcState::Remote);
     }
 
-    // Add any hosted dirs to site list (doesn't matter if they already exist, they just get replaced)
+    // Register any new static backends
     for (backend_id, _) in &cloned_dirs {
         global_state
-            .site_status_map
-            .insert(backend_id.clone(), ProcState::DirServer);
+            .process_registry
+            .register_backend(backend_id.clone(), crate::global_state::ProcState::DirServer);
     }
 
-    // And spawn the hosted process worker loops - this will also update/re-add the site to site_status_map
+    // Spawn new/updated process backends
     for (backend_id, proc) in cloned_modified_procs {
         match new_configuration.resolve_process_backend(&backend_id, &proc) {
             Ok(resolved) => {
-                tokio::task::spawn(proc_host::ProcHost::host(
+                // Create token externally and register before spawning
+                let token = CancellationToken::new();
+                let enabled = resolved.auto_start.unwrap_or(new_configuration.auto_start);
+                global_state.process_registry.register_host(
+                    backend_id.clone(),
+                    token.clone(),
+                    crate::global_state::ProcState::Stopped,
+                    enabled,
+                    resolved.port,
+                );
+                tokio::task::spawn(proc_host::host(
                     resolved,
-                    global_state.clone(),
+                    global_state.process_registry.clone(),
+                    token,
                 ));
             }
             Err(e) => bail!(
@@ -207,7 +201,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     let rebuilt_cruma_config = match build_cruma_config(&new_configuration) {
-        Ok((mut cfg, notes)) => {
+        Ok((cfg, notes)) => {
 
             if !notes.unsupported.is_empty() {
                 tracing::warn!(
