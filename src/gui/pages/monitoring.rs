@@ -37,14 +37,14 @@ impl OddBoxGui {
                 })
                 .style(|theme: &Theme, status| {
                     let palette = theme.extended_palette();
-                    let (bg, fg) = match status {
-                        button::Status::Hovered => {
-                            (palette.danger.strong.color, palette.danger.strong.text)
-                        }
-                        button::Status::Disabled => {
-                            (palette.background.weak.color, palette.background.weak.text)
-                        }
-                        _ => (palette.danger.weak.color, palette.danger.weak.text),
+                    let bg = match status {
+                        button::Status::Hovered => palette.danger.strong.color,
+                        button::Status::Disabled => palette.background.weak.color,
+                        _ => palette.danger.weak.color,
+                    };
+                    let fg = match status {
+                        button::Status::Disabled => palette.background.weak.text,
+                        _ => Color::WHITE,
                     };
                     button::Style {
                         background: Some(bg.into()),

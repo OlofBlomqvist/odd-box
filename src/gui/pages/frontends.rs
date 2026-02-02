@@ -23,7 +23,7 @@ impl OddBoxGui {
             TableColumn::fixed("Subdomains", 100.0),
         ];
 
-        let mut table = Table::new(columns);
+        let mut table = Table::new(columns).hover(Message::NoOp);
 
         for route in &self.cached_config.routes {
             table = table.push_row(vec![

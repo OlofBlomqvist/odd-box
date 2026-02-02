@@ -23,7 +23,7 @@ impl OddBoxGui {
                 TableColumn::fixed("HTTPS", 60.0),
             ];
 
-            let mut table = Table::new(columns);
+            let mut table = Table::new(columns).hover(Message::NoOp);
 
             for backend in &self.cached_config.remote_backends {
                 table = table.push_row(vec![
@@ -36,12 +36,7 @@ impl OddBoxGui {
 
             sections.push(
                 column![
-                    text("Remote Backends").color(Color {
-                        r: 155.0,
-                        g: 155.0,
-                        b: 0.0,
-                        a: 1.0,
-                    }),
+                    text("Remote Backends"),
                     table.build()
                 ]
                 .spacing(10)
@@ -57,7 +52,7 @@ impl OddBoxGui {
                 TableColumn::fixed("List Dir", 80.0),
             ];
 
-            let mut table = Table::new(columns);
+            let mut table = Table::new(columns).hover(Message::NoOp);
 
             for backend in &self.cached_config.static_backends {
                 table = table.push_row(vec![

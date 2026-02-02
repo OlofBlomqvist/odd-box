@@ -157,6 +157,8 @@ impl std::fmt::Display for LogLevelPreset {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    /// No-op message for hover-only interactive elements
+    NoOp,
     NavigateTo(Page),
     SystemThemeChanged(theme::Mode),
     LogViewportChanged(scrollable::Viewport),
@@ -312,6 +314,7 @@ impl OddBoxGui {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::NoOp => {}
             Message::NavigateTo(page) => {
                 self.current_page = page;
                 if page == Page::Monitoring {

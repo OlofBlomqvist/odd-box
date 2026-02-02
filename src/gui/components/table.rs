@@ -1,5 +1,5 @@
 use iced::border;
-use iced::widget::{Column as IcedColumn, Row, column, container, text};
+use iced::widget::{Column as IcedColumn, Row, button, column, container, text};
 use iced::{Border, Color, Element, Font, Length, Padding, Theme};
 
 /// Column width specification
@@ -50,9 +50,11 @@ impl Column {
 pub struct Table<'a, M: Clone + 'a> {
     columns: Vec<Column>,
     rows: Vec<Vec<Element<'a, M>>>,
+    row_messages: Vec<Option<M>>,
     spacing: f32,
     row_padding: Padding,
     header_padding: Padding,
+    hover_message: Option<M>,
 }
 
 impl<'a, M: Clone + 'a> Table<'a, M> {
@@ -60,6 +62,7 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
         Self {
             columns,
             rows: Vec::new(),
+            row_messages: Vec::new(),
             spacing: 10.0,
             row_padding: Padding {
                 top: 10.0,
@@ -73,36 +76,57 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
                 bottom: 12.0,
                 left: 12.0,
             },
+            hover_message: None,
         }
+    }
+
+    /// Enable hover effect on rows (requires a no-op message for button interactivity)
+    pub fn hover(mut self, message: M) -> Self {
+        self.hover_message = Some(message);
+        self
     }
 
     /// Add a row of cell elements
     pub fn push_row(mut self, cells: Vec<Element<'a, M>>) -> Self {
         self.rows.push(cells);
+        self.row_messages.push(None);
+        self
+    }
+
+    /// Add a clickable row of cell elements
+    pub fn push_row_with_message(mut self, cells: Vec<Element<'a, M>>, message: M) -> Self {
+        self.rows.push(cells);
+        self.row_messages.push(Some(message));
         self
     }
 
     /// Build the table element
     pub fn build(self) -> Element<'a, M> {
         let row_count = self.rows.len();
+        let hover_message = self.hover_message.clone();
 
         // Build header row
         let header_cells: Vec<Element<'a, M>> = self
             .columns
             .iter()
             .map(|col| {
-                text(col.title)
-                    .font({
-                        let mut font = Font::MONOSPACE;
-                        font.weight = iced::font::Weight::Bold;
-                        font
-                    })
-                    .style(|theme: &Theme| iced::widget::text::Style {
-                        color: Some(theme.palette().warning),
-                        ..Default::default()
-                    })
-                    .width(col.width)
-                    .into()
+                container(
+                    text(col.title)
+                        .font(Font {
+                            weight: iced::font::Weight::Bold,
+                            ..Font::MONOSPACE
+                        })
+                        .style(|theme: &Theme| {
+                            let palette = theme.extended_palette();
+                            iced::widget::text::Style {
+                                color: Some(palette.background.base.text),
+                                ..Default::default()
+                            }
+                        })
+                )
+                .width(col.width)
+                .clip(true)
+                .into()
             })
             .collect();
 
@@ -116,7 +140,7 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
             .style(|theme: &Theme| {
                 let palette = theme.extended_palette();
                 container::Style {
-                    background: Some(palette.background.weak.color.into()),
+                    background: Some(palette.background.strong.color.into()),
                     border: Border {
                         radius: border::top(6.0),
                         width: 0.0,
@@ -131,48 +155,93 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
         let data_rows: Vec<Element<'a, M>> = self
             .rows
             .into_iter()
+            .zip(self.row_messages.into_iter())
             .enumerate()
-            .map(|(idx, cells)| {
+            .map(|(idx, (cells, msg))| {
                 let is_even = idx % 2 == 0;
                 let is_last = idx == row_count.saturating_sub(1);
 
-                // Build row with cells that have explicit widths
+                // Build row with cells that have explicit widths and clipping
                 let row_cells: Vec<Element<'a, M>> = cells
                     .into_iter()
                     .zip(self.columns.iter())
-                    .map(|(cell, col)| container(cell).width(col.width).into())
+                    .map(|(cell, col)| {
+                        container(cell)
+                            .width(col.width)
+                            .clip(true)
+                            .into()
+                    })
                     .collect();
 
                 let data_row = Row::with_children(row_cells)
                     .spacing(self.spacing)
-                    .padding(self.row_padding)
                     .align_y(iced::Alignment::Center);
 
-                container(data_row)
-                    .width(Length::Fill)
-                    .style(move |theme: &Theme| {
-                        let palette = theme.extended_palette();
-                        let bg = if is_even {
-                            palette.background.weakest.color
-                        } else {
-                            palette.background.weaker.color
-                        };
-                        let radius = if is_last {
-                            border::bottom(6.0)
-                        } else {
-                            border::radius(0.0)
-                        };
-                        container::Style {
-                            background: Some(bg.into()),
-                            border: Border {
-                                radius,
-                                width: 0.0,
-                                color: Color::TRANSPARENT,
-                            },
-                            ..Default::default()
-                        }
-                    })
-                    .into()
+                // Use button for hover effect, otherwise use container
+                let row_msg = msg.or_else(|| hover_message.clone());
+                if row_msg.is_some() {
+                    button(data_row)
+                        .width(Length::Fill)
+                        .padding(self.row_padding)
+                        .on_press(row_msg.unwrap())
+                        .style(move |theme: &Theme, status| {
+                            let palette = theme.extended_palette();
+                            let base_bg = if is_even {
+                                palette.background.weakest.color
+                            } else {
+                                palette.background.weaker.color
+                            };
+                            let bg = match status {
+                                button::Status::Hovered | button::Status::Pressed => {
+                                    palette.primary.weak.color
+                                }
+                                _ => base_bg,
+                            };
+                            let radius = if is_last {
+                                border::bottom(6.0)
+                            } else {
+                                border::radius(0.0)
+                            };
+                            button::Style {
+                                background: Some(bg.into()),
+                                text_color: palette.background.base.text,
+                                border: Border {
+                                    radius,
+                                    width: 0.0,
+                                    color: Color::TRANSPARENT,
+                                },
+                                ..Default::default()
+                            }
+                        })
+                        .into()
+                } else {
+                    container(data_row)
+                        .width(Length::Fill)
+                        .padding(self.row_padding)
+                        .style(move |theme: &Theme| {
+                            let palette = theme.extended_palette();
+                            let bg = if is_even {
+                                palette.background.weakest.color
+                            } else {
+                                palette.background.weaker.color
+                            };
+                            let radius = if is_last {
+                                border::bottom(6.0)
+                            } else {
+                                border::radius(0.0)
+                            };
+                            container::Style {
+                                background: Some(bg.into()),
+                                border: Border {
+                                    radius,
+                                    width: 0.0,
+                                    color: Color::TRANSPARENT,
+                                },
+                                ..Default::default()
+                            }
+                        })
+                        .into()
+                }
             })
             .collect();
 
@@ -204,6 +273,7 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
 pub fn text_cell<'a, M: 'a>(content: impl ToString) -> Element<'a, M> {
     text(content.to_string())
         .font(Font::MONOSPACE)
+        .wrapping(iced::widget::text::Wrapping::None)
         .style(|theme: &Theme| iced::widget::text::Style {
             color: Some(theme.extended_palette().background.base.text),
             ..Default::default()
@@ -215,6 +285,7 @@ pub fn text_cell<'a, M: 'a>(content: impl ToString) -> Element<'a, M> {
 pub fn colored_text_cell<'a, M: 'a>(content: impl ToString, color: Color) -> Element<'a, M> {
     text(content.to_string())
         .font(Font::MONOSPACE)
+        .wrapping(iced::widget::text::Wrapping::None)
         .color(color)
         .into()
 }
@@ -226,5 +297,9 @@ pub fn bool_cell<'a, M: 'a>(value: bool) -> Element<'a, M> {
     } else {
         ("No", Color::from_rgb(0.5, 0.5, 0.5))
     };
-    text(label).font(Font::MONOSPACE).color(color).into()
+    text(label)
+        .font(Font::MONOSPACE)
+        .wrapping(iced::widget::text::Wrapping::None)
+        .color(color)
+        .into()
 }
