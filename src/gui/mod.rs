@@ -68,13 +68,10 @@ pub fn run(
         OddBoxGui::view,
     )
     .style(|_state, theme: &Theme| {
+        // Use theme's background with transparency for blur effect
         let bg = theme.palette().background;
-        // Check if theme is dark by calculating luminance
-        let luminance = 0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b;
-        let is_dark = luminance < 0.5;
-
         theme::Style {
-            background_color: if is_dark { Color::TRANSPARENT } else { bg },
+            background_color: Color::from_rgba(bg.r, bg.g, bg.b, 0.85),
             text_color: theme.palette().text,
         }
     })
@@ -416,11 +413,9 @@ impl OddBoxGui {
                 .width(Length::Fill)
                 .height(Length::Fill),
         )
-        .style(|theme: &Theme| {
-            let palette = theme.extended_palette();
-
+        .style(|_theme: &Theme| {
             container::Style {
-                background:  Some(palette.background.base.color.scale_alpha(0.7).into()),
+                background: Some(Background::Color(Color::TRANSPARENT)),
                 ..Default::default()
             }
         })
@@ -490,9 +485,10 @@ impl OddBoxGui {
 
         container(sidebar_content)
             .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
+                // Slightly darker/lighter than main bg for contrast
+                let bg = theme.extended_palette().background.weak.color;
                 container::Style {
-                    background: Some(Background::Color(Color::TRANSPARENT)), //Some(palette.background.weaker.color.into()),
+                    background: Some(Background::Color(Color::from_rgba(bg.r, bg.g, bg.b, 0.5))),
                     ..Default::default()
                 }
             })
@@ -583,6 +579,13 @@ impl OddBoxGui {
             Scrollable::new(content)
                 .width(Length::Fill)
                 .height(Length::Fill)
+                .style(|theme: &Theme, status| scrollable::Style {
+                    container: container::Style {
+                        background: Some(Background::Color(Color::TRANSPARENT)),
+                        ..Default::default()
+                    },
+                    ..scrollable::default(theme, status)
+                })
                 .into()
         }
     }
