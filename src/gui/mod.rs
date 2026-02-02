@@ -2,11 +2,12 @@ pub mod components;
 pub mod logs;
 mod pages;
 
+use iced::gradient::{ColorStop, Linear};
 use iced::widget::{
     Column, Id, Scrollable, button, column, container, image, row, scrollable, text,
 };
 use iced::{
-    Application, Background, Border, Color, Element, Font, Length, Padding, Subscription, Task, Theme, system, theme, time
+    Application, Background, Border, Color, Element, Font, Length, Padding, Radians, Subscription, Task, Theme, system, theme, time
 };
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -15,9 +16,15 @@ use crate::global_state::GlobalState;
 use logs::{LogFilter, SharedLogState};
 use pages::{CachedConfig, CachedLogLine, fetch_config};
 
-static SIDEBAR_LOGO: LazyLock<iced::widget::image::Handle> = LazyLock::new(|| {
+static SIDEBAR_LOGO_LIGHT: LazyLock<iced::widget::image::Handle> = LazyLock::new(|| {
     iced::widget::image::Handle::from_bytes(
         &include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/ob3.png"))[..],
+    )
+});
+
+static SIDEBAR_LOGO_DARK: LazyLock<iced::widget::image::Handle> = LazyLock::new(|| {
+    iced::widget::image::Handle::from_bytes(
+        &include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/ob3_black.png"))[..],
     )
 });
 
@@ -45,7 +52,7 @@ pub fn run(
 ) -> iced::Result {
     let window_settings = iced::window::Settings {
         size: iced::Size::new(1200.0, 800.0),
-        min_size: Some(iced::Size::new(1200.0, 400.0)),
+        min_size: Some(iced::Size::new(900.0, 400.0)),
         decorations: true, // Use native window decorations (KDE/GNOME title bar)
         blur: true,
         transparent: true,
@@ -60,9 +67,14 @@ pub fn run(
         OddBoxGui::update,
         OddBoxGui::view,
     )
-    .style(|state: _, theme: &Theme| {
+    .style(|_state, theme: &Theme| {
+        let bg = theme.palette().background;
+        // Check if theme is dark by calculating luminance
+        let luminance = 0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b;
+        let is_dark = luminance < 0.5;
+
         theme::Style {
-            background_color: Color::TRANSPARENT,
+            background_color: if is_dark { Color::TRANSPARENT } else { bg },
             text_color: theme.palette().text,
         }
     })
@@ -403,8 +415,9 @@ impl OddBoxGui {
         )
         .style(|theme: &Theme| {
             let palette = theme.extended_palette();
+
             container::Style {
-                background: Some(Background::Color(Color::TRANSPARENT)),//Some(palette.background.base.color.into()),
+                background:  Some(palette.background.base.color.scale_alpha(0.7).into()),
                 ..Default::default()
             }
         })
@@ -414,7 +427,13 @@ impl OddBoxGui {
     }
 
     fn view_sidebar(&self) -> Element<'_, Message> {
-        let logo = image(SIDEBAR_LOGO.clone()).expand(true);
+        let is_light = match self.theme_mode {
+            ThemeMode::Light => true,
+            ThemeMode::Dark => false,
+            ThemeMode::System => matches!(self.system_theme, Some(theme::Mode::Light)),
+        };
+        let logo_handle = if is_light { SIDEBAR_LOGO_DARK.clone() } else { SIDEBAR_LOGO_LIGHT.clone() };
+        let logo = image(logo_handle).expand(true);
 
         let header = container(
             row![
@@ -500,8 +519,19 @@ impl OddBoxGui {
             .style(move |theme: &Theme, status| {
                 let palette = theme.extended_palette();
 
+                // Check if theme is light by looking at background luminance
+                let bg = theme.palette().background;
+                let is_light_theme = (0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b) > 0.5;
+
                 let (background, text_color) = if is_active {
-                    (palette.primary.strong.color, palette.primary.strong.text)
+                    let bg_color = palette.primary.strong.color;
+                    // For light themes, ensure good contrast on the active button
+                    let text = if is_light_theme {
+                        Color::WHITE
+                    } else {
+                        palette.primary.strong.text
+                    };
+                    (bg_color, text)
                 } else {
                     match status {
                         button::Status::Hovered => {
