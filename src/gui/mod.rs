@@ -77,7 +77,7 @@ pub fn run(
     })
     .theme(OddBoxGui::theme)
     .subscription(OddBoxGui::subscription)
-    .window(window_settings)
+    .title("ODD-BOX").window(window_settings)
     .run()
 }
 
