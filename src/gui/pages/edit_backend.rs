@@ -25,7 +25,7 @@ impl OddBoxGui {
     pub(in crate::gui) fn view_edit_backend(&self) -> Element<'_, Message> {
         let mut errors: Vec<Element<'_, Message>> = Vec::new();
 
-        if self.edit_backend_is_new && self.edit_backend_form.id.trim().is_empty() {
+        if self.edit_backend_form.id.trim().is_empty() {
             errors.push(
                 text("Backend id is required.")
                     .size(12)
@@ -130,27 +130,17 @@ impl OddBoxGui {
                 BackendKind::Unknown => "Unknown Backend",
             };
 
-            let header = if self.edit_backend_is_new {
-                let id_label = text("Backend ID").size(13).style(muted_text);
-                let id_input = text_input("backend-id", &self.edit_backend_form.id)
-                    .on_input(|v| Message::EditBackendFieldChanged(EditBackendField::Id(v)))
-                    .padding(8)
-                    .width(Length::Fill);
-                column![
-                    text(kind_label).size(14).style(muted_text),
-                    id_label,
-                    id_input,
-                ]
-                .spacing(6)
-            } else {
-                column![
-                    text(kind_label).size(14).style(muted_text),
-                    text(format!("ID: {}", self.edit_backend_form.id))
-                        .size(12)
-                        .style(muted_text),
-                ]
-                .spacing(4)
-            };
+            let id_label = text("Backend ID").size(13).style(muted_text);
+            let id_input = text_input("backend-id", &self.edit_backend_form.id)
+                .on_input(|v| Message::EditBackendFieldChanged(EditBackendField::Id(v)))
+                .padding(8)
+                .width(Length::Fill);
+            let header = column![
+                text(kind_label).size(14).style(muted_text),
+                id_label,
+                id_input,
+            ]
+            .spacing(6);
 
             let (fields_card, info_card) = match self.edit_backend_form.kind {
                 BackendKind::Remote => {

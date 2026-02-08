@@ -335,6 +335,7 @@ pub struct OddBoxGui {
     pub(in crate::gui) edit_backend_pending_reload: bool,
     pub(in crate::gui) edit_backend_original: Option<String>,
     pub(in crate::gui) edit_backend_is_new: bool,
+    pub(in crate::gui) edit_backend_confirm_delete: bool,
 }
 
 fn log_scroll_id() -> Id {
@@ -559,14 +560,48 @@ async fn save_backend_form(
     }
 
     let mut guard = state.config.write().await;
-    if original_id.is_none() && guard.backends.contains_key(&form.id) {
+    if original_id.as_deref() != Some(&form.id) && guard.backends.contains_key(&form.id) {
         return Err("Backend id already exists.".to_string());
     }
 
     let key = form.id.clone();
-    if let Some(old) = original_id {
+    if let Some(old) = original_id.clone() {
         if old != key {
             guard.backends.remove(&old);
+            if let Some(http) = guard.frontends.http.as_mut() {
+                for (_, target) in http.routes.iter_mut() {
+                    match target {
+                        v4::RouteTarget::Simple(b) => {
+                            if b == &old {
+                                *b = key.clone();
+                            }
+                        }
+                        v4::RouteTarget::Detailed(d) => {
+                            if d.backend == old {
+                                d.backend = key.clone();
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(https) = guard.frontends.https.as_mut() {
+                if let Some(v4::HttpsRoutes::Explicit(routes)) = https.routes.as_mut() {
+                    for (_, target) in routes.iter_mut() {
+                        match target {
+                            v4::RouteTarget::Simple(b) => {
+                                if b == &old {
+                                    *b = key.clone();
+                                }
+                            }
+                            v4::RouteTarget::Detailed(d) => {
+                                if d.backend == old {
+                                    d.backend = key.clone();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -697,16 +732,6 @@ async fn save_backend_form(
 async fn delete_backend(state: Arc<GlobalState>, backend_id: String) -> Result<(), String> {
     let mut guard = state.config.write().await;
     guard.backends.remove(&backend_id);
-
-    if let Some(http) = guard.frontends.http.as_mut() {
-        http.routes
-            .retain(|_, target| target.backend_id() != backend_id);
-    }
-    if let Some(https) = guard.frontends.https.as_mut() {
-        if let Some(v4::HttpsRoutes::Explicit(routes)) = https.routes.as_mut() {
-            routes.retain(|_, target| target.backend_id() != backend_id);
-        }
-    }
 
     guard.reload_dashmaps();
     guard.is_valid().map_err(|e| e.to_string())?;
@@ -876,6 +901,7 @@ impl OddBoxGui {
                 edit_backend_pending_reload: false,
                 edit_backend_original: None,
                 edit_backend_is_new: false,
+                edit_backend_confirm_delete: false,
             },
             Task::batch(tasks),
         )
@@ -1067,6 +1093,7 @@ impl OddBoxGui {
                 self.edit_backend_notice = None;
                 self.edit_backend_original = self.edit_target.clone();
                 self.edit_backend_is_new = false;
+                self.edit_backend_confirm_delete = false;
                 return Task::perform(
                     load_backend_form(self.state.clone(), self.edit_target.clone().unwrap()),
                     Message::EditBackendLoaded,
@@ -1083,6 +1110,7 @@ impl OddBoxGui {
                 };
                 self.edit_backend_original = None;
                 self.edit_backend_is_new = true;
+                self.edit_backend_confirm_delete = false;
             }
             Message::EditFrontendLoaded(form) => {
                 self.edit_frontend_form = form;
@@ -1228,6 +1256,7 @@ impl OddBoxGui {
                     self.edit_backend_pending_reload = true;
                     self.edit_backend_is_new = false;
                     self.edit_backend_original = Some(self.edit_backend_form.id.clone());
+                    self.edit_backend_confirm_delete = false;
                 }
                 Err(err) => {
                     self.edit_backend_notice = Some(err);
@@ -1235,7 +1264,25 @@ impl OddBoxGui {
             },
             Message::EditBackendDelete => {
                 if let Some(id) = self.edit_backend_original.clone() {
+                    if !self.edit_backend_confirm_delete {
+                        let routes_count = self
+                            .cached_config
+                            .routes
+                            .iter()
+                            .filter(|r| r.backend == id)
+                            .count();
+                        if routes_count > 0 {
+                            self.edit_backend_notice = Some(format!(
+                                "Warning: {} route(s) still point to this backend. Delete again to confirm.",
+                                routes_count
+                            ));
+                            self.edit_backend_confirm_delete = true;
+                            return Task::none();
+                        }
+                    }
+
                     self.edit_backend_notice = None;
+                    self.edit_backend_confirm_delete = false;
                     return Task::perform(
                         delete_backend(self.state.clone(), id),
                         Message::EditBackendDeleteResult,
