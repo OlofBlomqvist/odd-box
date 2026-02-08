@@ -67,6 +67,27 @@ impl OddBoxGui {
                     .into(),
             );
         }
+        if matches!(self.edit_backend_form.kind, BackendKind::Process)
+            && self.edit_backend_form.proc_bin.trim().is_empty()
+        {
+            errors.push(
+                text("Binary is required.")
+                    .size(12)
+                    .color(Color::from_rgb(0.9, 0.3, 0.3))
+                    .into(),
+            );
+        }
+        if matches!(self.edit_backend_form.kind, BackendKind::Process)
+            && !self.edit_backend_form.proc_port.trim().is_empty()
+            && self.edit_backend_form.proc_port.trim().parse::<u16>().is_err()
+        {
+            errors.push(
+                text("Port must be a number.")
+                    .size(12)
+                    .color(Color::from_rgb(0.9, 0.3, 0.3))
+                    .into(),
+            );
+        }
 
         let notice = self
             .edit_backend_notice
@@ -289,13 +310,88 @@ impl OddBoxGui {
                     )
                 }
                 BackendKind::Process => {
-                    let note = text("Process backends are edited on the Managed Processes page.")
+                    let bin_label = text("Binary").size(13).style(muted_text);
+                    let bin_input = text_input("my-app", &self.edit_backend_form.proc_bin)
+                        .on_input(|v| Message::EditBackendFieldChanged(EditBackendField::ProcBin(v)))
+                        .padding(8)
+                        .width(Length::Fill);
+                    let bin_help = text("Path or command to execute")
                         .size(12)
                         .style(muted_text);
-                    let fields = column![header, note].spacing(6);
+
+                    let args_label = text("Args").size(13).style(muted_text);
+                    let args_input = text_input("--flag value", &self.edit_backend_form.proc_args)
+                        .on_input(|v| Message::EditBackendFieldChanged(EditBackendField::ProcArgs(v)))
+                        .padding(8)
+                        .width(Length::Fill);
+                    let args_help = text("Space-separated arguments")
+                        .size(12)
+                        .style(muted_text);
+
+                    let dir_label = text("Working dir").size(13).style(muted_text);
+                    let dir_input = text_input("/path/to/app", &self.edit_backend_form.proc_dir)
+                        .on_input(|v| Message::EditBackendFieldChanged(EditBackendField::ProcDir(v)))
+                        .padding(8)
+                        .width(Length::Fill);
+                    let dir_help = text("Optional working directory")
+                        .size(12)
+                        .style(muted_text);
+
+                    let protocol_label = text("Protocol").size(13).style(muted_text);
+                    let protocol_picker = pick_list(
+                        PROTOCOL_OPTIONS.as_slice(),
+                        Some(self.edit_backend_form.protocol.clone()),
+                        |v| Message::EditBackendFieldChanged(EditBackendField::Protocol(v)),
+                    )
+                    .padding(8)
+                    .width(Length::Fill);
+
+                    let https_toggle = checkbox(self.edit_backend_form.https)
+                        .label("Upstream uses HTTPS")
+                        .on_toggle(|v| Message::EditBackendFieldChanged(EditBackendField::Https(v)));
+
+                    let port_label = text("Port (optional)").size(13).style(muted_text);
+                    let port_input = text_input("8080", &self.edit_backend_form.proc_port)
+                        .on_input(|v| Message::EditBackendFieldChanged(EditBackendField::ProcPort(v)))
+                        .padding(8)
+                        .width(Length::Fill);
+
+                    let auto_start_toggle = checkbox(self.edit_backend_form.proc_auto_start)
+                        .label("Auto-start process")
+                        .on_toggle(|v| {
+                            Message::EditBackendFieldChanged(EditBackendField::ProcAutoStart(v))
+                        });
+
+                    let exclude_toggle = checkbox(self.edit_backend_form.proc_exclude_from_start_all)
+                        .label("Exclude from start-all")
+                        .on_toggle(|v| {
+                            Message::EditBackendFieldChanged(EditBackendField::ProcExcludeFromStartAll(v))
+                        });
+
+                    let fields = column![
+                        header,
+                        bin_label,
+                        bin_input,
+                        bin_help,
+                        args_label,
+                        args_input,
+                        args_help,
+                        dir_label,
+                        dir_input,
+                        dir_help,
+                        protocol_label,
+                        protocol_picker,
+                        https_toggle,
+                        port_label,
+                        port_input,
+                        auto_start_toggle,
+                        exclude_toggle,
+                    ]
+                    .spacing(6);
+
                     let info = column![
                         text("Process Backend").size(14).style(muted_text),
-                        text("This editor does not modify process configuration.")
+                        text("Managed by odd-box. Changes take effect after reload.")
                             .size(12)
                             .style(muted_text),
                     ]

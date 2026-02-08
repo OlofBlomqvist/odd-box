@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 
 use crate::global_state::GlobalState;
+use crate::types::proc_info::ProcId;
 use crate::configuration::v4;
 use logs::{LogFilter, SharedLogState};
 use pages::{CachedConfig, CachedLogLine, fetch_config};
@@ -256,6 +257,13 @@ pub struct EditBackendForm {
     pub list_dir: bool,
     pub render_markdown: bool,
     pub cache_max_age: String,
+    // Process
+    pub proc_bin: String,
+    pub proc_args: String,
+    pub proc_dir: String,
+    pub proc_port: String,
+    pub proc_auto_start: bool,
+    pub proc_exclude_from_start_all: bool,
     // Process (read-only for now)
     pub bin: String,
 }
@@ -270,6 +278,12 @@ pub enum EditBackendField {
     ListDir(bool),
     RenderMarkdown(bool),
     CacheMaxAge(String),
+    ProcBin(String),
+    ProcArgs(String),
+    ProcDir(String),
+    ProcPort(String),
+    ProcAutoStart(bool),
+    ProcExcludeFromStartAll(bool),
 }
 
 pub struct OddBoxGui {
@@ -454,6 +468,14 @@ async fn load_backend_form(state: Arc<GlobalState>, backend_id: String) -> EditB
             v4::Backend::Process(p) => {
                 form.kind = BackendKind::Process;
                 form.bin = p.bin.clone();
+                form.proc_bin = p.bin.clone();
+                form.proc_args = p.args.join(" ");
+                form.proc_dir = p.dir.clone().unwrap_or_default();
+                form.protocol = p.protocol.clone();
+                form.https = p.https;
+                form.proc_port = p.port.map(|v| v.to_string()).unwrap_or_default();
+                form.proc_auto_start = p.auto_start.unwrap_or(true);
+                form.proc_exclude_from_start_all = p.exclude_from_start_all;
             }
             v4::Backend::Remote(r) => {
                 form.kind = BackendKind::Remote;
@@ -558,7 +580,55 @@ async fn save_backend_form(
             );
         }
         BackendKind::Process => {
-            return Err("Process backends are edited on the Managed Processes page.".to_string());
+            if form.proc_bin.trim().is_empty() {
+                return Err("Binary is required.".to_string());
+            }
+
+            let port = if form.proc_port.trim().is_empty() {
+                None
+            } else {
+                Some(
+                    form.proc_port
+                        .trim()
+                        .parse::<u16>()
+                        .map_err(|_| "Port must be a number.".to_string())?,
+                )
+            };
+
+            let args: Vec<String> = form
+                .proc_args
+                .split_whitespace()
+                .map(|s| s.to_string())
+                .collect();
+
+            let (proc_id, env, log_level, log_format) = match guard.backends.get(&form.id) {
+                Some(v4::Backend::Process(p)) => {
+                    (p.proc_id.clone(), p.env.clone(), p.log_level.clone(), p.log_format.clone())
+                }
+                _ => (ProcId::new(), std::collections::HashMap::new(), None, None),
+            };
+
+            guard.backends.insert(
+                form.id.clone(),
+                v4::Backend::Process(v4::ProcessBackend {
+                    proc_id,
+                    bin: form.proc_bin.clone(),
+                    args,
+                    dir: if form.proc_dir.trim().is_empty() {
+                        None
+                    } else {
+                        Some(form.proc_dir.clone())
+                    },
+                    env,
+                    protocol: form.protocol,
+                    https: form.https,
+                    port,
+                    auto_start: Some(form.proc_auto_start),
+                    exclude_from_start_all: form.proc_exclude_from_start_all,
+                    log_level,
+                    log_format,
+                }),
+            );
         }
         BackendKind::Unknown => {
             return Err("Backend not found.".to_string());
@@ -981,6 +1051,14 @@ impl OddBoxGui {
                 EditBackendField::ListDir(v) => self.edit_backend_form.list_dir = v,
                 EditBackendField::RenderMarkdown(v) => self.edit_backend_form.render_markdown = v,
                 EditBackendField::CacheMaxAge(v) => self.edit_backend_form.cache_max_age = v,
+                EditBackendField::ProcBin(v) => self.edit_backend_form.proc_bin = v,
+                EditBackendField::ProcArgs(v) => self.edit_backend_form.proc_args = v,
+                EditBackendField::ProcDir(v) => self.edit_backend_form.proc_dir = v,
+                EditBackendField::ProcPort(v) => self.edit_backend_form.proc_port = v,
+                EditBackendField::ProcAutoStart(v) => self.edit_backend_form.proc_auto_start = v,
+                EditBackendField::ProcExcludeFromStartAll(v) => {
+                    self.edit_backend_form.proc_exclude_from_start_all = v;
+                }
             },
             Message::EditBackendPickDir => {
                 return Task::perform(pick_backend_dir(), Message::EditBackendDirPicked);
