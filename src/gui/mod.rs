@@ -174,6 +174,9 @@ pub enum Message {
     // Process control
     ProcessStart(String),
     ProcessStop(String),
+    // Dashboard card menu
+    DashboardToggleProcessMenu(String),
+    DashboardCursorMoved(f32, f32),
 }
 
 pub struct OddBoxGui {
@@ -200,6 +203,10 @@ pub struct OddBoxGui {
     pub(in crate::gui) log_auto_tail: bool,
     // Cached config data
     pub(in crate::gui) cached_config: CachedConfig,
+    // Dashboard: which process card has its action menu open
+    pub(in crate::gui) dashboard_process_menu: Option<String>,
+    pub(in crate::gui) dashboard_cursor_pos: (f32, f32),
+    pub(in crate::gui) dashboard_menu_pos: (f32, f32),
 }
 
 fn log_scroll_id() -> Id {
@@ -286,6 +293,9 @@ impl OddBoxGui {
                 log_wrap_enabled: false,
                 log_auto_tail: true, // Auto-tail enabled by default
                 cached_config: CachedConfig::default(),
+                dashboard_process_menu: None,
+                dashboard_cursor_pos: (0.0, 0.0),
+                dashboard_menu_pos: (0.0, 0.0),
             },
             Task::batch(tasks),
         )
@@ -314,6 +324,7 @@ impl OddBoxGui {
             Message::NoOp => {}
             Message::NavigateTo(page) => {
                 self.current_page = page;
+                self.dashboard_process_menu = None;
                 if page == Page::Monitoring {
                     self.refresh_log_cache(true);
                 }
@@ -398,6 +409,17 @@ impl OddBoxGui {
             }
             Message::ProcessStop(name) => {
                 self.state.process_registry.set_enabled(&name, false);
+            }
+            Message::DashboardToggleProcessMenu(name) => {
+                if self.dashboard_process_menu.as_ref() == Some(&name) {
+                    self.dashboard_process_menu = None;
+                } else {
+                    self.dashboard_process_menu = Some(name);
+                    self.dashboard_menu_pos = self.dashboard_cursor_pos;
+                }
+            }
+            Message::DashboardCursorMoved(x, y) => {
+                self.dashboard_cursor_pos = (x, y);
             }
         }
         Task::none()

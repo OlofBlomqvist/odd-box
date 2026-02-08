@@ -29,6 +29,7 @@ pub struct CachedRemoteBackend {
     pub endpoints: String,
     pub protocol: String,
     pub https: bool,
+    pub state: ProcState,
 }
 
 /// Cached static backend info for display
@@ -37,6 +38,7 @@ pub struct CachedStaticBackend {
     pub name: String,
     pub dir: String,
     pub list_dir: bool,
+    pub state: ProcState,
 }
 
 /// Cached route info for display
@@ -102,11 +104,16 @@ pub async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
                 .map(|e| format!("{}:{}", e.addr, e.port))
                 .collect::<Vec<_>>()
                 .join(", ");
+            let state = snapshot
+                .get(&name)
+                .map(|h| h.proc_state())
+                .unwrap_or(ProcState::Remote);
             CachedRemoteBackend {
                 name,
                 endpoints,
                 protocol: format!("{:?}", remote.protocol),
                 https: remote.https,
+                state,
             }
         })
         .collect();
@@ -119,10 +126,15 @@ pub async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
         .map(|entry| {
             let name = entry.key().clone();
             let static_site = entry.value();
+            let state = snapshot
+                .get(&name)
+                .map(|h| h.proc_state())
+                .unwrap_or(ProcState::DirServer);
             CachedStaticBackend {
                 name,
                 dir: static_site.dir.clone(),
                 list_dir: static_site.list_dir,
+                state,
             }
         })
         .collect();
