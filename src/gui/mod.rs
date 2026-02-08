@@ -160,6 +160,17 @@ impl std::fmt::Display for LogLevelPreset {
     }
 }
 
+impl std::fmt::Display for v4::Protocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            v4::Protocol::H1 => write!(f, "h1"),
+            v4::Protocol::H2 => write!(f, "h2"),
+            v4::Protocol::H2C => write!(f, "h2c"),
+            v4::Protocol::H2CPK => write!(f, "h2cpk"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     /// No-op message for hover-only interactive elements
@@ -196,6 +207,12 @@ pub enum Message {
     EditFrontendLetsEncryptToggled(bool),
     EditFrontendSave,
     EditFrontendSaveResult(Result<(), String>),
+    EditBackendLoaded(EditBackendForm),
+    EditBackendFieldChanged(EditBackendField),
+    EditBackendPickDir,
+    EditBackendDirPicked(Option<String>),
+    EditBackendSave,
+    EditBackendSaveResult(Result<(), String>),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -207,6 +224,50 @@ pub struct EditFrontendForm {
     pub redirect_to_https: bool,
     pub lets_encrypt: bool,
     pub https_only: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendKind {
+    Process,
+    Remote,
+    Static,
+    Unknown,
+}
+
+impl Default for BackendKind {
+    fn default() -> Self {
+        BackendKind::Unknown
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct EditBackendForm {
+    pub id: String,
+    pub kind: BackendKind,
+    // Remote
+    pub endpoints: String,
+    pub protocol: v4::Protocol,
+    pub https: bool,
+    pub keep_original_host_header: bool,
+    // Static
+    pub dir: String,
+    pub list_dir: bool,
+    pub render_markdown: bool,
+    pub cache_max_age: String,
+    // Process (read-only for now)
+    pub bin: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum EditBackendField {
+    Endpoints(String),
+    Protocol(v4::Protocol),
+    Https(bool),
+    KeepOriginalHostHeader(bool),
+    Dir(String),
+    ListDir(bool),
+    RenderMarkdown(bool),
+    CacheMaxAge(String),
 }
 
 pub struct OddBoxGui {
@@ -241,6 +302,8 @@ pub struct OddBoxGui {
     pub(in crate::gui) edit_target: Option<String>,
     pub(in crate::gui) edit_frontend_form: EditFrontendForm,
     pub(in crate::gui) edit_frontend_notice: Option<String>,
+    pub(in crate::gui) edit_backend_form: EditBackendForm,
+    pub(in crate::gui) edit_backend_notice: Option<String>,
 }
 
 fn log_scroll_id() -> Id {
@@ -373,6 +436,141 @@ async fn save_frontend_form(
     Ok(())
 }
 
+async fn load_backend_form(state: Arc<GlobalState>, backend_id: String) -> EditBackendForm {
+    let guard = state.config.read().await;
+    let mut form = EditBackendForm {
+        id: backend_id.clone(),
+        ..EditBackendForm::default()
+    };
+
+    if let Some(backend) = guard.backends.get(&backend_id) {
+        match backend {
+            v4::Backend::Process(p) => {
+                form.kind = BackendKind::Process;
+                form.bin = p.bin.clone();
+            }
+            v4::Backend::Remote(r) => {
+                form.kind = BackendKind::Remote;
+                form.protocol = r.protocol.clone();
+                form.https = r.https;
+                form.keep_original_host_header = r.keep_original_host_header;
+                form.endpoints = r
+                    .endpoints
+                    .iter()
+                    .map(|e| format!("{}:{}", e.addr, e.port))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+            }
+            v4::Backend::Static(s) => {
+                form.kind = BackendKind::Static;
+                form.dir = s.dir.clone();
+                form.list_dir = s.list_dir;
+                form.render_markdown = s.render_markdown;
+                form.cache_max_age = s
+                    .cache_max_age
+                    .map(|v| v.to_string())
+                    .unwrap_or_default();
+            }
+        }
+    } else {
+        form.kind = BackendKind::Unknown;
+    }
+
+    form
+}
+
+async fn save_backend_form(
+    state: Arc<GlobalState>,
+    form: EditBackendForm,
+) -> Result<(), String> {
+    if form.id.trim().is_empty() {
+        return Err("Backend id is required.".to_string());
+    }
+
+    let mut guard = state.config.write().await;
+
+    match form.kind {
+        BackendKind::Remote => {
+            let endpoints = form
+                .endpoints
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|item| {
+                    let (addr, port_str) = item
+                        .rsplit_once(':')
+                        .ok_or_else(|| format!("Invalid endpoint '{}'", item))?;
+                    let port: u16 = port_str
+                        .parse()
+                        .map_err(|_| format!("Invalid port in '{}'", item))?;
+                    Ok(v4::Endpoint {
+                        addr: addr.to_string(),
+                        port,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+
+            if endpoints.is_empty() {
+                return Err("At least one endpoint is required.".to_string());
+            }
+
+            guard.backends.insert(
+                form.id.clone(),
+                v4::Backend::Remote(v4::RemoteBackend {
+                    endpoints,
+                    protocol: form.protocol,
+                    https: form.https,
+                    keep_original_host_header: form.keep_original_host_header,
+                }),
+            );
+        }
+        BackendKind::Static => {
+            if form.dir.trim().is_empty() {
+                return Err("Directory is required.".to_string());
+            }
+
+            let cache_max_age = if form.cache_max_age.trim().is_empty() {
+                None
+            } else {
+                Some(
+                    form.cache_max_age
+                        .trim()
+                        .parse::<u64>()
+                        .map_err(|_| "Cache max-age must be a number.".to_string())?,
+                )
+            };
+
+            guard.backends.insert(
+                form.id.clone(),
+                v4::Backend::Static(v4::StaticBackend {
+                    dir: form.dir.clone(),
+                    index: "index.html".to_string(),
+                    list_dir: form.list_dir,
+                    render_markdown: form.render_markdown,
+                    cache_max_age,
+                }),
+            );
+        }
+        BackendKind::Process => {
+            return Err("Process backends are edited on the Managed Processes page.".to_string());
+        }
+        BackendKind::Unknown => {
+            return Err("Backend not found.".to_string());
+        }
+    }
+
+    guard.reload_dashmaps();
+    guard.is_valid().map_err(|e| e.to_string())?;
+    guard.write_to_disk().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+async fn pick_backend_dir() -> Option<String> {
+    rfd::FileDialog::new()
+        .pick_folder()
+        .map(|p| p.display().to_string())
+}
+
 impl OddBoxGui {
     fn apply_log_level_preset(filter: &mut LogFilter, preset: LogLevelPreset) {
         match preset {
@@ -460,6 +658,8 @@ impl OddBoxGui {
                 edit_target: None,
                 edit_frontend_form: EditFrontendForm::default(),
                 edit_frontend_notice: None,
+                edit_backend_form: EditBackendForm::default(),
+                edit_backend_notice: None,
             },
             Task::batch(tasks),
         )
@@ -629,6 +829,11 @@ impl OddBoxGui {
                 self.edit_target = Some(name);
                 self.current_page = Page::EditBackend;
                 self.dashboard_process_menu = None;
+                self.edit_backend_notice = None;
+                return Task::perform(
+                    load_backend_form(self.state.clone(), self.edit_target.clone().unwrap()),
+                    Message::EditBackendLoaded,
+                );
             }
             Message::EditFrontendLoaded(form) => {
                 self.edit_frontend_form = form;
@@ -667,6 +872,45 @@ impl OddBoxGui {
                 }
                 Err(err) => {
                     self.edit_frontend_notice = Some(err);
+                }
+            },
+            Message::EditBackendLoaded(form) => {
+                self.edit_backend_form = form;
+            }
+            Message::EditBackendFieldChanged(field) => match field {
+                EditBackendField::Endpoints(v) => self.edit_backend_form.endpoints = v,
+                EditBackendField::Protocol(v) => self.edit_backend_form.protocol = v,
+                EditBackendField::Https(v) => self.edit_backend_form.https = v,
+                EditBackendField::KeepOriginalHostHeader(v) => {
+                    self.edit_backend_form.keep_original_host_header = v;
+                }
+                EditBackendField::Dir(v) => self.edit_backend_form.dir = v,
+                EditBackendField::ListDir(v) => self.edit_backend_form.list_dir = v,
+                EditBackendField::RenderMarkdown(v) => self.edit_backend_form.render_markdown = v,
+                EditBackendField::CacheMaxAge(v) => self.edit_backend_form.cache_max_age = v,
+            },
+            Message::EditBackendPickDir => {
+                return Task::perform(pick_backend_dir(), Message::EditBackendDirPicked);
+            }
+            Message::EditBackendDirPicked(path) => {
+                if let Some(p) = path {
+                    self.edit_backend_form.dir = p;
+                }
+            }
+            Message::EditBackendSave => {
+                self.edit_backend_notice = None;
+                let form = self.edit_backend_form.clone();
+                return Task::perform(
+                    save_backend_form(self.state.clone(), form),
+                    Message::EditBackendSaveResult,
+                );
+            }
+            Message::EditBackendSaveResult(result) => match result {
+                Ok(_) => {
+                    self.edit_backend_notice = Some("Saved. Waiting for reload...".to_string());
+                }
+                Err(err) => {
+                    self.edit_backend_notice = Some(err);
                 }
             },
         }
