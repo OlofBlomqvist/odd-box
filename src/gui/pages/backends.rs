@@ -23,15 +23,18 @@ impl OddBoxGui {
                 TableColumn::fixed("HTTPS", 60.0),
             ];
 
-            let mut table = Table::new(columns).hover(Message::NoOp);
+            let mut table = Table::new(columns);
 
             for backend in &self.cached_config.remote_backends {
-                table = table.push_row(vec![
-                    text_cell(&backend.name),
-                    text_cell(&backend.endpoints),
-                    text_cell(&backend.protocol),
-                    bool_cell(backend.https),
-                ]);
+                table = table.push_row_with_message(
+                    vec![
+                        text_cell(&backend.name),
+                        text_cell(&backend.endpoints),
+                        text_cell(&backend.protocol),
+                        bool_cell(backend.https),
+                    ],
+                    Message::OpenEditBackend(backend.name.clone()),
+                );
             }
 
             sections.push(
@@ -52,14 +55,17 @@ impl OddBoxGui {
                 TableColumn::fixed("List Dir", 80.0),
             ];
 
-            let mut table = Table::new(columns).hover(Message::NoOp);
+            let mut table = Table::new(columns);
 
             for backend in &self.cached_config.static_backends {
-                table = table.push_row(vec![
-                    text_cell(&backend.name),
-                    text_cell(&backend.dir),
-                    bool_cell(backend.list_dir),
-                ]);
+                table = table.push_row_with_message(
+                    vec![
+                        text_cell(&backend.name),
+                        text_cell(&backend.dir),
+                        bool_cell(backend.list_dir),
+                    ],
+                    Message::OpenEditBackend(backend.name.clone()),
+                );
             }
 
             sections.push(

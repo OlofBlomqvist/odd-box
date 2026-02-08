@@ -1,5 +1,7 @@
 mod backends;
 mod dashboard;
+mod edit_backend;
+mod edit_frontend;
 mod frontends;
 mod monitoring;
 mod processes;

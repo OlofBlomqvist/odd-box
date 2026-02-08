@@ -9,10 +9,12 @@ use iced::widget::{
 use iced::{
     Application, Background, Border, Color, Element, Font, Length, Padding, Radians, Subscription, Task, Theme, system, theme, time
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
 
 use crate::global_state::GlobalState;
+use crate::configuration::v4;
 use logs::{LogFilter, SharedLogState};
 use pages::{CachedConfig, CachedLogLine, fetch_config};
 
@@ -91,6 +93,8 @@ pub enum Page {
     Backends,
     Frontends,
     ManagedProcesses,
+    EditFrontend,
+    EditBackend,
 }
 
 impl Page {
@@ -103,6 +107,8 @@ impl Page {
             Page::Backends => "Backends",
             Page::Frontends => "Frontends",
             Page::ManagedProcesses => "Managed Processes",
+            Page::EditFrontend => "Edit Frontend",
+            Page::EditBackend => "Edit Backend",
         }
     }
 
@@ -116,6 +122,8 @@ impl Page {
             Page::Backends => "⬚",
             Page::Frontends => "◧",
             Page::ManagedProcesses => "⚙",
+            Page::EditFrontend => "✎",
+            Page::EditBackend => "✎",
         }
     }
 }
@@ -177,6 +185,28 @@ pub enum Message {
     // Dashboard card menu
     DashboardToggleProcessMenu(String),
     DashboardCursorMoved(f32, f32),
+    OpenEditFrontend(String),
+    OpenEditBackend(String),
+    EditFrontendLoaded(EditFrontendForm),
+    EditFrontendHostChanged(String),
+    EditFrontendBackendChanged(String),
+    EditFrontendCaptureSubdomainsToggled(bool),
+    EditFrontendForwardSubdomainsToggled(bool),
+    EditFrontendRedirectHttpsToggled(bool),
+    EditFrontendLetsEncryptToggled(bool),
+    EditFrontendSave,
+    EditFrontendSaveResult(Result<(), String>),
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct EditFrontendForm {
+    pub hostname: String,
+    pub backend: String,
+    pub capture_subdomains: bool,
+    pub forward_subdomains: bool,
+    pub redirect_to_https: bool,
+    pub lets_encrypt: bool,
+    pub https_only: bool,
 }
 
 pub struct OddBoxGui {
@@ -203,14 +233,144 @@ pub struct OddBoxGui {
     pub(in crate::gui) log_auto_tail: bool,
     // Cached config data
     pub(in crate::gui) cached_config: CachedConfig,
+    pub(in crate::gui) backend_names: Vec<String>,
     // Dashboard: which process card has its action menu open
     pub(in crate::gui) dashboard_process_menu: Option<String>,
     pub(in crate::gui) dashboard_cursor_pos: (f32, f32),
     pub(in crate::gui) dashboard_menu_pos: (f32, f32),
+    pub(in crate::gui) edit_target: Option<String>,
+    pub(in crate::gui) edit_frontend_form: EditFrontendForm,
+    pub(in crate::gui) edit_frontend_notice: Option<String>,
 }
 
 fn log_scroll_id() -> Id {
     Id::new("odd_box_log_scroll")
+}
+
+async fn load_frontend_form(state: Arc<GlobalState>, hostname: String) -> EditFrontendForm {
+    let guard = state.config.read().await;
+
+    let mut form = EditFrontendForm {
+        hostname: hostname.clone(),
+        ..EditFrontendForm::default()
+    };
+
+    let mut target: Option<&v4::RouteTarget> = None;
+    let mut https_only = false;
+
+    if let Some(http) = &guard.frontends.http {
+        if let Some(t) = http.routes.get(&hostname) {
+            target = Some(t);
+        }
+    }
+
+    if target.is_none() {
+        if let Some(https) = &guard.frontends.https {
+            if let Some(v4::HttpsRoutes::Explicit(routes)) = &https.routes {
+                if let Some(t) = routes.get(&hostname) {
+                    target = Some(t);
+                    https_only = true;
+                }
+            }
+        }
+    }
+
+    if let Some(t) = target {
+        match t {
+            v4::RouteTarget::Simple(backend) => {
+                form.backend = backend.clone();
+            }
+            v4::RouteTarget::Detailed(d) => {
+                form.backend = d.backend.clone();
+                form.capture_subdomains = d.capture_subdomains;
+                form.forward_subdomains = d.forward_subdomains;
+                form.redirect_to_https = d.redirect_to_https;
+                form.lets_encrypt = d.lets_encrypt;
+            }
+        }
+    }
+
+    form.https_only = https_only;
+
+    form
+}
+
+async fn save_frontend_form(
+    state: Arc<GlobalState>,
+    original_host: Option<String>,
+    mut form: EditFrontendForm,
+) -> Result<(), String> {
+    if form.hostname.trim().is_empty() {
+        return Err("Hostname is required.".to_string());
+    }
+    if form.backend.trim().is_empty() {
+        return Err("Backend is required.".to_string());
+    }
+    if form.capture_subdomains && form.lets_encrypt {
+        return Err(
+            "LetsEncrypt cannot be enabled when capture subdomains is enabled.".to_string(),
+        );
+    }
+
+    let mut guard = state.config.write().await;
+    if !guard.backends.contains_key(&form.backend) {
+        return Err(format!("Backend '{}' does not exist.", form.backend));
+    }
+
+    let target = if form.capture_subdomains
+        || form.forward_subdomains
+        || form.redirect_to_https
+        || form.lets_encrypt
+    {
+        v4::RouteTarget::Detailed(v4::DetailedRoute {
+            backend: form.backend.clone(),
+            capture_subdomains: form.capture_subdomains,
+            forward_subdomains: form.forward_subdomains,
+            redirect_to_https: form.redirect_to_https,
+            lets_encrypt: form.lets_encrypt,
+        })
+    } else {
+        v4::RouteTarget::Simple(form.backend.clone())
+    };
+
+    if form.https_only {
+        if let Some(https) = guard.frontends.https.as_mut() {
+            if let Some(v4::HttpsRoutes::Explicit(routes)) = https.routes.as_mut() {
+                if let Some(old) = original_host.clone() {
+                    if old != form.hostname {
+                        routes.remove(&old);
+                    }
+                }
+                routes.insert(form.hostname.clone(), target.clone());
+            } else {
+                form.https_only = false;
+            }
+        } else {
+            form.https_only = false;
+        }
+    }
+
+    if !form.https_only {
+        if guard.frontends.http.is_none() {
+            guard.frontends.http = Some(v4::HttpFrontend {
+                port: 80,
+                routes: HashMap::new(),
+            });
+        }
+
+        let http = guard.frontends.http.as_mut().unwrap();
+        if let Some(old) = original_host {
+            if old != form.hostname {
+                http.routes.remove(&old);
+            }
+        }
+        http.routes.insert(form.hostname.clone(), target);
+    }
+
+    guard.is_valid().map_err(|e| e.to_string())?;
+    guard.write_to_disk().map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 impl OddBoxGui {
@@ -293,9 +453,13 @@ impl OddBoxGui {
                 log_wrap_enabled: false,
                 log_auto_tail: true, // Auto-tail enabled by default
                 cached_config: CachedConfig::default(),
+                backend_names: Vec::new(),
                 dashboard_process_menu: None,
                 dashboard_cursor_pos: (0.0, 0.0),
                 dashboard_menu_pos: (0.0, 0.0),
+                edit_target: None,
+                edit_frontend_form: EditFrontendForm::default(),
+                edit_frontend_notice: None,
             },
             Task::batch(tasks),
         )
@@ -309,6 +473,9 @@ impl OddBoxGui {
             }
             Page::ManagedProcesses | Page::Backends | Page::Frontends | Page::Dashboard => {
                 // Slower tick for config pages (process status can change)
+                time::every(std::time::Duration::from_millis(1000)).map(|_| Message::Tick)
+            }
+            Page::EditFrontend | Page::EditBackend => {
                 time::every(std::time::Duration::from_millis(1000)).map(|_| Message::Tick)
             }
             _ => Subscription::none(),
@@ -331,7 +498,12 @@ impl OddBoxGui {
                 // Trigger config refresh for config-related pages
                 if matches!(
                     page,
-                    Page::ManagedProcesses | Page::Backends | Page::Frontends | Page::Dashboard
+                    Page::ManagedProcesses
+                        | Page::Backends
+                        | Page::Frontends
+                        | Page::Dashboard
+                        | Page::EditFrontend
+                        | Page::EditBackend
                 ) {
                     return Task::perform(fetch_config(self.state.clone()), Message::ConfigUpdated);
                 }
@@ -356,13 +528,35 @@ impl OddBoxGui {
                 // Refresh config for config-related pages
                 if matches!(
                     self.current_page,
-                    Page::ManagedProcesses | Page::Backends | Page::Frontends | Page::Dashboard
+                    Page::ManagedProcesses
+                        | Page::Backends
+                        | Page::Frontends
+                        | Page::Dashboard
+                        | Page::EditFrontend
+                        | Page::EditBackend
                 ) {
                     return Task::perform(fetch_config(self.state.clone()), Message::ConfigUpdated);
                 }
             }
             Message::ConfigUpdated(config) => {
                 self.cached_config = config;
+                let mut names: Vec<String> = Vec::new();
+                names.extend(self.cached_config.processes.iter().map(|p| p.name.clone()));
+                names.extend(
+                    self.cached_config
+                        .remote_backends
+                        .iter()
+                        .map(|b| b.name.clone()),
+                );
+                names.extend(
+                    self.cached_config
+                        .static_backends
+                        .iter()
+                        .map(|b| b.name.clone()),
+                );
+                names.sort();
+                names.dedup();
+                self.backend_names = names;
             }
             Message::LogFilterTextChanged(text) => {
                 self.log_filter.text = text;
@@ -421,6 +615,60 @@ impl OddBoxGui {
             Message::DashboardCursorMoved(x, y) => {
                 self.dashboard_cursor_pos = (x, y);
             }
+            Message::OpenEditFrontend(name) => {
+                self.edit_target = Some(name.clone());
+                self.current_page = Page::EditFrontend;
+                self.dashboard_process_menu = None;
+                self.edit_frontend_notice = None;
+                return Task::perform(
+                    load_frontend_form(self.state.clone(), name),
+                    Message::EditFrontendLoaded,
+                );
+            }
+            Message::OpenEditBackend(name) => {
+                self.edit_target = Some(name);
+                self.current_page = Page::EditBackend;
+                self.dashboard_process_menu = None;
+            }
+            Message::EditFrontendLoaded(form) => {
+                self.edit_frontend_form = form;
+            }
+            Message::EditFrontendHostChanged(value) => {
+                self.edit_frontend_form.hostname = value;
+            }
+            Message::EditFrontendBackendChanged(value) => {
+                self.edit_frontend_form.backend = value;
+            }
+            Message::EditFrontendCaptureSubdomainsToggled(value) => {
+                self.edit_frontend_form.capture_subdomains = value;
+            }
+            Message::EditFrontendForwardSubdomainsToggled(value) => {
+                self.edit_frontend_form.forward_subdomains = value;
+            }
+            Message::EditFrontendRedirectHttpsToggled(value) => {
+                self.edit_frontend_form.redirect_to_https = value;
+            }
+            Message::EditFrontendLetsEncryptToggled(value) => {
+                self.edit_frontend_form.lets_encrypt = value;
+            }
+            Message::EditFrontendSave => {
+                self.edit_frontend_notice = None;
+                let form = self.edit_frontend_form.clone();
+                let original_host = self.edit_target.clone();
+                return Task::perform(
+                    save_frontend_form(self.state.clone(), original_host, form),
+                    Message::EditFrontendSaveResult,
+                );
+            }
+            Message::EditFrontendSaveResult(result) => match result {
+                Ok(_) => {
+                    self.edit_target = Some(self.edit_frontend_form.hostname.clone());
+                    self.edit_frontend_notice = Some("Saved. Waiting for reload...".to_string());
+                }
+                Err(err) => {
+                    self.edit_frontend_notice = Some(err);
+                }
+            },
         }
         Task::none()
     }
@@ -586,6 +834,8 @@ impl OddBoxGui {
             Page::Backends => self.view_backends(),
             Page::Frontends => self.view_frontends(),
             Page::ManagedProcesses => self.view_processes(),
+            Page::EditFrontend => self.view_edit_frontend(),
+            Page::EditBackend => self.view_edit_backend(),
         };
 
         // Monitoring page handles its own layout (no extra scrollable wrapper)

@@ -1,13 +1,14 @@
 use iced::widget::text::Wrapping;
-use iced::widget::{Column, Row, Stack, button, column, container, mouse_area, row, text};
-use iced::{Alignment, Border, Color, Element, Length, Padding, Theme};
+use iced::widget::{Column, Row, Stack, button, column, container, mouse_area, responsive, row, text};
+use iced::{Alignment, Border, Color, Element, Length, Padding, Size, Theme};
 
 use crate::global_state::ProcState;
 
 use super::super::{Message, OddBoxGui};
 
-/// Fixed card width — wrapping adapts column count to available space
-const CARD_WIDTH: f32 = 220.0;
+/// Minimum card width for responsive layout
+const CARD_MIN_WIDTH: f32 = 240.0;
+const CARD_GAP: f32 = 12.0;
 
 /// Category accent colors
 const COLOR_PROCESS: Color = Color::from_rgb(0.4, 0.6, 1.0);
@@ -56,6 +57,7 @@ fn site_card<'a>(
     category_label: &'a str,
     accent_color: Color,
     state: &ProcState,
+    card_width: f32,
 ) -> Element<'a, Message> {
     let dot_color = status_color(state);
 
@@ -63,6 +65,7 @@ fn site_card<'a>(
         text("●").color(dot_color).size(14),
         text(name.to_string())
             .size(15)
+            .wrapping(Wrapping::None)
             .font(iced::Font {
                 weight: iced::font::Weight::Bold,
                 ..iced::Font::MONOSPACE
@@ -91,8 +94,8 @@ fn site_card<'a>(
         .width(Length::Fill);
 
     container(card_content)
-        .padding(12)
-        .width(Length::Fixed(CARD_WIDTH))
+        .padding(16)
+        .width(Length::Fixed(card_width))
         .clip(true)
         .style(card_style)
         .into()
@@ -105,6 +108,7 @@ fn process_card<'a>(
     port: &str,
     bin: &str,
     state: &ProcState,
+    card_width: f32,
 ) -> Element<'a, Message> {
     let dot_color = status_color(state);
     let proc_name = name.to_string();
@@ -113,6 +117,7 @@ fn process_card<'a>(
         text("●").color(dot_color).size(14),
         text(name.to_string())
             .size(15)
+            .wrapping(Wrapping::None)
             .font(iced::Font {
                 weight: iced::font::Weight::Bold,
                 ..iced::Font::MONOSPACE
@@ -128,7 +133,7 @@ fn process_card<'a>(
 
     let bin_row = text(bin.to_string())
         .size(11)
-        .wrapping(Wrapping::None)
+        .wrapping(Wrapping::Word)
         .style(muted_text);
 
     let category_row = row![
@@ -146,8 +151,8 @@ fn process_card<'a>(
         .width(Length::Fill);
 
     let card = container(card_content)
-        .padding(12)
-        .width(Length::Fixed(CARD_WIDTH))
+        .padding(16)
+        .width(Length::Fixed(card_width))
         .clip(true)
         .style(card_style);
 
@@ -161,11 +166,9 @@ fn process_card<'a>(
 fn process_popup_menu<'a>(
     name: &str,
     state: &ProcState,
-    auto_start: bool,
 ) -> Element<'a, Message> {
     let proc_name = name.to_string();
     let dot_color = status_color(state);
-    let state_label = format!("{:?}", state);
 
     let header = row![
         text("●").color(dot_color).size(16),
@@ -175,7 +178,6 @@ fn process_popup_menu<'a>(
                 weight: iced::font::Weight::Bold,
                 ..iced::Font::MONOSPACE
             }),
-        text(state_label).size(13).style(muted_text),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -235,17 +237,19 @@ fn process_popup_menu<'a>(
         stop_btn = stop_btn.on_press(Message::ProcessStop(proc_name.clone()));
     }
 
-    let autostart_label = if auto_start {
-        "✓  Auto-start: On"
-    } else {
-        "✗  Auto-start: Off"
-    };
-    let autostart_btn = button(text(autostart_label).size(14))
+    let edit_frontend_btn = button(text("✎  Edit Frontend").size(14))
         .padding(btn_padding)
         .width(Length::Fill)
-        .style(menu_btn_style(Color::from_rgb(0.4, 0.5, 0.7)));
+        .style(menu_btn_style(Color::from_rgb(0.35, 0.55, 0.9)))
+        .on_press(Message::OpenEditFrontend(proc_name.clone()));
 
-    let actions = column![start_btn, stop_btn, autostart_btn].spacing(4);
+    let edit_backend_btn = button(text("✎  Edit Backend").size(14))
+        .padding(btn_padding)
+        .width(Length::Fill)
+        .style(menu_btn_style(Color::from_rgb(0.45, 0.6, 0.85)))
+        .on_press(Message::OpenEditBackend(proc_name));
+
+    let actions = column![start_btn, stop_btn, edit_frontend_btn, edit_backend_btn].spacing(4);
 
     let menu_content = column![header, actions].spacing(12);
 
@@ -345,6 +349,34 @@ fn section_header<'a>(title: &'a str, count: usize, accent: Color) -> Element<'a
     .into()
 }
 
+fn card_layout(size: Size) -> (usize, f32) {
+    let available_width = size.width.max(1.0);
+    let cols = ((available_width + CARD_GAP) / (CARD_MIN_WIDTH + CARD_GAP))
+        .floor()
+        .max(1.0) as usize;
+    let card_width =
+        (available_width - CARD_GAP * (cols.saturating_sub(1)) as f32) / cols as f32;
+    (cols, card_width)
+}
+
+fn rows_from_cards<'a>(
+    mut cards: Vec<Element<'a, Message>>,
+    cols: usize,
+) -> Column<'a, Message> {
+    let mut rows: Vec<Element<'a, Message>> = Vec::new();
+    while !cards.is_empty() {
+        let take = cols.min(cards.len());
+        let row_cards: Vec<Element<'a, Message>> = cards.drain(..take).collect();
+        rows.push(
+            Row::with_children(row_cards)
+                .spacing(CARD_GAP)
+                .width(Length::Fill)
+                .into(),
+        );
+    }
+    Column::with_children(rows).spacing(CARD_GAP)
+}
+
 impl OddBoxGui {
     pub(in crate::gui) fn view_dashboard(&self) -> Element<'_, Message> {
         let uptime = self
@@ -353,180 +385,184 @@ impl OddBoxGui {
             .map(|d| format!("{:.0?}", d))
             .unwrap_or_else(|_| "Unknown".to_string());
 
-        // --- Uptime bar ---
-        let uptime_bar = container(
-            row![
-                text("●").color(Color::from_rgb(0.4, 0.8, 0.4)).size(14),
-                text("Status: Running")
-                    .size(15)
-                    .color(Color::from_rgb(0.4, 0.8, 0.4)),
-                text(format!("  Uptime: {}", uptime))
-                    .size(15)
-                    .style(muted_text),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        )
-        .padding(14)
-        .width(Length::Fill)
-        .style(|theme: &Theme| {
-            let palette = theme.extended_palette();
-            container::Style {
-                background: Some(palette.background.weaker.color.into()),
-                border: Border {
-                    radius: 6.0.into(),
-                    width: 1.0,
-                    color: palette.background.strong.color,
-                },
-                ..Default::default()
-            }
-        });
+        let dashboard_content: Element<'_, Message> = responsive(move |size| {
+            let (cols, card_width) = card_layout(size);
 
-        // --- Summary counts ---
-        let total = self.cached_config.processes.len()
-            + self.cached_config.remote_backends.len()
-            + self.cached_config.static_backends.len();
+            // --- Uptime bar ---
+            let uptime_bar = container(
+                row![
+                    text("●").color(Color::from_rgb(0.4, 0.8, 0.4)).size(14),
+                    text("Status: Running")
+                        .size(15)
+                        .color(Color::from_rgb(0.4, 0.8, 0.4)),
+                    text(format!("  Uptime: {}", &uptime))
+                        .size(15)
+                        .style(muted_text),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .padding(14)
+            .width(Length::Fill)
+            .style(|theme: &Theme| {
+                let palette = theme.extended_palette();
+                container::Style {
+                    background: Some(palette.background.weaker.color.into()),
+                    border: Border {
+                        radius: 6.0.into(),
+                        width: 1.0,
+                        color: palette.background.strong.color,
+                    },
+                    ..Default::default()
+                }
+            });
 
-        let running = self
-            .cached_config
-            .processes
-            .iter()
-            .filter(|p| matches!(p.state, ProcState::Running))
-            .count()
-            + self
-                .cached_config
-                .remote_backends
-                .iter()
-                .filter(|r| matches!(r.state, ProcState::Running | ProcState::Remote))
-                .count()
-            + self
-                .cached_config
-                .static_backends
-                .iter()
-                .filter(|s| matches!(s.state, ProcState::Running | ProcState::DirServer))
-                .count();
+            // --- Summary counts ---
+            let total = self.cached_config.processes.len()
+                + self.cached_config.remote_backends.len()
+                + self.cached_config.static_backends.len();
 
-        let stopped = self
-            .cached_config
-            .processes
-            .iter()
-            .filter(|p| matches!(p.state, ProcState::Stopped))
-            .count();
-
-        let faulty = self
-            .cached_config
-            .processes
-            .iter()
-            .filter(|p| matches!(p.state, ProcState::Faulty))
-            .count();
-
-        let summary_row = Row::with_children(vec![
-            stat_box("Total", total, Color::WHITE),
-            stat_box("Running", running, Color::from_rgb(0.4, 0.8, 0.4)),
-            stat_box("Stopped", stopped, Color::from_rgb(0.6, 0.6, 0.6)),
-            stat_box("Faulty", faulty, Color::from_rgb(0.9, 0.3, 0.3)),
-        ])
-        .spacing(12);
-
-        // --- Category sections ---
-        let mut sections: Vec<Element<'_, Message>> = Vec::new();
-
-        // Managed Processes
-        if !self.cached_config.processes.is_empty() {
-            let cards: Vec<Element<'_, Message>> = self
+            let running = self
                 .cached_config
                 .processes
                 .iter()
-                .map(|p| process_card(&p.name, &p.protocol, &p.port, &p.bin, &p.state))
-                .collect();
+                .filter(|p| matches!(p.state, ProcState::Running))
+                .count()
+                + self
+                    .cached_config
+                    .remote_backends
+                    .iter()
+                    .filter(|r| matches!(r.state, ProcState::Running | ProcState::Remote))
+                    .count()
+                + self
+                    .cached_config
+                    .static_backends
+                    .iter()
+                    .filter(|s| matches!(s.state, ProcState::Running | ProcState::DirServer))
+                    .count();
 
-            sections.push(
-                column![
-                    section_header(
-                        "Managed Processes",
-                        self.cached_config.processes.len(),
-                        COLOR_PROCESS,
-                    ),
-                    Row::with_children(cards)
-                        .spacing(12)
-                        .wrap()
-                        .vertical_spacing(12),
-                ]
-                .spacing(10)
-                .into(),
-            );
-        }
-
-        // Remote Backends
-        if !self.cached_config.remote_backends.is_empty() {
-            let cards: Vec<Element<'_, Message>> = self
+            let stopped = self
                 .cached_config
-                .remote_backends
+                .processes
                 .iter()
-                .map(|r| {
-                    let subtitle = format!("{} · {}", r.protocol, r.endpoints);
-                    site_card(&r.name, &subtitle, "Remote", COLOR_REMOTE, &r.state)
-                })
-                .collect();
+                .filter(|p| matches!(p.state, ProcState::Stopped))
+                .count();
 
-            sections.push(
-                column![
-                    section_header(
-                        "Remote Backends",
-                        self.cached_config.remote_backends.len(),
-                        COLOR_REMOTE,
-                    ),
-                    Row::with_children(cards)
-                        .spacing(12)
-                        .wrap()
-                        .vertical_spacing(12),
-                ]
-                .spacing(10)
-                .into(),
-            );
-        }
-
-        // Static File Servers
-        if !self.cached_config.static_backends.is_empty() {
-            let cards: Vec<Element<'_, Message>> = self
+            let faulty = self
                 .cached_config
-                .static_backends
+                .processes
                 .iter()
-                .map(|s| {
-                    site_card(&s.name, &s.dir, "Dir Server", COLOR_DIR_SERVER, &s.state)
-                })
-                .collect();
+                .filter(|p| matches!(p.state, ProcState::Faulty))
+                .count();
 
-            sections.push(
-                column![
-                    section_header(
-                        "Static File Servers",
-                        self.cached_config.static_backends.len(),
-                        COLOR_DIR_SERVER,
-                    ),
-                    Row::with_children(cards)
-                        .spacing(12)
-                        .wrap()
-                        .vertical_spacing(12),
-                ]
-                .spacing(10)
-                .into(),
-            );
-        }
+            let summary_row = Row::with_children(vec![
+                stat_box("Total", total, Color::WHITE),
+                stat_box("Running", running, Color::from_rgb(0.4, 0.8, 0.4)),
+                stat_box("Stopped", stopped, Color::from_rgb(0.6, 0.6, 0.6)),
+                stat_box("Faulty", faulty, Color::from_rgb(0.9, 0.3, 0.3)),
+            ])
+            .spacing(12);
 
-        // Assemble the dashboard content
-        let mut content_children: Vec<Element<'_, Message>> = vec![
-            uptime_bar.into(),
-            summary_row.into(),
-        ];
-        content_children.extend(sections);
+            // --- Category sections ---
+            let mut sections: Vec<Element<'_, Message>> = Vec::new();
 
-        let dashboard_column = Column::with_children(content_children).spacing(20);
+            // Managed Processes
+            if !self.cached_config.processes.is_empty() {
+                let cards: Vec<Element<'_, Message>> = self
+                    .cached_config
+                    .processes
+                    .iter()
+                    .map(|p| {
+                        process_card(
+                            &p.name,
+                            &p.protocol,
+                            &p.port,
+                            &p.bin,
+                            &p.state,
+                            card_width,
+                        )
+                    })
+                    .collect();
 
-        // Wrap in mouse_area for cursor position tracking
-        let dashboard_content: Element<'_, Message> = mouse_area(dashboard_column)
-            .on_move(|p| Message::DashboardCursorMoved(p.x, p.y))
-            .into();
+                sections.push(
+                    column![
+                        section_header(
+                            "Managed Processes",
+                            self.cached_config.processes.len(),
+                            COLOR_PROCESS,
+                        ),
+                        rows_from_cards(cards, cols),
+                    ]
+                    .spacing(10)
+                    .into(),
+                );
+            }
+
+            // Remote Backends
+            if !self.cached_config.remote_backends.is_empty() {
+                let cards: Vec<Element<'_, Message>> = self
+                    .cached_config
+                    .remote_backends
+                    .iter()
+                    .map(|r| {
+                        let subtitle = format!("{} · {}", r.protocol, r.endpoints);
+                        site_card(&r.name, &subtitle, "Remote", COLOR_REMOTE, &r.state, card_width)
+                    })
+                    .collect();
+
+                sections.push(
+                    column![
+                        section_header(
+                            "Remote Backends",
+                            self.cached_config.remote_backends.len(),
+                            COLOR_REMOTE,
+                        ),
+                        rows_from_cards(cards, cols),
+                    ]
+                    .spacing(10)
+                    .into(),
+                );
+            }
+
+            // Static File Servers
+            if !self.cached_config.static_backends.is_empty() {
+                let cards: Vec<Element<'_, Message>> = self
+                    .cached_config
+                    .static_backends
+                    .iter()
+                    .map(|s| {
+                        site_card(&s.name, &s.dir, "Dir Server", COLOR_DIR_SERVER, &s.state, card_width)
+                    })
+                    .collect();
+
+                sections.push(
+                    column![
+                        section_header(
+                            "Static File Servers",
+                            self.cached_config.static_backends.len(),
+                            COLOR_DIR_SERVER,
+                        ),
+                        rows_from_cards(cards, cols),
+                    ]
+                    .spacing(10)
+                    .into(),
+                );
+            }
+
+            // Assemble the dashboard content
+            let mut content_children: Vec<Element<'_, Message>> = vec![
+                uptime_bar.into(),
+                summary_row.into(),
+            ];
+            content_children.extend(sections);
+
+            let dashboard_column = Column::with_children(content_children).spacing(20);
+
+            mouse_area(dashboard_column)
+                .on_move(|p| Message::DashboardCursorMoved(p.x, p.y))
+                .into()
+        })
+        .into();
 
         // --- Popup menu overlay ---
         let selected_proc = self.dashboard_process_menu.as_ref().and_then(|name| {
@@ -537,7 +573,7 @@ impl OddBoxGui {
         });
 
         if let Some(proc) = selected_proc {
-            let menu = process_popup_menu(&proc.name, &proc.state, proc.auto_start);
+            let menu = process_popup_menu(&proc.name, &proc.state);
 
             // Invisible dismiss layer — clicking anywhere outside the menu closes it
             let dismiss_name = proc.name.clone();

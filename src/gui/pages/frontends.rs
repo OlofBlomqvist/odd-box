@@ -23,15 +23,18 @@ impl OddBoxGui {
             TableColumn::fixed("Subdomains", 100.0),
         ];
 
-        let mut table = Table::new(columns).hover(Message::NoOp);
+        let mut table = Table::new(columns);
 
         for route in &self.cached_config.routes {
-            table = table.push_row(vec![
-                text_cell(&route.hostname),
-                text_cell(&route.backend),
-                bool_cell(route.https_redirect),
-                bool_cell(route.capture_subdomains),
-            ]);
+            table = table.push_row_with_message(
+                vec![
+                    text_cell(&route.hostname),
+                    text_cell(&route.backend),
+                    bool_cell(route.https_redirect),
+                    bool_cell(route.capture_subdomains),
+                ],
+                Message::OpenEditFrontend(route.hostname.clone()),
+            );
         }
 
         table.build()
