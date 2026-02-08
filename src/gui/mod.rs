@@ -216,6 +216,8 @@ pub enum Message {
     EditBackendFieldChanged(EditBackendField),
     EditBackendPickDir,
     EditBackendDirPicked(Option<String>),
+    EditBackendPickBin,
+    EditBackendBinPicked(Option<String>),
     EditBackendResolveDir(String),
     EditBackendResolvedDir(Result<Option<String>, String>),
     EditBackendSave,
@@ -745,6 +747,12 @@ async fn pick_backend_dir() -> Option<String> {
         .map(|p| p.display().to_string())
 }
 
+async fn pick_backend_bin() -> Option<String> {
+    rfd::FileDialog::new()
+        .pick_file()
+        .map(|p| p.display().to_string())
+}
+
 async fn resolve_backend_dir(state: Arc<GlobalState>, dir: String) -> Result<Option<String>, String> {
     let input = dir.trim();
     if input.is_empty() {
@@ -1224,6 +1232,14 @@ impl OddBoxGui {
                         resolve_backend_dir(self.state.clone(), dir),
                         Message::EditBackendResolvedDir,
                     );
+                }
+            }
+            Message::EditBackendPickBin => {
+                return Task::perform(pick_backend_bin(), Message::EditBackendBinPicked);
+            }
+            Message::EditBackendBinPicked(path) => {
+                if let Some(p) = path {
+                    self.edit_backend_form.proc_bin = p;
                 }
             }
             Message::EditBackendResolveDir(dir) => {

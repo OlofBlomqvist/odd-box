@@ -327,9 +327,27 @@ impl OddBoxGui {
                         .on_input(|v| Message::EditBackendFieldChanged(EditBackendField::ProcBin(v)))
                         .padding(8)
                         .width(Length::Fill);
+                    let bin_browse = button(text("Browse").size(12))
+                        .padding(8)
+                        .on_press(Message::EditBackendPickBin);
                     let bin_help = text("Path or command to execute")
                         .size(12)
                         .style(muted_text);
+                    let bin_trimmed = self.edit_backend_form.proc_bin.trim();
+                    let bin_path = std::path::Path::new(bin_trimmed);
+                    let bin_missing = !bin_trimmed.is_empty()
+                        && (bin_path.is_absolute()
+                            || bin_trimmed.contains(std::path::MAIN_SEPARATOR))
+                        && !bin_path.exists();
+                    let bin_missing_msg = if bin_missing {
+                        Some(
+                            text("Binary not found on disk.")
+                                .size(12)
+                                .color(Color::from_rgb(0.9, 0.3, 0.3)),
+                        )
+                    } else {
+                        None
+                    };
 
                     let args_label = text("Args").size(13).style(muted_text);
                     let args_input = text_input("--flag value", &self.edit_backend_form.proc_args)
@@ -380,10 +398,10 @@ impl OddBoxGui {
                             Message::EditBackendFieldChanged(EditBackendField::ProcExcludeFromStartAll(v))
                         });
 
-                    let fields = column![
+                    let mut fields = column![
                         header,
                         bin_label,
-                        bin_input,
+                        row![bin_input, bin_browse].spacing(8),
                         bin_help,
                         args_label,
                         args_input,
@@ -400,6 +418,9 @@ impl OddBoxGui {
                         exclude_toggle,
                     ]
                     .spacing(6);
+                    if let Some(msg) = bin_missing_msg {
+                        fields = fields.push(msg);
+                    }
 
                     let info = column![
                         text("Process Backend").size(14).style(muted_text),
