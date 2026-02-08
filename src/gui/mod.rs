@@ -304,10 +304,12 @@ pub struct OddBoxGui {
     pub(in crate::gui) edit_target: Option<String>,
     pub(in crate::gui) edit_frontend_form: EditFrontendForm,
     pub(in crate::gui) edit_frontend_notice: Option<String>,
+    pub(in crate::gui) edit_frontend_pending_reload: bool,
     pub(in crate::gui) edit_backend_form: EditBackendForm,
     pub(in crate::gui) edit_backend_notice: Option<String>,
     pub(in crate::gui) edit_backend_resolved_dir: Option<String>,
     pub(in crate::gui) edit_backend_resolve_error: Option<String>,
+    pub(in crate::gui) edit_backend_pending_reload: bool,
 }
 
 fn log_scroll_id() -> Id {
@@ -721,10 +723,12 @@ impl OddBoxGui {
                 edit_target: None,
                 edit_frontend_form: EditFrontendForm::default(),
                 edit_frontend_notice: None,
+                edit_frontend_pending_reload: false,
                 edit_backend_form: EditBackendForm::default(),
                 edit_backend_notice: None,
                 edit_backend_resolved_dir: None,
                 edit_backend_resolve_error: None,
+                edit_backend_pending_reload: false,
             },
             Task::batch(tasks),
         )
@@ -822,6 +826,14 @@ impl OddBoxGui {
                 names.sort();
                 names.dedup();
                 self.backend_names = names;
+                if self.edit_frontend_pending_reload {
+                    self.edit_frontend_notice = Some("Saved.".to_string());
+                    self.edit_frontend_pending_reload = false;
+                }
+                if self.edit_backend_pending_reload {
+                    self.edit_backend_notice = Some("Saved.".to_string());
+                    self.edit_backend_pending_reload = false;
+                }
             }
             Message::LogFilterTextChanged(text) => {
                 self.log_filter.text = text;
@@ -934,6 +946,7 @@ impl OddBoxGui {
                 Ok(_) => {
                     self.edit_target = Some(self.edit_frontend_form.hostname.clone());
                     self.edit_frontend_notice = Some("Saved. Waiting for reload...".to_string());
+                    self.edit_frontend_pending_reload = true;
                 }
                 Err(err) => {
                     self.edit_frontend_notice = Some(err);
@@ -1009,6 +1022,7 @@ impl OddBoxGui {
             Message::EditBackendSaveResult(result) => match result {
                 Ok(_) => {
                     self.edit_backend_notice = Some("Saved. Waiting for reload...".to_string());
+                    self.edit_backend_pending_reload = true;
                 }
                 Err(err) => {
                     self.edit_backend_notice = Some(err);
