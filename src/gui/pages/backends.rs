@@ -1,6 +1,6 @@
 use clap::builder::styling::RgbColor;
 use iced::theme::palette;
-use iced::widget::{Column, column, text};
+use iced::widget::{Column, button, column, row, text};
 use iced::{Color, Element};
 
 use crate::gui::components::{
@@ -13,6 +13,15 @@ use super::super::{Message, OddBoxGui};
 impl OddBoxGui {
     pub(in crate::gui) fn view_backends(&self) -> Element<'_, Message> {
         let mut sections: Vec<Element<'_, Message>> = Vec::new();
+        let actions = row![
+            button(text("Add Remote").size(14))
+                .on_press(Message::OpenNewBackend(super::super::BackendKind::Remote)),
+            button(text("Add Static").size(14))
+                .on_press(Message::OpenNewBackend(super::super::BackendKind::Static)),
+            button(text("Add Process").size(14))
+                .on_press(Message::OpenNewBackend(super::super::BackendKind::Process)),
+        ]
+        .spacing(8);
 
         // Remote backends section
         if !self.cached_config.remote_backends.is_empty() {
@@ -76,11 +85,17 @@ impl OddBoxGui {
         }
 
         if sections.is_empty() {
-            return text("No backends configured")
-                .color(self.theme().extended_palette().background.strong.text)
-                .into();
+            return column![
+                actions,
+                text("No backends configured")
+                    .color(self.theme().extended_palette().background.strong.text)
+            ]
+            .spacing(12)
+            .into();
         }
 
-        Column::with_children(sections).spacing(20).into()
+        let mut content = vec![actions.into()];
+        content.extend(sections);
+        Column::with_children(content).spacing(20).into()
     }
 }

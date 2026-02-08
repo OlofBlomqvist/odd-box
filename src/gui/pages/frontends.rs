@@ -1,5 +1,5 @@
 use iced::Element;
-use iced::widget::text;
+use iced::widget::{button, column, row, text};
 
 use crate::gui::components::{
     Column as TableColumn, Table,
@@ -10,10 +10,19 @@ use super::super::{Message, OddBoxGui};
 
 impl OddBoxGui {
     pub(in crate::gui) fn view_frontends(&self) -> Element<'_, Message> {
+        let actions = row![
+            button(text("Add Route").size(14)).on_press(Message::OpenNewFrontend),
+        ]
+        .spacing(8);
+
         if self.cached_config.routes.is_empty() {
-            return text("No routes configured")
-                .color(self.theme().extended_palette().background.strong.text)
-                .into();
+            return column![
+                actions,
+                text("No routes configured")
+                    .color(self.theme().extended_palette().background.strong.text)
+            ]
+            .spacing(12)
+            .into();
         }
 
         let columns = vec![
@@ -37,6 +46,6 @@ impl OddBoxGui {
             );
         }
 
-        table.build()
+        column![actions, table.build()].spacing(12).into()
     }
 }

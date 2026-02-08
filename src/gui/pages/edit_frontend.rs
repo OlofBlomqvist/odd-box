@@ -52,12 +52,20 @@ impl OddBoxGui {
             .as_ref()
             .map(|msg| text(msg).size(13).style(muted_text));
 
-        let actions = row![
-            button(text("Save").size(14)).on_press(Message::EditFrontendSave),
+        let mut actions_children: Vec<Element<'_, Message>> = vec![
+            button(text("Save").size(14)).on_press(Message::EditFrontendSave).into(),
             button(text("Back").size(14))
-                .on_press(Message::NavigateTo(super::super::Page::Frontends)),
-        ]
-        .spacing(10);
+                .on_press(Message::NavigateTo(super::super::Page::Frontends))
+                .into(),
+        ];
+        if !self.edit_frontend_is_new {
+            actions_children.push(
+                button(text("Delete").size(14))
+                    .on_press(Message::EditFrontendDelete)
+                    .into(),
+            );
+        }
+        let actions = row::Row::with_children(actions_children).spacing(10);
 
         let layout = responsive(|size| {
             let hostname_label = text("Hostname").size(13).style(muted_text);

@@ -199,6 +199,8 @@ pub enum Message {
     DashboardCursorMoved(f32, f32),
     OpenEditFrontend(String),
     OpenEditBackend(String),
+    OpenNewFrontend,
+    OpenNewBackend(BackendKind),
     EditFrontendLoaded(EditFrontendForm),
     EditFrontendHostChanged(String),
     EditFrontendBackendChanged(String),
@@ -208,6 +210,8 @@ pub enum Message {
     EditFrontendLetsEncryptToggled(bool),
     EditFrontendSave,
     EditFrontendSaveResult(Result<(), String>),
+    EditFrontendDelete,
+    EditFrontendDeleteResult(Result<(), String>),
     EditBackendLoaded(EditBackendForm),
     EditBackendFieldChanged(EditBackendField),
     EditBackendPickDir,
@@ -216,6 +220,8 @@ pub enum Message {
     EditBackendResolvedDir(Result<Option<String>, String>),
     EditBackendSave,
     EditBackendSaveResult(Result<(), String>),
+    EditBackendDelete,
+    EditBackendDeleteResult(Result<(), String>),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -270,6 +276,7 @@ pub struct EditBackendForm {
 
 #[derive(Debug, Clone)]
 pub enum EditBackendField {
+    Id(String),
     Endpoints(String),
     Protocol(v4::Protocol),
     Https(bool),
@@ -319,11 +326,15 @@ pub struct OddBoxGui {
     pub(in crate::gui) edit_frontend_form: EditFrontendForm,
     pub(in crate::gui) edit_frontend_notice: Option<String>,
     pub(in crate::gui) edit_frontend_pending_reload: bool,
+    pub(in crate::gui) edit_frontend_original: Option<String>,
+    pub(in crate::gui) edit_frontend_is_new: bool,
     pub(in crate::gui) edit_backend_form: EditBackendForm,
     pub(in crate::gui) edit_backend_notice: Option<String>,
     pub(in crate::gui) edit_backend_resolved_dir: Option<String>,
     pub(in crate::gui) edit_backend_resolve_error: Option<String>,
     pub(in crate::gui) edit_backend_pending_reload: bool,
+    pub(in crate::gui) edit_backend_original: Option<String>,
+    pub(in crate::gui) edit_backend_is_new: bool,
 }
 
 fn log_scroll_id() -> Id {
@@ -396,6 +407,20 @@ async fn save_frontend_form(
     }
 
     let mut guard = state.config.write().await;
+    if original_host.is_none() {
+        if let Some(http) = &guard.frontends.http {
+            if http.routes.contains_key(&form.hostname) {
+                return Err("Route already exists.".to_string());
+            }
+        }
+        if let Some(https) = &guard.frontends.https {
+            if let Some(v4::HttpsRoutes::Explicit(routes)) = &https.routes {
+                if routes.contains_key(&form.hostname) {
+                    return Err("Route already exists.".to_string());
+                }
+            }
+        }
+    }
     if !guard.backends.contains_key(&form.backend) {
         return Err(format!("Backend '{}' does not exist.", form.backend));
     }
@@ -456,6 +481,23 @@ async fn save_frontend_form(
     Ok(())
 }
 
+async fn delete_frontend(state: Arc<GlobalState>, host: String) -> Result<(), String> {
+    let mut guard = state.config.write().await;
+
+    if let Some(http) = guard.frontends.http.as_mut() {
+        http.routes.remove(&host);
+    }
+    if let Some(https) = guard.frontends.https.as_mut() {
+        if let Some(v4::HttpsRoutes::Explicit(routes)) = https.routes.as_mut() {
+            routes.remove(&host);
+        }
+    }
+
+    guard.is_valid().map_err(|e| e.to_string())?;
+    guard.write_to_disk().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 async fn load_backend_form(state: Arc<GlobalState>, backend_id: String) -> EditBackendForm {
     let guard = state.config.read().await;
     let mut form = EditBackendForm {
@@ -509,6 +551,7 @@ async fn load_backend_form(state: Arc<GlobalState>, backend_id: String) -> EditB
 
 async fn save_backend_form(
     state: Arc<GlobalState>,
+    original_id: Option<String>,
     form: EditBackendForm,
 ) -> Result<(), String> {
     if form.id.trim().is_empty() {
@@ -516,6 +559,16 @@ async fn save_backend_form(
     }
 
     let mut guard = state.config.write().await;
+    if original_id.is_none() && guard.backends.contains_key(&form.id) {
+        return Err("Backend id already exists.".to_string());
+    }
+
+    let key = form.id.clone();
+    if let Some(old) = original_id {
+        if old != key {
+            guard.backends.remove(&old);
+        }
+    }
 
     match form.kind {
         BackendKind::Remote => {
@@ -543,7 +596,7 @@ async fn save_backend_form(
             }
 
             guard.backends.insert(
-                form.id.clone(),
+                key,
                 v4::Backend::Remote(v4::RemoteBackend {
                     endpoints,
                     protocol: form.protocol,
@@ -569,7 +622,7 @@ async fn save_backend_form(
             };
 
             guard.backends.insert(
-                form.id.clone(),
+                key,
                 v4::Backend::Static(v4::StaticBackend {
                     dir: form.dir.clone(),
                     index: "index.html".to_string(),
@@ -609,7 +662,7 @@ async fn save_backend_form(
             };
 
             guard.backends.insert(
-                form.id.clone(),
+                key,
                 v4::Backend::Process(v4::ProcessBackend {
                     proc_id,
                     bin: form.proc_bin.clone(),
@@ -632,6 +685,26 @@ async fn save_backend_form(
         }
         BackendKind::Unknown => {
             return Err("Backend not found.".to_string());
+        }
+    }
+
+    guard.reload_dashmaps();
+    guard.is_valid().map_err(|e| e.to_string())?;
+    guard.write_to_disk().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+async fn delete_backend(state: Arc<GlobalState>, backend_id: String) -> Result<(), String> {
+    let mut guard = state.config.write().await;
+    guard.backends.remove(&backend_id);
+
+    if let Some(http) = guard.frontends.http.as_mut() {
+        http.routes
+            .retain(|_, target| target.backend_id() != backend_id);
+    }
+    if let Some(https) = guard.frontends.https.as_mut() {
+        if let Some(v4::HttpsRoutes::Explicit(routes)) = https.routes.as_mut() {
+            routes.retain(|_, target| target.backend_id() != backend_id);
         }
     }
 
@@ -794,11 +867,15 @@ impl OddBoxGui {
                 edit_frontend_form: EditFrontendForm::default(),
                 edit_frontend_notice: None,
                 edit_frontend_pending_reload: false,
+                edit_frontend_original: None,
+                edit_frontend_is_new: false,
                 edit_backend_form: EditBackendForm::default(),
                 edit_backend_notice: None,
                 edit_backend_resolved_dir: None,
                 edit_backend_resolve_error: None,
                 edit_backend_pending_reload: false,
+                edit_backend_original: None,
+                edit_backend_is_new: false,
             },
             Task::batch(tasks),
         )
@@ -967,20 +1044,45 @@ impl OddBoxGui {
                 self.current_page = Page::EditFrontend;
                 self.dashboard_process_menu = None;
                 self.edit_frontend_notice = None;
+                self.edit_frontend_original = Some(name.clone());
+                self.edit_frontend_is_new = false;
                 return Task::perform(
                     load_frontend_form(self.state.clone(), name),
                     Message::EditFrontendLoaded,
                 );
+            }
+            Message::OpenNewFrontend => {
+                self.edit_target = None;
+                self.current_page = Page::EditFrontend;
+                self.dashboard_process_menu = None;
+                self.edit_frontend_notice = None;
+                self.edit_frontend_form = EditFrontendForm::default();
+                self.edit_frontend_original = None;
+                self.edit_frontend_is_new = true;
             }
             Message::OpenEditBackend(name) => {
                 self.edit_target = Some(name);
                 self.current_page = Page::EditBackend;
                 self.dashboard_process_menu = None;
                 self.edit_backend_notice = None;
+                self.edit_backend_original = self.edit_target.clone();
+                self.edit_backend_is_new = false;
                 return Task::perform(
                     load_backend_form(self.state.clone(), self.edit_target.clone().unwrap()),
                     Message::EditBackendLoaded,
                 );
+            }
+            Message::OpenNewBackend(kind) => {
+                self.edit_target = None;
+                self.current_page = Page::EditBackend;
+                self.dashboard_process_menu = None;
+                self.edit_backend_notice = None;
+                self.edit_backend_form = EditBackendForm {
+                    kind,
+                    ..EditBackendForm::default()
+                };
+                self.edit_backend_original = None;
+                self.edit_backend_is_new = true;
             }
             Message::EditFrontendLoaded(form) => {
                 self.edit_frontend_form = form;
@@ -1006,7 +1108,7 @@ impl OddBoxGui {
             Message::EditFrontendSave => {
                 self.edit_frontend_notice = None;
                 let form = self.edit_frontend_form.clone();
-                let original_host = self.edit_target.clone();
+                let original_host = self.edit_frontend_original.clone();
                 return Task::perform(
                     save_frontend_form(self.state.clone(), original_host, form),
                     Message::EditFrontendSaveResult,
@@ -1017,6 +1119,28 @@ impl OddBoxGui {
                     self.edit_target = Some(self.edit_frontend_form.hostname.clone());
                     self.edit_frontend_notice = Some("Saved. Waiting for reload...".to_string());
                     self.edit_frontend_pending_reload = true;
+                    self.edit_frontend_is_new = false;
+                    self.edit_frontend_original = Some(self.edit_frontend_form.hostname.clone());
+                }
+                Err(err) => {
+                    self.edit_frontend_notice = Some(err);
+                }
+            },
+            Message::EditFrontendDelete => {
+                if let Some(host) = self.edit_frontend_original.clone() {
+                    self.edit_frontend_notice = None;
+                    return Task::perform(
+                        delete_frontend(self.state.clone(), host),
+                        Message::EditFrontendDeleteResult,
+                    );
+                }
+            }
+            Message::EditFrontendDeleteResult(result) => match result {
+                Ok(_) => {
+                    self.edit_frontend_notice = Some("Deleted. Waiting for reload...".to_string());
+                    self.edit_frontend_pending_reload = true;
+                    self.edit_frontend_is_new = true;
+                    self.edit_frontend_original = None;
                 }
                 Err(err) => {
                     self.edit_frontend_notice = Some(err);
@@ -1035,6 +1159,7 @@ impl OddBoxGui {
                 }
             }
             Message::EditBackendFieldChanged(field) => match field {
+                EditBackendField::Id(v) => self.edit_backend_form.id = v,
                 EditBackendField::Endpoints(v) => self.edit_backend_form.endpoints = v,
                 EditBackendField::Protocol(v) => self.edit_backend_form.protocol = v,
                 EditBackendField::Https(v) => self.edit_backend_form.https = v,
@@ -1093,7 +1218,7 @@ impl OddBoxGui {
                 self.edit_backend_notice = None;
                 let form = self.edit_backend_form.clone();
                 return Task::perform(
-                    save_backend_form(self.state.clone(), form),
+                    save_backend_form(self.state.clone(), self.edit_backend_original.clone(), form),
                     Message::EditBackendSaveResult,
                 );
             }
@@ -1101,6 +1226,28 @@ impl OddBoxGui {
                 Ok(_) => {
                     self.edit_backend_notice = Some("Saved. Waiting for reload...".to_string());
                     self.edit_backend_pending_reload = true;
+                    self.edit_backend_is_new = false;
+                    self.edit_backend_original = Some(self.edit_backend_form.id.clone());
+                }
+                Err(err) => {
+                    self.edit_backend_notice = Some(err);
+                }
+            },
+            Message::EditBackendDelete => {
+                if let Some(id) = self.edit_backend_original.clone() {
+                    self.edit_backend_notice = None;
+                    return Task::perform(
+                        delete_backend(self.state.clone(), id),
+                        Message::EditBackendDeleteResult,
+                    );
+                }
+            }
+            Message::EditBackendDeleteResult(result) => match result {
+                Ok(_) => {
+                    self.edit_backend_notice = Some("Deleted. Waiting for reload...".to_string());
+                    self.edit_backend_pending_reload = true;
+                    self.edit_backend_is_new = true;
+                    self.edit_backend_original = None;
                 }
                 Err(err) => {
                     self.edit_backend_notice = Some(err);

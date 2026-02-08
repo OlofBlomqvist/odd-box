@@ -309,9 +309,11 @@ impl ConfigWrapper {
         let hosted_processes = DashMap::new();
         let remote_sites = DashMap::new();
         let static_sites = DashMap::new();
+        let mut internal_configuration = config;
+        internal_configuration.path = path.clone();
 
         // Populate DashMaps from backends
-        for (id, backend) in &config.backends {
+        for (id, backend) in &internal_configuration.backends {
             match backend {
                 v4::Backend::Process(p) => {
                     hosted_processes.insert(id.clone(), p.clone());
@@ -328,7 +330,7 @@ impl ConfigWrapper {
         ConfigWrapper {
             path,
             internal_version: 0,
-            internal_configuration: config,
+            internal_configuration,
             hosted_processes,
             remote_sites,
             static_sites,
@@ -413,7 +415,8 @@ impl ConfigWrapper {
         } else {
             cfg_path.to_string()
         };
-        self.path = Some(full_path);
+        self.path = Some(full_path.clone());
+        self.internal_configuration.path = Some(full_path);
         Ok(())
     }
 
