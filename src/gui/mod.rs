@@ -211,6 +211,8 @@ pub enum Message {
     EditBackendFieldChanged(EditBackendField),
     EditBackendPickDir,
     EditBackendDirPicked(Option<String>),
+    EditBackendResolveDir(String),
+    EditBackendResolvedDir(Result<Option<String>, String>),
     EditBackendSave,
     EditBackendSaveResult(Result<(), String>),
 }
@@ -304,6 +306,8 @@ pub struct OddBoxGui {
     pub(in crate::gui) edit_frontend_notice: Option<String>,
     pub(in crate::gui) edit_backend_form: EditBackendForm,
     pub(in crate::gui) edit_backend_notice: Option<String>,
+    pub(in crate::gui) edit_backend_resolved_dir: Option<String>,
+    pub(in crate::gui) edit_backend_resolve_error: Option<String>,
 }
 
 fn log_scroll_id() -> Id {
@@ -571,6 +575,65 @@ async fn pick_backend_dir() -> Option<String> {
         .map(|p| p.display().to_string())
 }
 
+async fn resolve_backend_dir(state: Arc<GlobalState>, dir: String) -> Result<Option<String>, String> {
+    let input = dir.trim();
+    if input.is_empty() {
+        return Ok(None);
+    }
+
+    // Detect unknown variables
+    let mut idx = 0;
+    while let Some(pos) = input[idx..].find('$') {
+        let start = idx + pos + 1;
+        let mut end = start;
+        for ch in input[start..].chars() {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                end += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if end > start {
+            let var = &input[start..end];
+            if var != "root_dir" && var != "cfg_dir" {
+                return Err(format!("Unknown variable: ${}", var));
+            }
+        }
+        idx = end;
+    }
+
+    let guard = state.config.read().await;
+    let probe = v4::StaticBackend {
+        dir: input.to_string(),
+        index: "index.html".to_string(),
+        list_dir: false,
+        render_markdown: false,
+        cache_max_age: None,
+    };
+
+    let resolved = guard
+        .resolve_static_backend(&probe)
+        .map_err(|e| e.to_string())?;
+
+    let mut resolved_dir = resolved.dir.clone();
+    let resolved_path = std::path::Path::new(&resolved_dir);
+    if !resolved_path.is_absolute() {
+        let base = guard
+            .get_parent_path()
+            .ok()
+            .and_then(|p| std::fs::canonicalize(p).ok())
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        resolved_dir = base.join(resolved_path).display().to_string();
+    }
+
+    let canonical = std::fs::canonicalize(&resolved_dir)
+        .ok()
+        .map(|p| p.display().to_string());
+
+    Ok(Some(canonical.unwrap_or(resolved_dir)))
+}
+
 impl OddBoxGui {
     fn apply_log_level_preset(filter: &mut LogFilter, preset: LogLevelPreset) {
         match preset {
@@ -660,6 +723,8 @@ impl OddBoxGui {
                 edit_frontend_notice: None,
                 edit_backend_form: EditBackendForm::default(),
                 edit_backend_notice: None,
+                edit_backend_resolved_dir: None,
+                edit_backend_resolve_error: None,
             },
             Task::batch(tasks),
         )
@@ -876,6 +941,15 @@ impl OddBoxGui {
             },
             Message::EditBackendLoaded(form) => {
                 self.edit_backend_form = form;
+                self.edit_backend_resolved_dir = None;
+                self.edit_backend_resolve_error = None;
+                if matches!(self.edit_backend_form.kind, BackendKind::Static) {
+                    let dir = self.edit_backend_form.dir.clone();
+                    return Task::perform(
+                        resolve_backend_dir(self.state.clone(), dir),
+                        Message::EditBackendResolvedDir,
+                    );
+                }
             }
             Message::EditBackendFieldChanged(field) => match field {
                 EditBackendField::Endpoints(v) => self.edit_backend_form.endpoints = v,
@@ -884,7 +958,13 @@ impl OddBoxGui {
                 EditBackendField::KeepOriginalHostHeader(v) => {
                     self.edit_backend_form.keep_original_host_header = v;
                 }
-                EditBackendField::Dir(v) => self.edit_backend_form.dir = v,
+                EditBackendField::Dir(v) => {
+                    self.edit_backend_form.dir = v.clone();
+                    return Task::perform(
+                        resolve_backend_dir(self.state.clone(), v),
+                        Message::EditBackendResolvedDir,
+                    );
+                }
                 EditBackendField::ListDir(v) => self.edit_backend_form.list_dir = v,
                 EditBackendField::RenderMarkdown(v) => self.edit_backend_form.render_markdown = v,
                 EditBackendField::CacheMaxAge(v) => self.edit_backend_form.cache_max_age = v,
@@ -895,8 +975,29 @@ impl OddBoxGui {
             Message::EditBackendDirPicked(path) => {
                 if let Some(p) = path {
                     self.edit_backend_form.dir = p;
+                    let dir = self.edit_backend_form.dir.clone();
+                    return Task::perform(
+                        resolve_backend_dir(self.state.clone(), dir),
+                        Message::EditBackendResolvedDir,
+                    );
                 }
             }
+            Message::EditBackendResolveDir(dir) => {
+                return Task::perform(
+                    resolve_backend_dir(self.state.clone(), dir),
+                    Message::EditBackendResolvedDir,
+                );
+            }
+            Message::EditBackendResolvedDir(result) => match result {
+                Ok(resolved) => {
+                    self.edit_backend_resolved_dir = resolved;
+                    self.edit_backend_resolve_error = None;
+                }
+                Err(err) => {
+                    self.edit_backend_resolved_dir = None;
+                    self.edit_backend_resolve_error = Some(err);
+                }
+            },
             Message::EditBackendSave => {
                 self.edit_backend_notice = None;
                 let form = self.edit_backend_form.clone();

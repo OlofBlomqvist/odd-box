@@ -109,7 +109,7 @@ impl OddBoxGui {
             ]
             .spacing(4);
 
-            let (fields, info) = match self.edit_backend_form.kind {
+            let (fields_card, info_card) = match self.edit_backend_form.kind {
                 BackendKind::Remote => {
                     let endpoints_label = text("Endpoints").size(13).style(muted_text);
                     let endpoints_help = text("Comma-separated host:port list")
@@ -177,7 +177,18 @@ impl OddBoxGui {
                     ]
                     .spacing(6);
 
-                    (fields, info)
+                    (
+                        container(fields)
+                            .padding(12)
+                            .style(card_style)
+                            .width(Length::Fill),
+                        Some(
+                            container(info)
+                                .padding(12)
+                                .style(card_style)
+                                .width(Length::Fill),
+                        ),
+                    )
                 }
                 BackendKind::Static => {
                     let dir_label = text("Directory").size(13).style(muted_text);
@@ -189,7 +200,28 @@ impl OddBoxGui {
                         .padding(8)
                         .width(Length::Fill);
                     let dir_browse = button(text("Browse").size(12))
+                        .padding(8)
                         .on_press(Message::EditBackendPickDir);
+                    let resolved_dir = self.edit_backend_resolved_dir.as_ref().map(|path| {
+                        text(format!("Resolved: {}", path))
+                            .size(12)
+                            .style(muted_text)
+                    });
+                    let resolve_error = self.edit_backend_resolve_error.as_ref().map(|err| {
+                        text(err)
+                            .size(12)
+                            .color(Color::from_rgb(0.9, 0.3, 0.3))
+                    });
+                    let has_vars = self.edit_backend_form.dir.contains("$root_dir")
+                        || self.edit_backend_form.dir.contains("$cfg_dir")
+                        || self.edit_backend_form.dir.contains('~');
+                    let vars_help = column![
+                        text("Available variables:").size(12).style(muted_text),
+                        text("$root_dir  Project root directory").size(12).style(muted_text),
+                        text("$cfg_dir   Directory of the config file").size(12).style(muted_text),
+                        text("~          Home directory").size(12).style(muted_text),
+                    ]
+                    .spacing(2);
 
                     let list_toggle = checkbox(self.edit_backend_form.list_dir)
                         .label("Enable directory listing")
@@ -212,11 +244,23 @@ impl OddBoxGui {
                         .size(12)
                         .style(muted_text);
 
-                    let fields = column![
+                    let mut path_box = column![
                         header,
                         dir_label,
                         row![dir_input, dir_browse].spacing(8),
                         dir_help,
+                    ]
+                    .spacing(6);
+                    if let Some(err) = resolve_error {
+                        path_box = path_box.push(err);
+                    } else if let Some(resolved) = resolved_dir {
+                        path_box = path_box.push(resolved);
+                    } else if !has_vars {
+                        path_box = path_box.push(vars_help);
+                    }
+
+                    let options_box = column![
+                        text("Options").size(14).style(muted_text),
                         list_toggle,
                         render_toggle,
                         cache_label,
@@ -225,18 +269,24 @@ impl OddBoxGui {
                     ]
                     .spacing(6);
 
-                    let info = column![
-                        text("Static Backend").size(14).style(muted_text),
-                        text("Serves files from a local directory.")
-                            .size(12)
-                            .style(muted_text),
-                        text("Index files use defaults (index.html / index.md).")
-                            .size(12)
-                            .style(muted_text),
+                    let fields = column![
+                        container(path_box)
+                            .padding(12)
+                            .style(card_style)
+                            .width(Length::Fill),
+                        container(options_box)
+                            .padding(12)
+                            .style(card_style)
+                            .width(Length::Fill),
                     ]
-                    .spacing(6);
+                    .spacing(10);
 
-                    (fields, info)
+                    (
+                        container(fields)
+                            .width(Length::Fill)
+                            .style(|_| container::Style::default()),
+                        None,
+                    )
                 }
                 BackendKind::Process => {
                     let note = text("Process backends are edited on the Managed Processes page.")
@@ -250,7 +300,18 @@ impl OddBoxGui {
                             .style(muted_text),
                     ]
                     .spacing(6);
-                    (fields, info)
+                    (
+                        container(fields)
+                            .padding(12)
+                            .style(card_style)
+                            .width(Length::Fill),
+                        Some(
+                            container(info)
+                                .padding(12)
+                                .style(card_style)
+                                .width(Length::Fill),
+                        ),
+                    )
                 }
                 BackendKind::Unknown => {
                     let note = text("Backend not found.").size(12).style(muted_text);
@@ -262,33 +323,48 @@ impl OddBoxGui {
                             .style(muted_text),
                     ]
                     .spacing(6);
-                    (fields, info)
+                    (
+                        container(fields)
+                            .padding(12)
+                            .style(card_style)
+                            .width(Length::Fill),
+                        Some(
+                            container(info)
+                                .padding(12)
+                                .style(card_style)
+                                .width(Length::Fill),
+                        ),
+                    )
                 }
             };
 
-            let fields_card = container(fields)
-                .padding(12)
-                .style(card_style)
-                .width(Length::Fill);
-
-            let info_card = container(info)
-                .padding(12)
-                .style(card_style)
-                .width(Length::Fill);
-
             if size.width < 760.0 {
-                column![fields_card, info_card]
+                if let Some(info_card) = info_card {
+                    column![fields_card, info_card]
+                        .spacing(12)
+                        .width(Length::Fill)
+                        .into()
+                } else {
+                    column![fields_card]
+                        .spacing(12)
+                        .width(Length::Fill)
+                        .into()
+                }
+            } else {
+                if let Some(info_card) = info_card {
+                    row![
+                        fields_card.width(Length::FillPortion(3)),
+                        info_card.width(Length::FillPortion(2))
+                    ]
                     .spacing(12)
                     .width(Length::Fill)
                     .into()
-            } else {
-                row![
-                    fields_card.width(Length::FillPortion(3)),
-                    info_card.width(Length::FillPortion(2))
-                ]
-                .spacing(12)
-                .width(Length::Fill)
-                .into()
+                } else {
+                    column![fields_card]
+                        .spacing(12)
+                        .width(Length::Fill)
+                        .into()
+                }
             }
         });
 
