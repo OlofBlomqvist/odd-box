@@ -1,5 +1,5 @@
-use iced::widget::{button, row, text};
-use iced::{Border, Color, Element, Font, Padding, Theme};
+use iced::widget::{button, container, row, text};
+use iced::{Border, Color, Element, Font, Length, Padding, Theme};
 
 use crate::global_state::ProcState;
 use crate::gui::components::{
@@ -8,6 +8,7 @@ use crate::gui::components::{
 };
 
 use super::super::{Message, OddBoxGui};
+use iced::widget::text::Wrapping;
 
 impl OddBoxGui {
     pub(in crate::gui) fn view_processes(&self) -> Element<'_, Message> {
@@ -28,6 +29,7 @@ impl OddBoxGui {
         let mut table = Table::new(columns);
 
         for proc in &self.cached_config.processes {
+            let is_expanded = self.expanded_process.as_deref() == Some(&proc.name);
             let status_color = match proc.state {
                 ProcState::Running => Color::from_rgb(0.4, 0.85, 0.4),
                 ProcState::Starting | ProcState::Stopping => Color::from_rgb(1.0, 0.8, 0.3),
@@ -36,13 +38,21 @@ impl OddBoxGui {
                 _ => Color::from_rgb(0.6, 0.6, 0.6),
             };
 
-            let is_running = matches!(proc.state, ProcState::Running | ProcState::Starting);
-            let is_transitioning = matches!(proc.state, ProcState::Starting | ProcState::Stopping);
+            let actions = self.build_process_actions(&proc.name, proc.state.clone());
 
-            let actions = self.build_process_actions(&proc.name, is_running, is_transitioning);
+            let toggle_label = if is_expanded { "▼" } else { "▶" };
+            let toggle_btn = button(text(toggle_label).font(Font::MONOSPACE))
+                .padding(Padding {
+                    top: 2.0,
+                    right: 6.0,
+                    bottom: 2.0,
+                    left: 6.0,
+                })
+                .on_press(Message::ProcessToggleDetails(proc.name.clone()));
+            let name_cell = row![toggle_btn, text_cell(&proc.name)].spacing(6);
 
             table = table.push_row(vec![
-                text_cell(&proc.name),
+                name_cell.into(),
                 text_cell(&proc.bin),
                 text_cell(&proc.port),
                 text_cell(&proc.protocol),
@@ -50,19 +60,59 @@ impl OddBoxGui {
                 bool_cell(proc.auto_start),
                 actions,
             ]);
+
+            if is_expanded {
+                let configured_port = proc
+                    .configured_port
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "-".to_string());
+                let env_text = if proc.env.is_empty() {
+                    "none".to_string()
+                } else {
+                    proc.env
+                        .iter()
+                        .map(|(k, v)| format!("{k}={v}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+                let details = format!(
+                    "Assigned port: {}\nConfigured port: {}\nBinary: {}\nWorking dir: {}\nArgs: {}\nEnv:\n{}",
+                    proc.port,
+                    configured_port,
+                    if proc.bin.is_empty() { "-" } else { &proc.bin },
+                    if proc.dir.is_empty() { "-" } else { &proc.dir },
+                    if proc.args.is_empty() {
+                        "-"
+                    } else {
+                        &proc.args
+                    },
+                    env_text
+                );
+                let detail_cell = text(details)
+                    .font(Font::MONOSPACE)
+                    .size(12)
+                    .wrapping(Wrapping::Word);
+                let detail_row = container(detail_cell)
+                    .padding(Padding {
+                        top: 6.0,
+                        right: 12.0,
+                        bottom: 6.0,
+                        left: 24.0,
+                    })
+                    .width(Length::Fill);
+                table = table.push_full_row(detail_row.into());
+            }
         }
 
         table.build()
     }
 
-    fn build_process_actions(
-        &self,
-        proc_name: &str,
-        is_running: bool,
-        is_transitioning: bool,
-    ) -> Element<'_, Message> {
+    fn build_process_actions(&self, proc_name: &str, state: ProcState) -> Element<'_, Message> {
         let proc_name_start = proc_name.to_string();
         let proc_name_stop = proc_name.to_string();
+        let can_start = matches!(state, ProcState::Stopped | ProcState::Faulty);
+        let can_stop = matches!(state, ProcState::Running | ProcState::Faulty);
+        let is_transitioning = matches!(state, ProcState::Starting | ProcState::Stopping);
 
         // Start button
         let start_btn = button(text("Start").font(Font::MONOSPACE))
@@ -95,7 +145,7 @@ impl OddBoxGui {
                 }
             });
 
-        let start_btn = if !is_running && !is_transitioning {
+        let start_btn = if can_start && !is_transitioning {
             start_btn.on_press(Message::ProcessStart(proc_name_start))
         } else {
             start_btn
@@ -132,7 +182,7 @@ impl OddBoxGui {
                 }
             });
 
-        let stop_btn = if is_running && !is_transitioning {
+        let stop_btn = if can_stop && !is_transitioning {
             stop_btn.on_press(Message::ProcessStop(proc_name_stop))
         } else {
             stop_btn

@@ -114,8 +114,8 @@ fn kill_process_and_its_children(parent: std::process::Child) {
 
     #[cfg(not(unix))]
     {
-        use sysinfo::{ProcessRefreshKind, RefreshKind, System};
         use std::thread;
+        use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
         let parent_pid = parent.id();
 
@@ -164,6 +164,7 @@ fn kill_process_and_its_children(parent: std::process::Child) {
 pub async fn host(
     resolved_proc: crate::configuration::ResolvedProcessBackend,
     registry: Arc<ProcessRegistry>,
+    state: Arc<crate::global_state::GlobalState>,
     token: CancellationToken,
 ) {
     // Drop guard ensures token is cancelled when this function exits
@@ -187,7 +188,13 @@ pub async fn host(
         // Check if we're marked for removal
         if registry.is_marked_for_removal(backend_id) {
             tracing::debug!("[{}] Marked for removal, exiting", backend_id);
-            update_state(&registry, backend_id, &mut previous_state, crate::global_state::ProcState::Stopped);
+            update_state(
+                &registry,
+                backend_id,
+                &mut previous_state,
+                crate::global_state::ProcState::Stopped,
+            );
+            crate::cruma_integration::rebuild_cruma_config(&state);
             break;
         }
 
@@ -195,11 +202,20 @@ pub async fn host(
         let enabled = registry.is_enabled(backend_id);
 
         if !enabled {
-            update_state(&registry, backend_id, &mut previous_state, crate::global_state::ProcState::Stopped);
+            update_state(
+                &registry,
+                backend_id,
+                &mut previous_state,
+                crate::global_state::ProcState::Stopped,
+            );
+            crate::cruma_integration::rebuild_cruma_config(&state);
             continue;
         }
 
-        let Some(port) = resolved_proc.port.or_else(|| crate::configuration::get_random_free_port()) else {
+        let Some(port) = resolved_proc
+            .port
+            .or_else(|| crate::configuration::get_random_free_port())
+        else {
             tracing::error!("[{}] Failed to get a free port", backend_id);
             continue;
         };
@@ -215,26 +231,38 @@ pub async fn host(
             .as_ref()
             .map_or(current_work_dir, |x| x.to_string());
 
-        let resolved_bin_path = if let Some(p) = resolve_bin_path(&workdir, &resolved_proc.bin) {
-            missing_bin = false;
-            p
-        } else {
-            tracing::error!(
-                "[{}] Failed to resolve binary path - workdir: {}, bin: {}",
-                backend_id,
-                workdir,
-                resolved_proc.bin
-            );
-            update_state(&registry, backend_id, &mut previous_state, crate::global_state::ProcState::Faulty);
-            missing_bin = true;
-            continue;
-        };
+        let resolved_bin_path =
+            if let Some(p) = resolve_bin_path(backend_id, &workdir, &resolved_proc.bin) {
+                missing_bin = false;
+                p
+            } else {
+                tracing::error!(
+                    "[{}] Failed to resolve binary path - workdir: {}, bin: {}",
+                    backend_id,
+                    workdir,
+                    resolved_proc.bin
+                );
+                update_state(
+                    &registry,
+                    backend_id,
+                    &mut previous_state,
+                    crate::global_state::ProcState::Faulty,
+                );
+                crate::cruma_integration::rebuild_cruma_config(&state);
+                missing_bin = true;
+                continue;
+            };
 
-        // Build environment variables
+        // Build environment variables (expand $port)
         let mut env_vars: HashMap<String, String> = resolved_proc
             .env_vars
             .iter()
-            .map(|kvp| (kvp.key.clone(), kvp.value.clone()))
+            .map(|kvp| {
+                (
+                    kvp.key.clone(),
+                    kvp.value.replace("$port", &port.to_string()),
+                )
+            })
             .collect();
         env_vars.insert("PORT".into(), port.to_string());
 
@@ -245,7 +273,12 @@ pub async fn host(
             .map(|a| a.replace("$port", &port.to_string()))
             .collect();
 
-        update_state(&registry, backend_id, &mut previous_state, crate::global_state::ProcState::Starting);
+        update_state(
+            &registry,
+            backend_id,
+            &mut previous_state,
+            crate::global_state::ProcState::Starting,
+        );
 
         const _CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -285,8 +318,18 @@ pub async fn host(
                     Some(child_pid),
                     Some(port),
                     None,
+                    Some(
+                        env_vars
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect(),
+                    ),
+                    Some(args.clone()),
+                    Some(workdir.clone()),
+                    Some(resolved_bin_path.clone().to_string_lossy().to_string()),
                 );
                 previous_state = crate::global_state::ProcState::Running;
+                crate::cruma_integration::rebuild_cruma_config(&state);
 
                 let stdout = child.stdout.take().expect("Failed to capture stdout");
                 let stderr = child.stderr.take().expect("Failed to capture stderr");
@@ -295,7 +338,10 @@ pub async fn host(
                 let stdout_reader = std::io::BufReader::new(stdout);
                 let procname = backend_id.clone();
                 let reclone = re.clone();
-                let logformat = resolved_proc.log_format.clone().unwrap_or(LogFormat::standard);
+                let logformat = resolved_proc
+                    .log_format
+                    .clone()
+                    .unwrap_or(LogFormat::standard);
                 let proc_loglevel = resolved_proc.log_level.clone().unwrap_or(LogLevel::Info);
 
                 _ = std::thread::Builder::new()
@@ -307,24 +353,27 @@ pub async fn host(
                 // Spawn stderr reader thread
                 let stderr_reader = std::io::BufReader::new(stderr);
                 let procname = backend_id.clone();
-                _ = std::thread::Builder::new()
-                    .name(procname)
-                    .spawn(move || {
-                        for line in std::io::BufRead::lines(stderr_reader) {
-                            if let Ok(line) = line {
-                                if !line.is_empty() {
-                                    tracing::error!("{}", line.trim());
-                                }
+                _ = std::thread::Builder::new().name(procname).spawn(move || {
+                    for line in std::io::BufRead::lines(stderr_reader) {
+                        if let Ok(line) = line {
+                            if !line.is_empty() {
+                                tracing::error!("{}", line.trim());
                             }
                         }
-                    });
+                    }
+                });
 
                 // Monitor the running process
                 while let Ok(None) = child.try_wait() {
                     // Check if we're marked for removal
                     if registry.is_marked_for_removal(backend_id) {
                         tracing::info!("[{}] Marked for removal, stopping process", backend_id);
-                        update_state(&registry, backend_id, &mut previous_state, crate::global_state::ProcState::Stopping);
+                        update_state(
+                            &registry,
+                            backend_id,
+                            &mut previous_state,
+                            crate::global_state::ProcState::Stopping,
+                        );
                         kill_process_and_its_children(child);
                         break;
                     }
@@ -332,7 +381,12 @@ pub async fn host(
                     // Check if we've been disabled (stop requested from GUI)
                     if !registry.is_enabled(backend_id) {
                         tracing::info!("[{}] Disabled, stopping process", backend_id);
-                        update_state(&registry, backend_id, &mut previous_state, crate::global_state::ProcState::Stopping);
+                        update_state(
+                            &registry,
+                            backend_id,
+                            &mut previous_state,
+                            crate::global_state::ProcState::Stopping,
+                        );
                         kill_process_and_its_children(child);
                         break;
                     }
@@ -340,11 +394,23 @@ pub async fn host(
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
 
-                update_state(&registry, backend_id, &mut previous_state, crate::global_state::ProcState::Stopped);
+                update_state(
+                    &registry,
+                    backend_id,
+                    &mut previous_state,
+                    crate::global_state::ProcState::Stopped,
+                );
+                crate::cruma_integration::rebuild_cruma_config(&state);
             }
             Err(e) => {
                 tracing::error!("[{}] Failed to start: {:?}", backend_id, e);
-                update_state(&registry, backend_id, &mut previous_state, crate::global_state::ProcState::Faulty);
+                update_state(
+                    &registry,
+                    backend_id,
+                    &mut previous_state,
+                    crate::global_state::ProcState::Faulty,
+                );
+                crate::cruma_integration::rebuild_cruma_config(&state);
             }
         }
 
@@ -359,7 +425,13 @@ pub async fn host(
                 "[{}] Stopped unexpectedly, will restart in 5 seconds",
                 backend_id
             );
-            update_state(&registry, backend_id, &mut previous_state, crate::global_state::ProcState::Faulty);
+            update_state(
+                &registry,
+                backend_id,
+                &mut previous_state,
+                crate::global_state::ProcState::Faulty,
+            );
+            crate::cruma_integration::rebuild_cruma_config(&state);
             time_to_sleep_ms = 5000;
         }
 
@@ -376,7 +448,17 @@ fn update_state(
     new_state: crate::global_state::ProcState,
 ) {
     if *previous != new_state {
-        registry.update_state(backend_id, new_state.clone(), None, None, None);
+        registry.update_state(
+            backend_id,
+            new_state.clone(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
         *previous = new_state;
     }
 }
@@ -408,7 +490,10 @@ fn handle_stdout(
                     } else if trimmed.contains("ERROR") || trimmed.contains("error:") {
                         current_level = 5;
                         trimmed = trimmed.replace("error:", "").trim().to_string();
-                    } else if trimmed.contains("DEBUG") || trimmed.contains("debug:") || trimmed.contains("dbug:") {
+                    } else if trimmed.contains("DEBUG")
+                        || trimmed.contains("debug:")
+                        || trimmed.contains("dbug:")
+                    {
                         current_level = 2;
                         trimmed = trimmed.replace("debug:", "").trim().to_string();
                     } else if trimmed.contains("INFO") || trimmed.contains("info:") {
@@ -438,15 +523,18 @@ fn handle_stdout(
     }
 }
 
-fn resolve_bin_path(workdir: &str, bin: &str) -> Option<PathBuf> {
+fn resolve_bin_path(backend_id: &str, workdir: &str, bin: &str) -> Option<PathBuf> {
+    let mut attempts: Vec<String> = Vec::new();
     let bin_path = Path::new(bin);
 
     if bin_path.is_absolute() {
+        attempts.push(bin_path.display().to_string());
         if bin_path.exists() {
             return Some(bin_path.to_path_buf());
         }
     } else {
         let relative_path = Path::new(workdir).join(bin);
+        attempts.push(relative_path.display().to_string());
         if relative_path.exists() {
             return Some(relative_path);
         }
@@ -458,12 +546,29 @@ fn resolve_bin_path(workdir: &str, bin: &str) -> Option<PathBuf> {
         .expect("could not convert current directory to string")
         .to_string();
     let relative_path = Path::new(&current_work_dir).join(bin);
+    attempts.push(relative_path.display().to_string());
     if relative_path.exists() {
         return Some(relative_path);
     }
 
     match which::which(bin) {
         Ok(path) => Some(path),
-        Err(_) => None,
+        Err(_) => {
+            tracing::warn!(
+                backend_id = %backend_id,
+                bin = %bin,
+                workdir = %workdir,
+                attempts = ?attempts,
+                "Failed to resolve binary path"
+            );
+            if let Ok(path_env) = std::env::var("PATH") {
+                tracing::debug!(
+                    backend_id = %backend_id,
+                    path_env = %path_env,
+                    "PATH used for binary resolution"
+                );
+            }
+            None
+        }
     }
 }

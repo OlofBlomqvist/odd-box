@@ -1,8 +1,8 @@
 use iced::widget::{
-    Column, Row, Scrollable, Space, button, checkbox, column, container, lazy, pick_list, row,
-    scrollable, text, text_input,
+    Column, Row, Scrollable, Space, Stack, button, checkbox, column, container, lazy, mouse_area,
+    pick_list, row, scrollable, text, text_input,
 };
-use iced::{Border, Color, Element, Font, Length, Padding, Theme};
+use iced::{Alignment, Border, Color, Element, Font, Length, Padding, Theme};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use tracing::Level;
@@ -76,7 +76,122 @@ impl OddBoxGui {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        container(content)
+        let base: Element<'_, Message> = container(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+
+        let Some(modal) = &self.log_modal else {
+            return base;
+        };
+
+        let header = row![
+            text("Log Entry").size(20),
+            Space::new().width(Length::Fill),
+            button(text("Close"))
+                .padding(Padding {
+                    top: 4.0,
+                    right: 10.0,
+                    bottom: 4.0,
+                    left: 10.0,
+                })
+                .on_press(Message::LogCloseEntry),
+        ]
+        .align_y(iced::Alignment::Center);
+
+        let meta = row![
+            text(modal.level_str)
+                .font(Font::MONOSPACE)
+                .color(modal.level_color),
+            text(modal.source.clone())
+                .font(Font::MONOSPACE)
+                .style(|theme: &Theme| iced::widget::text::Style {
+                    color: Some(theme.extended_palette().background.weak.text),
+                    ..Default::default()
+                }),
+            text(modal.timestamp_str.clone())
+                .font(Font::MONOSPACE)
+                .style(|theme: &Theme| iced::widget::text::Style {
+                    color: Some(theme.extended_palette().background.weak.text),
+                    ..Default::default()
+                }),
+        ]
+        .spacing(12);
+
+        let message = Scrollable::new(
+            container(
+                text(modal.message.clone())
+                    .font(Font::MONOSPACE)
+                    .style(|theme: &Theme| iced::widget::text::Style {
+                        color: Some(theme.extended_palette().background.base.text),
+                        ..Default::default()
+                    })
+                    .wrapping(text::Wrapping::Word),
+            )
+            .padding(Padding {
+                top: 8.0,
+                right: 8.0,
+                bottom: 8.0,
+                left: 8.0,
+            }),
+        )
+        .height(Length::Fixed(260.0));
+
+        let actions = row![
+            Space::new().width(Length::Fill),
+            button(text("Copy"))
+                .padding(Padding {
+                    top: 6.0,
+                    right: 12.0,
+                    bottom: 6.0,
+                    left: 12.0,
+                })
+                .on_press(Message::LogCopyEntry),
+        ];
+
+        let modal_card = container(column![header, meta, message, actions].spacing(14))
+            .padding(Padding {
+                top: 16.0,
+                right: 18.0,
+                bottom: 16.0,
+                left: 18.0,
+            })
+            .width(Length::Fixed(720.0))
+            .style(|theme: &Theme| {
+                let palette = theme.extended_palette();
+                iced::widget::container::Style {
+                    background: Some(palette.background.weak.color.into()),
+                    text_color: Some(palette.background.base.text),
+                    border: Border {
+                        radius: 8.0.into(),
+                        width: 1.0,
+                        color: palette.background.strong.color,
+                    },
+                    ..Default::default()
+                }
+            });
+
+        let dimmer = container(column![])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(|theme: &Theme| {
+                let mut bg = theme.extended_palette().background.strong.color;
+                bg.a = 0.6;
+                iced::widget::container::Style {
+                    background: Some(bg.into()),
+                    ..Default::default()
+                }
+            });
+
+        let dismiss = mouse_area(dimmer).on_press(Message::LogCloseEntry);
+
+        let overlay = container(mouse_area(modal_card).on_press(Message::NoOp))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center);
+
+        Stack::with_children(vec![base, dismiss.into(), overlay.into()])
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -347,16 +462,25 @@ impl OddBoxGui {
                         }
                     };
 
-                    column![metadata_row, message_widget].spacing(2).into()
+                    let entry = column![metadata_row, message_widget].spacing(2);
+                    let entry_container = if dep.wrap {
+                        container(entry).width(Length::Fill)
+                    } else {
+                        container(entry).width(Length::Shrink)
+                    };
+                    mouse_area(entry_container)
+                        .on_press(Message::LogOpenEntry(line.id))
+                        .into()
                 })
                 .collect();
 
             let log_column = Column::with_children(rows).spacing(12);
 
+            let right_pad = if dep.wrap { 40.0 } else { 15.0 };
             let log_container: Element<'static, Message> = container(log_column)
                 .padding(Padding {
                     top: 10.0,
-                    right: 15.0,
+                    right: right_pad,
                     bottom: 10.0,
                     left: 15.0,
                 })
@@ -401,16 +525,9 @@ impl OddBoxGui {
                 .height(Length::Fill)
         };
 
-        let tail_active = self.log_auto_tail && self.log_is_at_bottom;
-
         scroller = scroller
             .id(super::super::log_scroll_id())
             .on_scroll(Message::LogViewportChanged);
-
-        // Follow the bottom only while tail is active (i.e. while we're at the end)
-        if tail_active {
-            scroller = scroller.anchor_bottom();
-        }
 
         scroller.into()
     }
@@ -423,7 +540,8 @@ impl OddBoxGui {
 
     /// Refresh the log cache. Returns true if new logs were added.
     pub(in crate::gui) fn refresh_log_cache(&mut self, force: bool) -> bool {
-        let state = self.log_state.read();
+        let _ = self.log_state.drain();
+        let state = self.log_state.snapshot();
 
         // Early-out if nothing changed and not forced
         let current_last_id = state.last_id();
@@ -499,7 +617,6 @@ impl OddBoxGui {
 
             if !found_previous {
                 // We lost track (e.g. rotation or clear). Fall back to a full rebuild.
-                drop(state);
                 return self.refresh_log_cache(true);
             }
 

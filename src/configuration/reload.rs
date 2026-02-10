@@ -9,10 +9,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     configuration::{LogLevel, v4},
-    cruma_integration::{ build_config as build_cruma_config,
-    },
+    cruma_integration,
     global_state::GlobalState,
-    proc_host
+    proc_host,
 };
 
 use super::{AnyOddBoxConfig, ConfigWrapper};
@@ -22,7 +21,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
 
     tokio::time::sleep(Duration::from_millis(1500)).await;
 
-    let active_configuration = { global_state.config.read().await.clone() };
+    let active_configuration = (*global_state.config.load_full()).clone();
     let mut file = std::fs::File::open(
         &active_configuration
             .path
@@ -37,7 +36,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
             let (a, b, _) = configuration
                 .try_upgrade_to_latest_version()
                 .expect("configuration upgrade failed. this is a bug in odd-box");
-            (ConfigWrapper::new(a,active_configuration.path.clone()), b)
+            (ConfigWrapper::new(a, active_configuration.path.clone()), b)
         }
         Err(e) => anyhow::bail!(e),
     };
@@ -45,7 +44,6 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
     new_configuration.internal_version = active_configuration.internal_version + 1;
 
     new_configuration.is_valid()?;
-
 
     if new_configuration.eq(&active_configuration) {
         trace!("Configuration has not changed, skipping reload");
@@ -62,25 +60,23 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
         .collect();
 
     // Filter out processes that are already running with same configuration - we don't need to restart them
+    let snapshot = global_state.process_registry.snapshot();
     let cloned_modified_procs: Vec<(String, v4::ProcessBackend)> = all_cloned_new_procs
         .iter_mut()
         .filter_map(|(backend_id, new_proc_conf)| {
-
-            // TODO: instead of just true for is_running, we need to find out if there actually is a proc_host running
-            // for this backend_id.. now we just always say true and kill even when it has the current config..
-            let is_running = true;
-
+            let is_running = snapshot.get(backend_id).is_some();
 
             if is_running {
-                // Check if the process backend exists in active config and compare
                 if let Some(active_proc) = active_configuration.hosted_processes.get(backend_id) {
-
-                    // Compare the configs (excluding active_port since we just synced it)
-                    if active_proc.value() == new_proc_conf {
-                        // Config unchanged, skip restart
+                    if process_configs_equal(active_proc.value(), new_proc_conf) {
                         return None;
                     } else {
-                        info!("Process {} has changed, will restart", backend_id);
+                        let diffs = process_config_diffs(active_proc.value(), new_proc_conf);
+                        info!(
+                            "Process {} has changed ({}), will restart",
+                            backend_id,
+                            diffs.join(", ")
+                        );
                         return Some((backend_id.clone(), new_proc_conf.clone()));
                     }
                 }
@@ -128,11 +124,23 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
                 }
                 _ => {
                     // Process backends - mark for removal if config changed or removed
-                    if cloned_modified_procs.iter().any(|(id, _)| id == &entry.backend_id) {
-                        info!("Marking process {} for removal as it has changed", entry.backend_id);
+                    if cloned_modified_procs
+                        .iter()
+                        .any(|(id, _)| id == &entry.backend_id)
+                    {
+                        info!(
+                            "Marking process {} for removal as it has changed",
+                            entry.backend_id
+                        );
                         true
-                    } else if !new_configuration.hosted_processes.contains_key(&entry.backend_id) {
-                        info!("Marking process {} for removal as it is no longer in the configuration", entry.backend_id);
+                    } else if !new_configuration
+                        .hosted_processes
+                        .contains_key(&entry.backend_id)
+                    {
+                        info!(
+                            "Marking process {} for removal as it is no longer in the configuration",
+                            entry.backend_id
+                        );
                         true
                     } else {
                         false
@@ -140,7 +148,10 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
                 }
             };
             if should_remove {
-                if let Some(token) = global_state.process_registry.mark_for_removal(&entry.backend_id) {
+                if let Some(token) = global_state
+                    .process_registry
+                    .mark_for_removal(&entry.backend_id)
+                {
                     tokens_to_wait.push(token);
                 }
             }
@@ -162,9 +173,10 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
 
     // Register any new static backends
     for (backend_id, _) in &cloned_dirs {
-        global_state
-            .process_registry
-            .register_backend(backend_id.clone(), crate::global_state::ProcState::DirServer);
+        global_state.process_registry.register_backend(
+            backend_id.clone(),
+            crate::global_state::ProcState::DirServer,
+        );
     }
 
     // Spawn new/updated process backends
@@ -184,6 +196,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
                 tokio::task::spawn(proc_host::host(
                     resolved,
                     global_state.process_registry.clone(),
+                    global_state.clone(),
                     token,
                 ));
             }
@@ -200,9 +213,16 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    let rebuilt_cruma_config = match build_cruma_config(&new_configuration) {
+    let runtime_ports =
+        cruma_integration::runtime_ports_from_registry(&global_state.process_registry);
+    let runtime_states =
+        cruma_integration::runtime_states_from_registry(&global_state.process_registry);
+    let rebuilt_cruma_config = match cruma_integration::build_config_with_runtime_ports(
+        &new_configuration,
+        &runtime_ports,
+        &runtime_states,
+    ) {
         Ok((cfg, notes)) => {
-
             if !notes.unsupported.is_empty() {
                 tracing::warn!(
                     "cruma config placeholders/unsupported after reload: {:?}",
@@ -218,9 +238,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
     };
 
     let new_log_level = new_configuration.log_level.clone();
-    let mut guard = global_state.config.write().await;
-    *guard = new_configuration;
-    drop(guard);
+    global_state.config.store(Arc::new(new_configuration));
 
     if let Some(new_cruma_cfg) = rebuilt_cruma_config {
         global_state
@@ -236,17 +254,36 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
         LogLevel::Debug => LevelFilter::DEBUG,
     };
 
-    let what = EnvFilter::from_default_env()
-        .add_directive(
+    let rust_log = std::env::var("RUST_LOG").ok();
+    let has_odd_box_override = rust_log
+        .as_ref()
+        .map(|v| v.split(',').any(|d| d.trim().starts_with("odd_box")))
+        .unwrap_or(false);
+    let has_cruma_override = rust_log
+        .as_ref()
+        .map(|v| v.split(',').any(|d| d.trim().starts_with("odd_box::cruma")))
+        .unwrap_or(false);
+
+    let mut what = EnvFilter::from_default_env();
+    if !has_odd_box_override {
+        what = what.add_directive(
             format!("odd_box={}", log_level)
                 .parse()
                 .expect("This directive should always work"),
-        )
-        .add_directive(
-            "odd_box::proc_host=trace"
+        );
+    }
+    what = what.add_directive(
+        "odd_box::proc_host=trace"
+            .parse()
+            .expect("This directive should always work"),
+    );
+    if !has_odd_box_override && !has_cruma_override {
+        what = what.add_directive(
+            "odd_box::cruma=info"
                 .parse()
                 .expect("This directive should always work"),
         );
+    }
 
     match &global_state.log_handle {
         crate::OddLogHandle::CLI(rw_lock) => match rw_lock.write().await.reload(what) {
@@ -276,4 +313,61 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
 
     info!("Configuration reloaded successfully.");
     Ok(())
+}
+
+fn process_configs_equal(a: &v4::ProcessBackend, b: &v4::ProcessBackend) -> bool {
+    if a == b {
+        return true;
+    }
+    let mut a = a.clone();
+    let mut b = b.clone();
+    // proc_id is generated on load; ignore it for change detection
+    let shared = a.proc_id.clone();
+    a.proc_id = shared.clone();
+    b.proc_id = shared;
+    a == b
+}
+
+fn process_config_diffs(a: &v4::ProcessBackend, b: &v4::ProcessBackend) -> Vec<&'static str> {
+    let mut diffs = Vec::new();
+
+    if a.bin != b.bin {
+        diffs.push("bin");
+    }
+    if a.args != b.args {
+        diffs.push("args");
+    }
+    if a.dir != b.dir {
+        diffs.push("dir");
+    }
+    if a.env != b.env {
+        diffs.push("env");
+    }
+    if a.protocol != b.protocol {
+        diffs.push("protocol");
+    }
+    if a.https != b.https {
+        diffs.push("https");
+    }
+    if a.port != b.port {
+        diffs.push("port");
+    }
+    if a.auto_start != b.auto_start {
+        diffs.push("auto_start");
+    }
+    if a.exclude_from_start_all != b.exclude_from_start_all {
+        diffs.push("exclude_from_start_all");
+    }
+    if a.log_level != b.log_level {
+        diffs.push("log_level");
+    }
+    if a.log_format != b.log_format {
+        diffs.push("log_format");
+    }
+
+    if diffs.is_empty() {
+        diffs.push("unknown");
+    }
+
+    diffs
 }

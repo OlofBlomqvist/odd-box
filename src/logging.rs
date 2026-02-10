@@ -1,6 +1,8 @@
-use std::collections::VecDeque;
-use std::sync::Mutex;
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+use crossbeam_queue::ArrayQueue;
 use tracing::Subscriber;
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
@@ -58,10 +60,7 @@ impl LogVisitor {
     }
 }
 
-pub struct NonTuiLoggerLayer {
-    pub broadcaster:
-        tokio::sync::broadcast::Sender<crate::types::odd_box_event::EventForWebsocketClients>,
-}
+pub struct NonTuiLoggerLayer {}
 impl<S: Subscriber> tracing_subscriber::Layer<S> for NonTuiLoggerLayer {
     fn on_event(
         &self,
@@ -110,54 +109,74 @@ impl<S: Subscriber> tracing_subscriber::Layer<S> for NonTuiLoggerLayer {
             msg,
         };
 
-        _ = self
-            .broadcaster
-            .send(crate::types::odd_box_event::EventForWebsocketClients::Log(
-                log_message,
-            ));
+        let _ = log_message;
     }
 }
 
+#[derive(Debug)]
 pub struct SharedLogBuffer {
-    pub logs: VecDeque<LogMsg>,
-    pub limit: Option<usize>,
-    pub pause: bool,
+    logs: ArrayQueue<LogMsg>,
+    limit: AtomicUsize,
+    pause: AtomicBool,
+    capacity: usize,
 }
 
 impl SharedLogBuffer {
     pub fn new() -> Self {
+        let capacity = 1000;
         SharedLogBuffer {
-            logs: VecDeque::new(),
-            limit: Some(500),
-            pause: false,
+            logs: ArrayQueue::new(capacity),
+            limit: AtomicUsize::new(500),
+            pause: AtomicBool::new(false),
+            capacity,
         }
     }
 
-    fn push(&mut self, message: LogMsg) {
-        if self.pause {
+    fn effective_limit(&self) -> usize {
+        let limit = self.limit.load(Ordering::Relaxed);
+        if limit == 0 {
+            self.capacity
+        } else {
+            limit.min(self.capacity)
+        }
+    }
+
+    fn push(&self, message: LogMsg) {
+        if self.pause.load(Ordering::Relaxed) {
             return;
         }
-        self.logs.push_back(message);
-        match self.limit {
-            Some(x) => {
-                while self.logs.len() > x {
-                    self.logs.pop_front();
-                }
+
+        let limit = self.effective_limit();
+        let mut msg = message;
+        loop {
+            while self.logs.len() >= limit {
+                let _ = self.logs.pop();
             }
-            None => {
-                // hard max even if user is scrolled up in the tui
-                while self.logs.len() > 1000 {
-                    self.logs.pop_front();
+            match self.logs.push(msg) {
+                Ok(()) => break,
+                Err(m) => {
+                    msg = m;
+                    let _ = self.logs.pop();
                 }
             }
         }
+    }
+
+    pub fn drain(&self) -> Vec<LogMsg> {
+        let mut out = Vec::new();
+        while let Some(msg) = self.logs.pop() {
+            out.push(msg);
+        }
+        out
+    }
+
+    pub fn clear(&self) {
+        while self.logs.pop().is_some() {}
     }
 }
 
 pub struct TuiLoggerLayer {
-    pub log_buffer: Arc<Mutex<SharedLogBuffer>>,
-    pub broadcaster:
-        tokio::sync::broadcast::Sender<crate::types::odd_box_event::EventForWebsocketClients>,
+    pub log_buffer: Arc<SharedLogBuffer>,
 }
 
 impl<S: Subscriber> Layer<S> for TuiLoggerLayer {
@@ -211,17 +230,6 @@ impl<S: Subscriber> Layer<S> for TuiLoggerLayer {
             msg,
         };
 
-        _ = self
-            .broadcaster
-            .send(crate::types::odd_box_event::EventForWebsocketClients::Log(
-                log_message.clone(),
-            ));
-
-        let mut buffer = self
-            .log_buffer
-            .lock()
-            .expect("must always be able to lock log buffer");
-
-        buffer.push(log_message.clone());
+        self.log_buffer.push(log_message.clone());
     }
 }

@@ -2,20 +2,23 @@ pub mod components;
 pub mod logs;
 mod pages;
 
+use iced::clipboard;
 use iced::gradient::{ColorStop, Linear};
+use iced::widget::scrollable::RelativeOffset;
 use iced::widget::{
     Column, Id, Scrollable, button, column, container, image, row, scrollable, text,
 };
 use iced::{
-    Application, Background, Border, Color, Element, Font, Length, Padding, Radians, Subscription, Task, Theme, system, theme, time
+    Application, Background, Border, Color, Element, Font, Length, Padding, Radians, Subscription,
+    Task, Theme, system, theme, time, window,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
 
+use crate::configuration::{LogLevel, v4};
 use crate::global_state::GlobalState;
 use crate::types::proc_info::ProcId;
-use crate::configuration::v4;
 use logs::{LogFilter, SharedLogState};
 use pages::{CachedConfig, CachedLogLine, fetch_config};
 
@@ -80,7 +83,8 @@ pub fn run(
     })
     .theme(OddBoxGui::theme)
     .subscription(OddBoxGui::subscription)
-    .title("ODD-BOX").window(window_settings)
+    .title("ODD-BOX")
+    .window(window_settings)
     .run()
 }
 
@@ -149,6 +153,63 @@ impl LogLevelPreset {
     ];
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProcessLogLevelChoice {
+    #[default]
+    Default,
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl ProcessLogLevelChoice {
+    pub const ALL: [ProcessLogLevelChoice; 6] = [
+        ProcessLogLevelChoice::Default,
+        ProcessLogLevelChoice::Trace,
+        ProcessLogLevelChoice::Debug,
+        ProcessLogLevelChoice::Info,
+        ProcessLogLevelChoice::Warn,
+        ProcessLogLevelChoice::Error,
+    ];
+
+    pub fn from_option(level: &Option<LogLevel>) -> Self {
+        match level {
+            None => ProcessLogLevelChoice::Default,
+            Some(LogLevel::Trace) => ProcessLogLevelChoice::Trace,
+            Some(LogLevel::Debug) => ProcessLogLevelChoice::Debug,
+            Some(LogLevel::Info) => ProcessLogLevelChoice::Info,
+            Some(LogLevel::Warn) => ProcessLogLevelChoice::Warn,
+            Some(LogLevel::Error) => ProcessLogLevelChoice::Error,
+        }
+    }
+
+    pub fn to_option(self) -> Option<LogLevel> {
+        match self {
+            ProcessLogLevelChoice::Default => None,
+            ProcessLogLevelChoice::Trace => Some(LogLevel::Trace),
+            ProcessLogLevelChoice::Debug => Some(LogLevel::Debug),
+            ProcessLogLevelChoice::Info => Some(LogLevel::Info),
+            ProcessLogLevelChoice::Warn => Some(LogLevel::Warn),
+            ProcessLogLevelChoice::Error => Some(LogLevel::Error),
+        }
+    }
+}
+
+impl std::fmt::Display for ProcessLogLevelChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProcessLogLevelChoice::Default => write!(f, "Default (Info)"),
+            ProcessLogLevelChoice::Trace => write!(f, "Trace"),
+            ProcessLogLevelChoice::Debug => write!(f, "Debug"),
+            ProcessLogLevelChoice::Info => write!(f, "Info"),
+            ProcessLogLevelChoice::Warn => write!(f, "Warn"),
+            ProcessLogLevelChoice::Error => write!(f, "Error"),
+        }
+    }
+}
+
 impl std::fmt::Display for LogLevelPreset {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -187,13 +248,26 @@ pub enum Message {
     LogsClear,
     LogToggleWrap(bool),
     LogToggleAutoTail(bool),
+    LogOpenEntry(u64),
+    LogCloseEntry,
+    LogCopyEntry,
     // Tick for refreshing log view
     Tick,
+    ExitPoll,
+    ExitWindowId(Option<window::Id>),
     // Config data updated
     ConfigUpdated(CachedConfig),
+    // Frontend port settings
+    FrontendHttpPortChanged(String),
+    FrontendHttpsPortChanged(String),
+    FrontendPortsSave,
+    FrontendPortsSaveResult(Result<(), String>),
     // Process control
     ProcessStart(String),
     ProcessStop(String),
+    ProcessStartAll,
+    ProcessStopAll,
+    ProcessToggleDetails(String),
     // Dashboard card menu
     DashboardToggleProcessMenu(String),
     DashboardCursorMoved(f32, f32),
@@ -203,7 +277,7 @@ pub enum Message {
     OpenNewBackend(BackendKind),
     EditFrontendLoaded(EditFrontendForm),
     EditFrontendHostChanged(String),
-    EditFrontendBackendChanged(String),
+    EditFrontendBackendChanged(BackendOption),
     EditFrontendCaptureSubdomainsToggled(bool),
     EditFrontendForwardSubdomainsToggled(bool),
     EditFrontendRedirectHttpsToggled(bool),
@@ -224,6 +298,16 @@ pub enum Message {
     EditBackendSaveResult(Result<(), String>),
     EditBackendDelete,
     EditBackendDeleteResult(Result<(), String>),
+    CrumaAuthModeChanged(CrumaAuthMode),
+    CrumaAuthModeSaveResult(Result<(), String>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CrumaAuthMode {
+    Disabled,
+    #[default]
+    Anonymous,
+    Authenticated,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -245,10 +329,59 @@ pub enum BackendKind {
     Unknown,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BackendOption {
+    pub id: String,
+    pub label: String,
+}
+
+impl BackendOption {
+    pub fn new(id: String, kind: &str) -> Self {
+        let label = format!("{id} ({kind})");
+        Self { id, label }
+    }
+}
+
+impl std::fmt::Display for BackendOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.label.fmt(f)
+    }
+}
+
 impl Default for BackendKind {
     fn default() -> Self {
         BackendKind::Unknown
     }
+}
+
+fn format_env_lines(env: &std::collections::HashMap<String, String>) -> String {
+    let mut pairs: Vec<(String, String)> =
+        env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    pairs
+        .into_iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn parse_env_lines(input: &str) -> Result<std::collections::HashMap<String, String>, String> {
+    let mut out = std::collections::HashMap::new();
+    for raw in input
+        .split(|c| c == '\n' || c == ',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        let (key, value) = raw
+            .split_once('=')
+            .ok_or_else(|| format!("Invalid env var '{raw}'. Use KEY=VALUE."))?;
+        let key = key.trim();
+        if key.is_empty() {
+            return Err(format!("Invalid env var '{raw}'. Key is empty."));
+        }
+        out.insert(key.to_string(), value.trim().to_string());
+    }
+    Ok(out)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -270,8 +403,10 @@ pub struct EditBackendForm {
     pub proc_args: String,
     pub proc_dir: String,
     pub proc_port: String,
+    pub proc_env: String,
     pub proc_auto_start: bool,
     pub proc_exclude_from_start_all: bool,
+    pub proc_log_level: ProcessLogLevelChoice,
     // Process (read-only for now)
     pub bin: String,
 }
@@ -291,8 +426,10 @@ pub enum EditBackendField {
     ProcArgs(String),
     ProcDir(String),
     ProcPort(String),
+    ProcEnv(String),
     ProcAutoStart(bool),
     ProcExcludeFromStartAll(bool),
+    ProcLogLevel(ProcessLogLevelChoice),
 }
 
 pub struct OddBoxGui {
@@ -310,6 +447,7 @@ pub struct OddBoxGui {
     pub(in crate::gui) known_sources: Vec<String>,
     // Cached filtered log lines for performance
     pub(in crate::gui) cached_log_lines: Arc<Vec<CachedLogLine>>,
+    expanded_process: Option<String>,
     pub(in crate::gui) last_log_count: usize,
     pub(in crate::gui) total_log_count: usize,
     // Track last seen log ID to avoid unnecessary rebuilds
@@ -317,6 +455,7 @@ pub struct OddBoxGui {
     // Log display options
     pub(in crate::gui) log_wrap_enabled: bool,
     pub(in crate::gui) log_auto_tail: bool,
+    pub(in crate::gui) log_modal: Option<LogModal>,
     // Cached config data
     pub(in crate::gui) cached_config: CachedConfig,
     pub(in crate::gui) backend_names: Vec<String>,
@@ -338,14 +477,42 @@ pub struct OddBoxGui {
     pub(in crate::gui) edit_backend_original: Option<String>,
     pub(in crate::gui) edit_backend_is_new: bool,
     pub(in crate::gui) edit_backend_confirm_delete: bool,
+    pub(in crate::gui) cruma_auth_mode: CrumaAuthMode,
+    pub(in crate::gui) cruma_mode_notice: Option<String>,
+    exit_requested: bool,
+    frontend_http_port_input: String,
+    frontend_https_port_input: String,
+    frontend_port_notice: Option<String>,
+    frontend_ports_dirty: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::gui) struct LogModal {
+    pub id: u64,
+    pub level_str: &'static str,
+    pub level_color: Color,
+    pub source: String,
+    pub timestamp_str: String,
+    pub message: String,
+    pub copy_text: String,
 }
 
 fn log_scroll_id() -> Id {
     Id::new("odd_box_log_scroll")
 }
 
+fn cruma_mode_from_config(cfg: &crate::configuration::ConfigWrapper) -> CrumaAuthMode {
+    match cfg.cruma.as_ref().and_then(|c| c.mode()) {
+        Some(crate::configuration::v4::CrumaMode::Anonymous) => CrumaAuthMode::Anonymous,
+        Some(crate::configuration::v4::CrumaMode::Authenticated { .. }) => {
+            CrumaAuthMode::Authenticated
+        }
+        None => CrumaAuthMode::Disabled,
+    }
+}
+
 async fn load_frontend_form(state: Arc<GlobalState>, hostname: String) -> EditFrontendForm {
-    let guard = state.config.read().await;
+    let guard = state.config.load_full();
 
     let mut form = EditFrontendForm {
         hostname: hostname.clone(),
@@ -409,7 +576,7 @@ async fn save_frontend_form(
         );
     }
 
-    let mut guard = state.config.write().await;
+    let mut guard = (*state.config.load_full()).clone();
     if original_host.is_none() {
         if let Some(http) = &guard.frontends.http {
             if http.routes.contains_key(&form.hostname) {
@@ -480,12 +647,98 @@ async fn save_frontend_form(
 
     guard.is_valid().map_err(|e| e.to_string())?;
     guard.write_to_disk().map_err(|e| e.to_string())?;
+    state.config.store(std::sync::Arc::new(guard));
+
+    Ok(())
+}
+
+async fn save_frontend_ports(
+    state: Arc<GlobalState>,
+    http_port_input: String,
+    https_port_input: String,
+) -> Result<(), String> {
+    fn parse_port(value: &str) -> Result<Option<u16>, String> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Ok(None);
+        }
+        let port: u16 = trimmed
+            .parse()
+            .map_err(|_| format!("Invalid port '{trimmed}'. Use 1-65535."))?;
+        if port == 0 {
+            return Err("Port must be between 1 and 65535.".to_string());
+        }
+        Ok(Some(port))
+    }
+
+    let http_port = parse_port(&http_port_input)?;
+    let https_port = parse_port(&https_port_input)?;
+
+    let mut guard = (*state.config.load_full()).clone();
+
+    if let Some(port) = http_port {
+        if guard.frontends.http.is_none() {
+            guard.frontends.http = Some(v4::HttpFrontend {
+                port,
+                routes: HashMap::new(),
+            });
+        } else if let Some(http) = guard.frontends.http.as_mut() {
+            http.port = port;
+        }
+    }
+
+    if let Some(port) = https_port {
+        if guard.frontends.https.is_none() {
+            let routes = guard
+                .frontends
+                .http
+                .as_ref()
+                .map(|_| v4::HttpsRoutes::Inherit(v4::InheritMarker::Inherit));
+            guard.frontends.https = Some(v4::HttpsFrontend {
+                port,
+                cert: v4::CertMode::default(),
+                routes,
+            });
+        } else if let Some(https) = guard.frontends.https.as_mut() {
+            https.port = port;
+        }
+    }
+
+    guard.is_valid().map_err(|e| e.to_string())?;
+    guard.write_to_disk().map_err(|e| e.to_string())?;
+    state.config.store(std::sync::Arc::new(guard));
+    crate::cruma_integration::rebuild_cruma_config(&state);
+
+    Ok(())
+}
+
+async fn save_cruma_mode(state: Arc<GlobalState>, mode: CrumaAuthMode) -> Result<(), String> {
+    let mut guard = (*state.config.load_full()).clone();
+
+    match mode {
+        CrumaAuthMode::Disabled => {
+            guard.cruma = None;
+        }
+        CrumaAuthMode::Anonymous => {
+            guard.cruma = Some(v4::CrumaConfig::Mode("anon".to_string()));
+        }
+        CrumaAuthMode::Authenticated => {
+            let Some(v4::CrumaConfig::Auth { id, key }) = guard.cruma.clone() else {
+                return Err("Authenticated credentials are not configured.".to_string());
+            };
+            guard.cruma = Some(v4::CrumaConfig::Auth { id, key });
+        }
+    }
+
+    guard.is_valid().map_err(|e| e.to_string())?;
+    guard.write_to_disk().map_err(|e| e.to_string())?;
+    state.config.store(std::sync::Arc::new(guard));
 
     Ok(())
 }
 
 async fn delete_frontend(state: Arc<GlobalState>, host: String) -> Result<(), String> {
-    let mut guard = state.config.write().await;
+    let mut guard = (*state.config.load_full()).clone();
 
     if let Some(http) = guard.frontends.http.as_mut() {
         http.routes.remove(&host);
@@ -498,11 +751,12 @@ async fn delete_frontend(state: Arc<GlobalState>, host: String) -> Result<(), St
 
     guard.is_valid().map_err(|e| e.to_string())?;
     guard.write_to_disk().map_err(|e| e.to_string())?;
+    state.config.store(std::sync::Arc::new(guard));
     Ok(())
 }
 
 async fn load_backend_form(state: Arc<GlobalState>, backend_id: String) -> EditBackendForm {
-    let guard = state.config.read().await;
+    let guard = state.config.load_full();
     let mut form = EditBackendForm {
         id: backend_id.clone(),
         ..EditBackendForm::default()
@@ -521,6 +775,8 @@ async fn load_backend_form(state: Arc<GlobalState>, backend_id: String) -> EditB
                 form.proc_port = p.port.map(|v| v.to_string()).unwrap_or_default();
                 form.proc_auto_start = p.auto_start.unwrap_or(true);
                 form.proc_exclude_from_start_all = p.exclude_from_start_all;
+                form.proc_log_level = ProcessLogLevelChoice::from_option(&p.log_level);
+                form.proc_env = format_env_lines(&p.env);
             }
             v4::Backend::Remote(r) => {
                 form.kind = BackendKind::Remote;
@@ -539,10 +795,7 @@ async fn load_backend_form(state: Arc<GlobalState>, backend_id: String) -> EditB
                 form.dir = s.dir.clone();
                 form.list_dir = s.list_dir;
                 form.render_markdown = s.render_markdown;
-                form.cache_max_age = s
-                    .cache_max_age
-                    .map(|v| v.to_string())
-                    .unwrap_or_default();
+                form.cache_max_age = s.cache_max_age.map(|v| v.to_string()).unwrap_or_default();
             }
         }
     } else {
@@ -561,7 +814,7 @@ async fn save_backend_form(
         return Err("Backend id is required.".to_string());
     }
 
-    let mut guard = state.config.write().await;
+    let mut guard = (*state.config.load_full()).clone();
     if original_id.as_deref() != Some(&form.id) && guard.backends.contains_key(&form.id) {
         return Err("Backend id already exists.".to_string());
     }
@@ -691,12 +944,12 @@ async fn save_backend_form(
                 .map(|s| s.to_string())
                 .collect();
 
-            let (proc_id, env, log_level, log_format) = match guard.backends.get(&form.id) {
-                Some(v4::Backend::Process(p)) => {
-                    (p.proc_id.clone(), p.env.clone(), p.log_level.clone(), p.log_format.clone())
-                }
-                _ => (ProcId::new(), std::collections::HashMap::new(), None, None),
+            let (proc_id, log_format) = match guard.backends.get(&form.id) {
+                Some(v4::Backend::Process(p)) => (p.proc_id.clone(), p.log_format.clone()),
+                _ => (ProcId::new(), None),
             };
+            let log_level = form.proc_log_level.to_option();
+            let env = parse_env_lines(&form.proc_env)?;
 
             guard.backends.insert(
                 key,
@@ -728,16 +981,18 @@ async fn save_backend_form(
     guard.reload_dashmaps();
     guard.is_valid().map_err(|e| e.to_string())?;
     guard.write_to_disk().map_err(|e| e.to_string())?;
+    state.config.store(std::sync::Arc::new(guard));
     Ok(())
 }
 
 async fn delete_backend(state: Arc<GlobalState>, backend_id: String) -> Result<(), String> {
-    let mut guard = state.config.write().await;
+    let mut guard = (*state.config.load_full()).clone();
     guard.backends.remove(&backend_id);
 
     guard.reload_dashmaps();
     guard.is_valid().map_err(|e| e.to_string())?;
     guard.write_to_disk().map_err(|e| e.to_string())?;
+    state.config.store(std::sync::Arc::new(guard));
     Ok(())
 }
 
@@ -753,7 +1008,10 @@ async fn pick_backend_bin() -> Option<String> {
         .map(|p| p.display().to_string())
 }
 
-async fn resolve_backend_dir(state: Arc<GlobalState>, dir: String) -> Result<Option<String>, String> {
+async fn resolve_backend_dir(
+    state: Arc<GlobalState>,
+    dir: String,
+) -> Result<Option<String>, String> {
     let input = dir.trim();
     if input.is_empty() {
         return Ok(None);
@@ -780,7 +1038,7 @@ async fn resolve_backend_dir(state: Arc<GlobalState>, dir: String) -> Result<Opt
         idx = end;
     }
 
-    let guard = state.config.read().await;
+    let guard = state.config.load_full();
     let probe = v4::StaticBackend {
         dir: input.to_string(),
         index: "index.html".to_string(),
@@ -873,6 +1131,8 @@ impl OddBoxGui {
         let log_level_preset = LogLevelPreset::InfoAndAbove;
         Self::apply_log_level_preset(&mut log_filter, log_level_preset);
 
+        let initial_cruma_mode = cruma_mode_from_config(&state.config.load_full());
+
         (
             Self {
                 state,
@@ -888,9 +1148,11 @@ impl OddBoxGui {
                 cached_log_lines: Arc::new(Vec::new()),
                 last_log_count: 0,
                 total_log_count: 0,
+                expanded_process: None,
                 last_seen_log_id: None,
                 log_wrap_enabled: false,
                 log_auto_tail: true, // Auto-tail enabled by default
+                log_modal: None,
                 cached_config: CachedConfig::default(),
                 backend_names: Vec::new(),
                 dashboard_process_menu: None,
@@ -910,6 +1172,13 @@ impl OddBoxGui {
                 edit_backend_original: None,
                 edit_backend_is_new: false,
                 edit_backend_confirm_delete: false,
+                cruma_auth_mode: initial_cruma_mode,
+                cruma_mode_notice: None,
+                exit_requested: false,
+                frontend_http_port_input: String::new(),
+                frontend_https_port_input: String::new(),
+                frontend_port_notice: None,
+                frontend_ports_dirty: false,
             },
             Task::batch(tasks),
         )
@@ -932,8 +1201,10 @@ impl OddBoxGui {
         };
 
         let theme_sub = system::theme_changes().map(Message::SystemThemeChanged);
+        let exit_sub =
+            time::every(std::time::Duration::from_millis(250)).map(|_| Message::ExitPoll);
 
-        Subscription::batch(vec![page_sub, theme_sub])
+        Subscription::batch(vec![page_sub, theme_sub, exit_sub])
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -944,6 +1215,10 @@ impl OddBoxGui {
                 self.dashboard_process_menu = None;
                 if page == Page::Monitoring {
                     self.refresh_log_cache(true);
+                    if self.log_auto_tail {
+                        self.log_is_at_bottom = true;
+                        return snap_log_to_bottom();
+                    }
                 }
                 // Trigger config refresh for config-related pages
                 if matches!(
@@ -973,7 +1248,10 @@ impl OddBoxGui {
             }
             Message::Tick => {
                 if self.current_page == Page::Monitoring {
-                    self.refresh_log_cache(false);
+                    let had_new_logs = self.refresh_log_cache(false);
+                    if had_new_logs && self.log_auto_tail && self.log_is_at_bottom {
+                        return snap_log_to_bottom();
+                    }
                 }
                 // Refresh config for config-related pages
                 if matches!(
@@ -986,6 +1264,18 @@ impl OddBoxGui {
                         | Page::EditBackend
                 ) {
                     return Task::perform(fetch_config(self.state.clone()), Message::ConfigUpdated);
+                }
+            }
+            Message::ExitPoll => {
+                if !self.exit_requested && self.state.exit.load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    self.exit_requested = true;
+                    return window::oldest().map(Message::ExitWindowId);
+                }
+            }
+            Message::ExitWindowId(id) => {
+                if let Some(id) = id {
+                    return window::close(id);
                 }
             }
             Message::ConfigUpdated(config) => {
@@ -1007,6 +1297,18 @@ impl OddBoxGui {
                 names.sort();
                 names.dedup();
                 self.backend_names = names;
+                if !self.frontend_ports_dirty {
+                    self.frontend_http_port_input = self
+                        .cached_config
+                        .http_port
+                        .map(|p| p.to_string())
+                        .unwrap_or_default();
+                    self.frontend_https_port_input = self
+                        .cached_config
+                        .https_port
+                        .map(|p| p.to_string())
+                        .unwrap_or_default();
+                }
                 if self.edit_frontend_pending_reload {
                     self.edit_frontend_notice = Some("Saved.".to_string());
                     self.edit_frontend_pending_reload = false;
@@ -1015,6 +1317,7 @@ impl OddBoxGui {
                     self.edit_backend_notice = Some("Saved.".to_string());
                     self.edit_backend_pending_reload = false;
                 }
+                self.cruma_auth_mode = cruma_mode_from_config(&self.state.config.load_full());
             }
             Message::LogFilterTextChanged(text) => {
                 self.log_filter.text = text;
@@ -1038,12 +1341,13 @@ impl OddBoxGui {
                 self.refresh_log_cache(true);
             }
             Message::LogsClear => {
-                self.log_state.write().clear();
+                self.log_state.clear();
                 self.cached_log_lines = Arc::new(Vec::new());
                 self.last_log_count = 0;
                 self.total_log_count = 0;
                 self.last_seen_log_id = None;
                 self.log_view_rev = self.log_view_rev.wrapping_add(1);
+                self.log_modal = None;
             }
             Message::LogToggleWrap(enabled) => {
                 self.log_wrap_enabled = enabled;
@@ -1053,14 +1357,88 @@ impl OddBoxGui {
                 self.log_auto_tail = enabled;
                 if enabled {
                     self.log_is_at_bottom = true;
-                    return iced::widget::operation::snap_to_end::<Message>(log_scroll_id());
+                    return snap_log_to_bottom();
                 }
             }
+            Message::LogOpenEntry(id) => {
+                if let Some(entry) = self.cached_log_lines.iter().find(|l| l.id == id) {
+                    let source = entry.source.clone();
+                    let timestamp_str = entry.timestamp_str.clone();
+                    let level_str = entry.level_str;
+                    let copy_text = format!(
+                        "{} {} {}\n{}",
+                        timestamp_str, level_str, source, entry.message
+                    );
+                    self.log_modal = Some(LogModal {
+                        id: entry.id,
+                        level_str,
+                        level_color: entry.level_color,
+                        source,
+                        timestamp_str,
+                        message: entry.message.clone(),
+                        copy_text,
+                    });
+                }
+            }
+            Message::LogCloseEntry => {
+                self.log_modal = None;
+            }
+            Message::LogCopyEntry => {
+                if let Some(entry) = &self.log_modal {
+                    return clipboard::write(entry.copy_text.clone());
+                }
+            }
+            Message::FrontendHttpPortChanged(value) => {
+                self.frontend_http_port_input = value;
+                self.frontend_ports_dirty = true;
+            }
+            Message::FrontendHttpsPortChanged(value) => {
+                self.frontend_https_port_input = value;
+                self.frontend_ports_dirty = true;
+            }
+            Message::FrontendPortsSave => {
+                self.frontend_port_notice = None;
+                return Task::perform(
+                    save_frontend_ports(
+                        self.state.clone(),
+                        self.frontend_http_port_input.clone(),
+                        self.frontend_https_port_input.clone(),
+                    ),
+                    Message::FrontendPortsSaveResult,
+                );
+            }
+            Message::FrontendPortsSaveResult(result) => match result {
+                Ok(()) => {
+                    self.frontend_port_notice = Some("Frontend ports updated.".to_string());
+                    self.frontend_ports_dirty = false;
+                    return Task::perform(fetch_config(self.state.clone()), Message::ConfigUpdated);
+                }
+                Err(err) => {
+                    self.frontend_port_notice = Some(err);
+                }
+            },
             Message::ProcessStart(name) => {
                 self.state.process_registry.set_enabled(&name, true);
             }
             Message::ProcessStop(name) => {
                 self.state.process_registry.set_enabled(&name, false);
+            }
+            Message::ProcessStartAll => {
+                for proc in &self.cached_config.processes {
+                    self.state.process_registry.set_enabled(&proc.name, true);
+                }
+            }
+            Message::ProcessStopAll => {
+                for proc in &self.cached_config.processes {
+                    self.state.process_registry.set_enabled(&proc.name, false);
+                }
+            }
+            Message::ProcessToggleDetails(name) => {
+                if self.expanded_process.as_deref() == Some(&name) {
+                    self.expanded_process = None;
+                } else {
+                    self.expanded_process = Some(name);
+                }
             }
             Message::DashboardToggleProcessMenu(name) => {
                 if self.dashboard_process_menu.as_ref() == Some(&name) {
@@ -1127,7 +1505,7 @@ impl OddBoxGui {
                 self.edit_frontend_form.hostname = value;
             }
             Message::EditFrontendBackendChanged(value) => {
-                self.edit_frontend_form.backend = value;
+                self.edit_frontend_form.backend = value.id;
             }
             Message::EditFrontendCaptureSubdomainsToggled(value) => {
                 self.edit_frontend_form.capture_subdomains = value;
@@ -1216,10 +1594,12 @@ impl OddBoxGui {
                 EditBackendField::ProcArgs(v) => self.edit_backend_form.proc_args = v,
                 EditBackendField::ProcDir(v) => self.edit_backend_form.proc_dir = v,
                 EditBackendField::ProcPort(v) => self.edit_backend_form.proc_port = v,
+                EditBackendField::ProcEnv(v) => self.edit_backend_form.proc_env = v,
                 EditBackendField::ProcAutoStart(v) => self.edit_backend_form.proc_auto_start = v,
                 EditBackendField::ProcExcludeFromStartAll(v) => {
                     self.edit_backend_form.proc_exclude_from_start_all = v;
                 }
+                EditBackendField::ProcLogLevel(v) => self.edit_backend_form.proc_log_level = v,
             },
             Message::EditBackendPickDir => {
                 return Task::perform(pick_backend_dir(), Message::EditBackendDirPicked);
@@ -1316,6 +1696,23 @@ impl OddBoxGui {
                     self.edit_backend_notice = Some(err);
                 }
             },
+            Message::CrumaAuthModeChanged(mode) => {
+                self.cruma_auth_mode = mode;
+                self.cruma_mode_notice = None;
+                return Task::perform(
+                    save_cruma_mode(self.state.clone(), mode),
+                    Message::CrumaAuthModeSaveResult,
+                );
+            }
+            Message::CrumaAuthModeSaveResult(result) => match result {
+                Ok(()) => {
+                    self.cruma_mode_notice = Some("Cruma mode updated.".to_string());
+                    return Task::perform(fetch_config(self.state.clone()), Message::ConfigUpdated);
+                }
+                Err(err) => {
+                    self.cruma_mode_notice = Some(err);
+                }
+            },
         }
         Task::none()
     }
@@ -1330,11 +1727,9 @@ impl OddBoxGui {
                 .width(Length::Fill)
                 .height(Length::Fill),
         )
-        .style(|_theme: &Theme| {
-            container::Style {
-                background: Some(Background::Color(Color::TRANSPARENT)),
-                ..Default::default()
-            }
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::TRANSPARENT)),
+            ..Default::default()
         })
         .width(Length::Fill)
         .height(Length::Fill)
@@ -1347,7 +1742,11 @@ impl OddBoxGui {
             ThemeMode::Dark => false,
             ThemeMode::System => matches!(self.system_theme, Some(theme::Mode::Light)),
         };
-        let logo_handle = if is_light { SIDEBAR_LOGO_DARK.clone() } else { SIDEBAR_LOGO_LIGHT.clone() };
+        let logo_handle = if is_light {
+            SIDEBAR_LOGO_DARK.clone()
+        } else {
+            SIDEBAR_LOGO_LIGHT.clone()
+        };
         let logo = image(logo_handle).expand(true);
 
         let header = container(
@@ -1441,13 +1840,8 @@ impl OddBoxGui {
 
                 let (background, text_color) = if is_active {
                     let bg_color = palette.primary.strong.color;
-                    // For light themes, ensure good contrast on the active button
-                    let text = if is_light_theme {
-                        Color::WHITE
-                    } else {
-                        palette.primary.strong.text
-                    };
-                    (bg_color, text)
+                    // Always use white on active to ensure contrast on purple background.
+                    (bg_color, Color::WHITE)
                 } else {
                     match status {
                         button::Status::Hovered => {
@@ -1475,7 +1869,7 @@ impl OddBoxGui {
     fn view_content(&self) -> Element<'_, Message> {
         let page_content: Element<'_, Message> = match self.current_page {
             Page::Dashboard => self.view_dashboard(),
-            Page::CrumaIngress => self.view_placeholder("Cruma Ingress configuration"),
+            Page::CrumaIngress => self.view_cruma_ingress(),
             Page::Monitoring => self.view_monitoring(),
             Page::Statistics => self.view_placeholder("Traffic statistics and metrics"),
             Page::Backends => self.view_backends(),
@@ -1532,4 +1926,13 @@ impl OddBoxGui {
             },
         }
     }
+}
+fn snap_log_to_bottom() -> Task<Message> {
+    iced::widget::operation::snap_to::<Message>(
+        log_scroll_id(),
+        RelativeOffset {
+            x: None,
+            y: Some(1.0),
+        },
+    )
 }

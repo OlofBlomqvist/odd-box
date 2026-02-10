@@ -2,6 +2,8 @@ mod configuration;
 mod cruma;
 pub mod cruma_integration;
 mod gui;
+mod http_events;
+mod logging;
 pub mod process_registry;
 mod tui;
 mod types;
@@ -12,8 +14,6 @@ use clap::Parser;
 use configuration::OddBoxConfigVersion;
 use configuration::{ConfigWrapper, LogLevel};
 use core::fmt;
-use cruma_integration::{ build_config as build_cruma_config,
-};
 use global_state::GlobalState;
 use notify::RecommendedWatcher;
 use notify::Watcher;
@@ -39,7 +39,13 @@ use std::sync::atomic::{AtomicBool as StdAtomicBool, Ordering as StdOrdering};
 mod docker;
 
 pub mod global_state {
-    use std::{sync::{Arc, atomic::{AtomicBool, AtomicU64}}, time::SystemTimeError};
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicU64},
+        },
+        time::SystemTimeError,
+    };
 
     #[derive(Debug, PartialEq, Clone)]
     pub enum ProcState {
@@ -61,40 +67,43 @@ pub mod global_state {
 
     #[derive(Debug)]
     pub struct GlobalState {
-
         pub enable_global_traffic_inspection: AtomicBool,
         pub exit: AtomicBool,
         pub process_registry: Arc<crate::process_registry::ProcessRegistry>,
-        pub cruma_assignment: Arc<tokio::sync::RwLock<Option<CrumaAssignedDomain>>>,
-
+        pub cruma_assignment: Arc<arc_swap::ArcSwapOption<CrumaAssignedDomain>>,
+        pub cruma_transports:
+            Arc<arc_swap::ArcSwap<Vec<cruma_tunnels_lib::TransportDescriptor>>>,
 
         pub started_at_time_stamp: std::time::SystemTime,
         pub log_handle: crate::OddLogHandle,
-        pub config: std::sync::Arc<tokio::sync::RwLock<crate::configuration::ConfigWrapper>>,
+        pub config: std::sync::Arc<arc_swap::ArcSwap<crate::configuration::ConfigWrapper>>,
         pub target_request_counts: dashmap::DashMap<String, AtomicU64>,
         pub cruma_config: std::sync::Arc<arc_swap::ArcSwap<cruma_proxy_lib::types::Configuration>>,
+        pub tui_log_buffer: std::sync::Arc<crate::logging::SharedLogBuffer>,
     }
     impl GlobalState {
         pub fn uptime(&self) -> Result<std::time::Duration, SystemTimeError> {
             self.started_at_time_stamp.elapsed()
         }
         pub fn new(
-            config: std::sync::Arc<tokio::sync::RwLock<crate::configuration::ConfigWrapper>>,
+            config: std::sync::Arc<arc_swap::ArcSwap<crate::configuration::ConfigWrapper>>,
             cruma_config: std::sync::Arc<arc_swap::ArcSwap<cruma_proxy_lib::types::Configuration>>,
             log_handle: crate::OddLogHandle,
+            tui_log_buffer: std::sync::Arc<crate::logging::SharedLogBuffer>,
         ) -> Self {
             Self {
-
                 enable_global_traffic_inspection: AtomicBool::new(false),
                 process_registry: Arc::new(crate::process_registry::ProcessRegistry::new()),
                 exit: AtomicBool::new(false),
-                cruma_assignment: Arc::new(tokio::sync::RwLock::new(None)),
+                cruma_assignment: Arc::new(arc_swap::ArcSwapOption::from(None)),
+                cruma_transports: Arc::new(arc_swap::ArcSwap::from_pointee(Vec::new())),
 
                 started_at_time_stamp: std::time::SystemTime::now(),
                 log_handle,
                 config,
                 target_request_counts: dashmap::DashMap::new(),
                 cruma_config,
+                tui_log_buffer,
             }
         }
 
@@ -129,15 +138,14 @@ lazy_static! {
 }
 
 async fn config_file_monitor(
-    config: Arc<RwLock<ConfigWrapper>>,
+    config: Arc<arc_swap::ArcSwap<ConfigWrapper>>,
     global_state: Arc<GlobalState>,
 ) -> anyhow::Result<()> {
-    let guard = config.read().await;
-    let cfg_path = guard
+    let cfg_path = config
+        .load_full()
         .path
         .clone()
         .expect("odd-box must be using a configuration file.");
-    drop(guard);
 
     let (mut watcher, rx) = async_watcher()?;
 
@@ -196,7 +204,6 @@ async fn config_file_monitor(
 
     Ok(())
 }
-
 
 fn generate_config(
     file_name: Option<&str>,
@@ -317,11 +324,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let gui_flag = args.gui;
-    let tui_flag = if gui_flag {
-        false
-    } else {
-        args.tui.unwrap_or(true)
-    };
+    let tui_flag = if gui_flag { false } else { args.tui };
 
     if args.init {
         generate_config(Some("odd-box.yaml"), false)?;
@@ -372,11 +375,15 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let shutdown_signal = Arc::new(tokio::sync::Notify::new());
-    let shared_config = std::sync::Arc::new(tokio::sync::RwLock::new(config));
+    let shared_config = std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(config));
 
     let cruma_cfg_init = {
-        let cfg_guard = shared_config.read().await;
-        let (cfg, notes) = build_cruma_config(&cfg_guard)?;
+        let cfg_guard = shared_config.load_full();
+        let (cfg, notes) = cruma_integration::build_config_with_runtime_ports(
+            &cfg_guard,
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+        )?;
 
         if !notes.unsupported.is_empty() {
             tracing::warn!(
@@ -387,65 +394,106 @@ async fn main() -> anyhow::Result<()> {
         cfg
     };
     let cruma_config_arc = std::sync::Arc::new(ArcSwap::from_pointee(cruma_cfg_init));
+    let tui_log_buffer = std::sync::Arc::new(crate::logging::SharedLogBuffer::new());
 
     let mut global_state = crate::global_state::GlobalState::new(
         shared_config.clone(),
         cruma_config_arc.clone(),
         OddLogHandle::None,
+        tui_log_buffer.clone(),
     );
 
-    let (cli_filter, cli_reload_handle) = tracing_subscriber::reload::Layer::new(
-        EnvFilter::from_default_env()
-            .add_directive(
+    let gui_log_state = if gui_flag {
+        Some(gui::logs::create_shared(1000))
+    } else {
+        None
+    };
+
+    let rust_log = std::env::var("RUST_LOG").ok();
+    let has_odd_box_override = rust_log
+        .as_ref()
+        .map(|v| v.split(',').any(|d| d.trim().starts_with("odd_box")))
+        .unwrap_or(false);
+    let has_cruma_override = rust_log
+        .as_ref()
+        .map(|v| v.split(',').any(|d| d.trim().starts_with("odd_box::cruma")))
+        .unwrap_or(false);
+
+    let mut cli_filter = EnvFilter::from_default_env();
+    if !has_odd_box_override {
+        cli_filter = cli_filter.add_directive(
+            format!("odd_box={}", log_level)
+                .parse()
+                .expect("This directive should always work"),
+        );
+    }
+    cli_filter = cli_filter
+        .add_directive(
+            "odd_box::proc_host=trace"
+                .parse()
+                .expect("This directive should always work"),
+        )
+        .add_directive(
+            "odd_box::observer=warn"
+                .parse()
+                .expect("This directive should always work"),
+        )
+        .add_directive(
+            "quinn_proto=warn"
+                .parse()
+                .expect("This directive should always work"),
+        )
+        .add_directive(
+            "hyper_util=warn"
+                .parse()
+                .expect("This directive should always work"),
+        )
+        .add_directive(
+            "h2=warn"
+                .parse()
+                .expect("This directive should always work"),
+        );
+    if !has_odd_box_override && !has_cruma_override {
+        cli_filter = cli_filter.add_directive(
+            "odd_box::cruma=info"
+                .parse()
+                .expect("This directive should always work"),
+        );
+    }
+
+    let (cli_filter, cli_reload_handle) = tracing_subscriber::reload::Layer::new(cli_filter);
+
+    if tui_flag {
+        let mut tui_filter = EnvFilter::from_default_env();
+        if !has_odd_box_override {
+            tui_filter = tui_filter.add_directive(
                 format!("odd_box={}", log_level)
                     .parse()
                     .expect("This directive should always work"),
-            )
-            .add_directive(
-                "odd_box::proc_host=trace"
-                    .parse()
-                    .expect("This directive should always work"),
-            )
-            .add_directive(
-                "odd_box::observer=warn"
-                    .parse()
-                    .expect("This directive should always work"),
-            )
-            .add_directive(
-                "quinn_proto=warn"
-                    .parse()
-                    .expect("This directive should always work"),
-            )
-            .add_directive(
-                "hyper_util=warn"
-                    .parse()
-                    .expect("This directive should always work"),
-            )
-            .add_directive(
-                "h2=warn"
-                    .parse()
-                    .expect("This directive should always work"),
-            ),
-    );
-
-    if tui_flag {
-        let (tui_filter, tui_reload_handle) = tracing_subscriber::reload::Layer::new(
-            EnvFilter::from_default_env()
-                .add_directive(
-                    format!("odd_box={}", log_level)
-                        .parse()
-                        .expect("This directive should always work"),
-                )
-                .add_directive(
-                    "odd_box::proc_host=trace"
-                        .parse()
-                        .expect("This directive should always work"),
-                ),
+            );
+        }
+        tui_filter = tui_filter.add_directive(
+            "odd_box::proc_host=trace"
+                .parse()
+                .expect("This directive should always work"),
         );
+        if !has_odd_box_override && !has_cruma_override {
+            tui_filter = tui_filter.add_directive(
+                "odd_box::cruma=info"
+                    .parse()
+                    .expect("This directive should always work"),
+            );
+        }
+
+        let (tui_filter, tui_reload_handle) = tracing_subscriber::reload::Layer::new(tui_filter);
 
         global_state.log_handle = OddLogHandle::TUI(RwLock::new(tui_reload_handle));
+        let tui_layer = crate::logging::TuiLoggerLayer {
+            log_buffer: tui_log_buffer.clone(),
+        };
         tracing_subscriber::registry()
             .with(tui_filter)
+            .with(tui_layer)
             .init();
     } else {
         global_state.log_handle = OddLogHandle::CLI(RwLock::new(cli_reload_handle));
@@ -461,13 +509,34 @@ async fn main() -> anyhow::Result<()> {
             ))
             .boxed();
 
-        tracing_subscriber::registry()
-            .with(fmt_layer)
-            .with(cli_filter)
-            .init();
+        if let Some(log_state) = &gui_log_state {
+            tracing_subscriber::registry()
+                .with(fmt_layer)
+                .with(cli_filter)
+                .with(gui::logs::GuiLoggerLayer::new(log_state.clone()))
+                .init();
+        } else {
+            tracing_subscriber::registry()
+                .with(fmt_layer)
+                .with(cli_filter)
+                .init();
+        }
     }
 
     let global_state = Arc::new(global_state);
+
+    http_events::install_http_event_sink(global_state.clone());
+
+    let cruma_mode = {
+        let cfg_guard = shared_config.load_full();
+        cfg_guard.cruma.as_ref().and_then(|c| c.mode())
+    };
+
+    if let Some(cfg) = shared_config.load_full().cruma.as_ref() {
+        if cfg.mode().is_none() {
+            tracing::warn!("cruma config present but invalid; tunnel agent will stay disabled");
+        }
+    }
 
     let cfg_monitor = tokio::spawn(config_file_monitor(
         shared_config.clone(),
@@ -484,18 +553,24 @@ async fn main() -> anyhow::Result<()> {
         } else {
             tracing::debug!("Ctrl-C received again; shutdown already in progress.");
         }
-        cstate
-            .exit
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        cstate.exit.store(true, std::sync::atomic::Ordering::SeqCst);
     })
     .expect("Error setting Ctrl-C handler");
 
     // Before starting the proxy thread(s) we need to initialize the tracing system and the tui if enabled.
     if tui_flag {
         tui::init();
-        tui_task = Some(tokio::spawn(tui::run(
-            global_state.clone()
-        )));
+        tui_task = Some(tokio::spawn(tui::run(global_state.clone())));
+    }
+
+    match &cruma_mode {
+        None => tracing::info!("Cruma mode: disabled"),
+        Some(crate::configuration::v4::CrumaMode::Anonymous) => {
+            tracing::info!("Cruma mode: anonymous")
+        }
+        Some(crate::configuration::v4::CrumaMode::Authenticated { .. }) => {
+            tracing::info!("Cruma mode: authenticated")
+        }
     }
 
     // Start cruma-based hosting (primary path). Port offset can be used to avoid clashes when legacy listeners are still around.
@@ -523,14 +598,6 @@ async fn main() -> anyhow::Result<()> {
                 cancel_on_shutdown.cancel();
             });
 
-            // Spawn CRUMA tunnel handler using the same configuration as the hosting stack.
-            {
-                let notify = shutdown_for_cruma.clone();
-                let state = state_for_cruma.clone();
-                let cfg_arc = cruma_cfg_arc.clone();
-                tokio::spawn(crate::cruma::cruma_thread(notify, state, cfg_arc));
-            }
-
             let ct_clone = cancel.clone();
             if let Err(e) =
                 cruma_proxy_lib::hosting::run_from_config(cruma_cfg_arc, persistence, ct_clone)
@@ -541,7 +608,12 @@ async fn main() -> anyhow::Result<()> {
         })
     };
 
-    let config_guard = global_state.config.read().await;
+    let cruma_agent_supervisor = tokio::spawn(cruma_agent_supervisor(
+        shutdown_signal.clone(),
+        global_state.clone(),
+    ));
+
+    let config_guard = global_state.config.load_full();
 
     // Add backends to the process registry based on their type
     for (backend_id, backend) in &cloned_backends {
@@ -563,6 +635,7 @@ async fn main() -> anyhow::Result<()> {
                         tokio::task::spawn(proc_host::host(
                             resolved,
                             global_state.process_registry.clone(),
+                            global_state.clone(),
                             token,
                         ));
                     }
@@ -579,14 +652,16 @@ async fn main() -> anyhow::Result<()> {
                     .register_backend(backend_id.clone(), crate::global_state::ProcState::Remote);
             }
             configuration::v4::Backend::Static(_) => {
-                global_state
-                    .process_registry
-                    .register_backend(backend_id.clone(), crate::global_state::ProcState::DirServer);
+                global_state.process_registry.register_backend(
+                    backend_id.clone(),
+                    crate::global_state::ProcState::DirServer,
+                );
             }
         }
     }
 
     drop(config_guard);
+    crate::cruma_integration::rebuild_cruma_config(&global_state);
 
     tokio::task::spawn(docker_thread(global_state.clone()));
 
@@ -602,8 +677,10 @@ async fn main() -> anyhow::Result<()> {
             .as_deref()
             .map(gui::ThemeMode::from_str)
             .unwrap_or(gui::ThemeMode::System);
-        // Create log state and start collector
-        let log_state = gui::logs::create_shared(1000);
+        let Some(log_state) = gui_log_state.clone() else {
+            tracing::error!("GUI logging state was not initialized");
+            return Ok(());
+        };
         // let _log_collector = gui::logs::spawn_collector(
         //     log_state.clone(),
         // );
@@ -664,8 +741,12 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("stopping proxy services..");
     }
 
+    shutdown_signal.notify_waiters();
+
     _ = cruma_task.abort();
     _ = cruma_task.await;
+    _ = cruma_agent_supervisor.abort();
+    _ = cruma_agent_supervisor.await;
     _ = cfg_monitor.abort();
 
     if tui_flag || gui_flag {
@@ -677,6 +758,84 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn cruma_agent_supervisor(
+    shutdown: Arc<tokio::sync::Notify>,
+    state: Arc<crate::global_state::GlobalState>,
+) {
+    use crate::configuration::v4::CrumaMode;
+
+    struct RunningAgent {
+        mode: CrumaMode,
+        shutdown: Arc<tokio::sync::Notify>,
+        handle: tokio::task::JoinHandle<anyhow::Result<()>>,
+    }
+
+    async fn stop_agent(agent: Option<RunningAgent>) {
+        if let Some(agent) = agent {
+            agent.shutdown.notify_waiters();
+            match agent.handle.await {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => {
+                    tracing::error!(error=%err, "cruma agent stopped with error");
+                }
+                Err(err) => {
+                    tracing::error!(error=%err, "cruma agent task join failed");
+                }
+            }
+        }
+    }
+
+    fn spawn_agent(mode: CrumaMode, state: Arc<crate::global_state::GlobalState>) -> RunningAgent {
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let cfg_arc = state.cruma_config.clone();
+        let creds = match &mode {
+            CrumaMode::Anonymous => cruma_tunnels_lib::AgentCredentials::anonymous(),
+            CrumaMode::Authenticated { id, key } => {
+                cruma_tunnels_lib::AgentCredentials::new(id, key)
+            }
+        };
+        let handle = tokio::spawn(crate::cruma::cruma_thread(
+            notify.clone(),
+            state,
+            cfg_arc,
+            creds,
+        ));
+        RunningAgent {
+            mode,
+            shutdown: notify,
+            handle,
+        }
+    }
+
+    let mut running: Option<RunningAgent> = None;
+    let mut last_mode: Option<CrumaMode> = None;
+
+    loop {
+        tokio::select! {
+            _ = shutdown.notified() => {
+                break;
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {}
+        }
+
+        let mode = state
+            .config
+            .load_full()
+            .cruma
+            .as_ref()
+            .and_then(|c| c.mode());
+        if mode != last_mode {
+            stop_agent(running.take()).await;
+            if let Some(next) = mode.clone() {
+                running = Some(spawn_agent(next, state.clone()));
+            }
+            last_mode = mode;
+        }
+    }
+
+    stop_agent(running).await;
+}
+
 type CliLogHandle = tracing_subscriber::reload::Handle<
     EnvFilter,
     tracing_subscriber::layer::Layered<
@@ -684,10 +843,7 @@ type CliLogHandle = tracing_subscriber::reload::Handle<
         tracing_subscriber::Registry,
     >,
 >;
-type TuiLogHandle = tracing_subscriber::reload::Handle<
-    EnvFilter,
-    tracing_subscriber::Registry,
->;
+type TuiLogHandle = tracing_subscriber::reload::Handle<EnvFilter, tracing_subscriber::Registry>;
 
 pub enum OddLogHandle {
     CLI(RwLock<CliLogHandle>),
@@ -700,7 +856,6 @@ impl fmt::Debug for OddLogHandle {
         f.write_str("OddLogHandle")
     }
 }
-
 
 // we could probably subscribe to the docker socket instead of having this stupid loop..
 // this does however seem to work fine and is rather simple, so keeping it for now :)
@@ -731,16 +886,24 @@ pub async fn docker_thread(state: Arc<GlobalState>) {
             // Register running docker containers
             for guard in &running_container_targets_dash_map {
                 let (host_name, _) = guard.pair();
-                state
-                    .process_registry
-                    .register_backend(host_name.to_string(), crate::global_state::ProcState::Docker);
+                state.process_registry.register_backend(
+                    host_name.to_string(),
+                    crate::global_state::ProcState::Docker,
+                );
             }
-            let mut guard = state.config.write().await;
+            let mut guard = (*state.config.load_full()).clone();
             guard.docker_containers = running_container_targets_dash_map;
 
             // Keep cruma config in sync with docker-discovered targets.
-            if let Ok((cfg, notes)) = build_cruma_config(&guard) {
-
+            let runtime_ports =
+                cruma_integration::runtime_ports_from_registry(&state.process_registry);
+            let runtime_states =
+                cruma_integration::runtime_states_from_registry(&state.process_registry);
+            if let Ok((cfg, notes)) = cruma_integration::build_config_with_runtime_ports(
+                &guard,
+                &runtime_ports,
+                &runtime_states,
+            ) {
                 if !notes.unsupported.is_empty() {
                     tracing::warn!(
                         "cruma config placeholders/unsupported after docker update: {:?}",
@@ -749,6 +912,7 @@ pub async fn docker_thread(state: Arc<GlobalState>) {
                 }
                 state.cruma_config.store(std::sync::Arc::new(cfg));
             }
+            state.config.store(std::sync::Arc::new(guard));
         }
         tokio::time::sleep(Duration::from_secs(10)).await;
     }

@@ -7,8 +7,14 @@ pub struct Args {
     #[arg(index = 1)]
     pub configuration: Option<String>,
 
-    #[arg(long, default_value = "true")]
-    pub tui: Option<bool>,
+    /// Launch with TUI (default: true). Can be passed as `--tui` or `--tui=false`.
+    #[arg(
+        long,
+        default_value_t = true,
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
+    pub tui: bool,
 
     /// Launch with graphical user interface
     #[arg(long)]

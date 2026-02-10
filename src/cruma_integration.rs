@@ -6,8 +6,12 @@ use cruma_proxy_lib::types::*;
 
 use crate::configuration::{ConfigWrapper, v4};
 use crate::docker::ContainerProxyTarget;
+use crate::global_state::GlobalState;
+use crate::global_state::ProcState;
+use crate::process_registry::ProcessRegistry;
 
 const DEFAULT_404_HTML: &[u8] = include_bytes!("assets/404.html");
+const DEFAULT_STARTING_HTML: &[u8] = include_bytes!("assets/starting.html");
 
 #[derive(Debug, Default, Clone)]
 pub struct BuildNotes {
@@ -39,6 +43,18 @@ fn protocol_to_upstream(protocol: &v4::Protocol) -> HttpUpstreamProto {
     }
 }
 
+fn upstream_proto_and_tls(protocol: &v4::Protocol, use_tls: bool) -> (HttpUpstreamProto, Option<OriginTls>) {
+    let mut upstream = protocol_to_upstream(protocol);
+    if use_tls {
+        if matches!(upstream, HttpUpstreamProto::H2C | HttpUpstreamProto::H2CPK) {
+            upstream = HttpUpstreamProto::H2;
+        }
+        (upstream, Some(default_origin_tls()))
+    } else {
+        (upstream, None)
+    }
+}
+
 fn default_origin_tls() -> OriginTls {
     OriginTls {
         sni: OriginTlsSni::TryFromClientHelloThenHostHeaderThenBackendAddr,
@@ -48,12 +64,35 @@ fn default_origin_tls() -> OriginTls {
     }
 }
 
+fn origin_tls_with_sni(sni: Option<OriginTlsSni>) -> OriginTls {
+    let mut tls = default_origin_tls();
+    if let Some(sni) = sni {
+        tls.sni = sni;
+    }
+    tls
+}
+
 fn http_route(name: String, pat: HostPattern, backend: WebBackendId) -> HttpRoute {
     HttpRoute {
         name,
         priority: 0,
         filter: HttpMatch::Host { hosts: vec![pat] },
         middlewares: Vec::new(),
+        target: Target::Backend { backend },
+    }
+}
+
+fn http_route_with_middlewares(
+    name: String,
+    pat: HostPattern,
+    backend: WebBackendId,
+    middlewares: Vec<HttpMiddleware>,
+) -> HttpRoute {
+    HttpRoute {
+        name,
+        priority: 0,
+        filter: HttpMatch::Host { hosts: vec![pat] },
+        middlewares,
         target: Target::Backend { backend },
     }
 }
@@ -68,6 +107,30 @@ fn respond_route(name: String, pat: HostPattern, status: u16, body: &str) -> Htt
             status,
             body: Some(body.as_bytes().to_vec()),
             content_type: None,
+        },
+    }
+}
+
+fn respond_route_with_html(
+    name: String,
+    pat: HostPattern,
+    status: u16,
+    body: &[u8],
+    extra_headers: Vec<(String, String)>,
+) -> HttpRoute {
+    let mut middlewares = Vec::new();
+    for (name, value) in extra_headers {
+        middlewares.push(HttpMiddleware::AddRespHeader { name, value });
+    }
+    HttpRoute {
+        name,
+        priority: 0,
+        filter: HttpMatch::Host { hosts: vec![pat] },
+        middlewares,
+        target: Target::Respond {
+            status,
+            body: Some(body.to_vec()),
+            content_type: Some("text/html; charset=utf-8".to_string()),
         },
     }
 }
@@ -111,6 +174,14 @@ fn to_endpoint(addr: &str, port: u16) -> Option<Endpoint> {
 
 /// Build a cruma_proxy_lib Configuration from the current OddBox V4 config.
 pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, BuildNotes)> {
+    build_config_with_runtime_ports(cfg, &HashMap::new(), &HashMap::new())
+}
+
+pub fn build_config_with_runtime_ports(
+    cfg: &ConfigWrapper,
+    runtime_ports: &HashMap<String, u16>,
+    runtime_states: &HashMap<String, ProcState>,
+) -> anyhow::Result<(Configuration, BuildNotes)> {
     let mut notes = BuildNotes::default();
     let mut web_backends: HashMap<WebBackendId, WebBackend> = HashMap::new();
     let mut http_routes: Vec<HttpRoute> = Vec::new();
@@ -135,16 +206,56 @@ pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, Build
 
                 match backend {
                     v4::Backend::Process(proc) => {
+                        let is_running = runtime_states
+                            .get(backend_id_str)
+                            .map(|state| matches!(state, ProcState::Running))
+                            .unwrap_or(true);
 
-                        // TODO
-                        let port = 443;
+                        if !is_running {
+                            http_routes.push(respond_route_with_html(
+                                format!("{host}-starting"),
+                                host_pattern(host, capture_subdomains),
+                                503,
+                                DEFAULT_STARTING_HTML,
+                                vec![
+                                    ("Retry-After".to_string(), "2".to_string()),
+                                    ("Connection".to_string(), "close".to_string()),
+                                    ("Cache-Control".to_string(), "no-store".to_string()),
+                                ],
+                            ));
+                            continue;
+                        }
+
+                        let port = proc
+                            .port
+                            .or_else(|| runtime_ports.get(backend_id_str).copied());
+                        let Some(port) = port else {
+                            notes.unsupported.push(format!(
+                                "Process backend '{}' has no port; using starting response for route '{}'",
+                                backend_id_str, host
+                            ));
+                            http_routes.push(respond_route_with_html(
+                                format!("{host}-starting"),
+                                host_pattern(host, capture_subdomains),
+                                503,
+                                DEFAULT_STARTING_HTML,
+                                vec![
+                                    ("Retry-After".to_string(), "2".to_string()),
+                                    ("Connection".to_string(), "close".to_string()),
+                                    ("Cache-Control".to_string(), "no-store".to_string()),
+                                ],
+                            ));
+                            continue;
+                        };
 
                         if let Some(ep) = to_endpoint(loopback_addr, port) {
+                            let (protocol, origin_tls) =
+                                upstream_proto_and_tls(&proc.protocol, proc.https);
                             let web_backend = WebBackend {
                                 id: cruma_backend_id.clone(),
-                                protocol: protocol_to_upstream(&proc.protocol),
+                                protocol,
                                 endpoints: NonEmptyVec(vec![ep]),
-                                origin_tls: proc.https.then_some(default_origin_tls()),
+                                origin_tls,
                             };
                             web_backends.insert(cruma_backend_id.clone(), web_backend);
                         }
@@ -171,18 +282,36 @@ pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, Build
                             continue;
                         }
 
+                        let (protocol, mut origin_tls) =
+                            upstream_proto_and_tls(&remote.protocol, remote.https);
+                        let backend_host = endpoints.first().map(|ep| ep.addr.clone());
+                        if remote.https && !remote.keep_original_host_header {
+                            if let Some(host) = backend_host.as_deref() {
+                                origin_tls =
+                                    Some(origin_tls_with_sni(Some(OriginTlsSni::Custom(
+                                        host.to_string(),
+                                    ))));
+                            }
+                        }
                         let web_backend = WebBackend {
                             id: cruma_backend_id.clone(),
-                            protocol: protocol_to_upstream(&remote.protocol),
+                            protocol,
                             endpoints: NonEmptyVec(endpoints),
-                            origin_tls: remote.https.then_some(default_origin_tls()),
+                            origin_tls,
                         };
                         web_backends.insert(cruma_backend_id.clone(), web_backend);
 
-                        http_routes.push(http_route(
+                        let mut middlewares = Vec::new();
+                        if !remote.keep_original_host_header {
+                            if let Some(host) = backend_host {
+                                middlewares.push(HttpMiddleware::RewriteHost { to: host });
+                            }
+                        }
+                        http_routes.push(http_route_with_middlewares(
                             host.clone(),
                             host_pattern(host, capture_subdomains),
                             cruma_backend_id,
+                            middlewares,
                         ));
                     }
 
@@ -357,4 +486,46 @@ pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, Build
     }
 
     Ok((config, notes))
+}
+
+pub fn runtime_ports_from_registry(registry: &ProcessRegistry) -> HashMap<String, u16> {
+    let snapshot = registry.snapshot();
+    snapshot
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .active_port()
+                .map(|port| (entry.backend_id.clone(), port))
+        })
+        .collect()
+}
+
+pub fn runtime_states_from_registry(registry: &ProcessRegistry) -> HashMap<String, ProcState> {
+    let snapshot = registry.snapshot();
+    snapshot
+        .entries
+        .iter()
+        .map(|entry| (entry.backend_id.clone(), entry.proc_state()))
+        .collect()
+}
+
+pub fn rebuild_cruma_config(state: &GlobalState) {
+    let cfg = state.config.load_full();
+    let runtime_ports = runtime_ports_from_registry(&state.process_registry);
+    let runtime_states = runtime_states_from_registry(&state.process_registry);
+    match build_config_with_runtime_ports(&cfg, &runtime_ports, &runtime_states) {
+        Ok((cfg, notes)) => {
+            if !notes.unsupported.is_empty() {
+                tracing::trace!(
+                    "cruma config placeholders/unsupported after process update: {:?}",
+                    notes.unsupported
+                );
+            }
+            state.cruma_config.store(std::sync::Arc::new(cfg));
+        }
+        Err(e) => {
+            tracing::error!(error=%e, "Failed to rebuild cruma config after process update");
+        }
+    }
 }

@@ -1,10 +1,9 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
 use arc_swap::ArcSwap;
-use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 
 pub type ProcessKey = String;
@@ -19,6 +18,10 @@ pub struct ProcessState {
     pub last_transition_at: Option<SystemTime>,
     pub last_exit_at: Option<SystemTime>,
     pub enabled: bool,
+    pub resolved_env: Option<Vec<(String, String)>>,
+    pub resolved_args: Option<Vec<String>>,
+    pub resolved_dir: Option<String>,
+    pub resolved_bin: Option<String>,
 }
 
 /// A handle to a registered backend with live state access.
@@ -44,7 +47,10 @@ impl ProcessHandle {
 
     /// Check if the proc_host has exited (token cancelled).
     pub fn is_cancelled(&self) -> bool {
-        self.token.as_ref().map(|t| t.is_cancelled()).unwrap_or(false)
+        self.token
+            .as_ref()
+            .map(|t| t.is_cancelled())
+            .unwrap_or(false)
     }
 
     /// Check if this entry is marked for removal.
@@ -79,7 +85,7 @@ impl RegistrySnapshot {
 }
 
 /// Internal entry stored in the registry.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ProcessEntry {
     backend_id: String,
     token: Option<CancellationToken>,
@@ -87,10 +93,11 @@ struct ProcessEntry {
     marked_for_removal: Arc<AtomicBool>,
 }
 
-#[derive(Debug, Default)]
-struct Inner {
+#[derive(Debug, Clone)]
+struct RegistryInner {
     version: u64,
     entries: HashMap<ProcessKey, ProcessEntry>,
+    snapshot: Arc<RegistrySnapshot>,
 }
 
 /// Registry for proc_host lifecycle and backend state.
@@ -100,25 +107,29 @@ struct Inner {
 /// - Readers get live state through Arc indirection
 #[derive(Debug)]
 pub struct ProcessRegistry {
-    snapshot: ArcSwap<RegistrySnapshot>,
-    inner: Mutex<Inner>,
+    inner: ArcSwap<RegistryInner>,
 }
 
 impl ProcessRegistry {
     pub fn new() -> Self {
+        let entries = HashMap::new();
+        let snapshot = Arc::new(RegistrySnapshot {
+            version: 0,
+            entries: Vec::new(),
+        });
         Self {
-            snapshot: ArcSwap::from_pointee(RegistrySnapshot {
+            inner: ArcSwap::from_pointee(RegistryInner {
                 version: 0,
-                entries: Vec::new(),
+                entries,
+                snapshot,
             }),
-            inner: Mutex::new(Inner::default()),
         }
     }
 
     /// Returns the latest registry snapshot, synchronously.
     /// State within entries is always live (not point-in-time).
     pub fn snapshot(&self) -> Arc<RegistrySnapshot> {
-        self.snapshot.load_full()
+        self.inner.load_full().snapshot.clone()
     }
 
     /// Register a hosted process backend with a cancellation token.
@@ -134,25 +145,36 @@ impl ProcessRegistry {
     ) {
         let backend_id = backend_id.into();
         let now = SystemTime::now();
-        let mut inner = self.inner.lock();
-        inner.entries.insert(
-            backend_id.clone(),
-            ProcessEntry {
-                backend_id,
-                token: Some(token),
-                state: Arc::new(ArcSwap::from_pointee(ProcessState {
-                    proc_state: initial_state,
-                    pid: None,
-                    active_port,
-                    started_at: None,
-                    last_transition_at: Some(now),
-                    last_exit_at: None,
-                    enabled,
-                })),
-                marked_for_removal: Arc::new(AtomicBool::new(false)),
-            },
-        );
-        self.publish_locked(&inner);
+        self.inner.rcu(|current| {
+            let backend_id = backend_id.clone();
+            let token = token.clone();
+            let initial_state = initial_state.clone();
+            let mut next = (**current).clone();
+            next.entries.insert(
+                backend_id.clone(),
+                ProcessEntry {
+                    backend_id,
+                    token: Some(token),
+                    state: Arc::new(ArcSwap::from_pointee(ProcessState {
+                        proc_state: initial_state,
+                        pid: None,
+                        active_port,
+                        started_at: None,
+                        last_transition_at: Some(now),
+                        last_exit_at: None,
+                        enabled,
+                        resolved_env: None,
+                        resolved_args: None,
+                        resolved_dir: None,
+                        resolved_bin: None,
+                    })),
+                    marked_for_removal: Arc::new(AtomicBool::new(false)),
+                },
+            );
+            next.version = next.version.wrapping_add(1);
+            next.snapshot = build_snapshot(next.version, &next.entries);
+            Arc::new(next)
+        });
     }
 
     /// Register a non-process backend (Remote, Static, Docker) without a cancellation token.
@@ -163,25 +185,35 @@ impl ProcessRegistry {
     ) {
         let backend_id = backend_id.into();
         let now = SystemTime::now();
-        let mut inner = self.inner.lock();
-        inner.entries.insert(
-            backend_id.clone(),
-            ProcessEntry {
-                backend_id,
-                token: None,
-                state: Arc::new(ArcSwap::from_pointee(ProcessState {
-                    proc_state: state,
-                    pid: None,
-                    active_port: None,
-                    started_at: None,
-                    last_transition_at: Some(now),
-                    last_exit_at: None,
-                    enabled: true,
-                })),
-                marked_for_removal: Arc::new(AtomicBool::new(false)),
-            },
-        );
-        self.publish_locked(&inner);
+        self.inner.rcu(|current| {
+            let backend_id = backend_id.clone();
+            let state = state.clone();
+            let mut next = (**current).clone();
+            next.entries.insert(
+                backend_id.clone(),
+                ProcessEntry {
+                    backend_id,
+                    token: None,
+                    state: Arc::new(ArcSwap::from_pointee(ProcessState {
+                        proc_state: state,
+                        pid: None,
+                        active_port: None,
+                        started_at: None,
+                        last_transition_at: Some(now),
+                        last_exit_at: None,
+                        enabled: true,
+                        resolved_env: None,
+                        resolved_args: None,
+                        resolved_dir: None,
+                        resolved_bin: None,
+                    })),
+                    marked_for_removal: Arc::new(AtomicBool::new(false)),
+                },
+            );
+            next.version = next.version.wrapping_add(1);
+            next.snapshot = build_snapshot(next.version, &next.entries);
+            Arc::new(next)
+        });
     }
 
     /// Update the state of a backend. Does NOT rebuild the snapshot.
@@ -192,8 +224,12 @@ impl ProcessRegistry {
         pid: Option<u32>,
         active_port: Option<u16>,
         enabled: Option<bool>,
+        resolved_env: Option<Vec<(String, String)>>,
+        resolved_args: Option<Vec<String>>,
+        resolved_dir: Option<String>,
+        resolved_bin: Option<String>,
     ) {
-        let inner = self.inner.lock();
+        let inner = self.inner.load_full();
         let Some(entry) = inner.entries.get(backend_id) else {
             return;
         };
@@ -228,6 +264,19 @@ impl ProcessRegistry {
             new_state.enabled = enabled;
         }
 
+        if let Some(env) = resolved_env {
+            new_state.resolved_env = Some(env);
+        }
+        if let Some(args) = resolved_args {
+            new_state.resolved_args = Some(args);
+        }
+        if let Some(dir) = resolved_dir {
+            new_state.resolved_dir = Some(dir);
+        }
+        if let Some(bin) = resolved_bin {
+            new_state.resolved_bin = Some(bin);
+        }
+
         if is_running && new_state.started_at.is_none() {
             new_state.started_at = Some(now);
         }
@@ -239,7 +288,7 @@ impl ProcessRegistry {
     /// Mark a backend for removal. Returns the token if present so caller can await exit.
     /// The proc_host should check `is_marked_for_removal()` and exit when true.
     pub fn mark_for_removal(&self, backend_id: &str) -> Option<CancellationToken> {
-        let inner = self.inner.lock();
+        let inner = self.inner.load_full();
         if let Some(entry) = inner.entries.get(backend_id) {
             entry.marked_for_removal.store(true, Ordering::SeqCst);
             return entry.token.clone();
@@ -249,7 +298,7 @@ impl ProcessRegistry {
 
     /// Check if a backend is marked for removal.
     pub fn is_marked_for_removal(&self, backend_id: &str) -> bool {
-        let inner = self.inner.lock();
+        let inner = self.inner.load_full();
         inner
             .entries
             .get(backend_id)
@@ -260,7 +309,7 @@ impl ProcessRegistry {
     /// Set the enabled state for a backend (used for start/stop from GUI).
     /// Returns true if the backend was found and updated.
     pub fn set_enabled(&self, backend_id: &str, enabled: bool) -> bool {
-        let inner = self.inner.lock();
+        let inner = self.inner.load_full();
         if let Some(entry) = inner.entries.get(backend_id) {
             let current = entry.state.load();
             let mut new_state = (**current).clone();
@@ -273,7 +322,7 @@ impl ProcessRegistry {
 
     /// Check if a backend is enabled.
     pub fn is_enabled(&self, backend_id: &str) -> bool {
-        let inner = self.inner.lock();
+        let inner = self.inner.load_full();
         inner
             .entries
             .get(backend_id)
@@ -284,52 +333,46 @@ impl ProcessRegistry {
     /// Remove entries that are marked for removal AND whose token is cancelled (proc_host exited).
     /// For non-process backends, removes if marked for removal.
     pub fn cleanup_finished(&self) {
-        let mut inner = self.inner.lock();
-        let before = inner.entries.len();
-        inner.entries.retain(|_, e| {
-            let marked = e.marked_for_removal.load(Ordering::Relaxed);
-            if !marked {
-                return true;
+        self.inner.rcu(|current| {
+            let mut next = (**current).clone();
+            let before = next.entries.len();
+            next.entries.retain(|_, e| {
+                let marked = e.marked_for_removal.load(Ordering::Relaxed);
+                if !marked {
+                    return true;
+                }
+                // Marked for removal - check if it's actually finished
+                match &e.token {
+                    Some(token) => !token.is_cancelled(), // Keep if not yet cancelled
+                    None => false,                        // No token = remove immediately
+                }
+            });
+            if next.entries.len() == before {
+                return current.clone();
             }
-            // Marked for removal - check if it's actually finished
-            match &e.token {
-                Some(token) => !token.is_cancelled(), // Keep if not yet cancelled
-                None => false,                        // No token = remove immediately
-            }
+            next.version = next.version.wrapping_add(1);
+            next.snapshot = build_snapshot(next.version, &next.entries);
+            Arc::new(next)
         });
-        if inner.entries.len() != before {
-            self.publish_locked(&inner);
-        }
     }
 
     /// Remove an entry immediately (for non-process backends like docker).
     pub fn remove(&self, backend_id: &str) {
-        let mut inner = self.inner.lock();
-        if inner.entries.remove(backend_id).is_some() {
-            self.publish_locked(&inner);
-        }
-    }
-
-    fn publish_locked(&self, inner: &Inner) {
-        let mut entries: Vec<_> = inner
-            .entries
-            .values()
-            .map(|e| ProcessHandle {
-                backend_id: e.backend_id.clone(),
-                state: e.state.clone(),
-                token: e.token.clone(),
-                marked_for_removal: e.marked_for_removal.clone(),
-            })
-            .collect();
-        entries.sort_by(|a, b| a.backend_id.cmp(&b.backend_id));
-
-        let version = inner.version.wrapping_add(1);
-        self.snapshot.store(Arc::new(RegistrySnapshot { version, entries }));
+        self.inner.rcu(|current| {
+            if !current.entries.contains_key(backend_id) {
+                return current.clone();
+            }
+            let mut next = (**current).clone();
+            next.entries.remove(backend_id);
+            next.version = next.version.wrapping_add(1);
+            next.snapshot = build_snapshot(next.version, &next.entries);
+            Arc::new(next)
+        });
     }
 
     /// Mark all process backends for removal (used during app shutdown).
     pub fn mark_all_for_removal(&self) {
-        let inner = self.inner.lock();
+        let inner = self.inner.load_full();
         for entry in inner.entries.values() {
             if entry.token.is_some() {
                 entry.marked_for_removal.store(true, Ordering::SeqCst);
@@ -342,4 +385,24 @@ impl Default for ProcessRegistry {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn build_snapshot(
+    version: u64,
+    entries: &HashMap<ProcessKey, ProcessEntry>,
+) -> Arc<RegistrySnapshot> {
+    let mut list: Vec<_> = entries
+        .values()
+        .map(|e| ProcessHandle {
+            backend_id: e.backend_id.clone(),
+            state: e.state.clone(),
+            token: e.token.clone(),
+            marked_for_removal: e.marked_for_removal.clone(),
+        })
+        .collect();
+    list.sort_by(|a, b| a.backend_id.cmp(&b.backend_id));
+    Arc::new(RegistrySnapshot {
+        version,
+        entries: list,
+    })
 }

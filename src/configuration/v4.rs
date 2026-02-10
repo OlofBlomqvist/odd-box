@@ -9,9 +9,7 @@ use crate::{configuration::yaml_air, types::proc_info::ProcId};
 // V4 Configuration - YAML-based with Frontend/Backend separation
 // ============================================================================
 
-#[derive(
-    Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash, JsonSchema,
-)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash, JsonSchema)]
 pub enum V4VersionEnum {
     #[default]
     V4,
@@ -20,7 +18,6 @@ pub enum V4VersionEnum {
 /// Root configuration structure for odd-box V4
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct OddBoxV4Config {
-
     /// Schema version marker
     #[serde(default)]
     pub version: V4VersionEnum,
@@ -59,6 +56,10 @@ pub struct OddBoxV4Config {
     #[serde(default = "default_true")]
     pub auto_start: bool,
 
+    /// Cruma tunnel agent configuration (optional)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cruma: Option<CrumaConfig>,
+
     // ========================================================================
     // Admin Interface
     // ========================================================================
@@ -80,6 +81,35 @@ pub struct OddBoxV4Config {
     pub frontends: Frontends,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(untagged)]
+pub enum CrumaConfig {
+    /// Shorthand mode string (e.g. "anon")
+    Mode(String),
+    /// Authenticated tunnel credentials
+    Auth { id: String, key: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CrumaMode {
+    Anonymous,
+    Authenticated { id: String, key: String },
+}
+
+impl CrumaConfig {
+    pub fn mode(&self) -> Option<CrumaMode> {
+        match self {
+            CrumaConfig::Mode(value) => match value.trim().to_ascii_lowercase().as_str() {
+                "anon" | "anonymous" => Some(CrumaMode::Anonymous),
+                _ => None,
+            },
+            CrumaConfig::Auth { id, key } => Some(CrumaMode::Authenticated {
+                id: id.clone(),
+                key: key.clone(),
+            }),
+        }
+    }
+}
 
 // ============================================================================
 // Backend Types
@@ -210,9 +240,7 @@ pub struct Endpoint {
 }
 
 /// Upstream protocol
-#[derive(
-    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default,
-)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
     /// HTTP/1.1
@@ -340,9 +368,7 @@ pub struct DetailedRoute {
 }
 
 /// TLS certificate mode
-#[derive(
-    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default,
-)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CertMode {
     /// Use self-signed certificates
@@ -584,7 +610,6 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
             }),
         };
 
-
         Ok(OddBoxV4Config {
             version: V4VersionEnum::V4,
             path: v3.path,
@@ -598,6 +623,7 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
             root_dir: v3.root_dir,
             default_log_format: v3.default_log_format,
             auto_start: v3.auto_start.unwrap_or(true),
+            cruma: None,
             admin_api_host: v3.odd_box_url,
             admin_api_password: v3.odd_box_password,
             backends,
@@ -784,6 +810,7 @@ impl OddBoxV4Config {
             root_dir: Some("~".to_string()),
             default_log_format: LogFormat::standard,
             auto_start: true,
+            cruma: None,
             admin_api_host: Some("admin.localhost".to_string()),
             admin_api_password: None,
             backends,

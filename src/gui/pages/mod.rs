@@ -1,4 +1,5 @@
 mod backends;
+mod cruma;
 mod dashboard;
 mod edit_backend;
 mod edit_frontend;
@@ -19,9 +20,13 @@ pub struct CachedProcess {
     pub name: String,
     pub bin: String,
     pub port: String,
+    pub configured_port: Option<u16>,
     pub protocol: String,
     pub state: ProcState,
     pub auto_start: bool,
+    pub args: String,
+    pub dir: String,
+    pub env: Vec<(String, String)>,
 }
 
 /// Cached remote backend info for display
@@ -59,12 +64,16 @@ pub struct CachedConfig {
     pub remote_backends: Vec<CachedRemoteBackend>,
     pub static_backends: Vec<CachedStaticBackend>,
     pub routes: Vec<CachedRoute>,
+    pub http_port: Option<u16>,
+    pub https_port: Option<u16>,
 }
 
 /// Async function to fetch configuration data
 pub async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
-    let config_guard = state.config.read().await;
+    let config_guard = state.config.load_full();
     let snapshot = state.process_registry.snapshot();
+    let http_port = config_guard.frontends.http.as_ref().map(|h| h.port);
+    let https_port = config_guard.frontends.https.as_ref().map(|h| h.port);
 
     // Fetch processes
     let mut processes: Vec<CachedProcess> = config_guard
@@ -74,20 +83,48 @@ pub async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
             let name = entry.key().clone();
             let proc = entry.value();
             let handle = snapshot.get(&name);
-            let proc_state = handle
-                .map(|h| h.proc_state())
+            let state = handle.map(|h| h.state());
+            let proc_state = state
+                .as_ref()
+                .map(|s| s.proc_state.clone())
                 .unwrap_or(ProcState::Stopped);
-            let port = handle
-                .and_then(|h| h.active_port())
+            let port = state
+                .as_ref()
+                .and_then(|s| s.active_port)
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "-".to_string());
+            let resolved_bin = state
+                .as_ref()
+                .and_then(|s| s.resolved_bin.clone())
+                .unwrap_or_else(|| proc.bin.clone());
+            let resolved_args = state
+                .as_ref()
+                .and_then(|s| s.resolved_args.clone())
+                .unwrap_or_else(|| proc.args.clone());
+            let resolved_dir = state
+                .as_ref()
+                .and_then(|s| s.resolved_dir.clone())
+                .unwrap_or_else(|| proc.dir.clone().unwrap_or_default());
+            let resolved_env = state
+                .as_ref()
+                .and_then(|s| s.resolved_env.clone())
+                .unwrap_or_else(|| {
+                    proc.env
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect()
+                });
             CachedProcess {
                 name,
-                bin: proc.bin.clone(),
+                bin: resolved_bin,
                 port,
+                configured_port: proc.port,
                 protocol: format!("{:?}", proc.protocol),
                 state: proc_state,
                 auto_start: proc.auto_start.unwrap_or(true),
+                args: resolved_args.join(" "),
+                dir: resolved_dir,
+                env: resolved_env,
             }
         })
         .collect();
@@ -180,5 +217,7 @@ pub async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
         remote_backends,
         static_backends,
         routes,
+        http_port,
+        https_port,
     }
 }

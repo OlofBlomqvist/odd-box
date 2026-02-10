@@ -1,5 +1,5 @@
 use iced::widget::text::Wrapping;
-use iced::widget::{Column, Row, Stack, button, column, container, mouse_area, responsive, row, text};
+use iced::widget::{Column, Row, button, column, container, mouse_area, responsive, row, text};
 use iced::{Alignment, Border, Color, Element, Length, Padding, Size, Theme};
 
 use crate::global_state::ProcState;
@@ -14,6 +14,7 @@ const CARD_GAP: f32 = 12.0;
 const COLOR_PROCESS: Color = Color::from_rgb(0.4, 0.6, 1.0);
 const COLOR_REMOTE: Color = Color::from_rgb(0.7, 0.5, 1.0);
 const COLOR_DIR_SERVER: Color = Color::from_rgb(0.3, 0.8, 0.7);
+const COLOR_FRONTEND: Color = Color::from_rgb(0.35, 0.8, 0.6);
 
 /// Status dot color based on process state
 fn status_color(state: &ProcState) -> Color {
@@ -27,16 +28,27 @@ fn status_color(state: &ProcState) -> Color {
     }
 }
 
-/// Shared card container style
-fn card_style(theme: &Theme) -> container::Style {
+/// Shared card button style (adds hover border)
+fn card_button_style_with_accent(
+    theme: &Theme,
+    status: button::Status,
+    accent: Color,
+) -> button::Style {
     let palette = theme.extended_palette();
     let bg = palette.background.weaker.color;
-    container::Style {
+    let (border_color, border_width) = match status {
+        button::Status::Hovered | button::Status::Pressed => {
+            (accent, 2.0)
+        }
+        _ => (palette.background.strong.color, 1.0),
+    };
+    button::Style {
         background: Some(Color::from_rgba(bg.r, bg.g, bg.b, 0.8).into()),
+        text_color: palette.background.base.text,
         border: Border {
             radius: 8.0.into(),
-            width: 1.0,
-            color: palette.background.strong.color,
+            width: border_width,
+            color: border_color,
         },
         ..Default::default()
     }
@@ -58,26 +70,34 @@ fn site_card<'a>(
     accent_color: Color,
     state: &ProcState,
     card_width: f32,
+    on_press: Option<Message>,
 ) -> Element<'a, Message> {
     let dot_color = status_color(state);
 
     let name_row = row![
         text("●").color(dot_color).size(14),
-        text(name.to_string())
-            .size(15)
-            .wrapping(Wrapping::None)
-            .font(iced::Font {
-                weight: iced::font::Weight::Bold,
-                ..iced::Font::MONOSPACE
-            }),
+        container(
+            text(name.to_string())
+                .size(15)
+                .wrapping(Wrapping::Word)
+                .font(iced::Font {
+                    weight: iced::font::Weight::Bold,
+                    ..iced::Font::MONOSPACE
+                })
+        )
+        .width(Length::Fill),
     ]
     .spacing(6)
-    .align_y(Alignment::Center);
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
 
-    let subtitle_row = text(subtitle.to_string())
-        .size(13)
-        .wrapping(Wrapping::None)
-        .style(muted_text);
+    let subtitle_row = container(
+        text(subtitle.to_string())
+            .size(13)
+            .wrapping(Wrapping::Word)
+            .style(muted_text),
+    )
+    .width(Length::Fill);
 
     let category_row = row![
         text("▎").color(accent_color).size(16),
@@ -93,182 +113,35 @@ fn site_card<'a>(
         .spacing(6)
         .width(Length::Fill);
 
-    container(card_content)
+    let mut card = button(card_content)
         .padding(16)
         .width(Length::Fixed(card_width))
         .clip(true)
-        .style(card_style)
-        .into()
+        .style(move |theme, status| card_button_style_with_accent(theme, status, accent_color))
+        .on_press(Message::NoOp);
+
+    if let Some(msg) = on_press {
+        card = card.on_press(msg);
+    }
+
+    card.into()
 }
 
-/// Build a process card — clickable for context menu
-fn process_card<'a>(
-    name: &str,
-    protocol: &str,
-    port: &str,
-    bin: &str,
+fn frontend_card<'a>(
+    hostname: &str,
+    subtitle: &str,
     state: &ProcState,
     card_width: f32,
 ) -> Element<'a, Message> {
-    let dot_color = status_color(state);
-    let proc_name = name.to_string();
-
-    let name_row = row![
-        text("●").color(dot_color).size(14),
-        text(name.to_string())
-            .size(15)
-            .wrapping(Wrapping::None)
-            .font(iced::Font {
-                weight: iced::font::Weight::Bold,
-                ..iced::Font::MONOSPACE
-            }),
-    ]
-    .spacing(6)
-    .align_y(Alignment::Center);
-
-    let subtitle_row = text(format!("{} · :{}", protocol, port))
-        .size(13)
-        .wrapping(Wrapping::None)
-        .style(muted_text);
-
-    let bin_row = text(bin.to_string())
-        .size(11)
-        .wrapping(Wrapping::Word)
-        .style(muted_text);
-
-    let category_row = row![
-        text("▎").color(COLOR_PROCESS).size(16),
-        text("Process")
-            .size(12)
-            .wrapping(Wrapping::None)
-            .style(muted_text),
-    ]
-    .spacing(2)
-    .align_y(Alignment::Center);
-
-    let card_content = column![name_row, subtitle_row, bin_row, category_row]
-        .spacing(4)
-        .width(Length::Fill);
-
-    let card = container(card_content)
-        .padding(16)
-        .width(Length::Fixed(card_width))
-        .clip(true)
-        .style(card_style);
-
-    mouse_area(card)
-        .on_press(Message::DashboardToggleProcessMenu(proc_name))
-        .interaction(iced::mouse::Interaction::Pointer)
-        .into()
-}
-
-/// Build the popup context menu for a process
-fn process_popup_menu<'a>(
-    name: &str,
-    state: &ProcState,
-) -> Element<'a, Message> {
-    let proc_name = name.to_string();
-    let dot_color = status_color(state);
-
-    let header = row![
-        text("●").color(dot_color).size(16),
-        text(name.to_string())
-            .size(16)
-            .font(iced::Font {
-                weight: iced::font::Weight::Bold,
-                ..iced::Font::MONOSPACE
-            }),
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center);
-
-    let can_start = matches!(state, ProcState::Stopped | ProcState::Faulty);
-    let can_stop = matches!(state, ProcState::Running);
-
-    let menu_btn_style = |hover_color: Color| {
-        move |theme: &Theme, status: button::Status| {
-            let palette = theme.extended_palette();
-            let (bg, text_color) = match status {
-                button::Status::Hovered => (hover_color, Color::WHITE),
-                button::Status::Disabled => {
-                    let c = palette.background.strong.color;
-                    (
-                        Color::from_rgba(c.r, c.g, c.b, 0.4),
-                        Color::from_rgba(1.0, 1.0, 1.0, 0.3),
-                    )
-                }
-                _ => (
-                    palette.background.strong.color,
-                    palette.background.strong.text,
-                ),
-            };
-            button::Style {
-                background: Some(bg.into()),
-                text_color,
-                border: Border {
-                    radius: 6.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        }
-    };
-
-    let btn_padding = Padding {
-        top: 8.0,
-        right: 16.0,
-        bottom: 8.0,
-        left: 16.0,
-    };
-
-    let mut start_btn = button(text("▶  Start").size(14))
-        .padding(btn_padding)
-        .width(Length::Fill)
-        .style(menu_btn_style(Color::from_rgb(0.3, 0.7, 0.3)));
-    if can_start {
-        start_btn = start_btn.on_press(Message::ProcessStart(proc_name.clone()));
-    }
-
-    let mut stop_btn = button(text("■  Stop").size(14))
-        .padding(btn_padding)
-        .width(Length::Fill)
-        .style(menu_btn_style(Color::from_rgb(0.8, 0.3, 0.3)));
-    if can_stop {
-        stop_btn = stop_btn.on_press(Message::ProcessStop(proc_name.clone()));
-    }
-
-    let edit_frontend_btn = button(text("✎  Edit Frontend").size(14))
-        .padding(btn_padding)
-        .width(Length::Fill)
-        .style(menu_btn_style(Color::from_rgb(0.35, 0.55, 0.9)))
-        .on_press(Message::OpenEditFrontend(proc_name.clone()));
-
-    let edit_backend_btn = button(text("✎  Edit Backend").size(14))
-        .padding(btn_padding)
-        .width(Length::Fill)
-        .style(menu_btn_style(Color::from_rgb(0.45, 0.6, 0.85)))
-        .on_press(Message::OpenEditBackend(proc_name));
-
-    let actions = column![start_btn, stop_btn, edit_frontend_btn, edit_backend_btn].spacing(4);
-
-    let menu_content = column![header, actions].spacing(12);
-
-    container(menu_content)
-        .padding(16)
-        .width(Length::Fixed(240.0))
-        .style(|theme: &Theme| {
-            let palette = theme.extended_palette();
-            container::Style {
-                background: Some(palette.background.base.color.into()),
-                border: Border {
-                    radius: 10.0.into(),
-                    width: 1.0,
-                    color: palette.background.strong.color,
-                },
-                ..Default::default()
-            }
-        })
-        .into()
+    site_card(
+        hostname,
+        subtitle,
+        "Frontend",
+        COLOR_FRONTEND,
+        state,
+        card_width,
+        Some(Message::OpenEditFrontend(hostname.to_string())),
+    )
 }
 
 /// Build a small stat box for the summary row
@@ -336,12 +209,10 @@ fn section_header<'a>(title: &'a str, count: usize, accent: Color) -> Element<'a
     });
 
     row![
-        text(title)
-            .size(17)
-            .font(iced::Font {
-                weight: iced::font::Weight::Bold,
-                ..Default::default()
-            }),
+        text(title).size(17).font(iced::Font {
+            weight: iced::font::Weight::Bold,
+            ..Default::default()
+        }),
         badge,
     ]
     .spacing(8)
@@ -354,15 +225,11 @@ fn card_layout(size: Size) -> (usize, f32) {
     let cols = ((available_width + CARD_GAP) / (CARD_MIN_WIDTH + CARD_GAP))
         .floor()
         .max(1.0) as usize;
-    let card_width =
-        (available_width - CARD_GAP * (cols.saturating_sub(1)) as f32) / cols as f32;
+    let card_width = (available_width - CARD_GAP * (cols.saturating_sub(1)) as f32) / cols as f32;
     (cols, card_width)
 }
 
-fn rows_from_cards<'a>(
-    mut cards: Vec<Element<'a, Message>>,
-    cols: usize,
-) -> Column<'a, Message> {
+fn rows_from_cards<'a>(mut cards: Vec<Element<'a, Message>>, cols: usize) -> Column<'a, Message> {
     let mut rows: Vec<Element<'a, Message>> = Vec::new();
     while !cards.is_empty() {
         let take = cols.min(cards.len());
@@ -418,45 +285,47 @@ impl OddBoxGui {
             });
 
             // --- Summary counts ---
-            let total = self.cached_config.processes.len()
-                + self.cached_config.remote_backends.len()
-                + self.cached_config.static_backends.len();
+            let total = self.cached_config.routes.len();
+            let mut running = 0usize;
+            let mut stopped = 0usize;
+            let mut faulty = 0usize;
 
-            let running = self
-                .cached_config
-                .processes
-                .iter()
-                .filter(|p| matches!(p.state, ProcState::Running))
-                .count()
-                + self
+            for route in &self.cached_config.routes {
+                let state = self
                     .cached_config
-                    .remote_backends
+                    .processes
                     .iter()
-                    .filter(|r| matches!(r.state, ProcState::Running | ProcState::Remote))
-                    .count()
-                + self
-                    .cached_config
-                    .static_backends
-                    .iter()
-                    .filter(|s| matches!(s.state, ProcState::Running | ProcState::DirServer))
-                    .count();
+                    .find(|p| p.name == route.backend)
+                    .map(|p| p.state.clone())
+                    .or_else(|| {
+                        self.cached_config
+                            .remote_backends
+                            .iter()
+                            .find(|b| b.name == route.backend)
+                            .map(|b| b.state.clone())
+                    })
+                    .or_else(|| {
+                        self.cached_config
+                            .static_backends
+                            .iter()
+                            .find(|b| b.name == route.backend)
+                            .map(|b| b.state.clone())
+                    })
+                    .unwrap_or(ProcState::Faulty);
 
-            let stopped = self
-                .cached_config
-                .processes
-                .iter()
-                .filter(|p| matches!(p.state, ProcState::Stopped))
-                .count();
-
-            let faulty = self
-                .cached_config
-                .processes
-                .iter()
-                .filter(|p| matches!(p.state, ProcState::Faulty))
-                .count();
+                match state {
+                    ProcState::Running | ProcState::Remote | ProcState::DirServer | ProcState::Docker => {
+                        running += 1;
+                    }
+                    ProcState::Stopped | ProcState::Starting | ProcState::Stopping => {
+                        stopped += 1;
+                    }
+                    ProcState::Faulty => faulty += 1,
+                }
+            }
 
             let summary_row = Row::with_children(vec![
-                stat_box("Total", total, Color::WHITE),
+                stat_box("Routes", total, Color::WHITE),
                 stat_box("Running", running, Color::from_rgb(0.4, 0.8, 0.4)),
                 stat_box("Stopped", stopped, Color::from_rgb(0.6, 0.6, 0.6)),
                 stat_box("Faulty", faulty, Color::from_rgb(0.9, 0.3, 0.3)),
@@ -466,82 +335,47 @@ impl OddBoxGui {
             // --- Category sections ---
             let mut sections: Vec<Element<'_, Message>> = Vec::new();
 
-            // Managed Processes
-            if !self.cached_config.processes.is_empty() {
+            if !self.cached_config.routes.is_empty() {
                 let cards: Vec<Element<'_, Message>> = self
                     .cached_config
-                    .processes
+                    .routes
                     .iter()
-                    .map(|p| {
-                        process_card(
-                            &p.name,
-                            &p.protocol,
-                            &p.port,
-                            &p.bin,
-                            &p.state,
-                            card_width,
-                        )
+                    .map(|route| {
+                        if let Some(proc_backend) = self
+                            .cached_config
+                            .processes
+                            .iter()
+                            .find(|p| p.name == route.backend)
+                        {
+                            let subtitle =
+                                format!("Process · {} · :{}", proc_backend.protocol, proc_backend.port);
+                            frontend_card(&route.hostname, &subtitle, &proc_backend.state, card_width)
+                        } else if let Some(remote) = self
+                            .cached_config
+                            .remote_backends
+                            .iter()
+                            .find(|r| r.name == route.backend)
+                        {
+                            let subtitle = format!("Remote · {}", remote.endpoints);
+                            frontend_card(&route.hostname, &subtitle, &remote.state, card_width)
+                        } else if let Some(dir) = self
+                            .cached_config
+                            .static_backends
+                            .iter()
+                            .find(|s| s.name == route.backend)
+                        {
+                            let subtitle = format!("Static · {}", dir.dir);
+                            frontend_card(&route.hostname, &subtitle, &dir.state, card_width)
+                        } else {
+                            let subtitle = format!("Missing backend · {}", route.backend);
+                            frontend_card(&route.hostname, &subtitle, &ProcState::Faulty, card_width)
+                        }
                     })
                     .collect();
 
                 sections.push(
                     column![
-                        section_header(
-                            "Managed Processes",
-                            self.cached_config.processes.len(),
-                            COLOR_PROCESS,
-                        ),
-                        rows_from_cards(cards, cols),
-                    ]
-                    .spacing(10)
-                    .into(),
-                );
-            }
-
-            // Remote Backends
-            if !self.cached_config.remote_backends.is_empty() {
-                let cards: Vec<Element<'_, Message>> = self
-                    .cached_config
-                    .remote_backends
-                    .iter()
-                    .map(|r| {
-                        let subtitle = format!("{} · {}", r.protocol, r.endpoints);
-                        site_card(&r.name, &subtitle, "Remote", COLOR_REMOTE, &r.state, card_width)
-                    })
-                    .collect();
-
-                sections.push(
-                    column![
-                        section_header(
-                            "Remote Backends",
-                            self.cached_config.remote_backends.len(),
-                            COLOR_REMOTE,
-                        ),
-                        rows_from_cards(cards, cols),
-                    ]
-                    .spacing(10)
-                    .into(),
-                );
-            }
-
-            // Static File Servers
-            if !self.cached_config.static_backends.is_empty() {
-                let cards: Vec<Element<'_, Message>> = self
-                    .cached_config
-                    .static_backends
-                    .iter()
-                    .map(|s| {
-                        site_card(&s.name, &s.dir, "Dir Server", COLOR_DIR_SERVER, &s.state, card_width)
-                    })
-                    .collect();
-
-                sections.push(
-                    column![
-                        section_header(
-                            "Static File Servers",
-                            self.cached_config.static_backends.len(),
-                            COLOR_DIR_SERVER,
-                        ),
+                        section_header("Frontends", self.cached_config.routes.len(), COLOR_FRONTEND),
                         rows_from_cards(cards, cols),
                     ]
                     .spacing(10)
@@ -550,10 +384,8 @@ impl OddBoxGui {
             }
 
             // Assemble the dashboard content
-            let mut content_children: Vec<Element<'_, Message>> = vec![
-                uptime_bar.into(),
-                summary_row.into(),
-            ];
+            let mut content_children: Vec<Element<'_, Message>> =
+                vec![uptime_bar.into(), summary_row.into()];
             content_children.extend(sections);
 
             let dashboard_column = Column::with_children(content_children).spacing(20);
@@ -563,50 +395,6 @@ impl OddBoxGui {
                 .into()
         })
         .into();
-
-        // --- Popup menu overlay ---
-        let selected_proc = self.dashboard_process_menu.as_ref().and_then(|name| {
-            self.cached_config
-                .processes
-                .iter()
-                .find(|p| &p.name == name)
-        });
-
-        if let Some(proc) = selected_proc {
-            let menu = process_popup_menu(&proc.name, &proc.state);
-
-            // Invisible dismiss layer — clicking anywhere outside the menu closes it
-            let dismiss_name = proc.name.clone();
-            let dismiss = mouse_area(
-                container(column![])
-                    .width(Length::Fill)
-                    .height(Length::Fill),
-            )
-            .on_press(Message::DashboardToggleProcessMenu(dismiss_name));
-
-            // Position the menu at the stored cursor location
-            let (mx, my) = self.dashboard_menu_pos;
-            let positioned_menu = container(menu)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .align_x(Alignment::Start)
-                .align_y(Alignment::Start)
-                .padding(Padding {
-                    top: my,
-                    left: mx,
-                    bottom: 0.0,
-                    right: 0.0,
-                });
-
-            Stack::with_children(vec![
-                dashboard_content,
-                dismiss.into(),
-                positioned_menu.into(),
-            ])
-            .width(Length::Fill)
-            .into()
-        } else {
-            dashboard_content
-        }
+        dashboard_content
     }
 }

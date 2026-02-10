@@ -49,12 +49,17 @@ impl Column {
 /// Table builder for creating consistent tables across the GUI
 pub struct Table<'a, M: Clone + 'a> {
     columns: Vec<Column>,
-    rows: Vec<Vec<Element<'a, M>>>,
+    rows: Vec<RowKind<'a, M>>,
     row_messages: Vec<Option<M>>,
     spacing: f32,
     row_padding: Padding,
     header_padding: Padding,
     hover_message: Option<M>,
+}
+
+enum RowKind<'a, M: Clone + 'a> {
+    Cells(Vec<Element<'a, M>>),
+    Full(Element<'a, M>),
 }
 
 impl<'a, M: Clone + 'a> Table<'a, M> {
@@ -88,15 +93,22 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
 
     /// Add a row of cell elements
     pub fn push_row(mut self, cells: Vec<Element<'a, M>>) -> Self {
-        self.rows.push(cells);
+        self.rows.push(RowKind::Cells(cells));
         self.row_messages.push(None);
         self
     }
 
     /// Add a clickable row of cell elements
     pub fn push_row_with_message(mut self, cells: Vec<Element<'a, M>>, message: M) -> Self {
-        self.rows.push(cells);
+        self.rows.push(RowKind::Cells(cells));
         self.row_messages.push(Some(message));
+        self
+    }
+
+    /// Add a full-width row element (not constrained by column widths)
+    pub fn push_full_row(mut self, content: Element<'a, M>) -> Self {
+        self.rows.push(RowKind::Full(content));
+        self.row_messages.push(None);
         self
     }
 
@@ -122,7 +134,7 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
                                 color: Some(palette.background.base.text),
                                 ..Default::default()
                             }
-                        })
+                        }),
                 )
                 .width(col.width)
                 .clip(true)
@@ -157,30 +169,30 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
             .into_iter()
             .zip(self.row_messages.into_iter())
             .enumerate()
-            .map(|(idx, (cells, msg))| {
+            .map(|(idx, (row, msg))| {
                 let is_even = idx % 2 == 0;
                 let is_last = idx == row_count.saturating_sub(1);
 
-                // Build row with cells that have explicit widths and clipping
-                let row_cells: Vec<Element<'a, M>> = cells
-                    .into_iter()
-                    .zip(self.columns.iter())
-                    .map(|(cell, col)| {
-                        container(cell)
-                            .width(col.width)
-                            .clip(true)
-                            .into()
-                    })
-                    .collect();
+                let content: Element<'a, M> = match row {
+                    RowKind::Cells(cells) => {
+                        let row_cells: Vec<Element<'a, M>> = cells
+                            .into_iter()
+                            .zip(self.columns.iter())
+                            .map(|(cell, col)| container(cell).width(col.width).clip(true).into())
+                            .collect();
 
-                let data_row = Row::with_children(row_cells)
-                    .spacing(self.spacing)
-                    .align_y(iced::Alignment::Center);
+                        Row::with_children(row_cells)
+                            .spacing(self.spacing)
+                            .align_y(iced::Alignment::Center)
+                            .into()
+                    }
+                    RowKind::Full(content) => container(content).width(Length::Fill).into(),
+                };
 
                 // Use button for hover effect, otherwise use container
                 let row_msg = msg.or_else(|| hover_message.clone());
                 if row_msg.is_some() {
-                    button(data_row)
+                    button(content)
                         .width(Length::Fill)
                         .padding(self.row_padding)
                         .on_press(row_msg.unwrap())
@@ -197,6 +209,12 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
                                 }
                                 _ => base_bg,
                             };
+                            let border_color = match status {
+                                button::Status::Hovered | button::Status::Pressed => {
+                                    palette.primary.strong.color
+                                }
+                                _ => Color::TRANSPARENT,
+                            };
                             let radius = if is_last {
                                 border::bottom(6.0)
                             } else {
@@ -207,15 +225,15 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
                                 text_color: palette.background.base.text,
                                 border: Border {
                                     radius,
-                                    width: 0.0,
-                                    color: Color::TRANSPARENT,
+                                    width: 1.0,
+                                    color: border_color,
                                 },
                                 ..Default::default()
                             }
                         })
                         .into()
                 } else {
-                    container(data_row)
+                    container(content)
                         .width(Length::Fill)
                         .padding(self.row_padding)
                         .style(move |theme: &Theme| {
@@ -274,6 +292,18 @@ pub fn text_cell<'a, M: 'a>(content: impl ToString) -> Element<'a, M> {
     text(content.to_string())
         .font(Font::MONOSPACE)
         .wrapping(iced::widget::text::Wrapping::None)
+        .style(|theme: &Theme| iced::widget::text::Style {
+            color: Some(theme.extended_palette().background.base.text),
+            ..Default::default()
+        })
+        .into()
+}
+
+/// Helper to create a wrapping text cell (useful for long hostnames)
+pub fn wrap_text_cell<'a, M: 'a>(content: impl ToString) -> Element<'a, M> {
+    text(content.to_string())
+        .font(Font::MONOSPACE)
+        .wrapping(iced::widget::text::Wrapping::Word)
         .style(|theme: &Theme| iced::widget::text::Style {
             color: Some(theme.extended_palette().background.base.text),
             ..Default::default()

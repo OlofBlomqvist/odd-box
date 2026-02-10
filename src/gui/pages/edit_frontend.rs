@@ -3,7 +3,7 @@ use iced::widget::{
 };
 use iced::{Border, Color, Element, Length, Theme};
 
-use super::super::{Message, OddBoxGui};
+use super::super::{BackendOption, Message, OddBoxGui};
 
 fn muted_text(theme: &Theme) -> iced::widget::text::Style {
     iced::widget::text::Style {
@@ -30,7 +30,10 @@ impl OddBoxGui {
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
             );
-        } else if !self.backend_names.contains(&self.edit_frontend_form.backend) {
+        } else if !self
+            .backend_names
+            .contains(&self.edit_frontend_form.backend)
+        {
             errors.push(
                 text("Selected backend does not exist.")
                     .size(12)
@@ -53,7 +56,9 @@ impl OddBoxGui {
             .map(|msg| text(msg).size(13).style(muted_text));
 
         let mut actions_children: Vec<Element<'_, Message>> = vec![
-            button(text("Save").size(14)).on_press(Message::EditFrontendSave).into(),
+            button(text("Save").size(14))
+                .on_press(Message::EditFrontendSave)
+                .into(),
             button(text("Back").size(14))
                 .on_press(Message::NavigateTo(super::super::Page::Frontends))
                 .into(),
@@ -77,10 +82,30 @@ impl OddBoxGui {
                 .padding(8)
                 .width(Length::Fill);
 
-            let backend_selected = self
-                .backend_names
+            let mut backend_options: Vec<BackendOption> = Vec::new();
+            backend_options.extend(
+                self.cached_config
+                    .processes
+                    .iter()
+                    .map(|p| BackendOption::new(p.name.clone(), "process")),
+            );
+            backend_options.extend(
+                self.cached_config
+                    .remote_backends
+                    .iter()
+                    .map(|b| BackendOption::new(b.name.clone(), "remote")),
+            );
+            backend_options.extend(
+                self.cached_config
+                    .static_backends
+                    .iter()
+                    .map(|b| BackendOption::new(b.name.clone(), "static")),
+            );
+            backend_options.sort_by(|a, b| a.id.cmp(&b.id));
+
+            let backend_selected = backend_options
                 .iter()
-                .find(|n| *n == &self.edit_frontend_form.backend)
+                .find(|o| o.id == self.edit_frontend_form.backend)
                 .cloned();
 
             let backend_label = text("Backend").size(13).style(muted_text);
@@ -88,7 +113,7 @@ impl OddBoxGui {
                 .size(12)
                 .style(muted_text);
             let backend_picker = pick_list(
-                self.backend_names.as_slice(),
+                backend_options,
                 backend_selected,
                 Message::EditFrontendBackendChanged,
             )
@@ -160,13 +185,9 @@ impl OddBoxGui {
                 }
             };
 
-            let fields_card = container(fields)
-                .padding(12)
-                .style(card_style);
+            let fields_card = container(fields).padding(12).style(card_style);
 
-            let options_card = container(options)
-                .padding(12)
-                .style(card_style);
+            let options_card = container(options).padding(12).style(card_style);
 
             if size.width < 760.0 {
                 column![
@@ -189,7 +210,9 @@ impl OddBoxGui {
 
         let mut content = column![
             text("Edit Frontend").size(20),
-            text("Route settings (HTTP frontend)").size(13).style(muted_text),
+            text("Route settings (HTTP frontend)")
+                .size(13)
+                .style(muted_text),
             layout,
             actions,
         ]

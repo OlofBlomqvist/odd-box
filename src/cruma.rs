@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use cruma_proxy_lib::{proxying::ProxyService, termination::*};
-use cruma_tunnels_lib::IncomingCrumaTlsStream;
+use cruma_tunnels_lib::{AgentCredentials, IncomingCrumaTlsStream};
 
 use crate::global_state::GlobalState;
 
 /// Collect allowed hostnames from the current odd-box config.
 pub async fn extract_allowed_domain_names(state: Arc<GlobalState>) -> Vec<String> {
-    let odd_box_config = state.config.read().await.clone();
+    let odd_box_config = state.config.load_full();
 
     // In V4, the DashMap key is the backend_id which serves as the hostname
     let hosted_domain_names = odd_box_config
@@ -45,15 +45,15 @@ pub async fn cruma_thread(
     notify: Arc<tokio::sync::Notify>,
     state: Arc<GlobalState>,
     cruma_conf: Arc<ArcSwap<cruma_proxy_lib::types::Configuration>>,
+    credentials: AgentCredentials,
 ) -> anyhow::Result<()> {
     let ct = tokio_util::sync::CancellationToken::new();
     use cruma_tunnels_lib::*;
-    let config = AgentRuntimeConfig::default(AgentCredentials::anonymous())?;
+    let config = AgentRuntimeConfig::default(credentials)?;
     // Get TLS port from frontends config
     let port = state
         .config
-        .read()
-        .await
+        .load_full()
         .frontends
         .https
         .as_ref()
@@ -61,6 +61,17 @@ pub async fn cruma_thread(
         .unwrap_or(4343);
     let reconnect = Arc::new(tokio::sync::Notify::new());
     let runtime = agent_runtime::start_agent_runtime(reconnect, config, ct.clone()).await?;
+    let mut transport_rx = runtime.transport_snapshot_rx();
+    let transport_state = state.clone();
+    tokio::spawn(async move {
+        loop {
+            if transport_rx.changed().await.is_err() {
+                break;
+            }
+            let snapshot = transport_rx.borrow().clone();
+            transport_state.cruma_transports.store(Arc::new(snapshot));
+        }
+    });
 
     let mut events = runtime.subscribe();
     let p = Arc::new(
@@ -85,13 +96,12 @@ pub async fn cruma_thread(
                         cruma_tunnels_lib::AgentEvent::AnonymousTunnelAssigned { assigned_domain, welcome_message }
                         | cruma_tunnels_lib::AgentEvent::AuthenticatedTunnelAssigned { assigned_domain, welcome_message } => {
                                 tracing::info!(assigned_domain, welcome_message);
-                                {
-                                    let mut slot = state.cruma_assignment.write().await;
-                                    *slot = Some(crate::global_state::CrumaAssignedDomain {
+                                state.cruma_assignment.store(Some(std::sync::Arc::new(
+                                    crate::global_state::CrumaAssignedDomain {
                                         assigned_domain,
                                         welcome_message,
-                                    });
-                                }
+                                    },
+                                )));
                             },
                             evt => {
                                 tracing::trace!("Received event from server: {:#?}", evt);
@@ -136,6 +146,7 @@ pub async fn handle_stream(
     let terminator = cruma_proxy_lib::termination::Terminator::new(p.clone(), cruma_conf.clone());
     let proxy_service = ProxyService::new(cruma_conf, terminator);
 
+
     let preface = match &cruma_stream {
         IncomingCrumaTlsStream::Quic { preface, .. }
         | IncomingCrumaTlsStream::Http2 { preface, .. } => preface.clone(),
@@ -149,15 +160,8 @@ pub async fn handle_stream(
     } else {
         // Although our connection with cruma is TLS encrypted, we can still get non-TLS streams forwarded to us.
         // This means they were terminated on the cruma.io servers, so we need to proxy them as non-TLS here.
-        let eport = _state
-            .config
-            .read()
-            .await
-            .frontends
-            .http
-            .as_ref()
-            .map(|h| h.port)
-            .unwrap_or(8080);
+        let cfg = _state.config.load_full();
+        let eport = cfg.frontends.http.as_ref().map(|h| h.port).unwrap_or(8080);
         proxy_service
             .proxy_non_tls(cruma_stream, eport, preface.src.parse()?)
             .await

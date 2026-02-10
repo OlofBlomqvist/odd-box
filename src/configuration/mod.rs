@@ -20,7 +20,9 @@ pub mod yaml_air;
 use anyhow::bail;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::{debug, trace};
 
 // Re-export the latest config version
 pub use v4::*;
@@ -53,24 +55,14 @@ pub enum AnyOddBoxConfig {
     V4(v4::OddBoxV4Config),
 }
 
-#[derive(
-    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, schemars::JsonSchema,
-)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, schemars::JsonSchema)]
 pub struct EnvVar {
     pub key: String,
     pub value: String,
 }
 
 #[derive(
-    Serialize,
-    Deserialize,
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    schemars::JsonSchema,
-    Default,
+    Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, schemars::JsonSchema, Default,
 )]
 #[allow(non_camel_case_types)]
 pub enum LogFormat {
@@ -122,15 +114,7 @@ impl<'de> Deserialize<'de> for LogLevel {
 }
 
 #[derive(
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-    Default,
-    PartialEq,
-    Eq,
-    Hash,
-    schemars::JsonSchema,
+    Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash, schemars::JsonSchema,
 )]
 pub enum OddBoxConfigVersion {
     #[default]
@@ -699,14 +683,24 @@ impl ConfigWrapper {
         let resolved_dir = proc.dir.as_ref().map(|d| with_vars(d));
         let resolved_bin = with_vars(&proc.bin);
 
+        trace!(
+            backend_id = %backend_id,
+            root_dir = %root_dir,
+            cfg_dir = %cfg_dir,
+            resolved_bin = %resolved_bin,
+            resolved_dir = ?resolved_dir,
+            resolved_args = ?resolved_args,
+            "Resolved process backend paths and args"
+        );
+
+        // Merge global env with process env (process overrides global)
+        let mut merged_env: HashMap<String, String> = self.env.clone();
+        merged_env.extend(proc.env.clone());
+
         // Convert env HashMap to Vec<EnvVar> for compatibility
-        let env_vars: Vec<EnvVar> = proc
-            .env
-            .iter()
-            .map(|(k, v)| EnvVar {
-                key: k.clone(),
-                value: v.clone(),
-            })
+        let env_vars: Vec<EnvVar> = merged_env
+            .into_iter()
+            .map(|(k, v)| EnvVar { key: k, value: v })
             .collect();
 
         Ok(ResolvedProcessBackend {
