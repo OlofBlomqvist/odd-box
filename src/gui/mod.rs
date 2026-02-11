@@ -2,6 +2,7 @@ pub mod components;
 pub mod logs;
 mod macos_app_icon;
 mod pages;
+mod tray;
 
 use iced::clipboard;
 use iced::gradient::{ColorStop, Linear};
@@ -83,6 +84,19 @@ pub fn run(
     log_state: SharedLogState,
 ) -> iced::Result {
     macos_app_icon::apply_default_icon();
+
+    // Initialize system tray icon
+    let tray_handle = match tray::TrayHandle::new("ODD-BOX") {
+        Ok(handle) => {
+            tracing::info!("System tray initialized successfully");
+            Some(handle)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to initialize system tray: {}", e);
+            None
+        }
+    };
+
     let use_glass_effects = cfg!(target_os = "macos");
     let initial_window_size = iced::Size::new(1200.0, 800.0);
     set_gui_text_scale(initial_window_size);
@@ -92,14 +106,24 @@ pub fn run(
         decorations: true, // Use native window decorations (KDE/GNOME title bar)
         blur: use_glass_effects,
         transparent: use_glass_effects,
+        // Disable default close behavior so we can intercept and hide instead
+        #[cfg(target_os = "macos")]
+        exit_on_close_request: false,
         ..Default::default()
     };
 
     let state_clone = state.clone();
     let log_state_clone = log_state.clone();
 
+    // Wrap tray_handle in Arc<Mutex> so we can move it into the closure
+    let tray_handle = std::sync::Arc::new(std::sync::Mutex::new(tray_handle));
+    let tray_handle_clone = tray_handle.clone();
+
     iced::application(
-        move || OddBoxGui::new(state_clone.clone(), theme_mode, log_state_clone.clone()),
+        move || {
+            let tray = tray_handle_clone.lock().unwrap().take();
+            OddBoxGui::new(state_clone.clone(), theme_mode, log_state_clone.clone(), tray)
+        },
         OddBoxGui::update,
         OddBoxGui::view,
     )
@@ -274,7 +298,7 @@ pub enum Message {
     /// No-op message for hover-only interactive elements
     NoOp,
     NavigateTo(Page),
-    WindowResized(iced::Size),
+    WindowResized(window::Id, iced::Size),
     SystemThemeChanged(theme::Mode),
     LogViewportChanged(scrollable::Viewport),
     // Log filter messages
@@ -292,6 +316,17 @@ pub enum Message {
     Tick,
     ExitPoll,
     ExitWindowId(Option<window::Id>),
+    // Window close request (for hiding instead of closing on macOS)
+    WindowCloseRequested(window::Id),
+    // Window focus events (to track minimized state)
+    WindowFocused(window::Id),
+    WindowUnfocused(window::Id),
+    // Window minimized state check result
+    WindowMinimizedCheck(Option<bool>),
+    // Window ID resolved after opening
+    WindowIdResolved(Option<window::Id>),
+    // Tray command received
+    TrayCommandReceived,
     // Config data updated
     ConfigUpdated(CachedConfig),
     // Frontend port settings
@@ -464,6 +499,10 @@ pub struct OddBoxGui {
     system_theme: Option<theme::Mode>,
     log_is_at_bottom: bool,
     log_view_rev: u64,
+    // Window and tray management
+    window_id: Option<window::Id>,
+    window_visible: bool,
+    tray_handle: Option<tray::TrayHandle>,
     // Log filtering
     pub(in crate::gui) log_filter: LogFilter,
     pub(in crate::gui) log_level_preset: LogLevelPreset,
@@ -1250,6 +1289,7 @@ impl OddBoxGui {
         state: Arc<GlobalState>,
         theme_mode: ThemeMode,
         log_state: SharedLogState,
+        tray_handle: Option<tray::TrayHandle>,
     ) -> (Self, Task<Message>) {
         let state_clone = state.clone();
         let mut tasks: Vec<Task<Message>> = vec![Task::perform(
@@ -1277,6 +1317,9 @@ impl OddBoxGui {
                 system_theme: None,
                 log_is_at_bottom: true,
                 log_view_rev: 0,
+                window_id: None,
+                window_visible: true,
+                tray_handle,
                 log_filter,
                 log_level_preset,
                 known_sources: Vec::new(),
@@ -1344,11 +1387,23 @@ impl OddBoxGui {
         };
 
         let theme_sub = system::theme_changes().map(Message::SystemThemeChanged);
-        let resize_sub = window::resize_events().map(|(_id, size)| Message::WindowResized(size));
+        let resize_sub = window::resize_events().map(|(id, size)| Message::WindowResized(id, size));
         let exit_sub =
             time::every(std::time::Duration::from_millis(250)).map(|_| Message::ExitPoll);
+        // Listen for window close requests (to hide instead of quit on macOS)
+        let close_sub = window::close_requests().map(Message::WindowCloseRequested);
+        // Listen for window events (focus/unfocus to detect minimize)
+        let window_events_sub = window::events().map(|(id, event)| {
+            match event {
+                iced::window::Event::Focused => Message::WindowFocused(id),
+                iced::window::Event::Unfocused => Message::WindowUnfocused(id),
+                _ => Message::NoOp,
+            }
+        });
+        // Poll for tray commands
+        let tray_sub = time::every(std::time::Duration::from_millis(100)).map(|_| Message::TrayCommandReceived);
 
-        Subscription::batch(vec![page_sub, theme_sub, resize_sub, exit_sub])
+        Subscription::batch(vec![page_sub, theme_sub, resize_sub, exit_sub, close_sub, window_events_sub, tray_sub])
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -1377,7 +1432,11 @@ impl OddBoxGui {
                     return Task::perform(fetch_config(self.state.clone()), Message::ConfigUpdated);
                 }
             }
-            Message::WindowResized(size) => {
+            Message::WindowResized(id, size) => {
+                // Capture window ID for tray commands
+                if self.window_id.is_none() {
+                    self.window_id = Some(id);
+                }
                 set_gui_text_scale(size);
             }
             Message::SystemThemeChanged(mode) => {
@@ -1423,6 +1482,115 @@ impl OddBoxGui {
             Message::ExitWindowId(id) => {
                 if let Some(id) = id {
                     return window::close(id);
+                }
+            }
+            Message::WindowCloseRequested(id) => {
+                // On macOS with tray available, hide the window instead of closing
+                #[cfg(target_os = "macos")]
+                if self.tray_handle.is_some() {
+                    self.window_visible = false;
+                    if let Some(ref tray) = self.tray_handle {
+                        tray.set_window_visible(false);
+                    }
+                    // Remove from Dock when hidden
+                    macos_app_icon::set_activation_policy(macos_app_icon::ActivationPolicy::Accessory);
+                    return window::set_mode(id, window::Mode::Hidden);
+                }
+                
+                // On other platforms or if no tray on macOS, close normally
+                #[cfg(not(target_os = "macos"))]
+                {
+                    self.state.exit.store(true, std::sync::atomic::Ordering::SeqCst);
+                    return window::close(id);
+                }
+                
+                // macOS without tray - also close normally
+                #[cfg(target_os = "macos")]
+                {
+                    self.state.exit.store(true, std::sync::atomic::Ordering::SeqCst);
+                    return window::close(id);
+                }
+            }
+            Message::WindowIdResolved(id) => {
+                self.window_id = id;
+            }
+            Message::WindowFocused(_id) => {
+                // Window is now focused (restored from minimize or brought to front)
+                self.window_visible = true;
+                if let Some(ref tray) = self.tray_handle {
+                    tray.set_window_visible(true);
+                }
+            }
+            Message::WindowUnfocused(id) => {
+                // Window lost focus - could be minimized or just clicked away
+                // Check if actually minimized
+                return window::is_minimized(id).map(Message::WindowMinimizedCheck);
+            }
+            Message::WindowMinimizedCheck(is_minimized) => {
+                // Update tray based on minimized state
+                if is_minimized == Some(true) {
+                    self.window_visible = false;
+                    if let Some(ref tray) = self.tray_handle {
+                        tray.set_window_visible(false);
+                    }
+                }
+            }
+            Message::TrayCommandReceived => {
+                // Poll for tray commands
+                if let Some(ref tray) = self.tray_handle {
+                    while let Ok(cmd) = tray.command_rx.try_recv() {
+                        match cmd {
+                            tray::TrayCommand::Show => {
+                                self.window_visible = true;
+                                tray.set_window_visible(true);
+                                // Show in Dock when window is visible and reapply icon
+                                #[cfg(target_os = "macos")]
+                                {
+                                    macos_app_icon::set_activation_policy(macos_app_icon::ActivationPolicy::Regular);
+                                    macos_app_icon::apply_default_icon();
+                                }
+                                if let Some(id) = self.window_id {
+                                    return Task::batch(vec![
+                                        window::minimize(id, false), // Unminimize if minimized
+                                        window::set_mode(id, window::Mode::Windowed),
+                                        window::gain_focus(id),
+                                    ]);
+                                } else {
+                                    // Window doesn't exist, need to open a new one
+                                    // For now, just log - full implementation would open new window
+                                    tracing::info!("Show requested but no window ID available");
+                                }
+                            }
+                            tray::TrayCommand::Hide => {
+                                self.window_visible = false;
+                                tray.set_window_visible(false);
+                                // Remove from Dock when hidden
+                                #[cfg(target_os = "macos")]
+                                macos_app_icon::set_activation_policy(macos_app_icon::ActivationPolicy::Accessory);
+                                if let Some(id) = self.window_id {
+                                    return window::set_mode(id, window::Mode::Hidden);
+                                }
+                            }
+                            tray::TrayCommand::Quit => {
+                                // Immediately disable tray menu items to show we're shutting down
+                                tray.set_shutting_down();
+                                
+                                self.state.exit.store(true, std::sync::atomic::Ordering::SeqCst);
+                                // Force exit after timeout if graceful shutdown fails
+                                std::thread::spawn(|| {
+                                    std::thread::sleep(std::time::Duration::from_secs(2));
+                                    std::process::exit(0);
+                                });
+                                if let Some(id) = self.window_id {
+                                    return Task::batch(vec![
+                                        window::close(id),
+                                        iced::exit(),
+                                    ]);
+                                }
+                                return iced::exit();
+                            }
+                        }
+                    }
                 }
             }
             Message::ConfigUpdated(config) => {

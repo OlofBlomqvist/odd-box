@@ -1,13 +1,51 @@
-//! macOS-specific utility to set the application dock icon at runtime.
+//! macOS-specific utilities for application appearance and behavior.
 //!
-//! When launching a Rust GUI application from the terminal on macOS, the dock
-//! icon defaults to the terminal's icon. This module uses Cocoa APIs to
-//! explicitly set the application icon from embedded PNG bytes.
+//! This module provides:
+//! - Setting the application dock icon at runtime (for command-line launches)
+//! - Controlling the activation policy (show/hide in Dock)
 
 #![allow(deprecated)]
 #![allow(unexpected_cfgs)]
 
 use tracing::warn;
+
+/// macOS application activation policies.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum ActivationPolicy {
+    /// Regular app - appears in Dock and Cmd+Tab
+    Regular = 0,
+    /// Accessory app - doesn't appear in Dock, but can have windows
+    Accessory = 1,
+    /// Prohibited - pure background app, no UI
+    #[allow(dead_code)]
+    Prohibited = 2,
+}
+
+/// Sets the macOS application activation policy.
+///
+/// - `Regular`: App appears in Dock and Cmd+Tab switcher
+/// - `Accessory`: App doesn't appear in Dock (useful when window is hidden but tray is active)
+///
+/// On non-macOS platforms, this function is a no-op.
+#[allow(dead_code)]
+pub fn set_activation_policy(#[allow(unused_variables)] policy: ActivationPolicy) {
+    #[cfg(target_os = "macos")]
+    {
+        use cocoa::appkit::NSApplication;
+        use cocoa::base::nil;
+        use objc::{msg_send, sel, sel_impl};
+
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            if app != nil {
+                let _: () = msg_send![app, setActivationPolicy: policy as i64];
+                tracing::trace!("Set macOS activation policy to {:?}", policy);
+            }
+        }
+    }
+}
 
 /// Applies the default application icon on macOS.
 ///
