@@ -690,9 +690,8 @@ async fn main() -> anyhow::Result<()> {
             tracing::error!("GUI logging state was not initialized");
             return Ok(());
         };
-        // let _log_collector = gui::logs::spawn_collector(
-        //     log_state.clone(),
-        // );
+        // Spawn background task for log filtering (runs expensive filter ops off GUI thread)
+        let _filter_task = gui::logs::spawn_filter_task(log_state.clone());
         // Run GUI on main thread - this blocks until window is closed
         if let Err(e) = gui::run(global_state.clone(), theme_mode, log_state) {
             tracing::error!("GUI error: {:?}", e);

@@ -7,8 +7,6 @@ mod frontends;
 mod monitoring;
 mod processes;
 
-pub(super) use monitoring::CachedLogLine;
-
 use std::sync::Arc;
 
 use crate::configuration;

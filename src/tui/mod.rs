@@ -1166,20 +1166,22 @@ fn build_log_lines(
             continue;
         }
         let (label, color) = fmt_level(entry.level, light_theme);
+        let source: &str = &entry.source;
+        let message: &str = &entry.message;
         let meta_prefix = if show_timestamp {
-            format!("[{}] {} {} ", label, entry.timestamp, entry.source)
+            format!("[{}] {} {} ", label, entry.timestamp, source)
         } else {
-            format!("[{}] {} ", label, entry.source)
+            format!("[{}] {} ", label, source)
         };
         let meta_len = meta_prefix.chars().count();
         let cont_prefix = " ".repeat(meta_len);
 
-        let mut msg_iter = entry.message.lines().peekable();
+        let mut msg_iter = message.lines().peekable();
         if msg_iter.peek().is_none() {
             lines.push(Line::from(vec![
                 Span::styled(format!("[{}]", label), Style::default().fg(color)),
                 Span::raw(" "),
-                Span::styled(&entry.source, Style::default().fg(info_color(light_theme))),
+                Span::styled(source, Style::default().fg(info_color(light_theme))),
             ]));
             continue;
         }
@@ -1211,7 +1213,7 @@ fn build_log_lines(
                         spans.push(Span::raw(" "));
                     }
                     spans.push(Span::styled(
-                        &entry.source,
+                        source,
                         Style::default().fg(info_color(light_theme)),
                     ));
                     spans.push(Span::raw(" "));
@@ -1244,14 +1246,16 @@ fn count_log_lines(
             continue;
         }
         let (label, _) = fmt_level(entry.level, light_theme);
+        let source: &str = &entry.source;
+        let message: &str = &entry.message;
         let meta_prefix = if show_timestamp {
-            format!("[{}] {} {} ", label, entry.timestamp, entry.source)
+            format!("[{}] {} {} ", label, entry.timestamp, source)
         } else {
-            format!("[{}] {} ", label, entry.source)
+            format!("[{}] {} ", label, source)
         };
         let meta_len = meta_prefix.chars().count();
         let cont_len = meta_len;
-        let mut msg_iter = entry.message.lines().peekable();
+        let mut msg_iter = message.lines().peekable();
         if msg_iter.peek().is_none() {
             count += 1;
             continue;

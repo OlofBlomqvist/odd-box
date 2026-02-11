@@ -4,14 +4,13 @@ mod macos_app_icon;
 mod pages;
 mod tray;
 
-use iced::clipboard;
-use iced::gradient::{ColorStop, Linear};
-use iced::widget::scrollable::RelativeOffset;
 use iced::widget::{
-    Column, Id, Scrollable, button, column, container, image, row, scrollable, text,
+    Column, Scrollable, button, column, container, image, row, scrollable, text,
 };
+use iced::widget::scrollable::RelativeOffset;
+
 use iced::{
-    Application, Background, Border, Color, Element, Font, Length, Padding, Radians, Subscription,
+    Background, Border, Color, Element, Length, Padding, Subscription,
     Task, Theme, system, theme, time, window,
 };
 use std::collections::HashMap;
@@ -23,7 +22,7 @@ use crate::configuration::{LogLevel, v4};
 use crate::global_state::GlobalState;
 use crate::types::proc_info::ProcId;
 use logs::{LogFilter, SharedLogState};
-use pages::{CachedConfig, CachedLogLine, fetch_config};
+use pages::{CachedConfig, fetch_config};
 
 static SIDEBAR_LOGO_LIGHT: LazyLock<iced::widget::image::Handle> = LazyLock::new(|| {
     iced::widget::image::Handle::from_bytes(
@@ -309,9 +308,6 @@ pub enum Message {
     LogsClear,
     LogToggleWrap(bool),
     LogToggleAutoTail(bool),
-    LogOpenEntry(u64),
-    LogCloseEntry,
-    LogCopyEntry,
     // Tick for refreshing log view
     Tick,
     ExitPoll,
@@ -500,27 +496,22 @@ pub struct OddBoxGui {
     theme_mode: ThemeMode,
     system_theme: Option<theme::Mode>,
     log_is_at_bottom: bool,
-    log_view_rev: u64,
     // Window and tray management
     window_id: Option<window::Id>,
     window_visible: bool,
     tray_handle: Option<tray::TrayHandle>,
-    // Log filtering
+    // Log filtering (local copy for UI display; synced to log_state via set_filter)
     pub(in crate::gui) log_filter: LogFilter,
     pub(in crate::gui) log_level_preset: LogLevelPreset,
-    // Cached list of known sources
-    pub(in crate::gui) known_sources: Vec<String>,
-    // Cached filtered log lines for performance
-    pub(in crate::gui) cached_log_lines: Arc<Vec<CachedLogLine>>,
     expanded_process: Option<String>,
-    pub(in crate::gui) last_log_count: usize,
-    pub(in crate::gui) total_log_count: usize,
-    // Track last seen log ID to avoid unnecessary rebuilds
-    pub(in crate::gui) last_seen_log_id: Option<u64>,
+    // Track last filtered entry ID for auto-tail change detection
+    last_seen_filtered_id: Option<u64>,
+    // Track previous viewport values so content growth does not disable tail mode.
+    last_log_max_scroll_y: Option<f32>,
+    last_log_viewport_y: Option<f32>,
     // Log display options
     pub(in crate::gui) log_wrap_enabled: bool,
     pub(in crate::gui) log_auto_tail: bool,
-    pub(in crate::gui) log_modal: Option<LogModal>,
     // Cached config data
     pub(in crate::gui) cached_config: CachedConfig,
     pub(in crate::gui) backend_names: Vec<String>,
@@ -560,19 +551,18 @@ pub struct OddBoxGui {
     frontend_ports_dirty: bool,
 }
 
-#[derive(Debug, Clone)]
-pub(in crate::gui) struct LogModal {
-    pub id: u64,
-    pub level_str: &'static str,
-    pub level_color: Color,
-    pub source: String,
-    pub timestamp_str: String,
-    pub message: String,
-    pub copy_text: String,
+fn log_scroll_id() -> iced::widget::Id {
+    iced::widget::Id::new("odd_box_log_scroll")
 }
 
-fn log_scroll_id() -> Id {
-    Id::new("odd_box_log_scroll")
+fn snap_log_to_bottom() -> Task<Message> {
+    iced::widget::operation::snap_to::<Message>(
+        log_scroll_id(),
+        RelativeOffset {
+            x: None,
+            y: Some(1.0),
+        },
+    )
 }
 
 fn cruma_mode_from_config(cfg: &crate::configuration::ConfigWrapper) -> CrumaAuthMode {
@@ -1308,6 +1298,8 @@ impl OddBoxGui {
         let mut log_filter = LogFilter::new();
         let log_level_preset = LogLevelPreset::InfoAndAbove;
         Self::apply_log_level_preset(&mut log_filter, log_level_preset);
+        // Push initial filter to background task
+        log_state.set_filter(log_filter.clone());
 
         let initial_cruma_mode = cruma_mode_from_config(&state.config.load_full());
 
@@ -1319,21 +1311,17 @@ impl OddBoxGui {
                 theme_mode,
                 system_theme: None,
                 log_is_at_bottom: true,
-                log_view_rev: 0,
                 window_id: None,
                 window_visible: true,
                 tray_handle,
                 log_filter,
                 log_level_preset,
-                known_sources: Vec::new(),
-                cached_log_lines: Arc::new(Vec::new()),
-                last_log_count: 0,
-                total_log_count: 0,
                 expanded_process: None,
-                last_seen_log_id: None,
+                last_seen_filtered_id: None,
+                last_log_max_scroll_y: None,
+                last_log_viewport_y: None,
                 log_wrap_enabled: false,
                 log_auto_tail: true, // Auto-tail enabled by default
-                log_modal: None,
                 cached_config: CachedConfig::default(),
                 backend_names: Vec::new(),
                 dashboard_process_menu: None,
@@ -1417,7 +1405,6 @@ impl OddBoxGui {
                 self.current_page = page;
                 self.dashboard_process_menu = None;
                 if page == Page::Monitoring {
-                    self.refresh_log_cache(true);
                     if self.log_auto_tail {
                         self.log_is_at_bottom = true;
                         return snap_log_to_bottom();
@@ -1454,13 +1441,40 @@ impl OddBoxGui {
                 let current_y = viewport.absolute_offset().y;
 
                 // Allow a small tolerance for rounding/layout differences.
-                self.log_is_at_bottom = max_scroll_y - current_y <= 4.0;
+                let at_bottom_now = max_scroll_y - current_y <= 4.0;
+                let content_grew = self
+                    .last_log_max_scroll_y
+                    .map(|prev| max_scroll_y > prev + 0.5)
+                    .unwrap_or(false);
+                let user_scrolled = self
+                    .last_log_viewport_y
+                    .map(|prev| (current_y - prev).abs() > 0.5)
+                    .unwrap_or(false);
+
+                // If auto-tail is on, and we were at bottom, and the only change is that
+                // content grew (new logs), keep tailing instead of entering paused state.
+                self.log_is_at_bottom = if self.log_auto_tail
+                    && self.log_is_at_bottom
+                    && content_grew
+                    && !user_scrolled
+                {
+                    true
+                } else {
+                    at_bottom_now
+                };
+
+                self.last_log_max_scroll_y = Some(max_scroll_y);
+                self.last_log_viewport_y = Some(current_y);
             }
             Message::Tick => {
                 if self.current_page == Page::Monitoring {
-                    let had_new_logs = self.refresh_log_cache(false);
-                    if had_new_logs && self.log_auto_tail && self.log_is_at_bottom {
-                        return snap_log_to_bottom();
+                    let filtered = self.log_state.filtered_snapshot();
+                    let last_id = filtered.last_filtered_id;
+                    if last_id != self.last_seen_filtered_id {
+                        self.last_seen_filtered_id = last_id;
+                        if self.log_auto_tail && self.log_is_at_bottom {
+                            return snap_log_to_bottom();
+                        }
                     }
                 }
                 // Refresh config for config-related pages
@@ -1673,12 +1687,12 @@ impl OddBoxGui {
             }
             Message::LogFilterTextChanged(text) => {
                 self.log_filter.text = text;
-                self.refresh_log_cache(true);
+                self.log_state.set_filter(self.log_filter.clone());
             }
             Message::LogLevelPresetChanged(preset) => {
                 self.log_level_preset = preset;
                 Self::apply_log_level_preset(&mut self.log_filter, preset);
-                self.refresh_log_cache(true);
+                self.log_state.set_filter(self.log_filter.clone());
             }
             Message::LogFilterToggleSource(source, enabled) => {
                 if enabled {
@@ -1686,58 +1700,30 @@ impl OddBoxGui {
                 } else {
                     self.log_filter.sources.remove(&source);
                 }
-                self.refresh_log_cache(true);
+                self.log_state.set_filter(self.log_filter.clone());
             }
             Message::LogFilterClearSources => {
                 self.log_filter.sources.clear();
-                self.refresh_log_cache(true);
+                self.log_state.set_filter(self.log_filter.clone());
             }
             Message::LogsClear => {
                 self.log_state.clear();
-                self.cached_log_lines = Arc::new(Vec::new());
-                self.last_log_count = 0;
-                self.total_log_count = 0;
-                self.last_seen_log_id = None;
-                self.log_view_rev = self.log_view_rev.wrapping_add(1);
-                self.log_modal = None;
+                self.last_seen_filtered_id = None;
+                self.last_log_max_scroll_y = None;
+                self.last_log_viewport_y = None;
+                self.log_is_at_bottom = true;
             }
+
             Message::LogToggleWrap(enabled) => {
                 self.log_wrap_enabled = enabled;
-                self.log_view_rev = self.log_view_rev.wrapping_add(1);
             }
             Message::LogToggleAutoTail(enabled) => {
                 self.log_auto_tail = enabled;
                 if enabled {
+                    self.last_log_max_scroll_y = None;
+                    self.last_log_viewport_y = None;
                     self.log_is_at_bottom = true;
                     return snap_log_to_bottom();
-                }
-            }
-            Message::LogOpenEntry(id) => {
-                if let Some(entry) = self.cached_log_lines.iter().find(|l| l.id == id) {
-                    let source = entry.source.clone();
-                    let timestamp_str = entry.timestamp_str.clone();
-                    let level_str = entry.level_str;
-                    let copy_text = format!(
-                        "{} {} {}\n{}",
-                        timestamp_str, level_str, source, entry.message
-                    );
-                    self.log_modal = Some(LogModal {
-                        id: entry.id,
-                        level_str,
-                        level_color: entry.level_color,
-                        source,
-                        timestamp_str,
-                        message: entry.message.clone(),
-                        copy_text,
-                    });
-                }
-            }
-            Message::LogCloseEntry => {
-                self.log_modal = None;
-            }
-            Message::LogCopyEntry => {
-                if let Some(entry) = &self.log_modal {
-                    return clipboard::write(entry.copy_text.clone());
                 }
             }
             Message::FrontendHttpPortChanged(value) => {
@@ -2400,13 +2386,4 @@ impl OddBoxGui {
             },
         }
     }
-}
-fn snap_log_to_bottom() -> Task<Message> {
-    iced::widget::operation::snap_to::<Message>(
-        log_scroll_id(),
-        RelativeOffset {
-            x: None,
-            y: Some(1.0),
-        },
-    )
 }

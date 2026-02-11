@@ -1,14 +1,15 @@
-use chrono::{DateTime, Local};
+use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+
+use arc_swap::ArcSwap;
+use chrono::{DateTime, Local};
+use parking_lot::Mutex;
+use tokio::sync::mpsc;
 use tracing::Level;
 use tracing::Subscriber;
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
-
-use arc_swap::ArcSwap;
-use crossbeam_queue::ArrayQueue;
 
 pub struct LogMsg {
     pub lvl: Level,
@@ -60,178 +61,237 @@ fn is_source_tag(tag: &str) -> bool {
     true
 }
 
-/// A single log entry with all metadata
+/// A single log entry with all metadata.
+/// Uses Arc<str> for strings to enable cheap cloning in filtered snapshots.
 #[derive(Debug, Clone)]
 pub struct LogEntry {
     pub id: u64,
     pub timestamp: DateTime<Local>,
     pub level: Level,
-    pub message: String,
-    pub source: String,
-    pub thread: Option<String>,
+    pub message: Arc<str>,
+    pub source: Arc<str>,
+    pub thread: Option<Arc<str>>,
+    // Pre-computed lowercase versions for fast text search.
+    message_lower: Arc<str>,
+    source_lower: Arc<str>,
+    thread_lower: Option<Arc<str>>,
 }
 
 impl From<(u64, LogMsg)> for LogEntry {
     fn from((id, msg): (u64, LogMsg)) -> Self {
+        let message_lower: Arc<str> = msg.msg.to_lowercase().into();
+        let source_lower: Arc<str> = msg.src.to_lowercase().into();
+        let thread_lower: Option<Arc<str>> = msg.thread.as_ref().map(|t| t.to_lowercase().into());
         Self {
             id,
             timestamp: Local::now(),
             level: msg.lvl,
-            message: msg.msg,
-            source: msg.src,
-            thread: msg.thread,
+            message: msg.msg.into(),
+            source: msg.src.into(),
+            thread: msg.thread.map(|t| t.into()),
+            message_lower,
+            source_lower,
+            thread_lower,
         }
     }
 }
 
+/// Pre-filtered view published for GUI consumption.
+/// The GUI only reads this structure and never scans the full log store.
 #[derive(Debug, Clone)]
-pub struct LogSnapshot {
-    entries: VecDeque<LogEntry>,
-    first_id: Option<u64>,
-    last_id: Option<u64>,
-    /// All unique sources seen (for filter UI)
-    known_sources: HashSet<String>,
+pub struct FilteredSnapshot {
+    pub entries: Arc<Vec<Arc<LogEntry>>>,
+    pub total_count: usize,
+    pub filtered_count: usize,
+    pub known_sources: Vec<String>,
+    pub last_filtered_id: Option<u64>,
 }
 
-/// Shared log state that collects and stores log messages
-pub struct LogState {
-    queue: ArrayQueue<QueuedLog>,
-    snapshot: ArcSwap<LogSnapshot>,
-    max_entries: usize,
-    next_id: AtomicU64,
-}
-
-struct QueuedLog {
-    id: u64,
-    msg: LogMsg,
-}
-
-impl LogSnapshot {
-    fn new() -> Self {
+impl Default for FilteredSnapshot {
+    fn default() -> Self {
         Self {
-            entries: VecDeque::new(),
-            first_id: None,
-            last_id: None,
+            entries: Arc::new(Vec::new()),
+            total_count: 0,
+            filtered_count: 0,
+            known_sources: Vec::new(),
+            last_filtered_id: None,
+        }
+    }
+}
+
+enum LogCommand {
+    Append(LogMsg),
+    SetFilter(LogFilter),
+    Clear,
+}
+
+/// Shared handle used by producers and GUI.
+/// A dedicated background worker owns all logs and filter state.
+pub struct LogState {
+    cmd_tx: mpsc::UnboundedSender<LogCommand>,
+    cmd_rx: Mutex<Option<mpsc::UnboundedReceiver<LogCommand>>>,
+    filtered_snapshot: ArcSwap<FilteredSnapshot>,
+    max_entries: usize,
+}
+
+struct LogWorker {
+    logs: VecDeque<Arc<LogEntry>>,
+    known_sources: HashSet<String>,
+    filter: LogFilter,
+    max_entries: usize,
+    next_id: u64,
+}
+
+impl LogWorker {
+    fn new(max_entries: usize) -> Self {
+        Self {
+            logs: VecDeque::new(),
             known_sources: HashSet::new(),
+            filter: LogFilter::default(),
+            max_entries,
+            next_id: 0,
         }
     }
 
-    /// Get all entries (newest last)
-    pub fn entries(&self) -> &VecDeque<LogEntry> {
-        &self.entries
+    fn apply_command(&mut self, cmd: LogCommand) -> bool {
+        match cmd {
+            LogCommand::Append(msg) => {
+                if !msg.src.is_empty() {
+                    self.known_sources.insert(msg.src.to_string());
+                }
+                if let Some(ref thread) = msg.thread {
+                    if !thread.is_empty() {
+                        self.known_sources.insert(thread.to_string());
+                    }
+                }
+
+                let id = self.next_id;
+                self.next_id = self.next_id.saturating_add(1);
+                let entry = Arc::new(LogEntry::from((id, msg)));
+                self.logs.push_back(entry);
+
+                while self.logs.len() > self.max_entries {
+                    self.logs.pop_front();
+                }
+                true
+            }
+            LogCommand::SetFilter(filter) => {
+                self.filter = filter;
+                true
+            }
+            LogCommand::Clear => {
+                self.logs.clear();
+                self.known_sources.clear();
+                true
+            }
+        }
     }
 
-    /// Get entry count
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
+    fn rebuild_filtered_snapshot(&self) -> FilteredSnapshot {
+        let text_lower = if self.filter.text.is_empty() {
+            None
+        } else {
+            Some(self.filter.text.to_lowercase())
+        };
 
-    /// Check if empty
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
+        let filtered_entries: Vec<Arc<LogEntry>> = self
+            .logs
+            .iter()
+            .filter(|e| self.filter.matches_with_text_lower(e.as_ref(), text_lower.as_deref()))
+            .cloned()
+            .collect();
 
-    /// Get all known sources (for filter dropdown)
-    pub fn known_sources(&self) -> &HashSet<String> {
-        &self.known_sources
-    }
+        let filtered_count = filtered_entries.len();
+        let last_filtered_id = filtered_entries.last().map(|e| e.id);
 
-    /// Get the ID of the most recent entry (for change detection)
-    pub fn last_id(&self) -> Option<u64> {
-        self.last_id
+        let mut sources: Vec<String> = self.known_sources.iter().cloned().collect();
+        sources.sort();
+
+        FilteredSnapshot {
+            entries: Arc::new(filtered_entries),
+            total_count: self.logs.len(),
+            filtered_count,
+            known_sources: sources,
+            last_filtered_id,
+        }
     }
 }
 
 impl LogState {
     pub fn new(max_entries: usize) -> Self {
-        let queue_cap = max_entries.saturating_mul(4).max(1024);
-        let snapshot = ArcSwap::from_pointee(LogSnapshot::new());
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         Self {
-            queue: ArrayQueue::new(queue_cap),
-            snapshot,
+            cmd_tx,
+            cmd_rx: Mutex::new(Some(cmd_rx)),
+            filtered_snapshot: ArcSwap::from_pointee(FilteredSnapshot::default()),
             max_entries,
-            next_id: AtomicU64::new(0),
         }
     }
 
-    /// Add a new log message
+    /// Add a new log message.
     pub fn push(&self, msg: LogMsg) {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let mut item = QueuedLog { id, msg };
-        loop {
-            match self.queue.push(item) {
-                Ok(()) => break,
-                Err(returned) => {
-                    item = returned;
-                    let _ = self.queue.pop();
-                }
-            }
-        }
+        let _ = self.cmd_tx.send(LogCommand::Append(msg));
     }
 
-    /// Drain queued log messages and publish a new snapshot.
-    /// Returns true if new logs were added.
-    pub fn drain(&self) -> bool {
-        if self.queue.is_empty() {
-            return false;
-        }
-
-        let mut drained = Vec::new();
-        while let Some(item) = self.queue.pop() {
-            drained.push(item);
-        }
-
-        if drained.is_empty() {
-            return false;
-        }
-
-        self.snapshot.rcu(|current| {
-            let mut next = (**current).clone();
-            for item in drained.drain(..) {
-                let msg = item.msg;
-
-                if !msg.src.is_empty() {
-                    next.known_sources.insert(msg.src.clone());
-                }
-                if let Some(ref thread) = msg.thread {
-                    if !thread.is_empty() {
-                        next.known_sources.insert(thread.clone());
-                    }
-                }
-
-                let entry = LogEntry::from((item.id, msg));
-                next.entries.push_back(entry);
-            }
-
-            while next.entries.len() > self.max_entries {
-                next.entries.pop_front();
-            }
-
-            next.first_id = next.entries.front().map(|e| e.id);
-            next.last_id = next.entries.back().map(|e| e.id);
-
-            Arc::new(next)
-        });
-
-        true
-    }
-
-    /// Get the latest snapshot.
-    pub fn snapshot(&self) -> Arc<LogSnapshot> {
-        self.snapshot.load_full()
-    }
-
-    /// Clear all entries and queued logs.
+    /// Clear all entries.
     pub fn clear(&self) {
-        while self.queue.pop().is_some() {}
-        self.snapshot.store(Arc::new(LogSnapshot::new()));
+        let _ = self.cmd_tx.send(LogCommand::Clear);
+    }
+
+    /// Set filter criteria (called from GUI thread).
+    /// This only sends a command to the worker.
+    pub fn set_filter(&self, filter: LogFilter) {
+        let _ = self.cmd_tx.send(LogCommand::SetFilter(filter));
+    }
+
+    /// Get the pre-computed filtered snapshot (called from GUI thread - very cheap).
+    pub fn filtered_snapshot(&self) -> Arc<FilteredSnapshot> {
+        self.filtered_snapshot.load_full()
+    }
+
+    fn take_worker_receiver(&self) -> Option<mpsc::UnboundedReceiver<LogCommand>> {
+        self.cmd_rx.lock().take()
     }
 }
 
-/// Thread-safe handle to log state
+/// Thread-safe handle to log state.
 pub type SharedLogState = Arc<LogState>;
 
-/// Create a new shared log state
+/// Spawn a background task that owns all log entries and filtering state.
+/// This keeps expensive filtering off the GUI thread and publishes only
+/// pre-filtered data to readers.
+pub fn spawn_filter_task(log_state: SharedLogState) -> tokio::task::JoinHandle<()> {
+    let Some(mut rx) = log_state.take_worker_receiver() else {
+        return tokio::spawn(async {});
+    };
+
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
+        let mut worker = LogWorker::new(log_state.max_entries);
+
+        loop {
+            interval.tick().await;
+
+            let mut changed = false;
+            loop {
+                match rx.try_recv() {
+                    Ok(cmd) => {
+                        changed |= worker.apply_command(cmd);
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => return,
+                }
+            }
+
+            if changed {
+                let filtered_snapshot = worker.rebuild_filtered_snapshot();
+                log_state.filtered_snapshot.store(Arc::new(filtered_snapshot));
+            }
+        }
+    })
+}
+
+/// Create a new shared log state.
 pub fn create_shared(max_entries: usize) -> SharedLogState {
     Arc::new(LogState::new(max_entries))
 }
@@ -300,36 +360,29 @@ impl<S: Subscriber> Layer<S> for GuiLoggerLayer {
     }
 }
 
-/// Spawn a background task that consumes log messages from the broadcast channel
-pub fn spawn_collector(log_state: SharedLogState) -> tokio::task::JoinHandle<()> {
-    // TODO: i dont think we should have channels for this but impl a real tracing
-    // subscriber sort of thing?
-    todo!()
-}
-
-/// Filter criteria for log display
-#[derive(Debug, Clone, Default)]
+/// Filter criteria for log display.
+#[derive(Debug, Clone)]
 pub struct LogFilter {
-    /// Text to search for in message
+    /// Text to search for in message.
     pub text: String,
-    /// Minimum log level to show
+    /// Minimum log level to show.
     pub min_level: Option<Level>,
-    /// Only show entries from these sources (empty = show all)
+    /// Only show entries from these sources (empty = show all).
     pub sources: HashSet<String>,
-    /// Show trace level
+    /// Show trace level.
     pub show_trace: bool,
-    /// Show debug level
+    /// Show debug level.
     pub show_debug: bool,
-    /// Show info level
+    /// Show info level.
     pub show_info: bool,
-    /// Show warn level
+    /// Show warn level.
     pub show_warn: bool,
-    /// Show error level
+    /// Show error level.
     pub show_error: bool,
 }
 
-impl LogFilter {
-    pub fn new() -> Self {
+impl Default for LogFilter {
+    fn default() -> Self {
         Self {
             text: String::new(),
             min_level: None,
@@ -341,10 +394,17 @@ impl LogFilter {
             show_error: true,
         }
     }
+}
 
-    /// Check if an entry matches this filter
-    pub fn matches(&self, entry: &LogEntry) -> bool {
-        // Check level
+impl LogFilter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Check if an entry matches this filter, with pre-computed lowercase text filter.
+    /// Pass None if self.text is empty, or Some(&lowercase_text) otherwise.
+    #[inline]
+    pub fn matches_with_text_lower(&self, entry: &LogEntry, text_lower: Option<&str>) -> bool {
         let level_ok = match entry.level {
             Level::TRACE => self.show_trace,
             Level::DEBUG => self.show_debug,
@@ -356,15 +416,13 @@ impl LogFilter {
             return false;
         }
 
-        // Check text filter
-        if !self.text.is_empty() {
-            let text_lower = self.text.to_lowercase();
-            let in_message = entry.message.to_lowercase().contains(&text_lower);
-            let in_source = entry.source.to_lowercase().contains(&text_lower);
+        if let Some(text_lower) = text_lower {
+            let in_message = entry.message_lower.contains(text_lower);
+            let in_source = entry.source_lower.contains(text_lower);
             let in_thread = entry
-                .thread
+                .thread_lower
                 .as_ref()
-                .map(|t| t.to_lowercase().contains(&text_lower))
+                .map(|t| t.contains(text_lower))
                 .unwrap_or(false);
 
             if !in_message && !in_source && !in_thread {
@@ -372,13 +430,12 @@ impl LogFilter {
             }
         }
 
-        // Check source filter
         if !self.sources.is_empty() {
-            let source_match = self.sources.contains(&entry.source)
+            let source_match = self.sources.contains(entry.source.borrow() as &str)
                 || entry
                     .thread
                     .as_ref()
-                    .map(|t| self.sources.contains(t))
+                    .map(|t| self.sources.contains(t.borrow() as &str))
                     .unwrap_or(false);
             if !source_match {
                 return false;
@@ -386,10 +443,5 @@ impl LogFilter {
         }
 
         true
-    }
-
-    /// Apply filter to entries and return matching ones
-    pub fn apply<'a>(&self, entries: &'a VecDeque<LogEntry>) -> Vec<&'a LogEntry> {
-        entries.iter().filter(|e| self.matches(e)).collect()
     }
 }
