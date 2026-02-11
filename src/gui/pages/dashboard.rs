@@ -15,15 +15,29 @@ const COLOR_PROCESS: Color = Color::from_rgb(0.4, 0.6, 1.0);
 const COLOR_REMOTE: Color = Color::from_rgb(0.7, 0.5, 1.0);
 const COLOR_DIR_SERVER: Color = Color::from_rgb(0.3, 0.8, 0.7);
 
+fn is_light_theme(theme: &Theme) -> bool {
+    let bg = theme.extended_palette().background.base.color;
+    (0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b) > 0.5
+}
+
+fn text_on_color(bg: Color) -> Color {
+    let luma = 0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b;
+    if luma > 0.58 {
+        Color::from_rgb(0.08, 0.08, 0.08)
+    } else {
+        Color::WHITE
+    }
+}
+
 /// Status dot color based on process state
 fn status_color(state: &ProcState) -> Color {
     match state {
         ProcState::Running | ProcState::Remote | ProcState::DirServer | ProcState::Docker => {
-            Color::from_rgb(0.4, 0.8, 0.4)
+            Color::from_rgb(0.22, 0.66, 0.30)
         }
-        ProcState::Starting | ProcState::Stopping => Color::from_rgb(0.9, 0.7, 0.2),
-        ProcState::Stopped => Color::from_rgb(0.6, 0.6, 0.6),
-        ProcState::Faulty => Color::from_rgb(0.9, 0.3, 0.3),
+        ProcState::Starting | ProcState::Stopping => Color::from_rgb(0.82, 0.56, 0.18),
+        ProcState::Stopped => Color::from_rgb(0.45, 0.45, 0.45),
+        ProcState::Faulty => Color::from_rgb(0.78, 0.22, 0.22),
     }
 }
 
@@ -53,8 +67,15 @@ fn card_button_style_with_accent(
 
 /// Muted text style
 fn muted_text(theme: &Theme) -> iced::widget::text::Style {
+    let palette = theme.extended_palette();
+    let color = if is_light_theme(theme) {
+        let c = palette.background.base.text;
+        Color::from_rgba(c.r, c.g, c.b, 0.78)
+    } else {
+        palette.background.weak.text
+    };
     iced::widget::text::Style {
-        color: Some(theme.extended_palette().background.weak.text),
+        color: Some(color),
         ..Default::default()
     }
 }
@@ -72,10 +93,10 @@ fn site_card<'a>(
     let dot_color = status_color(state);
 
     let name_row = row![
-        text("●").color(dot_color).size(14),
+        text("●").color(dot_color).size(super::super::text_size(14)),
         container(
             text(name.to_string())
-                .size(15)
+                .size(super::super::text_size(15))
                 .wrapping(Wrapping::Word)
                 .font(iced::Font {
                     weight: iced::font::Weight::Bold,
@@ -90,16 +111,16 @@ fn site_card<'a>(
 
     let subtitle_row = container(
         text(subtitle.to_string())
-            .size(13)
+            .size(super::super::text_size(13))
             .wrapping(Wrapping::Word)
             .style(muted_text),
     )
     .width(Length::Fill);
 
     let category_row = row![
-        text("▎").color(accent_color).size(16),
+        text("▎").color(accent_color).size(super::super::text_size(16)),
         text(category_label)
-            .size(12)
+            .size(super::super::text_size(12))
             .wrapping(Wrapping::None)
             .style(muted_text),
     ]
@@ -128,13 +149,13 @@ fn site_card<'a>(
 fn stat_box<'a>(label: &'a str, value: usize, color: Color) -> Element<'a, Message> {
     let content = column![
         text(value.to_string())
-            .size(22)
+            .size(super::super::text_size(22))
             .color(color)
             .font(iced::Font {
                 weight: iced::font::Weight::Bold,
                 ..iced::Font::MONOSPACE
             }),
-        text(label).size(13).style(muted_text),
+        text(label).size(super::super::text_size(13)).style(muted_text),
     ]
     .spacing(2)
     .align_x(Alignment::Center);
@@ -166,8 +187,8 @@ fn stat_box<'a>(label: &'a str, value: usize, color: Color) -> Element<'a, Messa
 fn section_header<'a>(title: &'a str, count: usize, accent: Color) -> Element<'a, Message> {
     let badge = container(
         text(count.to_string())
-            .size(13)
-            .color(Color::WHITE)
+            .size(super::super::text_size(13))
+            .color(text_on_color(accent))
             .font(iced::Font {
                 weight: iced::font::Weight::Bold,
                 ..Default::default()
@@ -189,7 +210,7 @@ fn section_header<'a>(title: &'a str, count: usize, accent: Color) -> Element<'a
     });
 
     row![
-        text(title).size(17).font(iced::Font {
+        text(title).size(super::super::text_size(17)).font(iced::Font {
             weight: iced::font::Weight::Bold,
             ..Default::default()
         }),
@@ -238,12 +259,12 @@ impl OddBoxGui {
             // --- Uptime bar ---
             let uptime_bar = container(
                 row![
-                    text("●").color(Color::from_rgb(0.4, 0.8, 0.4)).size(14),
+                    text("●").color(Color::from_rgb(0.22, 0.66, 0.30)).size(super::super::text_size(14)),
                     text("Status: Running")
-                        .size(15)
-                        .color(Color::from_rgb(0.4, 0.8, 0.4)),
+                        .size(super::super::text_size(15))
+                        .color(Color::from_rgb(0.22, 0.66, 0.30)),
                     text(format!("  Uptime: {}", &uptime))
-                        .size(15)
+                        .size(super::super::text_size(15))
                         .style(muted_text),
                 ]
                 .spacing(6)
@@ -342,10 +363,10 @@ impl OddBoxGui {
             faulty += orphan_count;
 
             let summary_row = Row::with_children(vec![
-                stat_box("Sites", total, Color::WHITE),
-                stat_box("Running", running, Color::from_rgb(0.4, 0.8, 0.4)),
-                stat_box("Stopped", stopped, Color::from_rgb(0.6, 0.6, 0.6)),
-                stat_box("Faulty", faulty, Color::from_rgb(0.9, 0.3, 0.3)),
+                stat_box("Sites", total, Color::from_rgb(0.20, 0.44, 0.78)),
+                stat_box("Running", running, Color::from_rgb(0.22, 0.66, 0.30)),
+                stat_box("Stopped", stopped, Color::from_rgb(0.45, 0.45, 0.45)),
+                stat_box("Faulty", faulty, Color::from_rgb(0.78, 0.22, 0.22)),
             ])
             .spacing(12);
 

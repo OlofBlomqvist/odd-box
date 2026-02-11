@@ -30,22 +30,62 @@ pub fn init() {
     println!("Starting odd-box TUI (press q or Ctrl+C to exit)...");
 }
 
-fn fmt_state(state: ProcState) -> (&'static str, Color) {
+fn muted_color(light_theme: bool) -> Color {
+    if light_theme {
+        Color::DarkGray
+    } else {
+        Color::Gray
+    }
+}
+
+fn info_color(light_theme: bool) -> Color {
+    if light_theme {
+        Color::Blue
+    } else {
+        Color::LightBlue
+    }
+}
+
+fn timestamp_color(light_theme: bool) -> Color {
+    if light_theme {
+        Color::Blue
+    } else {
+        Color::Cyan
+    }
+}
+
+fn unused_color(light_theme: bool) -> Color {
+    if light_theme {
+        Color::Yellow
+    } else {
+        Color::LightYellow
+    }
+}
+
+fn row_highlight_bg(light_theme: bool) -> Color {
+    if light_theme {
+        Color::Rgb(220, 226, 234)
+    } else {
+        Color::DarkGray
+    }
+}
+
+fn fmt_state(state: ProcState, light_theme: bool) -> (&'static str, Color) {
     match state {
         ProcState::Running => ("running", Color::Green),
         ProcState::Starting => ("starting", Color::Yellow),
         ProcState::Stopping => ("stopping", Color::Yellow),
-        ProcState::Stopped => ("stopped", Color::Gray),
+        ProcState::Stopped => ("stopped", muted_color(light_theme)),
         ProcState::Faulty => ("faulty", Color::Red),
         ProcState::Remote => ("remote", Color::Cyan),
-        ProcState::DirServer => ("dir", Color::LightBlue),
+        ProcState::DirServer => ("dir", info_color(light_theme)),
         ProcState::Docker => ("docker", Color::Magenta),
     }
 }
 
-fn fmt_level(level: Level) -> (&'static str, Color) {
+fn fmt_level(level: Level, light_theme: bool) -> (&'static str, Color) {
     match level {
-        Level::TRACE => ("TRC", Color::Gray),
+        Level::TRACE => ("TRC", muted_color(light_theme)),
         Level::DEBUG => ("DBG", Color::Blue),
         Level::INFO => ("INF", Color::Green),
         Level::WARN => ("WRN", Color::Yellow),
@@ -56,6 +96,7 @@ fn fmt_level(level: Level) -> (&'static str, Color) {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TuiPage {
     Sites,
+    Docker,
     Logs,
 }
 
@@ -64,6 +105,7 @@ const TUI_FOOTER_HEIGHT: u16 = 2;
 
 struct Snapshot {
     version: String,
+    cruma_enabled: bool,
     cruma_fqdn: String,
     cruma_motd: String,
     listen_ports: String,
@@ -71,7 +113,19 @@ struct Snapshot {
     remotes: Vec<(String, ProcState, String)>,
     statics: Vec<(String, ProcState, String)>,
     docker: Vec<(String, ProcState, String)>,
+    docker_discovered: Vec<DockerRow>,
     routes: Vec<(String, String, bool)>,
+}
+
+#[derive(Clone)]
+struct DockerRow {
+    container_name: String,
+    image: String,
+    runtime: String,
+    state: String,
+    marked: bool,
+    detail: String,
+    is_routed: bool,
 }
 
 fn format_listen_ports(http: Option<u16>, https: Option<u16>) -> String {
@@ -90,6 +144,7 @@ async fn build_snapshot(global_state: &GlobalState) -> Snapshot {
 
     let version = env!("CARGO_PKG_VERSION").to_string();
 
+    let cruma_enabled = cfg.cruma.as_ref().and_then(|c| c.mode()).is_some();
     let (cruma_fqdn, cruma_motd) = if let Some(assignment) = cruma_assignment.as_ref() {
         (
             assignment.assigned_domain.clone(),
@@ -158,6 +213,37 @@ async fn build_snapshot(global_state: &GlobalState) -> Snapshot {
             (host, state, cont.image_name)
         })
         .collect();
+    let docker_discovered = global_state
+        .docker_discovery
+        .load_full()
+        .iter()
+        .map(|cont| {
+            let derived_host = format!("{}.odd-box.localhost", cont.container_name);
+            let effective_host_name = cont
+                .host_name_label
+                .clone()
+                .unwrap_or_else(|| derived_host.clone());
+            let is_routed = cfg.docker_containers.contains_key(&effective_host_name);
+            let display_host = cont
+                .host_name_label
+                .clone()
+                .unwrap_or_else(|| derived_host.clone());
+            let port_detail = cont
+                .odd_box_port
+                .or(cont.inferred_private_port)
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "-".to_string());
+            DockerRow {
+                container_name: cont.container_name.clone(),
+                image: cont.image_name.clone(),
+                runtime: cont.runtime.clone(),
+                state: cont.state.clone(),
+                marked: cont.label_odd_box_marked,
+                detail: format!("host: {} · port: {}", display_host, port_detail),
+                is_routed,
+            }
+        })
+        .collect();
 
     let mut routes: Vec<(String, String, bool)> = Vec::new();
     if let Some(http) = &cfg.frontends.http {
@@ -177,6 +263,7 @@ async fn build_snapshot(global_state: &GlobalState) -> Snapshot {
 
     Snapshot {
         version,
+        cruma_enabled,
         cruma_fqdn,
         cruma_motd,
         listen_ports,
@@ -184,6 +271,7 @@ async fn build_snapshot(global_state: &GlobalState) -> Snapshot {
         remotes,
         statics,
         docker,
+        docker_discovered,
         routes,
     }
 }
@@ -192,6 +280,7 @@ fn draw_ui(
     f: &mut Frame<'_>,
     data: &Snapshot,
     page: TuiPage,
+    light_theme: bool,
     log_entries: &VecDeque<LogLine>,
     log_scroll: usize,
     log_tail: bool,
@@ -225,24 +314,39 @@ fn draw_ui(
         Span::raw("  "),
         Span::raw(match page {
             TuiPage::Sites => "TUI (sites)",
+            TuiPage::Docker => "TUI (docker)",
             TuiPage::Logs => "TUI (logs)",
         }),
     ]));
 
-    let status = Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled("Cruma FQDN: ", Style::default().fg(Color::Gray)),
-            Span::raw(&data.cruma_fqdn),
-        ]),
-        Line::from(vec![
-            Span::styled("Cruma MOTD: ", Style::default().fg(Color::Gray)),
-            Span::raw(&data.cruma_motd),
-        ]),
-        Line::from(vec![
-            Span::styled("Listen: ", Style::default().fg(Color::Gray)),
-            Span::raw(&data.listen_ports),
-        ]),
-    ]);
+    let status = if data.cruma_enabled {
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled("Cruma FQDN: ", Style::default().fg(muted_color(light_theme))),
+                Span::raw(&data.cruma_fqdn),
+            ]),
+            Line::from(vec![
+                Span::styled("Cruma MOTD: ", Style::default().fg(muted_color(light_theme))),
+                Span::raw(&data.cruma_motd),
+            ]),
+            Line::from(vec![
+                Span::styled("Listen: ", Style::default().fg(muted_color(light_theme))),
+                Span::raw(&data.listen_ports),
+            ]),
+        ])
+    } else {
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled("Cruma Ingress: ", Style::default().fg(muted_color(light_theme))),
+                Span::raw("Disabled"),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Listen: ", Style::default().fg(muted_color(light_theme))),
+                Span::raw(&data.listen_ports),
+            ]),
+        ])
+    };
 
     f.render_widget(header, header_rows[0]);
     f.render_widget(status, header_rows[1]);
@@ -250,7 +354,21 @@ fn draw_ui(
     match page {
         TuiPage::Sites => {
             let (table, mut state, total, start, visible, scroll_area) =
-                build_flat_table(data, root[1], hovered_row);
+                build_flat_table(data, root[1], hovered_row, light_theme);
+            f.render_stateful_widget(table, root[1], &mut state);
+
+            if total > visible {
+                let content_len = total.saturating_sub(visible).saturating_add(1).max(1);
+                let mut state = ScrollbarState::new(content_len)
+                    .position(start.min(content_len.saturating_sub(1)))
+                    .viewport_content_length(visible.max(1));
+                let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
+                f.render_stateful_widget(scrollbar, scroll_area, &mut state);
+            }
+        }
+        TuiPage::Docker => {
+            let (table, mut state, total, start, visible, scroll_area) =
+                build_docker_table(data, root[1], hovered_row, light_theme);
             f.render_stateful_widget(table, root[1], &mut state);
 
             if total > visible {
@@ -269,6 +387,7 @@ fn draw_ui(
                 root[1],
                 log_show_timestamp,
                 log_level_filter,
+                light_theme,
             );
             f.render_widget(view, root[1]);
             if total > visible {
@@ -283,40 +402,46 @@ fn draw_ui(
     }
 
     let mut footer_spans = vec![
-        Span::styled("↑/↓", Style::default().fg(Color::Gray)),
+        Span::styled("↑/↓", Style::default().fg(muted_color(light_theme))),
         Span::raw(" scroll  "),
-        Span::styled("tab", Style::default().fg(Color::Gray)),
+        Span::styled("tab", Style::default().fg(muted_color(light_theme))),
         Span::raw(" switch  "),
     ];
-    if page == TuiPage::Logs {
-        footer_spans.extend([
-            Span::styled("f", Style::default().fg(Color::Gray)),
+    match page {
+        TuiPage::Sites => footer_spans.extend([
+            Span::styled("s", Style::default().fg(muted_color(light_theme))),
+            Span::raw(" start all  "),
+            Span::styled("x", Style::default().fg(muted_color(light_theme))),
+            Span::raw(" stop all  "),
+        ]),
+        TuiPage::Docker => {}
+        TuiPage::Logs => footer_spans.extend([
+            Span::styled("f", Style::default().fg(muted_color(light_theme))),
             Span::raw(if log_tail {
                 " tail:on  "
             } else {
                 " tail:off  "
             }),
-            Span::styled("t", Style::default().fg(Color::Gray)),
+            Span::styled("t", Style::default().fg(muted_color(light_theme))),
             Span::raw(if log_show_timestamp {
                 " ts:on  "
             } else {
                 " ts:off  "
             }),
-            Span::styled("l", Style::default().fg(Color::Gray)),
+            Span::styled("l", Style::default().fg(muted_color(light_theme))),
             Span::raw(format!(" lvl:{}  ", log_level_filter.label())),
-            Span::styled("c", Style::default().fg(Color::Gray)),
+            Span::styled("c", Style::default().fg(muted_color(light_theme))),
             Span::raw(" clear  "),
-        ]);
-    } else {
+        ]),
+    }
+    if page == TuiPage::Docker {
         footer_spans.extend([
-            Span::styled("s", Style::default().fg(Color::Gray)),
-            Span::raw(" start all  "),
-            Span::styled("x", Style::default().fg(Color::Gray)),
-            Span::raw(" stop all  "),
+            Span::styled("docker/podman", Style::default().fg(muted_color(light_theme))),
+            Span::raw(" set labels: odd_box=true odd_box_port=<container-port> [odd_box_host_name=<host>]  "),
         ]);
     }
     footer_spans.extend([
-        Span::styled("q", Style::default().fg(Color::Gray)),
+        Span::styled("q", Style::default().fg(muted_color(light_theme))),
         Span::raw(" quit"),
     ]);
 
@@ -398,12 +523,14 @@ struct RowData {
     name: String,
     process_id: Option<String>,
     state: ProcState,
+    state_label: Option<&'static str>,
+    state_color: Option<Color>,
     detail: String,
     muted: bool,
     alert: bool,
 }
 
-fn build_rows(data: &Snapshot) -> Vec<RowData> {
+fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
     let mut rows = Vec::new();
     let mut backend_ids: Vec<String> = Vec::new();
     backend_ids.extend(data.processes.iter().map(|(n, _, _, _)| n.clone()));
@@ -419,17 +546,23 @@ fn build_rows(data: &Snapshot) -> Vec<RowData> {
 
     let mut backend_state: std::collections::BTreeMap<String, ProcState> =
         std::collections::BTreeMap::new();
+    let mut backend_kind: std::collections::BTreeMap<String, &'static str> =
+        std::collections::BTreeMap::new();
     for (name, state, _, _) in &data.processes {
         backend_state.insert(name.clone(), state.clone());
+        backend_kind.insert(name.clone(), "process");
     }
     for (name, state, _) in &data.remotes {
         backend_state.insert(name.clone(), state.clone());
+        backend_kind.insert(name.clone(), "remote");
     }
     for (name, state, _) in &data.statics {
         backend_state.insert(name.clone(), state.clone());
+        backend_kind.insert(name.clone(), "static");
     }
     for (name, state, _) in &data.docker {
         backend_state.insert(name.clone(), state.clone());
+        backend_kind.insert(name.clone(), "docker");
     }
 
     let mut routes_by_backend: std::collections::BTreeMap<String, Vec<(String, bool)>> =
@@ -459,10 +592,11 @@ fn build_rows(data: &Snapshot) -> Vec<RowData> {
         } else {
             ProcState::Faulty
         };
+        let backend_kind = backend_kind.get(backend).copied().unwrap_or("unknown");
         let mut detail = if *https_only {
-            format!("-> {} (https-only)", backend)
+            format!("-> {} ({}, https-only)", backend, backend_kind)
         } else {
-            format!("-> {}", backend)
+            format!("-> {} ({})", backend, backend_kind)
         };
         if missing {
             detail.push_str(" (missing backend)");
@@ -479,6 +613,8 @@ fn build_rows(data: &Snapshot) -> Vec<RowData> {
             name: host.clone(),
             process_id,
             state,
+            state_label: None,
+            state_color: None,
             detail,
             muted: false,
             alert: missing || !backend_ok,
@@ -486,6 +622,7 @@ fn build_rows(data: &Snapshot) -> Vec<RowData> {
     }
     for (name, state, bin, port) in &data.processes {
         let combined = routes_by_backend.get(name).and_then(|r| r.first()).cloned();
+        let is_unused = !routes_by_backend.contains_key(name);
         let (display_name, suffix) = if let Some((host, https_only)) = combined {
             let marker = if https_only { " (https-only)" } else { "" };
             (
@@ -493,13 +630,18 @@ fn build_rows(data: &Snapshot) -> Vec<RowData> {
                 format!("backend: {}{} · {} · port: {}", name, marker, bin, port),
             )
         } else {
-            (name.clone(), format!("{} · port: {}", bin, port))
+            (
+                name.clone(),
+                format!("{} · port: {} (no frontend)", bin, port),
+            )
         };
         rows.push(RowData {
             kind: "process",
             name: display_name,
             process_id: Some(name.clone()),
             state: state.clone(),
+            state_label: is_unused.then_some("unused"),
+            state_color: is_unused.then_some(unused_color(light_theme)),
             detail: suffix,
             muted: false,
             alert: false,
@@ -507,6 +649,7 @@ fn build_rows(data: &Snapshot) -> Vec<RowData> {
     }
     for (name, state, detail) in &data.remotes {
         let combined = routes_by_backend.get(name).and_then(|r| r.first()).cloned();
+        let is_unused = !routes_by_backend.contains_key(name);
         let (display_name, suffix, muted, alert) = if let Some((host, https_only)) = combined {
             let marker = if https_only { " (https-only)" } else { "" };
             (
@@ -519,8 +662,8 @@ fn build_rows(data: &Snapshot) -> Vec<RowData> {
             (
                 name.clone(),
                 format!("{} (no frontend)", detail),
-                true,
-                true,
+                false,
+                false,
             )
         };
         rows.push(RowData {
@@ -528,6 +671,8 @@ fn build_rows(data: &Snapshot) -> Vec<RowData> {
             name: display_name,
             process_id: None,
             state: state.clone(),
+            state_label: is_unused.then_some("unused"),
+            state_color: is_unused.then_some(unused_color(light_theme)),
             detail: suffix,
             muted,
             alert,
@@ -535,6 +680,7 @@ fn build_rows(data: &Snapshot) -> Vec<RowData> {
     }
     for (name, state, dir) in &data.statics {
         let combined = routes_by_backend.get(name).and_then(|r| r.first()).cloned();
+        let is_unused = !routes_by_backend.contains_key(name);
         let (display_name, suffix, muted, alert) = if let Some((host, https_only)) = combined {
             let marker = if https_only { " (https-only)" } else { "" };
             (
@@ -544,13 +690,15 @@ fn build_rows(data: &Snapshot) -> Vec<RowData> {
                 false,
             )
         } else {
-            (name.clone(), format!("{} (no frontend)", dir), true, true)
+            (name.clone(), format!("{} (no frontend)", dir), false, false)
         };
         rows.push(RowData {
             kind: "static",
             name: display_name,
             process_id: None,
             state: state.clone(),
+            state_label: is_unused.then_some("unused"),
+            state_color: is_unused.then_some(unused_color(light_theme)),
             detail: suffix,
             muted,
             alert,
@@ -558,17 +706,20 @@ fn build_rows(data: &Snapshot) -> Vec<RowData> {
     }
     for (name, state, image) in &data.docker {
         let combined = routes_by_backend.get(name).and_then(|r| r.first()).cloned();
+        let is_unused = !routes_by_backend.contains_key(name);
         let (display_name, suffix) = if let Some((host, https_only)) = combined {
             let marker = if https_only { " (https-only)" } else { "" };
             (host, format!("backend: {}{} · {}", name, marker, image))
         } else {
-            (name.clone(), image.clone())
+            (name.clone(), format!("{image} (no frontend)"))
         };
         rows.push(RowData {
             kind: "docker",
             name: display_name,
             process_id: None,
             state: state.clone(),
+            state_label: is_unused.then_some("unused"),
+            state_color: is_unused.then_some(unused_color(light_theme)),
             detail: suffix,
             muted: false,
             alert: false,
@@ -582,6 +733,7 @@ fn build_flat_table<'a>(
     data: &'a Snapshot,
     area: ratatui::layout::Rect,
     hovered_row: Option<usize>,
+    light_theme: bool,
 ) -> (
     Table<'a>,
     TableState,
@@ -590,7 +742,7 @@ fn build_flat_table<'a>(
     usize,
     ratatui::layout::Rect,
 ) {
-    let rows = build_rows(data);
+    let rows = build_rows(data, light_theme);
     let total = rows.len();
     let visible = area.height.saturating_sub(3) as usize;
     let start = TUI_SCROLL.load(std::sync::atomic::Ordering::Relaxed);
@@ -602,7 +754,9 @@ fn build_flat_table<'a>(
     let rows_vec: Vec<Row> = rows[start..end]
         .iter()
         .map(|row| {
-            let (label, color) = fmt_state(row.state.clone());
+            let (default_label, default_color) = fmt_state(row.state.clone(), light_theme);
+            let label = row.state_label.unwrap_or(default_label);
+            let color = row.state_color.unwrap_or(default_color);
             let mut name_cell = Cell::from(row.name.clone());
             let mut detail_cell = Cell::from(row.detail.clone());
             let mut kind_cell = Cell::from(row.kind);
@@ -619,7 +773,7 @@ fn build_flat_table<'a>(
                 detail_cell,
             ]);
             if row.muted {
-                table_row = table_row.style(Style::default().fg(Color::Gray));
+                table_row = table_row.style(Style::default().fg(muted_color(light_theme)));
             }
             table_row
         })
@@ -631,7 +785,7 @@ fn build_flat_table<'a>(
         Cell::from("State"),
         Cell::from("Detail"),
     ])
-    .style(Style::default().fg(Color::Gray));
+    .style(Style::default().fg(muted_color(light_theme)));
 
     let table = Table::new(
         rows_vec,
@@ -643,11 +797,130 @@ fn build_flat_table<'a>(
         ],
     )
     .header(header)
-    .row_highlight_style(Style::default().bg(Color::DarkGray))
+    .row_highlight_style(Style::default().bg(row_highlight_bg(light_theme)))
     .block(
         Block::default()
             .borders(Borders::ALL)
             .title(format!("Sites ({} total)", total)),
+    )
+    .column_spacing(1);
+
+    let scroll_area = ratatui::layout::Rect {
+        x: area.x + area.width.saturating_sub(1),
+        y: area.y + 1,
+        width: 1,
+        height: area.height.saturating_sub(2),
+    };
+
+    let mut state = TableState::default();
+    if let Some(row) = hovered_row {
+        if row >= start && row < end {
+            state.select(Some(row - start));
+        }
+    }
+
+    (table, state, total, start, visible, scroll_area)
+}
+
+fn build_docker_table<'a>(
+    data: &'a Snapshot,
+    area: ratatui::layout::Rect,
+    hovered_row: Option<usize>,
+    light_theme: bool,
+) -> (
+    Table<'a>,
+    TableState,
+    usize,
+    usize,
+    usize,
+    ratatui::layout::Rect,
+) {
+    let rows = sorted_docker_rows(data);
+
+    let total = rows.len();
+    let visible = area.height.saturating_sub(3) as usize;
+    let start = TUI_DOCKER_SCROLL.load(std::sync::atomic::Ordering::Relaxed);
+    let max_start = total.saturating_sub(visible);
+    let start = start.min(max_start);
+    TUI_DOCKER_SCROLL.store(start, std::sync::atomic::Ordering::Relaxed);
+    let end = (start + visible).min(total);
+
+    let rows_vec: Vec<Row> = rows[start..end]
+        .iter()
+        .map(|row| {
+            let name = &row.container_name;
+            let image = &row.image;
+            let runtime = &row.runtime;
+            let state = &row.state;
+            let marked = row.marked;
+            let detail = &row.detail;
+            let is_routed = row.is_routed;
+            let state_color = if state.eq_ignore_ascii_case("running") {
+                Color::Green
+            } else if state.eq_ignore_ascii_case("exited")
+                || state.eq_ignore_ascii_case("dead")
+                || state.eq_ignore_ascii_case("failed")
+            {
+                Color::Red
+            } else {
+                muted_color(light_theme)
+            };
+            let state_label = state.clone();
+            let mark_label = if marked { "yes" } else { "no" };
+            let mark_color = if marked {
+                Color::Cyan
+            } else {
+                muted_color(light_theme)
+            };
+            let route_label = if is_routed {
+                "active"
+            } else if marked {
+                "marked"
+            } else {
+                "-"
+            };
+            let route_color = if is_routed {
+                Color::Green
+            } else if marked {
+                Color::Yellow
+            } else {
+                muted_color(light_theme)
+            };
+            Row::new(vec![
+                Cell::from(name.clone()),
+                Cell::from(state_label).style(Style::default().fg(state_color)),
+                Cell::from(mark_label).style(Style::default().fg(mark_color)),
+                Cell::from(route_label).style(Style::default().fg(route_color)),
+                Cell::from(format!("{} · runtime: {} · {}", image, runtime, detail)),
+            ])
+        })
+        .collect();
+
+    let header = Row::new(vec![
+        Cell::from("Name"),
+        Cell::from("State"),
+        Cell::from("Marked"),
+        Cell::from("Route"),
+        Cell::from("Detail"),
+    ])
+    .style(Style::default().fg(muted_color(light_theme)));
+
+    let table = Table::new(
+        rows_vec,
+        [
+            Constraint::Percentage(24),
+            Constraint::Length(10),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Percentage(50),
+        ],
+    )
+    .header(header)
+    .row_highlight_style(Style::default().bg(row_highlight_bg(light_theme)))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(format!("Docker ({} total)", total)),
     )
     .column_spacing(1);
 
@@ -696,6 +969,42 @@ fn hit_test_site_row(area: Rect, mouse_y: u16, total: usize) -> Option<usize> {
     Some(row_index)
 }
 
+fn sorted_docker_rows(
+    data: &Snapshot,
+) -> Vec<DockerRow> {
+    let mut rows = data.docker_discovered.clone();
+    rows.sort_by_cached_key(|row| row.container_name.to_ascii_lowercase());
+    rows
+}
+
+fn hit_test_docker_row(area: Rect, mouse_y: u16, total: usize) -> Option<usize> {
+    let inner = area.inner(Margin {
+        vertical: 1,
+        horizontal: 1,
+    });
+    if inner.height < 2 {
+        return None;
+    }
+    let row_y_start = inner.y.saturating_add(1);
+    if mouse_y < row_y_start || mouse_y >= inner.y.saturating_add(inner.height) {
+        return None;
+    }
+
+    let visible = inner.height.saturating_sub(1) as usize;
+    let start = TUI_DOCKER_SCROLL.load(std::sync::atomic::Ordering::Relaxed);
+    let row_in_view = mouse_y.saturating_sub(row_y_start) as usize;
+    if row_in_view >= visible {
+        return None;
+    }
+
+    let row_index = start.saturating_add(row_in_view);
+    if row_index >= total {
+        return None;
+    }
+
+    Some(row_index)
+}
+
 fn scroll_area_for_content(area: Rect) -> Rect {
     ratatui::layout::Rect {
         x: area.x + area.width.saturating_sub(1),
@@ -716,6 +1025,7 @@ fn scroll_pos_from_mouse(scroll_area: Rect, mouse_row: u16, max_start: usize) ->
 }
 
 static TUI_SCROLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static TUI_DOCKER_SCROLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static TUI_LOG_SCROLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 #[derive(Clone, Debug)]
@@ -803,10 +1113,17 @@ fn build_log_view<'a>(
     area: ratatui::layout::Rect,
     show_timestamp: bool,
     log_level_filter: LogLevelFilter,
+    light_theme: bool,
 ) -> (Paragraph<'a>, usize, usize, usize, ratatui::layout::Rect) {
     let visible = area.height.saturating_sub(2) as usize;
     let content_width = area.width.saturating_sub(3) as usize;
-    let all_lines = build_log_lines(entries, content_width, show_timestamp, log_level_filter);
+    let all_lines = build_log_lines(
+        entries,
+        content_width,
+        show_timestamp,
+        log_level_filter,
+        light_theme,
+    );
     let total = all_lines.len();
     let max_start = total.saturating_sub(visible);
     let start = scroll.min(max_start);
@@ -841,13 +1158,14 @@ fn build_log_lines(
     content_width: usize,
     show_timestamp: bool,
     log_level_filter: LogLevelFilter,
+    light_theme: bool,
 ) -> Vec<Line> {
     let mut lines: Vec<Line> = Vec::new();
     for entry in entries.iter() {
         if level_rank(entry.level) < filter_rank(log_level_filter) {
             continue;
         }
-        let (label, color) = fmt_level(entry.level);
+        let (label, color) = fmt_level(entry.level, light_theme);
         let meta_prefix = if show_timestamp {
             format!("[{}] {} {} ", label, entry.timestamp, entry.source)
         } else {
@@ -861,7 +1179,7 @@ fn build_log_lines(
             lines.push(Line::from(vec![
                 Span::styled(format!("[{}]", label), Style::default().fg(color)),
                 Span::raw(" "),
-                Span::styled(&entry.source, Style::default().fg(Color::LightBlue)),
+                Span::styled(&entry.source, Style::default().fg(info_color(light_theme))),
             ]));
             continue;
         }
@@ -888,13 +1206,13 @@ fn build_log_lines(
                     if show_timestamp {
                         spans.push(Span::styled(
                             &entry.timestamp,
-                            Style::default().fg(Color::Cyan),
+                            Style::default().fg(timestamp_color(light_theme)),
                         ));
                         spans.push(Span::raw(" "));
                     }
                     spans.push(Span::styled(
                         &entry.source,
-                        Style::default().fg(Color::LightBlue),
+                        Style::default().fg(info_color(light_theme)),
                     ));
                     spans.push(Span::raw(" "));
                     spans
@@ -918,13 +1236,14 @@ fn count_log_lines(
     content_width: usize,
     show_timestamp: bool,
     log_level_filter: LogLevelFilter,
+    light_theme: bool,
 ) -> usize {
     let mut count = 0usize;
     for entry in entries {
         if level_rank(entry.level) < filter_rank(log_level_filter) {
             continue;
         }
-        let (label, _) = fmt_level(entry.level);
+        let (label, _) = fmt_level(entry.level, light_theme);
         let meta_prefix = if show_timestamp {
             format!("[{}] {} {} ", label, entry.timestamp, entry.source)
         } else {
@@ -995,11 +1314,28 @@ fn restore_terminal(terminal: &mut Terminal<ratatui::backend::CrosstermBackend<S
     let _ = terminal.show_cursor();
 }
 
-pub async fn run(global_state: Arc<GlobalState>) {
+fn detect_light_terminal_from_env() -> bool {
+    std::env::var("COLORFGBG")
+        .ok()
+        .and_then(|value| value.rsplit(';').next().and_then(|bg| bg.parse::<u8>().ok()))
+        .map(|bg| bg == 7 || bg == 15)
+        .unwrap_or(false)
+}
+
+fn resolve_light_theme(theme_arg: Option<&str>) -> bool {
+    match theme_arg {
+        Some("light") => true,
+        Some("dark") => false,
+        _ => detect_light_terminal_from_env(),
+    }
+}
+
+pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
     let mut terminal = match setup_terminal() {
         Ok(t) => t,
         Err(_) => return,
     };
+    let light_theme = resolve_light_theme(theme_arg.as_deref());
 
     let refresh_every = Duration::from_millis(500);
     let mut last_refresh = Instant::now() - refresh_every;
@@ -1039,8 +1375,13 @@ pub async fn run(global_state: Arc<GlobalState>) {
                         .size()
                         .map(|s| s.width.saturating_sub(3) as usize)
                         .unwrap_or(0);
-                    let total_lines =
-                        count_log_lines(&log_entries, width, log_show_timestamp, log_level_filter);
+                    let total_lines = count_log_lines(
+                        &log_entries,
+                        width,
+                        log_show_timestamp,
+                        log_level_filter,
+                        light_theme,
+                    );
                     let max_start = total_lines.saturating_sub(visible);
                     cur >= max_start.saturating_sub(1)
                 };
@@ -1076,8 +1417,13 @@ pub async fn run(global_state: Arc<GlobalState>) {
                         .size()
                         .map(|s| s.width.saturating_sub(3) as usize)
                         .unwrap_or(0);
-                    let total_lines =
-                        count_log_lines(&log_entries, width, log_show_timestamp, log_level_filter);
+                    let total_lines = count_log_lines(
+                        &log_entries,
+                        width,
+                        log_show_timestamp,
+                        log_level_filter,
+                        light_theme,
+                    );
                     let max_start = total_lines.saturating_sub(visible);
                     TUI_LOG_SCROLL.store(max_start, std::sync::atomic::Ordering::Relaxed);
                 }
@@ -1092,6 +1438,7 @@ pub async fn run(global_state: Arc<GlobalState>) {
                     f,
                     &data,
                     page,
+                    light_theme,
                     &log_entries,
                     TUI_LOG_SCROLL.load(std::sync::atomic::Ordering::Relaxed),
                     log_tail,
@@ -1137,7 +1484,7 @@ pub async fn run(global_state: Arc<GlobalState>) {
                                 };
                                 match page {
                                     TuiPage::Sites => {
-                                        let rows = build_rows(&data);
+                                        let rows = build_rows(&data, light_theme);
                                         let total = rows.len();
                                         let visible =
                                             content_area.height.saturating_sub(3) as usize;
@@ -1150,6 +1497,24 @@ pub async fn run(global_state: Arc<GlobalState>) {
                                         if next != cur as usize {
                                             TUI_SCROLL
                                                 .store(next, std::sync::atomic::Ordering::Relaxed);
+                                            dirty = true;
+                                        }
+                                    }
+                                    TuiPage::Docker => {
+                                        let total = data.docker_discovered.len();
+                                        let visible =
+                                            content_area.height.saturating_sub(3) as usize;
+                                        let max_start = total.saturating_sub(visible);
+                                        let cur = TUI_DOCKER_SCROLL
+                                            .load(std::sync::atomic::Ordering::Relaxed)
+                                            as isize;
+                                        let next =
+                                            (cur + delta).clamp(0, max_start as isize) as usize;
+                                        if next != cur as usize {
+                                            TUI_DOCKER_SCROLL.store(
+                                                next,
+                                                std::sync::atomic::Ordering::Relaxed,
+                                            );
                                             dirty = true;
                                         }
                                     }
@@ -1166,6 +1531,7 @@ pub async fn run(global_state: Arc<GlobalState>) {
                                             width,
                                             log_show_timestamp,
                                             log_level_filter,
+                                            light_theme,
                                         );
                                         let max_start = total.saturating_sub(visible);
                                         let cur = TUI_LOG_SCROLL
@@ -1182,23 +1548,30 @@ pub async fn run(global_state: Arc<GlobalState>) {
                                 }
                             }
                             MouseEventKind::Moved => {
-                                if page != TuiPage::Sites {
+                                if page != TuiPage::Sites && page != TuiPage::Docker {
                                     continue;
                                 }
                                 if drag_scroll.is_some() {
                                     continue;
                                 }
-                                let rows = build_rows(&data);
-                                let total = rows.len();
-                                let new_hover = hit_test_site_row(content_area, mouse.row, total)
-                                    .map(|row| row);
+                                let new_hover = if page == TuiPage::Sites {
+                                    let rows = build_rows(&data, light_theme);
+                                    let total = rows.len();
+                                    hit_test_site_row(content_area, mouse.row, total).map(|row| row)
+                                } else {
+                                    let rows = sorted_docker_rows(&data);
+                                    let total = rows.len();
+                                    hit_test_docker_row(content_area, mouse.row, total)
+                                        .map(|row| row)
+                                };
                                 if new_hover != hovered_row {
                                     hovered_row = new_hover;
                                     dirty = true;
                                 }
                             }
                             MouseEventKind::Down(MouseButton::Left) => {
-                                if matches!(page, TuiPage::Sites | TuiPage::Logs) {
+                                if matches!(page, TuiPage::Sites | TuiPage::Docker | TuiPage::Logs)
+                                {
                                     let scroll_area = scroll_area_for_content(content_area);
                                     if mouse.column == scroll_area.x
                                         && mouse.row >= scroll_area.y
@@ -1208,7 +1581,7 @@ pub async fn run(global_state: Arc<GlobalState>) {
                                         drag_scroll = Some(page);
                                         match page {
                                             TuiPage::Sites => {
-                                                let rows = build_rows(&data);
+                                                let rows = build_rows(&data, light_theme);
                                                 let total = rows.len();
                                                 let visible =
                                                     content_area.height.saturating_sub(3) as usize;
@@ -1228,6 +1601,26 @@ pub async fn run(global_state: Arc<GlobalState>) {
                                                     dirty = true;
                                                 }
                                             }
+                                            TuiPage::Docker => {
+                                                let total = data.docker_discovered.len();
+                                                let visible =
+                                                    content_area.height.saturating_sub(3) as usize;
+                                                let max_start = total.saturating_sub(visible);
+                                                let next = scroll_pos_from_mouse(
+                                                    scroll_area,
+                                                    mouse.row,
+                                                    max_start,
+                                                );
+                                                let cur = TUI_DOCKER_SCROLL
+                                                    .load(std::sync::atomic::Ordering::Relaxed);
+                                                if next != cur {
+                                                    TUI_DOCKER_SCROLL.store(
+                                                        next,
+                                                        std::sync::atomic::Ordering::Relaxed,
+                                                    );
+                                                    dirty = true;
+                                                }
+                                            }
                                             TuiPage::Logs => {
                                                 if log_tail {
                                                     log_tail = false;
@@ -1241,6 +1634,7 @@ pub async fn run(global_state: Arc<GlobalState>) {
                                                     width,
                                                     log_show_timestamp,
                                                     log_level_filter,
+                                                    light_theme,
                                                 );
                                                 let max_start = total.saturating_sub(visible);
                                                 let next = scroll_pos_from_mouse(
@@ -1265,7 +1659,7 @@ pub async fn run(global_state: Arc<GlobalState>) {
                                 if page != TuiPage::Sites {
                                     continue;
                                 }
-                                let rows = build_rows(&data);
+                                let rows = build_rows(&data, light_theme);
                                 let total = rows.len();
                                 if let Some(row_idx) =
                                     hit_test_site_row(content_area, mouse.row, total)
@@ -1338,7 +1732,7 @@ pub async fn run(global_state: Arc<GlobalState>) {
                                 };
                                 match target_page {
                                     TuiPage::Sites => {
-                                        let rows = build_rows(&data);
+                                        let rows = build_rows(&data, light_theme);
                                         let total = rows.len();
                                         let visible =
                                             content_area.height.saturating_sub(3) as usize;
@@ -1357,6 +1751,27 @@ pub async fn run(global_state: Arc<GlobalState>) {
                                             dirty = true;
                                         }
                                     }
+                                    TuiPage::Docker => {
+                                        let total = data.docker_discovered.len();
+                                        let visible =
+                                            content_area.height.saturating_sub(3) as usize;
+                                        let max_start = total.saturating_sub(visible);
+                                        let scroll_area = scroll_area_for_content(content_area);
+                                        let next = scroll_pos_from_mouse(
+                                            scroll_area,
+                                            mouse.row,
+                                            max_start,
+                                        );
+                                        let cur = TUI_DOCKER_SCROLL
+                                            .load(std::sync::atomic::Ordering::Relaxed);
+                                        if next != cur {
+                                            TUI_DOCKER_SCROLL.store(
+                                                next,
+                                                std::sync::atomic::Ordering::Relaxed,
+                                            );
+                                            dirty = true;
+                                        }
+                                    }
                                     TuiPage::Logs => {
                                         if log_tail {
                                             log_tail = false;
@@ -1369,6 +1784,7 @@ pub async fn run(global_state: Arc<GlobalState>) {
                                             width,
                                             log_show_timestamp,
                                             log_level_filter,
+                                            light_theme,
                                         );
                                         let max_start = total.saturating_sub(visible);
                                         let scroll_area = scroll_area_for_content(content_area);
@@ -1425,7 +1841,8 @@ pub async fn run(global_state: Arc<GlobalState>) {
                             return;
                         } else if key.code == KeyCode::Tab {
                             page = match page {
-                                TuiPage::Sites => TuiPage::Logs,
+                                TuiPage::Sites => TuiPage::Docker,
+                                TuiPage::Docker => TuiPage::Logs,
                                 TuiPage::Logs => TuiPage::Sites,
                             };
                             if page == TuiPage::Logs {
@@ -1447,6 +1864,7 @@ pub async fn run(global_state: Arc<GlobalState>) {
                                     width,
                                     log_show_timestamp,
                                     log_level_filter,
+                                    light_theme,
                                 );
                                 let max_start = total_lines.saturating_sub(visible);
                                 TUI_LOG_SCROLL
@@ -1518,6 +1936,7 @@ pub async fn run(global_state: Arc<GlobalState>) {
                                 width,
                                 log_show_timestamp,
                                 log_level_filter,
+                                light_theme,
                             );
                             let max_start = total_lines.saturating_sub(visible);
                             TUI_LOG_SCROLL.store(max_start, std::sync::atomic::Ordering::Relaxed);
@@ -1541,6 +1960,7 @@ pub async fn run(global_state: Arc<GlobalState>) {
                                     width,
                                     log_show_timestamp,
                                     log_level_filter,
+                                    light_theme,
                                 );
                                 let max_start = total_lines.saturating_sub(visible);
                                 TUI_LOG_SCROLL
@@ -1570,6 +1990,7 @@ pub async fn run(global_state: Arc<GlobalState>) {
                                 width,
                                 log_show_timestamp,
                                 log_level_filter,
+                                light_theme,
                             );
                             let max_start = total_lines.saturating_sub(visible);
                             TUI_LOG_SCROLL.store(max_start, std::sync::atomic::Ordering::Relaxed);
@@ -1583,6 +2004,7 @@ pub async fn run(global_state: Arc<GlobalState>) {
                         } else {
                             let target_scroll = match page {
                                 TuiPage::Sites => &TUI_SCROLL,
+                                TuiPage::Docker => &TUI_DOCKER_SCROLL,
                                 TuiPage::Logs => &TUI_LOG_SCROLL,
                             };
                             if key.code == KeyCode::Up {

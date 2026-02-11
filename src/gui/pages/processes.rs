@@ -78,7 +78,7 @@ impl OddBoxGui {
                 );
                 let detail_text = text(details)
                     .font(Font::MONOSPACE)
-                    .size(12)
+                    .size(super::super::text_size(12))
                     .wrapping(Wrapping::Word);
                 let actions = self.build_process_actions(&proc.name, proc.state.clone());
                 let detail_content = column![detail_text, actions].spacing(8);

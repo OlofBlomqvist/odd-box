@@ -91,7 +91,7 @@ impl OddBoxGui {
         let mut transport_list = Column::new().spacing(4);
         if transports.is_empty() {
             transport_list =
-                transport_list.push(text("No active channels.").font(Font::MONOSPACE).size(12));
+                transport_list.push(text("No active channels.").font(Font::MONOSPACE).size(super::super::text_size(12)));
         } else {
             for t in transports.iter() {
                 let proto = match t.protocol {
@@ -101,7 +101,7 @@ impl OddBoxGui {
                 transport_list = transport_list.push(
                     text(format!("{proto} #{}  {}", t.instance_idx, t.addr))
                         .font(Font::MONOSPACE)
-                        .size(12),
+                        .size(super::super::text_size(12)),
                 );
             }
         }
@@ -126,7 +126,7 @@ impl OddBoxGui {
             }
         });
 
-        let mode_header = text("Connection Mode").font(Font::MONOSPACE).size(14);
+        let mode_header = text("Connection Mode").font(Font::MONOSPACE).size(super::super::text_size(14));
 
         let disabled_radio = radio(
             "Disabled",
@@ -158,7 +158,7 @@ impl OddBoxGui {
             mode_col = mode_col.push(
                 text(msg)
                     .color(self.theme().extended_palette().background.weak.text)
-                    .size(12),
+                    .size(super::super::text_size(12)),
             );
         }
 
@@ -166,7 +166,7 @@ impl OddBoxGui {
             mode_col = mode_col.push(
                 text("Authenticated credentials are not configured yet.")
                     .color(Color::from_rgb(0.9, 0.6, 0.2))
-                    .size(12),
+                    .size(super::super::text_size(12)),
             );
         }
 

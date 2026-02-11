@@ -12,7 +12,7 @@ use super::super::{Message, OddBoxGui};
 impl OddBoxGui {
     pub(in crate::gui) fn view_frontends(&self) -> Element<'_, Message> {
         let actions =
-            row![button(text("Add Route").size(14)).on_press(Message::OpenNewFrontend),].spacing(8);
+            row![button(text("Add Route").size(super::super::text_size(14))).on_press(Message::OpenNewFrontend),].spacing(8);
 
         let http_placeholder = self
             .cached_config
@@ -27,23 +27,23 @@ impl OddBoxGui {
 
         let http_input = text_input(&http_placeholder, &self.frontend_http_port_input)
             .on_input(Message::FrontendHttpPortChanged)
-            .size(14);
+            .size(super::super::text_size(14));
         let https_input = text_input(&https_placeholder, &self.frontend_https_port_input)
             .on_input(Message::FrontendHttpsPortChanged)
-            .size(14);
+            .size(super::super::text_size(14));
 
         let ports_row = row![
-            text("HTTP Port").size(14),
+            text("HTTP Port").size(super::super::text_size(14)),
             http_input,
-            text("HTTPS Port").size(14),
+            text("HTTPS Port").size(super::super::text_size(14)),
             https_input,
-            button(text("Apply Ports").size(14)).on_press(Message::FrontendPortsSave),
+            button(text("Apply Ports").size(super::super::text_size(14))).on_press(Message::FrontendPortsSave),
         ]
         .spacing(8);
 
         let notice = self.frontend_port_notice.as_ref().map(|msg| {
             text(msg)
-                .size(13)
+                .size(super::super::text_size(13))
                 .color(self.theme().extended_palette().background.strong.text)
         });
 

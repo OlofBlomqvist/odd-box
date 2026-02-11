@@ -15,6 +15,7 @@ use iced::{
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::configuration::{LogLevel, v4};
 use crate::global_state::GlobalState;
@@ -33,6 +34,23 @@ static SIDEBAR_LOGO_DARK: LazyLock<iced::widget::image::Handle> = LazyLock::new(
         &include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/ob3_black.png"))[..],
     )
 });
+
+static GUI_TEXT_SCALE_BITS: AtomicU32 = AtomicU32::new(1.0f32.to_bits());
+
+fn compute_text_scale(size: iced::Size) -> f32 {
+    let width_scale = (size.width / 1200.0).clamp(0.85, 1.35);
+    let height_scale = (size.height / 800.0).clamp(0.85, 1.35);
+    width_scale.min(height_scale)
+}
+
+fn set_gui_text_scale(size: iced::Size) {
+    GUI_TEXT_SCALE_BITS.store(compute_text_scale(size).to_bits(), Ordering::Relaxed);
+}
+
+pub(in crate::gui) fn text_size(base: u16) -> f32 {
+    let scale = f32::from_bits(GUI_TEXT_SCALE_BITS.load(Ordering::Relaxed));
+    (base as f32 * scale).round()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeMode {
@@ -56,12 +74,15 @@ pub fn run(
     theme_mode: ThemeMode,
     log_state: SharedLogState,
 ) -> iced::Result {
+    let use_glass_effects = cfg!(target_os = "macos");
+    let initial_window_size = iced::Size::new(1200.0, 800.0);
+    set_gui_text_scale(initial_window_size);
     let window_settings = iced::window::Settings {
-        size: iced::Size::new(1200.0, 800.0),
+        size: initial_window_size,
         min_size: Some(iced::Size::new(900.0, 400.0)),
         decorations: true, // Use native window decorations (KDE/GNOME title bar)
-        blur: true,
-        transparent: true,
+        blur: use_glass_effects,
+        transparent: use_glass_effects,
         ..Default::default()
     };
 
@@ -74,10 +95,16 @@ pub fn run(
         OddBoxGui::view,
     )
     .style(|_state, theme: &Theme| {
-        // Use theme's background with transparency for blur effect
         let bg = theme.palette().background;
+        let use_glass_effects = cfg!(target_os = "macos");
+        let is_light = (0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b) > 0.5;
+        let alpha = if use_glass_effects {
+            if is_light { 0.68 } else { 0.80 }
+        } else {
+            1.0
+        };
         theme::Style {
-            background_color: Color::from_rgba(bg.r, bg.g, bg.b, 0.75),
+            background_color: Color::from_rgba(bg.r, bg.g, bg.b, alpha),
             text_color: theme.palette().text,
         }
     })
@@ -238,6 +265,7 @@ pub enum Message {
     /// No-op message for hover-only interactive elements
     NoOp,
     NavigateTo(Page),
+    WindowResized(iced::Size),
     SystemThemeChanged(theme::Mode),
     LogViewportChanged(scrollable::Viewport),
     // Log filter messages
@@ -1201,10 +1229,11 @@ impl OddBoxGui {
         };
 
         let theme_sub = system::theme_changes().map(Message::SystemThemeChanged);
+        let resize_sub = window::resize_events().map(|(_id, size)| Message::WindowResized(size));
         let exit_sub =
             time::every(std::time::Duration::from_millis(250)).map(|_| Message::ExitPoll);
 
-        Subscription::batch(vec![page_sub, theme_sub, exit_sub])
+        Subscription::batch(vec![page_sub, theme_sub, resize_sub, exit_sub])
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -1232,6 +1261,9 @@ impl OddBoxGui {
                 ) {
                     return Task::perform(fetch_config(self.state.clone()), Message::ConfigUpdated);
                 }
+            }
+            Message::WindowResized(size) => {
+                set_gui_text_scale(size);
             }
             Message::SystemThemeChanged(mode) => {
                 self.system_theme = Some(mode);
@@ -1727,9 +1759,17 @@ impl OddBoxGui {
                 .width(Length::Fill)
                 .height(Length::Fill),
         )
-        .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(Color::TRANSPARENT)),
-            ..Default::default()
+        .style(|theme: &Theme| {
+            let bg = theme.palette().background;
+            let use_glass_effects = cfg!(target_os = "macos");
+            container::Style {
+                background: Some(Background::Color(if use_glass_effects {
+                    Color::TRANSPARENT
+                } else {
+                    Color::from_rgba(bg.r, bg.g, bg.b, 1.0)
+                })),
+                ..Default::default()
+            }
         })
         .width(Length::Fill)
         .height(Length::Fill)
@@ -1801,10 +1841,25 @@ impl OddBoxGui {
 
         container(sidebar_content)
             .style(|theme: &Theme| {
-                // Slightly darker/lighter than main bg for contrast
-                let bg = theme.extended_palette().background.weak.color;
+                let use_glass_effects = cfg!(target_os = "macos");
+                let palette = theme.extended_palette();
+                let bg = palette.background.weak.color;
+                let base_bg = theme.palette().background;
+                let is_light = (0.299 * base_bg.r + 0.587 * base_bg.g + 0.114 * base_bg.b) > 0.5;
+                let shade = if is_light { 1.0 } else { 0.5 };
+                let alpha = if use_glass_effects {
+                    if is_light { 0.22 } else { 0.30 }
+                } else {
+                    1.0
+                };
                 container::Style {
-                    background: Some(Background::Color(Color::from_rgba(bg.r, bg.g, bg.b, 0.5))),
+                    background: Some(Background::Color(Color::from_rgba(
+                        bg.r * shade,
+                        bg.g * shade,
+                        bg.b * shade,
+                        alpha,
+                    ))),
+                    border: Border::default(),
                     ..Default::default()
                 }
             })
@@ -1833,10 +1888,6 @@ impl OddBoxGui {
             })
             .style(move |theme: &Theme, status| {
                 let palette = theme.extended_palette();
-
-                // Check if theme is light by looking at background luminance
-                let bg = theme.palette().background;
-                let is_light_theme = (0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b) > 0.5;
 
                 let (background, text_color) = if is_active {
                     let bg_color = palette.primary.strong.color;
@@ -1883,7 +1934,7 @@ impl OddBoxGui {
         if self.current_page == Page::Monitoring {
             page_content
         } else {
-            let page_title = text(self.current_page.title()).size(20);
+            let page_title = text(self.current_page.title()).size(text_size(20));
             let content = column![page_title, page_content]
                 .spacing(20)
                 .padding(30)
@@ -1894,7 +1945,24 @@ impl OddBoxGui {
                 .height(Length::Fill)
                 .style(|theme: &Theme, status| scrollable::Style {
                     container: container::Style {
-                        background: Some(Background::Color(Color::TRANSPARENT)),
+                        background: Some(Background::Color({
+                            let use_glass_effects = cfg!(target_os = "macos");
+                            let bg = theme.extended_palette().background.base.color;
+                            if use_glass_effects {
+                                let base_bg = theme.palette().background;
+                                let is_light = (0.299 * base_bg.r
+                                    + 0.587 * base_bg.g
+                                    + 0.114 * base_bg.b)
+                                    > 0.5;
+                                let shade = if is_light { 0.7 } else { 0.52 };
+                                let alpha = if is_light { 0.07 } else { 0.106 };
+                                Color::from_rgba(bg.r * shade, bg.g * shade, bg.b * shade, alpha)
+                            } else {
+                                // Non-macOS uses opaque surfaces; avoid extra darkening so pages
+                                // match Monitoring's baseline readability.
+                                Color::from_rgba(bg.r, bg.g, bg.b, 1.0)
+                            }
+                        })),
                         ..Default::default()
                     },
                     ..scrollable::default(theme, status)

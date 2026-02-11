@@ -18,7 +18,7 @@ impl OddBoxGui {
         if self.edit_frontend_form.hostname.trim().is_empty() {
             errors.push(
                 text("Hostname is required.")
-                    .size(12)
+                    .size(super::super::text_size(12))
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
             );
@@ -26,7 +26,7 @@ impl OddBoxGui {
         if self.edit_frontend_form.backend.trim().is_empty() {
             errors.push(
                 text("Backend is required.")
-                    .size(12)
+                    .size(super::super::text_size(12))
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
             );
@@ -36,7 +36,7 @@ impl OddBoxGui {
         {
             errors.push(
                 text("Selected backend does not exist.")
-                    .size(12)
+                    .size(super::super::text_size(12))
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
             );
@@ -44,7 +44,7 @@ impl OddBoxGui {
         if self.edit_frontend_form.capture_subdomains && self.edit_frontend_form.lets_encrypt {
             errors.push(
                 text("LetsEncrypt cannot be used with capture subdomains.")
-                    .size(12)
+                    .size(super::super::text_size(12))
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
             );
@@ -53,19 +53,19 @@ impl OddBoxGui {
         let notice = self
             .edit_frontend_notice
             .as_ref()
-            .map(|msg| text(msg).size(13).style(muted_text));
+            .map(|msg| text(msg).size(super::super::text_size(13)).style(muted_text));
 
         let mut actions_children: Vec<Element<'_, Message>> = vec![
-            button(text("Save").size(14))
+            button(text("Save").size(super::super::text_size(14)))
                 .on_press(Message::EditFrontendSave)
                 .into(),
-            button(text("Back").size(14))
+            button(text("Back").size(super::super::text_size(14)))
                 .on_press(Message::NavigateTo(super::super::Page::Frontends))
                 .into(),
         ];
         if !self.edit_frontend_is_new {
             actions_children.push(
-                button(text("Delete").size(14))
+                button(text("Delete").size(super::super::text_size(14)))
                     .on_press(Message::EditFrontendDelete)
                     .into(),
             );
@@ -73,9 +73,9 @@ impl OddBoxGui {
         let actions = row::Row::with_children(actions_children).spacing(10);
 
         let layout = responsive(|size| {
-            let hostname_label = text("Hostname").size(13).style(muted_text);
+            let hostname_label = text("Hostname").size(super::super::text_size(13)).style(muted_text);
             let hostname_help = text("The public host this route matches (e.g. example.local)")
-                .size(12)
+                .size(super::super::text_size(12))
                 .style(muted_text);
             let hostname_input = text_input("example.local", &self.edit_frontend_form.hostname)
                 .on_input(Message::EditFrontendHostChanged)
@@ -108,9 +108,9 @@ impl OddBoxGui {
                 .find(|o| o.id == self.edit_frontend_form.backend)
                 .cloned();
 
-            let backend_label = text("Backend").size(13).style(muted_text);
+            let backend_label = text("Backend").size(super::super::text_size(13)).style(muted_text);
             let backend_help = text("Select which backend handles requests for this host")
-                .size(12)
+                .size(super::super::text_size(12))
                 .style(muted_text);
             let backend_picker = pick_list(
                 backend_options,
@@ -125,28 +125,28 @@ impl OddBoxGui {
                 .label("Capture subdomains")
                 .on_toggle(Message::EditFrontendCaptureSubdomainsToggled);
             let capture_help = text("Match *.example.com as well as the root host")
-                .size(12)
+                .size(super::super::text_size(12))
                 .style(muted_text);
 
             let forward_toggle = checkbox(self.edit_frontend_form.forward_subdomains)
                 .label("Forward subdomains")
                 .on_toggle(Message::EditFrontendForwardSubdomainsToggled);
             let forward_help = text("Preserve the subdomain in the upstream host header")
-                .size(12)
+                .size(super::super::text_size(12))
                 .style(muted_text);
 
             let redirect_toggle = checkbox(self.edit_frontend_form.redirect_to_https)
                 .label("Redirect HTTP to HTTPS")
                 .on_toggle(Message::EditFrontendRedirectHttpsToggled);
             let redirect_help = text("Send HTTP requests to HTTPS for this host")
-                .size(12)
+                .size(super::super::text_size(12))
                 .style(muted_text);
 
             let lets_encrypt_toggle = checkbox(self.edit_frontend_form.lets_encrypt)
                 .label("Use Let's Encrypt")
                 .on_toggle(Message::EditFrontendLetsEncryptToggled);
             let lets_encrypt_help = text("Enable ACME certificates for this host")
-                .size(12)
+                .size(super::super::text_size(12))
                 .style(muted_text);
 
             let fields = column![
@@ -160,7 +160,7 @@ impl OddBoxGui {
             .spacing(6);
 
             let options = column![
-                text("Options").size(14).style(muted_text),
+                text("Options").size(super::super::text_size(14)).style(muted_text),
                 capture_toggle,
                 capture_help,
                 forward_toggle,
@@ -209,9 +209,9 @@ impl OddBoxGui {
         });
 
         let mut content = column![
-            text("Edit Frontend").size(20),
+            text("Edit Frontend").size(super::super::text_size(20)),
             text("Route settings (HTTP frontend)")
-                .size(13)
+                .size(super::super::text_size(13))
                 .style(muted_text),
             layout,
             actions,

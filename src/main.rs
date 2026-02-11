@@ -79,6 +79,7 @@ pub mod global_state {
         pub config: std::sync::Arc<arc_swap::ArcSwap<crate::configuration::ConfigWrapper>>,
         pub target_request_counts: dashmap::DashMap<String, AtomicU64>,
         pub cruma_config: std::sync::Arc<arc_swap::ArcSwap<cruma_proxy_lib::types::Configuration>>,
+        pub docker_discovery: std::sync::Arc<arc_swap::ArcSwap<Vec<crate::docker::DiscoveredContainer>>>,
         pub tui_log_buffer: std::sync::Arc<crate::logging::SharedLogBuffer>,
     }
     impl GlobalState {
@@ -103,6 +104,7 @@ pub mod global_state {
                 config,
                 target_request_counts: dashmap::DashMap::new(),
                 cruma_config,
+                docker_discovery: Arc::new(arc_swap::ArcSwap::from_pointee(Vec::new())),
                 tui_log_buffer,
             }
         }
@@ -560,7 +562,10 @@ async fn main() -> anyhow::Result<()> {
     // Before starting the proxy thread(s) we need to initialize the tracing system and the tui if enabled.
     if tui_flag {
         tui::init();
-        tui_task = Some(tokio::spawn(tui::run(global_state.clone())));
+        tui_task = Some(tokio::spawn(tui::run(
+            global_state.clone(),
+            args.theme.clone(),
+        )));
     }
 
     match &cruma_mode {
@@ -859,15 +864,90 @@ impl fmt::Debug for OddLogHandle {
 
 // we could probably subscribe to the docker socket instead of having this stupid loop..
 // this does however seem to work fine and is rather simple, so keeping it for now :)
+fn connect_container_runtimes() -> Vec<(String, bollard::Docker)> {
+    let mut clients = Vec::new();
+    if let Ok(client) = bollard::Docker::connect_with_local_defaults() {
+        clients.push(("default".to_string(), client));
+    }
+
+    let mut socket_candidates: Vec<(String, String)> = vec![
+        ("docker".to_string(), "/var/run/docker.sock".to_string()),
+        ("podman-system".to_string(), "/run/podman/podman.sock".to_string()),
+        ("podman-system".to_string(), "/var/run/podman/podman.sock".to_string()),
+    ];
+    if let Ok(xdg_runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        socket_candidates.push((
+            "podman-user".to_string(),
+            format!("{xdg_runtime_dir}/podman/podman.sock"),
+        ));
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    for (label, socket_path) in socket_candidates {
+        if !std::path::Path::new(&socket_path).exists() || !seen.insert(socket_path.clone()) {
+            continue;
+        }
+        let host = format!("unix://{socket_path}");
+        match bollard::Docker::connect_with_unix(&host, 120, &bollard::API_DEFAULT_VERSION) {
+            Ok(client) => clients.push((label, client)),
+            Err(err) => tracing::debug!(
+                "container runtime socket {} unavailable: {}",
+                socket_path,
+                err
+            ),
+        }
+    }
+
+    clients
+}
+
 pub async fn docker_thread(state: Arc<GlobalState>) {
     loop {
-        if let Ok(docker) = bollard::Docker::connect_with_local_defaults() {
-            let running_container_targets = docker::get_container_proxy_targets(&docker)
-                .await
-                .unwrap_or_default();
+        let runtime_clients = connect_container_runtimes();
+        if !runtime_clients.is_empty() {
+            let mut discovered_containers = Vec::new();
+            let mut running_container_targets_by_host: std::collections::BTreeMap<
+                String,
+                crate::docker::ContainerProxyTarget,
+            > = std::collections::BTreeMap::new();
+
+            for (runtime, docker) in runtime_clients {
+                let mut discovered = docker::discover_containers(&docker).await.unwrap_or_default();
+                for item in &mut discovered {
+                    item.runtime = runtime.clone();
+                }
+                discovered_containers.extend(discovered);
+
+                let mut targets = docker::get_container_proxy_targets(&docker)
+                    .await
+                    .unwrap_or_default();
+                for target in &mut targets {
+                    target.runtime = runtime.clone();
+                }
+                for target in targets {
+                    let host = target.generate_host_name();
+                    match running_container_targets_by_host.entry(host.clone()) {
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(target);
+                        }
+                        std::collections::btree_map::Entry::Occupied(_) => {
+                            tracing::warn!(
+                                "Container host '{}' discovered in multiple runtimes; keeping first and skipping duplicate from runtime '{}'",
+                                host,
+                                runtime
+                            );
+                        }
+                    }
+                }
+            }
+
+            state
+                .docker_discovery
+                .store(std::sync::Arc::new(discovered_containers));
+
             let running_container_targets_dash_map = dashmap::DashMap::new();
-            for x in running_container_targets {
-                running_container_targets_dash_map.insert(x.generate_host_name(), x);
+            for (host, target) in running_container_targets_by_host {
+                running_container_targets_dash_map.insert(host, target);
             }
 
             // Mark removed docker containers in the registry

@@ -26,7 +26,7 @@ impl OddBoxGui {
         if self.edit_backend_form.id.trim().is_empty() {
             errors.push(
                 text("Backend id is required.")
-                    .size(12)
+                    .size(super::super::text_size(12))
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
             );
@@ -37,7 +37,7 @@ impl OddBoxGui {
         {
             errors.push(
                 text("At least one endpoint is required.")
-                    .size(12)
+                    .size(super::super::text_size(12))
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
             );
@@ -48,7 +48,7 @@ impl OddBoxGui {
         {
             errors.push(
                 text("Directory is required.")
-                    .size(12)
+                    .size(super::super::text_size(12))
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
             );
@@ -65,7 +65,7 @@ impl OddBoxGui {
         {
             errors.push(
                 text("Cache max-age must be a number.")
-                    .size(12)
+                    .size(super::super::text_size(12))
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
             );
@@ -75,7 +75,7 @@ impl OddBoxGui {
         {
             errors.push(
                 text("Binary is required.")
-                    .size(12)
+                    .size(super::super::text_size(12))
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
             );
@@ -91,7 +91,7 @@ impl OddBoxGui {
         {
             errors.push(
                 text("Port must be a number.")
-                    .size(12)
+                    .size(super::super::text_size(12))
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
             );
@@ -100,19 +100,19 @@ impl OddBoxGui {
         let notice = self
             .edit_backend_notice
             .as_ref()
-            .map(|msg| text(msg).size(13).style(muted_text));
+            .map(|msg| text(msg).size(super::super::text_size(13)).style(muted_text));
 
         let mut actions_children: Vec<Element<'_, Message>> = vec![
-            button(text("Save").size(14))
+            button(text("Save").size(super::super::text_size(14)))
                 .on_press(Message::EditBackendSave)
                 .into(),
-            button(text("Back").size(14))
+            button(text("Back").size(super::super::text_size(14)))
                 .on_press(Message::NavigateTo(super::super::Page::Backends))
                 .into(),
         ];
         if !self.edit_backend_is_new {
             actions_children.push(
-                button(text("Delete").size(14))
+                button(text("Delete").size(super::super::text_size(14)))
                     .on_press(Message::EditBackendDelete)
                     .into(),
             );
@@ -140,13 +140,13 @@ impl OddBoxGui {
                 BackendKind::Unknown => "Unknown Backend",
             };
 
-            let id_label = text("Backend ID").size(13).style(muted_text);
+            let id_label = text("Backend ID").size(super::super::text_size(13)).style(muted_text);
             let id_input = text_input("backend-id", &self.edit_backend_form.id)
                 .on_input(|v| Message::EditBackendFieldChanged(EditBackendField::Id(v)))
                 .padding(8)
                 .width(Length::Fill);
             let header = column![
-                text(kind_label).size(14).style(muted_text),
+                text(kind_label).size(super::super::text_size(14)).style(muted_text),
                 id_label,
                 id_input,
             ]
@@ -154,9 +154,9 @@ impl OddBoxGui {
 
             let (fields_card, info_card) = match self.edit_backend_form.kind {
                 BackendKind::Remote => {
-                    let endpoints_label = text("Endpoints").size(13).style(muted_text);
+                    let endpoints_label = text("Endpoints").size(super::super::text_size(13)).style(muted_text);
                     let endpoints_help = text("Comma-separated host:port list")
-                        .size(12)
+                        .size(super::super::text_size(12))
                         .style(muted_text);
                     let endpoints_input = text_input(
                         "example.com:80, 10.0.0.5:8080",
@@ -166,9 +166,9 @@ impl OddBoxGui {
                     .padding(8)
                     .width(Length::Fill);
 
-                    let protocol_label = text("Protocol").size(13).style(muted_text);
+                    let protocol_label = text("Protocol").size(super::super::text_size(13)).style(muted_text);
                     let protocol_help = text("Upstream protocol (h1, h2, h2c, h2cpk)")
-                        .size(12)
+                        .size(super::super::text_size(12))
                         .style(muted_text);
                     let protocol_picker = pick_list(
                         PROTOCOL_OPTIONS.as_slice(),
@@ -184,7 +184,7 @@ impl OddBoxGui {
                             Message::EditBackendFieldChanged(EditBackendField::Https(v))
                         });
                     let https_help = text("Enable if endpoints are HTTPS")
-                        .size(12)
+                        .size(super::super::text_size(12))
                         .style(muted_text);
 
                     let keep_host_toggle =
@@ -196,7 +196,7 @@ impl OddBoxGui {
                                 )
                             });
                     let keep_host_help = text("Forward the incoming Host header to upstream")
-                        .size(12)
+                        .size(super::super::text_size(12))
                         .style(muted_text);
 
                     let fields = column![
@@ -215,12 +215,12 @@ impl OddBoxGui {
                     .spacing(6);
 
                     let info = column![
-                        text("Remote Backend").size(14).style(muted_text),
+                        text("Remote Backend").size(super::super::text_size(14)).style(muted_text),
                         text("Routes to one or more upstream servers.")
-                            .size(12)
+                            .size(super::super::text_size(12))
                             .style(muted_text),
                         text("Use commas to list multiple endpoints.")
-                            .size(12)
+                            .size(super::super::text_size(12))
                             .style(muted_text),
                     ]
                     .spacing(6);
@@ -239,38 +239,38 @@ impl OddBoxGui {
                     )
                 }
                 BackendKind::Static => {
-                    let dir_label = text("Directory").size(13).style(muted_text);
+                    let dir_label = text("Directory").size(super::super::text_size(13)).style(muted_text);
                     let dir_help = text("Folder path to serve files from")
-                        .size(12)
+                        .size(super::super::text_size(12))
                         .style(muted_text);
                     let dir_input = text_input("/var/www/site", &self.edit_backend_form.dir)
                         .on_input(|v| Message::EditBackendFieldChanged(EditBackendField::Dir(v)))
                         .padding(8)
                         .width(Length::Fill);
-                    let dir_browse = button(text("Browse").size(12))
+                    let dir_browse = button(text("Browse").size(super::super::text_size(12)))
                         .padding(8)
                         .on_press(Message::EditBackendPickDir);
                     let resolved_dir = self.edit_backend_resolved_dir.as_ref().map(|path| {
                         text(format!("Resolved: {}", path))
-                            .size(12)
+                            .size(super::super::text_size(12))
                             .style(muted_text)
                     });
                     let resolve_error = self
                         .edit_backend_resolve_error
                         .as_ref()
-                        .map(|err| text(err).size(12).color(Color::from_rgb(0.9, 0.3, 0.3)));
+                        .map(|err| text(err).size(super::super::text_size(12)).color(Color::from_rgb(0.9, 0.3, 0.3)));
                     let has_vars = self.edit_backend_form.dir.contains("$root_dir")
                         || self.edit_backend_form.dir.contains("$cfg_dir")
                         || self.edit_backend_form.dir.contains('~');
                     let vars_help = column![
-                        text("Available variables:").size(12).style(muted_text),
+                        text("Available variables:").size(super::super::text_size(12)).style(muted_text),
                         text("$root_dir  Project root directory")
-                            .size(12)
+                            .size(super::super::text_size(12))
                             .style(muted_text),
                         text("$cfg_dir   Directory of the config file")
-                            .size(12)
+                            .size(super::super::text_size(12))
                             .style(muted_text),
-                        text("~          Home directory").size(12).style(muted_text),
+                        text("~          Home directory").size(super::super::text_size(12)).style(muted_text),
                     ]
                     .spacing(2);
 
@@ -286,7 +286,7 @@ impl OddBoxGui {
                             Message::EditBackendFieldChanged(EditBackendField::RenderMarkdown(v))
                         });
 
-                    let cache_label = text("Cache max-age (seconds)").size(13).style(muted_text);
+                    let cache_label = text("Cache max-age (seconds)").size(super::super::text_size(13)).style(muted_text);
                     let cache_input = text_input("3600", &self.edit_backend_form.cache_max_age)
                         .on_input(|v| {
                             Message::EditBackendFieldChanged(EditBackendField::CacheMaxAge(v))
@@ -294,7 +294,7 @@ impl OddBoxGui {
                         .padding(8)
                         .width(Length::Fill);
                     let cache_help = text("Sets Cache-Control: max-age=<seconds> on responses")
-                        .size(12)
+                        .size(super::super::text_size(12))
                         .style(muted_text);
 
                     let mut path_box = column![
@@ -313,7 +313,7 @@ impl OddBoxGui {
                     }
 
                     let options_box = column![
-                        text("Options").size(14).style(muted_text),
+                        text("Options").size(super::super::text_size(14)).style(muted_text),
                         list_toggle,
                         render_toggle,
                         cache_label,
@@ -342,18 +342,18 @@ impl OddBoxGui {
                     )
                 }
                 BackendKind::Process => {
-                    let bin_label = text("Binary").size(13).style(muted_text);
+                    let bin_label = text("Binary").size(super::super::text_size(13)).style(muted_text);
                     let bin_input = text_input("my-app", &self.edit_backend_form.proc_bin)
                         .on_input(|v| {
                             Message::EditBackendFieldChanged(EditBackendField::ProcBin(v))
                         })
                         .padding(8)
                         .width(Length::Fill);
-                    let bin_browse = button(text("Browse").size(12))
+                    let bin_browse = button(text("Browse").size(super::super::text_size(12)))
                         .padding(8)
                         .on_press(Message::EditBackendPickBin);
                     let bin_help = text("Path or command to execute")
-                        .size(12)
+                        .size(super::super::text_size(12))
                         .style(muted_text);
                     let bin_trimmed = self.edit_backend_form.proc_bin.trim();
                     let bin_path = std::path::Path::new(bin_trimmed);
@@ -364,23 +364,23 @@ impl OddBoxGui {
                     let bin_missing_msg = if bin_missing {
                         Some(
                             text("Binary not found on disk.")
-                                .size(12)
+                                .size(super::super::text_size(12))
                                 .color(Color::from_rgb(0.9, 0.3, 0.3)),
                         )
                     } else {
                         None
                     };
 
-                    let args_label = text("Args").size(13).style(muted_text);
+                    let args_label = text("Args").size(super::super::text_size(13)).style(muted_text);
                     let args_input = text_input("--flag value", &self.edit_backend_form.proc_args)
                         .on_input(|v| {
                             Message::EditBackendFieldChanged(EditBackendField::ProcArgs(v))
                         })
                         .padding(8)
                         .width(Length::Fill);
-                    let args_help = text("Space-separated arguments").size(12).style(muted_text);
+                    let args_help = text("Space-separated arguments").size(super::super::text_size(12)).style(muted_text);
 
-                    let dir_label = text("Working dir").size(13).style(muted_text);
+                    let dir_label = text("Working dir").size(super::super::text_size(13)).style(muted_text);
                     let dir_input = text_input("/path/to/app", &self.edit_backend_form.proc_dir)
                         .on_input(|v| {
                             Message::EditBackendFieldChanged(EditBackendField::ProcDir(v))
@@ -388,10 +388,10 @@ impl OddBoxGui {
                         .padding(8)
                         .width(Length::Fill);
                     let dir_help = text("Optional working directory")
-                        .size(12)
+                        .size(super::super::text_size(12))
                         .style(muted_text);
 
-                    let protocol_label = text("Protocol").size(13).style(muted_text);
+                    let protocol_label = text("Protocol").size(super::super::text_size(13)).style(muted_text);
                     let protocol_picker = pick_list(
                         PROTOCOL_OPTIONS.as_slice(),
                         Some(self.edit_backend_form.protocol.clone()),
@@ -406,7 +406,7 @@ impl OddBoxGui {
                             Message::EditBackendFieldChanged(EditBackendField::Https(v))
                         });
 
-                    let port_label = text("Port (optional)").size(13).style(muted_text);
+                    let port_label = text("Port (optional)").size(super::super::text_size(13)).style(muted_text);
                     let port_input = text_input("8080", &self.edit_backend_form.proc_port)
                         .on_input(|v| {
                             Message::EditBackendFieldChanged(EditBackendField::ProcPort(v))
@@ -414,7 +414,7 @@ impl OddBoxGui {
                         .padding(8)
                         .width(Length::Fill);
 
-                    let env_label = text("Env vars").size(13).style(muted_text);
+                    let env_label = text("Env vars").size(super::super::text_size(13)).style(muted_text);
                     let env_input =
                         text_input("KEY=VALUE, OTHER=VALUE", &self.edit_backend_form.proc_env)
                             .on_input(|v| {
@@ -423,10 +423,10 @@ impl OddBoxGui {
                             .padding(8)
                             .width(Length::Fill);
                     let env_help = text("Comma-separated or one per line (KEY=VALUE)")
-                        .size(12)
+                        .size(super::super::text_size(12))
                         .style(muted_text);
 
-                    let log_level_label = text("Process log level").size(13).style(muted_text);
+                    let log_level_label = text("Process log level").size(super::super::text_size(13)).style(muted_text);
                     let log_level_picker = pick_list(
                         ProcessLogLevelChoice::ALL.as_slice(),
                         Some(self.edit_backend_form.proc_log_level),
@@ -435,7 +435,7 @@ impl OddBoxGui {
                     .padding(8)
                     .width(Length::Fill);
                     let log_level_help = text("Overrides default process log level")
-                        .size(12)
+                        .size(super::super::text_size(12))
                         .style(muted_text);
 
                     let auto_start_toggle = checkbox(self.edit_backend_form.proc_auto_start)
@@ -484,9 +484,9 @@ impl OddBoxGui {
                     }
 
                     let info = column![
-                        text("Process Backend").size(14).style(muted_text),
+                        text("Process Backend").size(super::super::text_size(14)).style(muted_text),
                         text("Managed by odd-box. Changes take effect after reload.")
-                            .size(12)
+                            .size(super::super::text_size(12))
                             .style(muted_text),
                     ]
                     .spacing(6);
@@ -503,12 +503,12 @@ impl OddBoxGui {
                     let mut global_env_list = column![];
                     for line in global_env_lines {
                         global_env_list =
-                            global_env_list.push(text(line).size(12).style(muted_text));
+                            global_env_list.push(text(line).size(super::super::text_size(12)).style(muted_text));
                     }
                     let global_env = column![
-                        text("Global Env Vars").size(14).style(muted_text),
+                        text("Global Env Vars").size(super::super::text_size(14)).style(muted_text),
                         text("Applies to all process backends.")
-                            .size(12)
+                            .size(super::super::text_size(12))
                             .style(muted_text),
                         global_env_list,
                     ]
@@ -538,12 +538,12 @@ impl OddBoxGui {
                     )
                 }
                 BackendKind::Unknown => {
-                    let note = text("Backend not found.").size(12).style(muted_text);
+                    let note = text("Backend not found.").size(super::super::text_size(12)).style(muted_text);
                     let fields = column![header, note].spacing(6);
                     let info = column![
-                        text("Unknown Backend").size(14).style(muted_text),
+                        text("Unknown Backend").size(super::super::text_size(14)).style(muted_text),
                         text("Select a backend from the Backends list.")
-                            .size(12)
+                            .size(super::super::text_size(12))
                             .style(muted_text),
                     ]
                     .spacing(6);
@@ -587,8 +587,8 @@ impl OddBoxGui {
         });
 
         let mut content = column![
-            text("Edit Backend").size(20),
-            text("Backend settings").size(13).style(muted_text),
+            text("Edit Backend").size(super::super::text_size(20)),
+            text("Backend settings").size(super::super::text_size(13)).style(muted_text),
             layout,
             actions,
         ]

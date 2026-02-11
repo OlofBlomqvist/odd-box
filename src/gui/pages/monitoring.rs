@@ -26,7 +26,7 @@ pub(in crate::gui) struct CachedLogLine {
 impl OddBoxGui {
     pub(in crate::gui) fn view_monitoring(&self) -> Element<'_, Message> {
         let title_row = row![
-            text("Monitoring").size(20),
+            text("Monitoring").size(super::super::text_size(20)),
             Space::new().width(Length::Fill),
             button(text("Clear Logs"))
                 .padding(Padding {
@@ -86,7 +86,7 @@ impl OddBoxGui {
         };
 
         let header = row![
-            text("Log Entry").size(20),
+            text("Log Entry").size(super::super::text_size(20)),
             Space::new().width(Length::Fill),
             button(text("Close"))
                 .padding(Padding {

@@ -13,14 +13,14 @@ impl OddBoxGui {
     pub(in crate::gui) fn view_backends(&self) -> Element<'_, Message> {
         let mut sections: Vec<Element<'_, Message>> = Vec::new();
         let actions = row![
-            button(text("Add Remote").size(14))
+            button(text("Add Remote").size(super::super::text_size(14)))
                 .on_press(Message::OpenNewBackend(super::super::BackendKind::Remote)),
-            button(text("Add Static").size(14))
+            button(text("Add Static").size(super::super::text_size(14)))
                 .on_press(Message::OpenNewBackend(super::super::BackendKind::Static)),
-            button(text("Add Process").size(14))
+            button(text("Add Process").size(super::super::text_size(14)))
                 .on_press(Message::OpenNewBackend(super::super::BackendKind::Process)),
-            button(text("Start All").size(14)).on_press(Message::ProcessStartAll),
-            button(text("Stop All").size(14)).on_press(Message::ProcessStopAll),
+            button(text("Start All").size(super::super::text_size(14))).on_press(Message::ProcessStartAll),
+            button(text("Stop All").size(super::super::text_size(14))).on_press(Message::ProcessStopAll),
         ]
         .spacing(8);
 
