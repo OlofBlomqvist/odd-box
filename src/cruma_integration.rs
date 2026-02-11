@@ -260,10 +260,14 @@ pub fn build_config_with_runtime_ports(
                             web_backends.insert(cruma_backend_id.clone(), web_backend);
                         }
 
-                        http_routes.push(http_route(
+                        // For process backends on loopback, preserve the original host header
+                        let middlewares = vec![HttpMiddleware::RewriteHost { to: host.clone() }];
+
+                        http_routes.push(http_route_with_middlewares(
                             host.clone(),
                             host_pattern(host, capture_subdomains),
                             cruma_backend_id,
+                            middlewares,
                         ));
                     }
 

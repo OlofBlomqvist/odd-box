@@ -19,14 +19,6 @@ backends:
     render_markdown: true
     cache_max_age: 3600
 
-  BE1:
-    type: static
-    dir: $cfg_dir/docs/book
-    index: index.html
-    list_dir: true
-    render_markdown: true
-    cache_max_age: null
-
   BE3:
     type: process
     bin: podman
@@ -50,6 +42,14 @@ backends:
     log_level: null
     log_format: null
 
+  BE1:
+    type: static
+    dir: $cfg_dir/docs/book
+    index: index.html
+    list_dir: true
+    render_markdown: true
+    cache_max_age: null
+
   BE4:
     type: process
     bin: /nix/store/n9xlfadcp7avgi4w87w41k8vnnyi4hm8-user-environment/bin/caddy
@@ -71,18 +71,6 @@ backends:
     log_level: null
     log_format: null
 
-  BE5:
-    type: remote
-
-    endpoints:
-
-      - addr: lobste.rs
-        port: 443
-
-    protocol: h1
-    https: true
-    keep_original_host_header: false
-
   BE6:
     type: process
     bin: python
@@ -102,15 +90,33 @@ backends:
     log_level: null
     log_format: null
 
+  BE5:
+    type: remote
+
+    endpoints:
+
+      - addr: lobste.rs
+        port: 443
+
+    protocol: h1
+    https: true
+    keep_original_host_header: false
+
 frontends:
 
   http:
-    port: 8080
+    port: 80
 
     routes:
+      py.localtest.me: BE4
+      B.localhost: BE1
       lobsters.localtest.me: BE3
+      B2.localhost: BE1
+      C3.localhost: BE2
       odd-box-docs.localhost: BE2
-      A1.localtest.me: BE6
+      C.localhost: BE2
+      hello-hi: BE2
+      A.localtest.me: BE1
 
       images1.local:
         backend: BE2
@@ -120,16 +126,10 @@ frontends:
         lets_encrypt: false
 
       test2.localhost: BE1
-      B2.localhost: BE1
+      A1.localtest.me: BE6
       nginx.localhost: BE4
-      C.localhost: BE2
-      C3.localhost: BE2
-      hello-hi: BE2
-      B.localhost: BE1
-      A.localtest.me: BE1
-      py.localtest.me: BE4
 
   https:
-    port: 4343
+    port: 443
     cert: self_signed
     routes: inherit
