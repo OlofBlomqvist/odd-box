@@ -79,7 +79,7 @@ pub enum TrayState {
 /// This handle provides methods to update the tray menu state and
 /// receive commands from user interactions.
 pub struct TrayHandle {
-    _tray: Arc<Mutex<TrayIcon>>,
+    tray: Arc<Mutex<TrayIcon>>,
     /// Receiver for commands from tray menu interactions
     pub command_rx: Receiver<TrayCommand>,
     /// The toggle menu item (Show/Hide) - kept for updating text
@@ -227,7 +227,7 @@ impl TrayHandle {
         });
 
         Ok(TrayHandle {
-            _tray: Arc::new(Mutex::new(tray)),
+            tray: Arc::new(Mutex::new(tray)),
             command_rx,
             toggle_item: toggle_item_for_handle,
             quit_item: quit_item_for_handle,
@@ -259,8 +259,92 @@ impl TrayHandle {
         self.quit_item.set_enabled(false);
         // Update text to indicate shutting down
         self.quit_item.set_text("Quitting...");
+        // Update icon to grayed-out version
+        if let Ok(gray_icon) = build_gray_tray_icon() {
+            if let Ok(tray) = self.tray.lock() {
+                #[cfg(target_os = "macos")]
+                let _ = tray.set_icon_as_template(true);
+                let _ = tray.set_icon(Some(gray_icon));
+            }
+        }
         info!("Tray menu disabled for shutdown");
     }
+}
+
+/// Build a grayed-out version of the tray icon for shutdown state
+fn build_gray_tray_icon() -> Result<Icon, String> {
+    let rgba = build_gray_box_icon_rgba();
+    Icon::from_rgba(rgba, ICON_SIZE, ICON_SIZE)
+        .map_err(|e| format!("Failed to create gray tray icon: {:?}", e))
+}
+
+/// Build a grayed-out procedural isometric box icon as RGBA data
+fn build_gray_box_icon_rgba() -> Vec<u8> {
+    let size = ICON_SIZE;
+    let mut rgba = vec![0u8; (size * size * 4) as usize];
+
+    // On macOS, use template style (outline only, black + alpha but dimmed)
+    // On other platforms, use grayed-out colored faces
+    #[cfg(target_os = "macos")]
+    let use_template = true;
+    #[cfg(not(target_os = "macos"))]
+    let use_template = false;
+
+    // Grayed-out colors for non-macOS platforms
+    const GRAY_EDGE_R: u8 = 120;
+    const GRAY_EDGE_G: u8 = 120;
+    const GRAY_EDGE_B: u8 = 120;
+    const GRAY_TOP_R: u8 = 180;
+    const GRAY_TOP_G: u8 = 180;
+    const GRAY_TOP_B: u8 = 180;
+    const GRAY_LEFT_R: u8 = 160;
+    const GRAY_LEFT_G: u8 = 160;
+    const GRAY_LEFT_B: u8 = 160;
+    const GRAY_RIGHT_R: u8 = 140;
+    const GRAY_RIGHT_G: u8 = 140;
+    const GRAY_RIGHT_B: u8 = 140;
+
+    for y in 0..size {
+        for x in 0..size {
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+            let idx = ((y * size + x) * 4) as usize;
+
+            if use_template {
+                // macOS template style: outline only but with reduced alpha for gray effect
+                let alpha: u8 = if is_on_edge(px, py) {
+                    128 // Dimmed edges for shutdown state
+                } else {
+                    0 // Everything else transparent
+                };
+
+                rgba[idx] = 0; // R
+                rgba[idx + 1] = 0; // G
+                rgba[idx + 2] = 0; // B
+                rgba[idx + 3] = alpha;
+            } else {
+                // Grayed-out colored icon for Windows/Linux
+                let (r, g, b, a) = if is_on_edge(px, py) {
+                    (GRAY_EDGE_R, GRAY_EDGE_G, GRAY_EDGE_B, 255u8)
+                } else if is_in_top_face(px, py) {
+                    (GRAY_TOP_R, GRAY_TOP_G, GRAY_TOP_B, 255u8)
+                } else if is_in_left_face(px, py) {
+                    (GRAY_LEFT_R, GRAY_LEFT_G, GRAY_LEFT_B, 255u8)
+                } else if is_in_right_face(px, py) {
+                    (GRAY_RIGHT_R, GRAY_RIGHT_G, GRAY_RIGHT_B, 255u8)
+                } else {
+                    (0, 0, 0, 0u8)
+                };
+
+                rgba[idx] = r;
+                rgba[idx + 1] = g;
+                rgba[idx + 2] = b;
+                rgba[idx + 3] = a;
+            }
+        }
+    }
+
+    rgba
 }
 
 /// Check if a point is inside the top face (diamond shape)

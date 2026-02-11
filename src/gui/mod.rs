@@ -1575,6 +1575,10 @@ impl OddBoxGui {
                                 // Immediately disable tray menu items to show we're shutting down
                                 tray.set_shutting_down();
                                 
+                                // Remove from Dock immediately
+                                #[cfg(target_os = "macos")]
+                                macos_app_icon::set_activation_policy(macos_app_icon::ActivationPolicy::Accessory);
+                                
                                 self.state.exit.store(true, std::sync::atomic::Ordering::SeqCst);
                                 // Force exit after timeout if graceful shutdown fails
                                 std::thread::spawn(|| {
@@ -1582,7 +1586,9 @@ impl OddBoxGui {
                                     std::process::exit(0);
                                 });
                                 if let Some(id) = self.window_id {
+                                    // Hide window immediately, then close and exit
                                     return Task::batch(vec![
+                                        window::set_mode(id, window::Mode::Hidden),
                                         window::close(id),
                                         iced::exit(),
                                     ]);
