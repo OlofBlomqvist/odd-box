@@ -32,7 +32,7 @@ impl HttpEventSink for OddBoxHttpEventSink {
                     handle_stop_command(&self.state, &proc_host, host.as_deref(), &path);
                 }
 
-                tracing::info!(
+                tracing::trace!(
                     method = %method,
                     host = ?host,
                     path = %path,
@@ -68,7 +68,7 @@ impl HttpEventSink for OddBoxHttpEventSink {
                     .get(backend_id)
                     .and_then(|h| h.active_port());
                 let configured_port = proc_backend.port;
-                tracing::info!(
+                tracing::trace!(
                     backend_id = %backend_id,
                     host = %host,
                     active_port = ?active_port,

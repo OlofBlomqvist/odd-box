@@ -1,5 +1,6 @@
 pub mod components;
 pub mod logs;
+mod macos_app_icon;
 mod pages;
 
 use iced::clipboard;
@@ -81,6 +82,7 @@ pub fn run(
     theme_mode: ThemeMode,
     log_state: SharedLogState,
 ) -> iced::Result {
+    macos_app_icon::apply_default_icon();
     let use_glass_effects = cfg!(target_os = "macos");
     let initial_window_size = iced::Size::new(1200.0, 800.0);
     set_gui_text_scale(initial_window_size);
