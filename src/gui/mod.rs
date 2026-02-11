@@ -2046,15 +2046,15 @@ impl OddBoxGui {
         container(sidebar_content)
             .style(|theme: &Theme| {
                 let use_glass_effects = cfg!(target_os = "macos");
-                let palette = theme.extended_palette();
-                let bg = palette.background.weak.color;
+                let bg = theme.extended_palette().background.base.color;
                 let base_bg = theme.palette().background;
                 let is_light = (0.299 * base_bg.r + 0.587 * base_bg.g + 0.114 * base_bg.b) > 0.5;
-                let shade = if is_light { 1.0 } else { 0.5 };
-                let alpha = if use_glass_effects {
-                    if is_light { 0.22 } else { 0.30 }
+                let (shade, alpha) = if use_glass_effects {
+                    let shade = if is_light { 0.7 } else { 0.52 };
+                    let alpha = if is_light { 0.07 } else { 0.106 };
+                    (shade, alpha)
                 } else {
-                    1.0
+                    (1.0, 1.0)
                 };
                 container::Style {
                     background: Some(Background::Color(Color::from_rgba(
@@ -2151,21 +2151,20 @@ impl OddBoxGui {
                     container: container::Style {
                         background: Some(Background::Color({
                             let use_glass_effects = cfg!(target_os = "macos");
-                            let bg = theme.extended_palette().background.base.color;
-                            if use_glass_effects {
-                                let base_bg = theme.palette().background;
-                                let is_light = (0.299 * base_bg.r
-                                    + 0.587 * base_bg.g
-                                    + 0.114 * base_bg.b)
-                                    > 0.5;
-                                let shade = if is_light { 0.7 } else { 0.52 };
-                                let alpha = if is_light { 0.07 } else { 0.106 };
-                                Color::from_rgba(bg.r * shade, bg.g * shade, bg.b * shade, alpha)
+                            let palette = theme.extended_palette();
+                            let bg = palette.background.weak.color;
+                            let base_bg = theme.palette().background;
+                            let is_light = (0.299 * base_bg.r
+                                + 0.587 * base_bg.g
+                                + 0.114 * base_bg.b)
+                                > 0.5;
+                            let shade = if is_light { 1.0 } else { 0.5 };
+                            let alpha = if use_glass_effects {
+                                if is_light { 0.22 } else { 0.30 }
                             } else {
-                                // Non-macOS uses opaque surfaces; avoid extra darkening so pages
-                                // match Monitoring's baseline readability.
-                                Color::from_rgba(bg.r, bg.g, bg.b, 1.0)
-                            }
+                                1.0
+                            };
+                            Color::from_rgba(bg.r * shade, bg.g * shade, bg.b * shade, alpha)
                         })),
                         ..Default::default()
                     },
