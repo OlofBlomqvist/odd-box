@@ -77,7 +77,7 @@ pub fn run(
         // Use theme's background with transparency for blur effect
         let bg = theme.palette().background;
         theme::Style {
-            background_color: Color::from_rgba(bg.r, bg.g, bg.b, 0.85),
+            background_color: Color::from_rgba(bg.r, bg.g, bg.b, 0.75),
             text_color: theme.palette().text,
         }
     })

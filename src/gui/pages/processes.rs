@@ -1,4 +1,4 @@
-use iced::widget::{button, container, row, text};
+use iced::widget::{button, column, container, row, text};
 use iced::{Border, Color, Element, Font, Length, Padding, Theme};
 
 use crate::global_state::ProcState;
@@ -23,7 +23,6 @@ impl OddBoxGui {
             TableColumn::fixed("Protocol", 80.0),
             TableColumn::fixed("Status", 100.0),
             TableColumn::fixed("Auto", 60.0),
-            TableColumn::fixed("Actions", 140.0),
         ];
 
         let mut table = Table::new(columns);
@@ -38,28 +37,17 @@ impl OddBoxGui {
                 _ => Color::from_rgb(0.6, 0.6, 0.6),
             };
 
-            let actions = self.build_process_actions(&proc.name, proc.state.clone());
-
-            let toggle_label = if is_expanded { "▼" } else { "▶" };
-            let toggle_btn = button(text(toggle_label).font(Font::MONOSPACE))
-                .padding(Padding {
-                    top: 2.0,
-                    right: 6.0,
-                    bottom: 2.0,
-                    left: 6.0,
-                })
-                .on_press(Message::ProcessToggleDetails(proc.name.clone()));
-            let name_cell = row![toggle_btn, text_cell(&proc.name)].spacing(6);
-
-            table = table.push_row(vec![
-                name_cell.into(),
-                text_cell(&proc.bin),
-                text_cell(&proc.port),
-                text_cell(&proc.protocol),
-                colored_text_cell(format!("{:?}", proc.state), status_color),
-                bool_cell(proc.auto_start),
-                actions,
-            ]);
+            table = table.push_row_with_message(
+                vec![
+                    text_cell(&proc.name),
+                    text_cell(&proc.bin),
+                    text_cell(&proc.port),
+                    text_cell(&proc.protocol),
+                    colored_text_cell(format!("{:?}", proc.state), status_color),
+                    bool_cell(proc.auto_start),
+                ],
+                Message::ProcessToggleDetails(proc.name.clone()),
+            );
 
             if is_expanded {
                 let configured_port = proc
@@ -88,11 +76,13 @@ impl OddBoxGui {
                     },
                     env_text
                 );
-                let detail_cell = text(details)
+                let detail_text = text(details)
                     .font(Font::MONOSPACE)
                     .size(12)
                     .wrapping(Wrapping::Word);
-                let detail_row = container(detail_cell)
+                let actions = self.build_process_actions(&proc.name, proc.state.clone());
+                let detail_content = column![detail_text, actions].spacing(8);
+                let detail_row = container(detail_content)
                     .padding(Padding {
                         top: 6.0,
                         right: 12.0,

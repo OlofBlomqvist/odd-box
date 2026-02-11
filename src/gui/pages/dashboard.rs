@@ -14,7 +14,6 @@ const CARD_GAP: f32 = 12.0;
 const COLOR_PROCESS: Color = Color::from_rgb(0.4, 0.6, 1.0);
 const COLOR_REMOTE: Color = Color::from_rgb(0.7, 0.5, 1.0);
 const COLOR_DIR_SERVER: Color = Color::from_rgb(0.3, 0.8, 0.7);
-const COLOR_FRONTEND: Color = Color::from_rgb(0.35, 0.8, 0.6);
 
 /// Status dot color based on process state
 fn status_color(state: &ProcState) -> Color {
@@ -37,9 +36,7 @@ fn card_button_style_with_accent(
     let palette = theme.extended_palette();
     let bg = palette.background.weaker.color;
     let (border_color, border_width) = match status {
-        button::Status::Hovered | button::Status::Pressed => {
-            (accent, 2.0)
-        }
+        button::Status::Hovered | button::Status::Pressed => (accent, 2.0),
         _ => (palette.background.strong.color, 1.0),
     };
     button::Style {
@@ -62,7 +59,7 @@ fn muted_text(theme: &Theme) -> iced::widget::text::Style {
     }
 }
 
-/// Build a site card for remote/static backends
+/// Build a site card
 fn site_card<'a>(
     name: &str,
     subtitle: &str,
@@ -125,23 +122,6 @@ fn site_card<'a>(
     }
 
     card.into()
-}
-
-fn frontend_card<'a>(
-    hostname: &str,
-    subtitle: &str,
-    state: &ProcState,
-    card_width: f32,
-) -> Element<'a, Message> {
-    site_card(
-        hostname,
-        subtitle,
-        "Frontend",
-        COLOR_FRONTEND,
-        state,
-        card_width,
-        Some(Message::OpenEditFrontend(hostname.to_string())),
-    )
 }
 
 /// Build a small stat box for the summary row
@@ -284,99 +264,257 @@ impl OddBoxGui {
                 }
             });
 
-            // --- Summary counts ---
-            let total = self.cached_config.routes.len();
+            // Route helpers
+            let route_count_for = |backend_name: &str| -> usize {
+                self.cached_config
+                    .routes
+                    .iter()
+                    .filter(|r| r.backend == backend_name)
+                    .count()
+            };
+            let route_hostname_for = |backend_name: &str| -> Option<&str> {
+                self.cached_config
+                    .routes
+                    .iter()
+                    .find(|r| r.backend == backend_name)
+                    .map(|r| r.hostname.as_str())
+            };
+            let backend_exists = |name: &str| -> bool {
+                self.cached_config.processes.iter().any(|p| p.name == name)
+                    || self
+                        .cached_config
+                        .remote_backends
+                        .iter()
+                        .any(|r| r.name == name)
+                    || self
+                        .cached_config
+                        .static_backends
+                        .iter()
+                        .any(|s| s.name == name)
+            };
+
+            // Summary counts (backend-centric)
+            let mut total = 0usize;
             let mut running = 0usize;
             let mut stopped = 0usize;
             let mut faulty = 0usize;
 
-            for route in &self.cached_config.routes {
-                let state = self
-                    .cached_config
-                    .processes
-                    .iter()
-                    .find(|p| p.name == route.backend)
-                    .map(|p| p.state.clone())
-                    .or_else(|| {
-                        self.cached_config
-                            .remote_backends
-                            .iter()
-                            .find(|b| b.name == route.backend)
-                            .map(|b| b.state.clone())
-                    })
-                    .or_else(|| {
-                        self.cached_config
-                            .static_backends
-                            .iter()
-                            .find(|b| b.name == route.backend)
-                            .map(|b| b.state.clone())
-                    })
-                    .unwrap_or(ProcState::Faulty);
-
-                match state {
-                    ProcState::Running | ProcState::Remote | ProcState::DirServer | ProcState::Docker => {
-                        running += 1;
-                    }
-                    ProcState::Stopped | ProcState::Starting | ProcState::Stopping => {
-                        stopped += 1;
-                    }
+            for proc in &self.cached_config.processes {
+                total += 1;
+                match proc.state {
+                    ProcState::Running
+                    | ProcState::Remote
+                    | ProcState::DirServer
+                    | ProcState::Docker => running += 1,
+                    ProcState::Stopped | ProcState::Starting | ProcState::Stopping => stopped += 1,
                     ProcState::Faulty => faulty += 1,
                 }
             }
+            for remote in &self.cached_config.remote_backends {
+                total += 1;
+                match remote.state {
+                    ProcState::Running
+                    | ProcState::Remote
+                    | ProcState::DirServer
+                    | ProcState::Docker => running += 1,
+                    ProcState::Stopped | ProcState::Starting | ProcState::Stopping => stopped += 1,
+                    ProcState::Faulty => faulty += 1,
+                }
+            }
+            for sb in &self.cached_config.static_backends {
+                total += 1;
+                match sb.state {
+                    ProcState::Running
+                    | ProcState::Remote
+                    | ProcState::DirServer
+                    | ProcState::Docker => running += 1,
+                    ProcState::Stopped | ProcState::Starting | ProcState::Stopping => stopped += 1,
+                    ProcState::Faulty => faulty += 1,
+                }
+            }
+            let orphan_count = self
+                .cached_config
+                .routes
+                .iter()
+                .filter(|r| !backend_exists(&r.backend))
+                .count();
+            total += orphan_count;
+            faulty += orphan_count;
 
             let summary_row = Row::with_children(vec![
-                stat_box("Routes", total, Color::WHITE),
+                stat_box("Sites", total, Color::WHITE),
                 stat_box("Running", running, Color::from_rgb(0.4, 0.8, 0.4)),
                 stat_box("Stopped", stopped, Color::from_rgb(0.6, 0.6, 0.6)),
                 stat_box("Faulty", faulty, Color::from_rgb(0.9, 0.3, 0.3)),
             ])
             .spacing(12);
 
-            // --- Category sections ---
             let mut sections: Vec<Element<'_, Message>> = Vec::new();
+            let color_muted = Color::from_rgb(0.5, 0.5, 0.5);
 
-            if !self.cached_config.routes.is_empty() {
+            // Process backends
+            if !self.cached_config.processes.is_empty() {
                 let cards: Vec<Element<'_, Message>> = self
                     .cached_config
-                    .routes
+                    .processes
                     .iter()
-                    .map(|route| {
-                        if let Some(proc_backend) = self
-                            .cached_config
-                            .processes
-                            .iter()
-                            .find(|p| p.name == route.backend)
-                        {
-                            let subtitle =
-                                format!("Process · {} · :{}", proc_backend.protocol, proc_backend.port);
-                            frontend_card(&route.hostname, &subtitle, &proc_backend.state, card_width)
-                        } else if let Some(remote) = self
-                            .cached_config
-                            .remote_backends
-                            .iter()
-                            .find(|r| r.name == route.backend)
-                        {
-                            let subtitle = format!("Remote · {}", remote.endpoints);
-                            frontend_card(&route.hostname, &subtitle, &remote.state, card_width)
-                        } else if let Some(dir) = self
-                            .cached_config
-                            .static_backends
-                            .iter()
-                            .find(|s| s.name == route.backend)
-                        {
-                            let subtitle = format!("Static · {}", dir.dir);
-                            frontend_card(&route.hostname, &subtitle, &dir.state, card_width)
-                        } else {
-                            let subtitle = format!("Missing backend · {}", route.backend);
-                            frontend_card(&route.hostname, &subtitle, &ProcState::Faulty, card_width)
-                        }
+                    .map(|proc| {
+                        let rc = route_count_for(&proc.name);
+                        let (card_name, subtitle) = match rc {
+                            1 => (
+                                route_hostname_for(&proc.name).unwrap_or(&proc.name),
+                                format!(
+                                    "backend: {} · {} · :{}",
+                                    proc.name, proc.protocol, proc.port
+                                ),
+                            ),
+                            0 => (
+                                proc.name.as_str(),
+                                format!("{} · :{} · no frontend", proc.protocol, proc.port),
+                            ),
+                            n => (
+                                proc.name.as_str(),
+                                format!("{} · :{} · {} routes", proc.protocol, proc.port, n),
+                            ),
+                        };
+                        let accent = if rc == 0 { color_muted } else { COLOR_PROCESS };
+                        site_card(
+                            card_name,
+                            &subtitle,
+                            "Process",
+                            accent,
+                            &proc.state,
+                            card_width,
+                            Some(Message::OpenEditBackend(proc.name.clone())),
+                        )
                     })
                     .collect();
-
                 sections.push(
                     column![
-                        section_header("Frontends", self.cached_config.routes.len(), COLOR_FRONTEND),
+                        section_header("Processes", cards.len(), COLOR_PROCESS),
                         rows_from_cards(cards, cols),
+                    ]
+                    .spacing(10)
+                    .into(),
+                );
+            }
+
+            // Remote backends
+            if !self.cached_config.remote_backends.is_empty() {
+                let cards: Vec<Element<'_, Message>> = self
+                    .cached_config
+                    .remote_backends
+                    .iter()
+                    .map(|remote| {
+                        let rc = route_count_for(&remote.name);
+                        let (card_name, subtitle) = match rc {
+                            1 => (
+                                route_hostname_for(&remote.name).unwrap_or(&remote.name),
+                                format!("backend: {} · {}", remote.name, remote.endpoints),
+                            ),
+                            0 => (
+                                remote.name.as_str(),
+                                format!("{} · no frontend", remote.endpoints),
+                            ),
+                            n => (
+                                remote.name.as_str(),
+                                format!("{} · {} routes", remote.endpoints, n),
+                            ),
+                        };
+                        let accent = if rc == 0 { color_muted } else { COLOR_REMOTE };
+                        site_card(
+                            card_name,
+                            &subtitle,
+                            "Remote",
+                            accent,
+                            &remote.state,
+                            card_width,
+                            Some(Message::OpenEditBackend(remote.name.clone())),
+                        )
+                    })
+                    .collect();
+                sections.push(
+                    column![
+                        section_header("Remote Backends", cards.len(), COLOR_REMOTE),
+                        rows_from_cards(cards, cols),
+                    ]
+                    .spacing(10)
+                    .into(),
+                );
+            }
+
+            // Static backends
+            if !self.cached_config.static_backends.is_empty() {
+                let cards: Vec<Element<'_, Message>> = self
+                    .cached_config
+                    .static_backends
+                    .iter()
+                    .map(|sb| {
+                        let rc = route_count_for(&sb.name);
+                        let (card_name, subtitle) = match rc {
+                            1 => (
+                                route_hostname_for(&sb.name).unwrap_or(&sb.name),
+                                format!("backend: {} · {}", sb.name, sb.dir),
+                            ),
+                            0 => (
+                                sb.name.as_str(),
+                                format!("{} · no frontend", sb.dir),
+                            ),
+                            n => (
+                                sb.name.as_str(),
+                                format!("{} · {} routes", sb.dir, n),
+                            ),
+                        };
+                        let accent = if rc == 0 { color_muted } else { COLOR_DIR_SERVER };
+                        site_card(
+                            card_name,
+                            &subtitle,
+                            "Static",
+                            accent,
+                            &sb.state,
+                            card_width,
+                            Some(Message::OpenEditBackend(sb.name.clone())),
+                        )
+                    })
+                    .collect();
+                sections.push(
+                    column![
+                        section_header("Static Backends", cards.len(), COLOR_DIR_SERVER),
+                        rows_from_cards(cards, cols),
+                    ]
+                    .spacing(10)
+                    .into(),
+                );
+            }
+
+            // Orphan routes (pointing to missing backends)
+            let orphan_cards: Vec<Element<'_, Message>> = self
+                .cached_config
+                .routes
+                .iter()
+                .filter(|r| !backend_exists(&r.backend))
+                .map(|route| {
+                    site_card(
+                        &route.hostname,
+                        &format!("Missing backend: {}", route.backend),
+                        "Faulty",
+                        Color::from_rgb(0.9, 0.3, 0.3),
+                        &ProcState::Faulty,
+                        card_width,
+                        Some(Message::OpenEditFrontend(route.hostname.clone())),
+                    )
+                })
+                .collect();
+            if !orphan_cards.is_empty() {
+                let count = orphan_cards.len();
+                sections.push(
+                    column![
+                        section_header(
+                            "Faulty Routes",
+                            count,
+                            Color::from_rgb(0.9, 0.3, 0.3)
+                        ),
+                        rows_from_cards(orphan_cards, cols),
                     ]
                     .spacing(10)
                     .into(),
