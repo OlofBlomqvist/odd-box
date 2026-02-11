@@ -327,6 +327,8 @@ pub enum Message {
     WindowIdResolved(Option<window::Id>),
     // Tray command received
     TrayCommandReceived,
+    // Tray quit phase 2 - complete the quit after window is hidden
+    TrayQuitPhase2,
     // Config data updated
     ConfigUpdated(CachedConfig),
     // Frontend port settings
@@ -551,6 +553,7 @@ pub struct OddBoxGui {
     pub(in crate::gui) global_env_notice: Option<String>,
     pub(in crate::gui) global_env_dirty: bool,
     exit_requested: bool,
+    tray_quit_pending: bool,
     frontend_http_port_input: String,
     frontend_https_port_input: String,
     frontend_port_notice: Option<String>,
@@ -1361,6 +1364,7 @@ impl OddBoxGui {
                 global_env_notice: None,
                 global_env_dirty: false,
                 exit_requested: false,
+                tray_quit_pending: false,
                 frontend_http_port_input: String::new(),
                 frontend_https_port_input: String::new(),
                 frontend_port_notice: None,
@@ -1572,31 +1576,54 @@ impl OddBoxGui {
                                 }
                             }
                             tray::TrayCommand::Quit => {
-                                // Immediately disable tray menu items to show we're shutting down
+                                // Phase 1: Immediate visual feedback
+                                // Gray out the tray icon and disable menu items
                                 tray.set_shutting_down();
                                 
                                 // Remove from Dock immediately
                                 #[cfg(target_os = "macos")]
                                 macos_app_icon::set_activation_policy(macos_app_icon::ActivationPolicy::Accessory);
                                 
-                                self.state.exit.store(true, std::sync::atomic::Ordering::SeqCst);
-                                // Force exit after timeout if graceful shutdown fails
-                                std::thread::spawn(|| {
-                                    std::thread::sleep(std::time::Duration::from_secs(2));
-                                    std::process::exit(0);
-                                });
+                                // Mark that we're in quit pending state
+                                self.tray_quit_pending = true;
+                                
+                                // Hide window immediately, then trigger phase 2 after a small delay
+                                // to ensure the window system has time to actually hide the window
                                 if let Some(id) = self.window_id {
-                                    // Hide window immediately, then close and exit
-                                    return Task::batch(vec![
-                                        window::set_mode(id, window::Mode::Hidden),
-                                        window::close(id),
-                                        iced::exit(),
-                                    ]);
+                                    return window::set_mode(id, window::Mode::Hidden)
+                                        .chain(Task::perform(
+                                            async {
+                                                // Small delay to let the window hide visually
+                                                std::thread::sleep(std::time::Duration::from_millis(50));
+                                            },
+                                            |_| Message::TrayQuitPhase2,
+                                        ));
                                 }
-                                return iced::exit();
+                                // No window, go directly to phase 2
+                                return Task::perform(async {}, |_| Message::TrayQuitPhase2);
                             }
                         }
                     }
+                }
+            }
+            Message::TrayQuitPhase2 => {
+                // Phase 2: Now that visual feedback is complete, trigger actual exit
+                // We set the exit flag which signals main.rs to start graceful shutdown.
+                // The GUI exits, allowing gui::run() to return, and main.rs handles
+                // waiting for processes to stop (up to 30 seconds).
+                if self.tray_quit_pending {
+                    self.tray_quit_pending = false;
+                    self.state.exit.store(true, std::sync::atomic::Ordering::SeqCst);
+                    
+                    // Exit the GUI - this allows gui::run() to return and main.rs
+                    // will handle the graceful shutdown of all processes
+                    if let Some(id) = self.window_id {
+                        return Task::batch(vec![
+                            window::close(id),
+                            iced::exit(),
+                        ]);
+                    }
+                    return iced::exit();
                 }
             }
             Message::ConfigUpdated(config) => {

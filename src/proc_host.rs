@@ -13,9 +13,12 @@ use std::process::{Child, ExitStatus};
 use std::time::Instant;
 
 #[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
+#[cfg(unix)]
 pub fn graceful_stop_pid_only(
     mut parent: Child,
-    include_direct_children: bool,
+    _include_direct_children: bool,
     total_timeout: Duration,
 ) -> io::Result<ExitStatus> {
     use nix::sys::signal::{
@@ -23,25 +26,23 @@ pub fn graceful_stop_pid_only(
         kill,
     };
     use nix::unistd::Pid;
-    use sysinfo::{ProcessRefreshKind, RefreshKind, System};
 
     let parent_pid = parent.id() as i32;
+    
+    // Since we spawn children with process_group(0), each child is its own process group leader.
+    // The process group ID (PGID) equals the child's PID.
+    // By signaling the negative PGID, we signal the entire process group (including grandchildren).
+    let pgid = parent_pid;
 
-    let child_pids: Vec<i32> = if include_direct_children {
-        let sys = System::new_with_specifics(
-            RefreshKind::nothing().with_processes(ProcessRefreshKind::everything()),
-        );
-
-        sys.processes()
-            .values()
-            .filter(|p| p.thread_kind().is_none())
-            .filter(|p| p.parent().map(|pp| pp.as_u32()) == Some(parent_pid as u32))
-            .map(|p| p.pid().as_u32() as i32)
-            .collect()
-    } else {
-        Vec::new()
-    };
-
+    /// Send a signal to an entire process group by using negative PID.
+    /// This signals all processes in the group, not just the leader.
+    #[inline]
+    fn send_to_group(pgid: i32, sig: nix::sys::signal::Signal) {
+        // Negative PID means "signal the entire process group with PGID = |pid|"
+        let _ = kill(Pid::from_raw(-pgid), sig);
+    }
+    
+    /// Send a signal to a single process (fallback for direct signaling)
     #[inline]
     fn send(pid: i32, sig: nix::sys::signal::Signal) {
         let _ = kill(Pid::from_raw(pid), sig);
@@ -51,35 +52,29 @@ pub fn graceful_stop_pid_only(
     let t_term = total_timeout.mul_f64(0.35);
     let t_kill = total_timeout - t_int - t_term;
 
-    // Phase 1: SIGINT (Ctrl-C)
-    for &cpid in &child_pids {
-        send(cpid, SIGINT);
-    }
-    send(parent_pid, SIGINT);
+    // Phase 1: SIGINT (Ctrl-C) - signal the entire process group
+    send_to_group(pgid, SIGINT);
     if let Some(st) = wait_with_deadline(&mut parent, t_int)? {
-        tracing::info!("Stopped the process using sigint (ctrl-c)");
+        tracing::info!("Stopped the process group using sigint (ctrl-c)");
         return Ok(st);
     }
 
-    // Phase 2: SIGTERM
-    for &cpid in &child_pids {
-        send(cpid, SIGTERM);
-    }
-    send(parent_pid, SIGTERM);
+    // Phase 2: SIGTERM - signal the entire process group
+    send_to_group(pgid, SIGTERM);
     if let Some(st) = wait_with_deadline(&mut parent, t_term)? {
-        tracing::info!("Stopped the process using sigterm");
+        tracing::info!("Stopped the process group using sigterm");
         return Ok(st);
     }
 
-    // Phase 3: SIGKILL (last resort)
-    for &cpid in &child_pids {
-        send(cpid, SIGKILL);
-    }
-    send(parent_pid, SIGKILL);
+    // Phase 3: SIGKILL (last resort) - signal the entire process group
+    send_to_group(pgid, SIGKILL);
     if let Some(st) = wait_with_deadline(&mut parent, t_kill)? {
-        tracing::warn!("Stopped the process using sigkill - this may leave resources allocated");
+        tracing::warn!("Stopped the process group using sigkill - this may leave resources allocated");
         return Ok(st);
     }
+    
+    // Final fallback: try to kill just the parent process directly
+    send(parent_pid, SIGKILL);
 
     if let Some(st) = parent.try_wait()? {
         return Ok(st);
@@ -300,14 +295,34 @@ pub async fn host(
             .spawn();
 
         #[cfg(not(target_os = "windows"))]
-        let cmd = Command::new(&resolved_bin_path)
-            .args(&args)
-            .envs(&env_vars)
-            .current_dir(&workdir)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .stdin(Stdio::null())
-            .spawn();
+        let cmd = {
+            let mut command = Command::new(&resolved_bin_path);
+            command
+                .args(&args)
+                .envs(&env_vars)
+                .current_dir(&workdir)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .stdin(Stdio::null())
+                // Make each child process its own process group leader.
+                // This allows us to signal the entire process group (including grandchildren)
+                // when stopping the process, ensuring complete cleanup.
+                .process_group(0);
+            
+            // On Linux, also set up the child process to receive SIGTERM when the parent dies.
+            // This ensures managed processes are cleaned up even if odd-box crashes or is killed.
+            #[cfg(target_os = "linux")]
+            unsafe {
+                use nix::sys::prctl;
+                use nix::sys::signal::Signal;
+                command.pre_exec(|| {
+                    prctl::set_pdeathsig(Signal::SIGTERM)?;
+                    Ok(())
+                });
+            }
+            
+            command.spawn()
+        };
 
         match cmd {
             Ok(mut child) => {
