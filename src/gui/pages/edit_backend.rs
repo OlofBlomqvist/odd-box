@@ -1,7 +1,7 @@
 use iced::widget::{
-    button, checkbox, column, container, pick_list, responsive, row, text, text_input,
+    button, checkbox, column, container, pick_list, responsive, row, text, text_input, Row, Space,
 };
-use iced::{Border, Color, Element, Length, Theme};
+use iced::{Border, Color, Element, Font, Length, Padding, Theme};
 
 use super::super::{BackendKind, EditBackendField, Message, OddBoxGui, ProcessLogLevelChoice};
 
@@ -414,17 +414,139 @@ impl OddBoxGui {
                         .padding(8)
                         .width(Length::Fill);
 
-                    let env_label = text("Env vars").size(super::super::text_size(13)).style(muted_text);
-                    let env_input =
-                        text_input("KEY=VALUE, OTHER=VALUE", &self.edit_backend_form.proc_env)
-                            .on_input(|v| {
-                                Message::EditBackendFieldChanged(EditBackendField::ProcEnv(v))
+                    let env_label = text("Environment Variables").size(super::super::text_size(13)).style(muted_text);
+                    
+                    // Build env var rows
+                    let mut env_rows: Vec<Element<'_, Message>> = Vec::new();
+                    for (idx, (key, value)) in self.edit_backend_form.proc_env.iter().enumerate() {
+                        let key_input = text_input("KEY", key)
+                            .on_input(move |v| Message::EditBackendEnvKeyChanged(idx, v))
+                            .padding(6)
+                            .size(super::super::text_size(12))
+                            .font(Font::MONOSPACE)
+                            .width(Length::FillPortion(2));
+                        
+                        let value_input = text_input("VALUE", value)
+                            .on_input(move |v| Message::EditBackendEnvValueChanged(idx, v))
+                            .padding(6)
+                            .size(super::super::text_size(12))
+                            .font(Font::MONOSPACE)
+                            .width(Length::FillPortion(3));
+                        
+                        let remove_btn = button(text("✕").size(super::super::text_size(12)))
+                            .padding(Padding {
+                                top: 4.0,
+                                right: 6.0,
+                                bottom: 4.0,
+                                left: 6.0,
                             })
-                            .padding(8)
-                            .width(Length::Fill);
-                    let env_help = text("Comma-separated or one per line (KEY=VALUE)")
+                            .style(|theme: &Theme, status| {
+                                let palette = theme.extended_palette();
+                                let (bg, fg) = match status {
+                                    button::Status::Hovered => {
+                                        (palette.danger.strong.color, palette.danger.strong.text)
+                                    }
+                                    _ => (Color::TRANSPARENT, palette.danger.base.color),
+                                };
+                                button::Style {
+                                    background: Some(bg.into()),
+                                    text_color: fg,
+                                    border: Border {
+                                        radius: 4.0.into(),
+                                        ..Default::default()
+                                    },
+                                    ..Default::default()
+                                }
+                            })
+                            .on_press(Message::EditBackendEnvRemove(idx));
+                        
+                        env_rows.push(
+                            row![key_input, value_input, remove_btn]
+                                .spacing(4)
+                                .align_y(iced::Alignment::Center)
+                                .into(),
+                        );
+                    }
+                    
+                    // Add new env var row
+                    let new_key_input = text_input("New key...", &self.edit_backend_env_new_key)
+                        .on_input(Message::EditBackendEnvNewKeyChanged)
+                        .on_submit(Message::EditBackendEnvAdd)
+                        .padding(6)
                         .size(super::super::text_size(12))
-                        .style(muted_text);
+                        .font(Font::MONOSPACE)
+                        .width(Length::FillPortion(2));
+                    
+                    let new_value_input = text_input("New value...", &self.edit_backend_env_new_value)
+                        .on_input(Message::EditBackendEnvNewValueChanged)
+                        .on_submit(Message::EditBackendEnvAdd)
+                        .padding(6)
+                        .size(super::super::text_size(12))
+                        .font(Font::MONOSPACE)
+                        .width(Length::FillPortion(3));
+                    
+                    let add_btn = button(text("+").size(super::super::text_size(12)))
+                        .padding(Padding {
+                            top: 4.0,
+                            right: 8.0,
+                            bottom: 4.0,
+                            left: 8.0,
+                        })
+                        .style(|theme: &Theme, status| {
+                            let palette = theme.extended_palette();
+                            let (bg, fg) = match status {
+                                button::Status::Hovered => {
+                                    (palette.primary.strong.color, palette.primary.strong.text)
+                                }
+                                _ => (palette.primary.weak.color, palette.primary.weak.text),
+                            };
+                            button::Style {
+                                background: Some(bg.into()),
+                                text_color: fg,
+                                border: Border {
+                                    radius: 4.0.into(),
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            }
+                        })
+                        .on_press(Message::EditBackendEnvAdd);
+                    
+                    let add_row = row![new_key_input, new_value_input, add_btn]
+                        .spacing(4)
+                        .align_y(iced::Alignment::Center);
+                    
+                    let mut env_list = column![].spacing(4);
+                    for env_row in env_rows {
+                        env_list = env_list.push(env_row);
+                    }
+                    env_list = env_list.push(add_row);
+                    
+                    let env_container = container(env_list)
+                        .padding(8)
+                        .width(Length::Fill)
+                        .style(|theme: &Theme| {
+                            let palette = theme.extended_palette();
+                            container::Style {
+                                background: Some(palette.background.weak.color.into()),
+                                border: Border {
+                                    radius: 4.0.into(),
+                                    width: 1.0,
+                                    color: palette.background.strong.color,
+                                },
+                                ..Default::default()
+                            }
+                        });
+                    
+                    let env_help = if self.edit_backend_form.proc_env.is_empty() {
+                        text("No process-specific env vars. Add with + button.")
+                            .size(super::super::text_size(12))
+                            .style(muted_text)
+                    } else {
+                        text("Process-level vars override global vars with same key.")
+                            .size(super::super::text_size(12))
+                            .style(muted_text)
+                    };
 
                     let log_level_label = text("Process log level").size(super::super::text_size(13)).style(muted_text);
                     let log_level_picker = pick_list(
@@ -470,7 +592,7 @@ impl OddBoxGui {
                         port_label,
                         port_input,
                         env_label,
-                        env_input,
+                        env_container,
                         env_help,
                         log_level_label,
                         log_level_picker,
@@ -587,7 +709,6 @@ impl OddBoxGui {
         });
 
         let mut content = column![
-            text("Edit Backend").size(super::super::text_size(20)),
             text("Backend settings").size(super::super::text_size(13)).style(muted_text),
             layout,
             actions,

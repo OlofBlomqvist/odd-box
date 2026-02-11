@@ -1,6 +1,7 @@
 use iced::widget::text::Wrapping;
 use iced::widget::{Column, Row, button, column, container, mouse_area, responsive, row, text};
 use iced::{Alignment, Border, Color, Element, Length, Padding, Size, Theme};
+use iced::theme;
 
 use crate::global_state::ProcState;
 
@@ -145,6 +146,13 @@ fn site_card<'a>(
     card.into()
 }
 
+/// Pick a color that works on both light and dark backgrounds.
+/// `dark_variant` is used when the theme is light (needs darker colors for contrast),
+/// `light_variant` is used when the theme is dark.
+fn theme_aware_color(is_light: bool, light_variant: Color, dark_variant: Color) -> Color {
+    if is_light { dark_variant } else { light_variant }
+}
+
 /// Build a small stat box for the summary row
 fn stat_box<'a>(label: &'a str, value: usize, color: Color) -> Element<'a, Message> {
     let content = column![
@@ -184,7 +192,9 @@ fn stat_box<'a>(label: &'a str, value: usize, color: Color) -> Element<'a, Messa
 }
 
 /// Section header with category name and count badge
-fn section_header<'a>(title: &'a str, count: usize, accent: Color) -> Element<'a, Message> {
+fn section_header<'a>(title: &'a str, count: usize, accent: Color, is_light: bool) -> Element<'a, Message> {
+    // Badge text: white on dark theme, dark on light theme for contrast on accent bg
+    let badge_text_color = if is_light { Color::from_rgb(0.15, 0.15, 0.15) } else { Color::WHITE };
     let badge = container(
         text(count.to_string())
             .size(super::super::text_size(13))
@@ -256,13 +266,26 @@ impl OddBoxGui {
         let dashboard_content: Element<'_, Message> = responsive(move |size| {
             let (cols, card_width) = card_layout(size);
 
+            // Detect light theme for theme-aware colors
+            let is_light = match self.theme_mode {
+                super::super::ThemeMode::Light => true,
+                super::super::ThemeMode::Dark => false,
+                super::super::ThemeMode::System => matches!(self.system_theme, Some(theme::Mode::Light)),
+            };
+
+            let status_green = theme_aware_color(
+                is_light,
+                Color::from_rgb(0.4, 0.8, 0.4),
+                Color::from_rgb(0.15, 0.55, 0.15),
+            );
+
             // --- Uptime bar ---
             let uptime_bar = container(
                 row![
-                    text("●").color(Color::from_rgb(0.22, 0.66, 0.30)).size(super::super::text_size(14)),
+                    text("●").color(status_green).size(super::super::text_size(14)),
                     text("Status: Running")
                         .size(super::super::text_size(15))
-                        .color(Color::from_rgb(0.22, 0.66, 0.30)),
+                        .color(status_green),
                     text(format!("  Uptime: {}", &uptime))
                         .size(super::super::text_size(15))
                         .style(muted_text),
@@ -362,11 +385,32 @@ impl OddBoxGui {
             total += orphan_count;
             faulty += orphan_count;
 
+            let sites_color = theme_aware_color(
+                is_light,
+                Color::WHITE,                       // dark theme: white
+                Color::from_rgb(0.15, 0.15, 0.25),  // light theme: dark blue-gray
+            );
+            let running_color = theme_aware_color(
+                is_light,
+                Color::from_rgb(0.4, 0.8, 0.4),     // dark theme: bright green
+                Color::from_rgb(0.15, 0.55, 0.15),   // light theme: darker green
+            );
+            let stopped_color = theme_aware_color(
+                is_light,
+                Color::from_rgb(0.6, 0.6, 0.6),     // dark theme: medium gray
+                Color::from_rgb(0.35, 0.35, 0.35),   // light theme: darker gray
+            );
+            let faulty_color = theme_aware_color(
+                is_light,
+                Color::from_rgb(0.9, 0.3, 0.3),     // dark theme: bright red
+                Color::from_rgb(0.75, 0.15, 0.15),   // light theme: darker red
+            );
+
             let summary_row = Row::with_children(vec![
-                stat_box("Sites", total, Color::from_rgb(0.20, 0.44, 0.78)),
-                stat_box("Running", running, Color::from_rgb(0.22, 0.66, 0.30)),
-                stat_box("Stopped", stopped, Color::from_rgb(0.45, 0.45, 0.45)),
-                stat_box("Faulty", faulty, Color::from_rgb(0.78, 0.22, 0.22)),
+                stat_box("Sites", total, sites_color),
+                stat_box("Running", running, running_color),
+                stat_box("Stopped", stopped, stopped_color),
+                stat_box("Faulty", faulty, faulty_color),
             ])
             .spacing(12);
 
@@ -412,7 +456,7 @@ impl OddBoxGui {
                     .collect();
                 sections.push(
                     column![
-                        section_header("Processes", cards.len(), COLOR_PROCESS),
+                        section_header("Processes", cards.len(), COLOR_PROCESS, is_light),
                         rows_from_cards(cards, cols),
                     ]
                     .spacing(10)
@@ -456,7 +500,7 @@ impl OddBoxGui {
                     .collect();
                 sections.push(
                     column![
-                        section_header("Remote Backends", cards.len(), COLOR_REMOTE),
+                        section_header("Remote Backends", cards.len(), COLOR_REMOTE, is_light),
                         rows_from_cards(cards, cols),
                     ]
                     .spacing(10)
@@ -500,7 +544,7 @@ impl OddBoxGui {
                     .collect();
                 sections.push(
                     column![
-                        section_header("Static Backends", cards.len(), COLOR_DIR_SERVER),
+                        section_header("Static Backends", cards.len(), COLOR_DIR_SERVER, is_light),
                         rows_from_cards(cards, cols),
                     ]
                     .spacing(10)
@@ -533,7 +577,8 @@ impl OddBoxGui {
                         section_header(
                             "Faulty Routes",
                             count,
-                            Color::from_rgb(0.9, 0.3, 0.3)
+                            Color::from_rgb(0.9, 0.3, 0.3),
+                            is_light,
                         ),
                         rows_from_cards(orphan_cards, cols),
                     ]

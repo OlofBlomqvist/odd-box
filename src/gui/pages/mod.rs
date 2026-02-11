@@ -66,6 +66,7 @@ pub struct CachedConfig {
     pub routes: Vec<CachedRoute>,
     pub http_port: Option<u16>,
     pub https_port: Option<u16>,
+    pub global_env: Vec<(String, String)>,
 }
 
 /// Async function to fetch configuration data
@@ -74,6 +75,14 @@ pub async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
     let snapshot = state.process_registry.snapshot();
     let http_port = config_guard.frontends.http.as_ref().map(|h| h.port);
     let https_port = config_guard.frontends.https.as_ref().map(|h| h.port);
+
+    // Fetch global environment variables
+    let mut global_env: Vec<(String, String)> = config_guard
+        .env
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    global_env.sort_by(|a, b| a.0.cmp(&b.0));
 
     // Fetch processes
     let mut processes: Vec<CachedProcess> = config_guard
@@ -219,5 +228,6 @@ pub async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
         routes,
         http_port,
         https_port,
+        global_env,
     }
 }

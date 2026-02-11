@@ -59,6 +59,13 @@ pub enum ThemeMode {
     System,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProcessesTab {
+    #[default]
+    Processes,
+    GlobalVariables,
+}
+
 impl ThemeMode {
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
@@ -326,8 +333,26 @@ pub enum Message {
     EditBackendSaveResult(Result<(), String>),
     EditBackendDelete,
     EditBackendDeleteResult(Result<(), String>),
+    // Process backend env vars (keypair editor)
+    EditBackendEnvKeyChanged(usize, String),
+    EditBackendEnvValueChanged(usize, String),
+    EditBackendEnvRemove(usize),
+    EditBackendEnvNewKeyChanged(String),
+    EditBackendEnvNewValueChanged(String),
+    EditBackendEnvAdd,
     CrumaAuthModeChanged(CrumaAuthMode),
     CrumaAuthModeSaveResult(Result<(), String>),
+    // Processes page tab
+    ProcessesTabChanged(ProcessesTab),
+    // Global environment variables
+    GlobalEnvKeyChanged(usize, String),
+    GlobalEnvValueChanged(usize, String),
+    GlobalEnvRemove(usize),
+    GlobalEnvNewKeyChanged(String),
+    GlobalEnvNewValueChanged(String),
+    GlobalEnvAdd,
+    GlobalEnvSave,
+    GlobalEnvSaveResult(Result<(), String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -382,36 +407,6 @@ impl Default for BackendKind {
     }
 }
 
-fn format_env_lines(env: &std::collections::HashMap<String, String>) -> String {
-    let mut pairs: Vec<(String, String)> =
-        env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    pairs.sort_by(|a, b| a.0.cmp(&b.0));
-    pairs
-        .into_iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn parse_env_lines(input: &str) -> Result<std::collections::HashMap<String, String>, String> {
-    let mut out = std::collections::HashMap::new();
-    for raw in input
-        .split(|c| c == '\n' || c == ',')
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-    {
-        let (key, value) = raw
-            .split_once('=')
-            .ok_or_else(|| format!("Invalid env var '{raw}'. Use KEY=VALUE."))?;
-        let key = key.trim();
-        if key.is_empty() {
-            return Err(format!("Invalid env var '{raw}'. Key is empty."));
-        }
-        out.insert(key.to_string(), value.trim().to_string());
-    }
-    Ok(out)
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct EditBackendForm {
     pub id: String,
@@ -431,7 +426,7 @@ pub struct EditBackendForm {
     pub proc_args: String,
     pub proc_dir: String,
     pub proc_port: String,
-    pub proc_env: String,
+    pub proc_env: Vec<(String, String)>,
     pub proc_auto_start: bool,
     pub proc_exclude_from_start_all: bool,
     pub proc_log_level: ProcessLogLevelChoice,
@@ -454,7 +449,6 @@ pub enum EditBackendField {
     ProcArgs(String),
     ProcDir(String),
     ProcPort(String),
-    ProcEnv(String),
     ProcAutoStart(bool),
     ProcExcludeFromStartAll(bool),
     ProcLogLevel(ProcessLogLevelChoice),
@@ -505,8 +499,16 @@ pub struct OddBoxGui {
     pub(in crate::gui) edit_backend_original: Option<String>,
     pub(in crate::gui) edit_backend_is_new: bool,
     pub(in crate::gui) edit_backend_confirm_delete: bool,
+    pub(in crate::gui) edit_backend_env_new_key: String,
+    pub(in crate::gui) edit_backend_env_new_value: String,
     pub(in crate::gui) cruma_auth_mode: CrumaAuthMode,
     pub(in crate::gui) cruma_mode_notice: Option<String>,
+    pub(in crate::gui) processes_tab: ProcessesTab,
+    pub(in crate::gui) global_env_vars: Vec<(String, String)>,
+    pub(in crate::gui) global_env_new_key: String,
+    pub(in crate::gui) global_env_new_value: String,
+    pub(in crate::gui) global_env_notice: Option<String>,
+    pub(in crate::gui) global_env_dirty: bool,
     exit_requested: bool,
     frontend_http_port_input: String,
     frontend_https_port_input: String,
@@ -740,6 +742,94 @@ async fn save_frontend_ports(
     Ok(())
 }
 
+async fn save_global_env(
+    state: Arc<GlobalState>,
+    vars: Vec<(String, String)>,
+) -> Result<(), String> {
+    let mut guard = (*state.config.load_full()).clone();
+
+    let env: std::collections::HashMap<String, String> = vars
+        .into_iter()
+        .filter(|(k, _)| !k.is_empty())
+        .collect();
+    guard.env = env;
+
+    guard.is_valid().map_err(|e| e.to_string())?;
+    guard.write_to_disk().map_err(|e| e.to_string())?;
+    
+    // Collect all process backend IDs before storing (global env affects all)
+    let process_ids: Vec<String> = guard
+        .hosted_processes
+        .iter()
+        .map(|e| e.key().clone())
+        .collect();
+    
+    state.config.store(std::sync::Arc::new(guard));
+    
+    // Restart all process backends to pick up new global env vars
+    for backend_id in process_ids {
+        restart_process_backend_sync(&state, &backend_id);
+    }
+
+    Ok(())
+}
+
+/// Restart a process backend with freshly resolved configuration.
+/// This is used after env var changes to ensure the process picks up new values.
+/// Note: This function bridges from iced's smol runtime to tokio.
+fn restart_process_backend_sync(state: &Arc<GlobalState>, backend_id: &str) {
+    use tokio_util::sync::CancellationToken;
+    
+    let handle = state.tokio_handle.clone();
+    let config = state.config.load_full();
+    
+    // Get the process backend config
+    let Some(proc) = config.hosted_processes.get(backend_id).map(|e| e.clone()) else {
+        return;
+    };
+    
+    // Check if process is currently registered
+    let was_enabled = state.process_registry.is_enabled(backend_id);
+    
+    // Mark for removal and wait for it to stop (using tokio runtime)
+    if let Some(token) = state.process_registry.mark_for_removal(backend_id) {
+        let _ = handle.block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                token.cancelled()
+            ).await
+        });
+    }
+    state.process_registry.cleanup_finished();
+    
+    // Resolve and spawn with fresh config
+    match config.resolve_process_backend(backend_id, &proc) {
+        Ok(resolved) => {
+            let token = CancellationToken::new();
+            let enabled = was_enabled && resolved.auto_start.unwrap_or(config.auto_start);
+            state.process_registry.register_host(
+                backend_id.to_string(),
+                token.clone(),
+                crate::global_state::ProcState::Stopped,
+                enabled,
+                resolved.port,
+            );
+            // Spawn on tokio runtime
+            handle.spawn(crate::proc_host::host(
+                resolved,
+                state.process_registry.clone(),
+                state.clone(),
+                token,
+            ));
+        }
+        Err(e) => {
+            tracing::error!("Failed to restart process {}: {:?}", backend_id, e);
+        }
+    }
+    
+    crate::cruma_integration::rebuild_cruma_config(state);
+}
+
 async fn save_cruma_mode(state: Arc<GlobalState>, mode: CrumaAuthMode) -> Result<(), String> {
     let mut guard = (*state.config.load_full()).clone();
 
@@ -804,7 +894,9 @@ async fn load_backend_form(state: Arc<GlobalState>, backend_id: String) -> EditB
                 form.proc_auto_start = p.auto_start.unwrap_or(true);
                 form.proc_exclude_from_start_all = p.exclude_from_start_all;
                 form.proc_log_level = ProcessLogLevelChoice::from_option(&p.log_level);
-                form.proc_env = format_env_lines(&p.env);
+                let mut env_vec: Vec<(String, String)> = p.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                env_vec.sort_by(|a, b| a.0.cmp(&b.0));
+                form.proc_env = env_vec;
             }
             v4::Backend::Remote(r) => {
                 form.kind = BackendKind::Remote;
@@ -977,10 +1069,14 @@ async fn save_backend_form(
                 _ => (ProcId::new(), None),
             };
             let log_level = form.proc_log_level.to_option();
-            let env = parse_env_lines(&form.proc_env)?;
+            let env: std::collections::HashMap<String, String> = form
+                .proc_env
+                .into_iter()
+                .filter(|(k, _)| !k.is_empty())
+                .collect();
 
             guard.backends.insert(
-                key,
+                key.clone(),
                 v4::Backend::Process(v4::ProcessBackend {
                     proc_id,
                     bin: form.proc_bin.clone(),
@@ -991,7 +1087,7 @@ async fn save_backend_form(
                         Some(form.proc_dir.clone())
                     },
                     env,
-                    protocol: form.protocol,
+                    protocol: form.protocol.clone(),
                     https: form.https,
                     port,
                     auto_start: Some(form.proc_auto_start),
@@ -1000,6 +1096,15 @@ async fn save_backend_form(
                     log_format,
                 }),
             );
+            
+            guard.is_valid().map_err(|e| e.to_string())?;
+            guard.write_to_disk().map_err(|e| e.to_string())?;
+            state.config.store(std::sync::Arc::new(guard));
+            
+            // Restart the process to pick up config changes
+            restart_process_backend_sync(&state, &key);
+            
+            return Ok(());
         }
         BackendKind::Unknown => {
             return Err("Backend not found.".to_string());
@@ -1200,8 +1305,16 @@ impl OddBoxGui {
                 edit_backend_original: None,
                 edit_backend_is_new: false,
                 edit_backend_confirm_delete: false,
+                edit_backend_env_new_key: String::new(),
+                edit_backend_env_new_value: String::new(),
                 cruma_auth_mode: initial_cruma_mode,
                 cruma_mode_notice: None,
+                processes_tab: ProcessesTab::default(),
+                global_env_vars: Vec::new(),
+                global_env_new_key: String::new(),
+                global_env_new_value: String::new(),
+                global_env_notice: None,
+                global_env_dirty: false,
                 exit_requested: false,
                 frontend_http_port_input: String::new(),
                 frontend_https_port_input: String::new(),
@@ -1311,6 +1424,10 @@ impl OddBoxGui {
                 }
             }
             Message::ConfigUpdated(config) => {
+                // Sync global env vars from config if user hasn't made local edits
+                if !self.global_env_dirty {
+                    self.global_env_vars = config.global_env.clone();
+                }
                 self.cached_config = config;
                 let mut names: Vec<String> = Vec::new();
                 names.extend(self.cached_config.processes.iter().map(|p| p.name.clone()));
@@ -1472,6 +1589,64 @@ impl OddBoxGui {
                     self.expanded_process = Some(name);
                 }
             }
+            Message::ProcessesTabChanged(tab) => {
+                self.processes_tab = tab;
+                // Reset notice when switching tabs
+                self.global_env_notice = None;
+            }
+            Message::GlobalEnvKeyChanged(idx, val) => {
+                if let Some(entry) = self.global_env_vars.get_mut(idx) {
+                    entry.0 = val;
+                    self.global_env_dirty = true;
+                }
+            }
+            Message::GlobalEnvValueChanged(idx, val) => {
+                if let Some(entry) = self.global_env_vars.get_mut(idx) {
+                    entry.1 = val;
+                    self.global_env_dirty = true;
+                }
+            }
+            Message::GlobalEnvRemove(idx) => {
+                if idx < self.global_env_vars.len() {
+                    self.global_env_vars.remove(idx);
+                    self.global_env_dirty = true;
+                }
+            }
+            Message::GlobalEnvNewKeyChanged(val) => {
+                self.global_env_new_key = val;
+            }
+            Message::GlobalEnvNewValueChanged(val) => {
+                self.global_env_new_value = val;
+            }
+            Message::GlobalEnvAdd => {
+                let key = self.global_env_new_key.trim().to_string();
+                let value = self.global_env_new_value.trim().to_string();
+                if !key.is_empty() {
+                    self.global_env_vars.push((key, value));
+                    self.global_env_new_key.clear();
+                    self.global_env_new_value.clear();
+                    self.global_env_dirty = true;
+                }
+            }
+            Message::GlobalEnvSave => {
+                let vars = self.global_env_vars.clone();
+                return Task::perform(
+                    save_global_env(self.state.clone(), vars),
+                    Message::GlobalEnvSaveResult,
+                );
+            }
+            Message::GlobalEnvSaveResult(result) => {
+                match result {
+                    Ok(()) => {
+                        self.global_env_notice = Some("Global environment variables saved.".to_string());
+                        self.global_env_dirty = false;
+                        return Task::perform(fetch_config(self.state.clone()), Message::ConfigUpdated);
+                    }
+                    Err(e) => {
+                        self.global_env_notice = Some(format!("Error: {e}"));
+                    }
+                }
+            }
             Message::DashboardToggleProcessMenu(name) => {
                 if self.dashboard_process_menu.as_ref() == Some(&name) {
                     self.dashboard_process_menu = None;
@@ -1626,7 +1801,6 @@ impl OddBoxGui {
                 EditBackendField::ProcArgs(v) => self.edit_backend_form.proc_args = v,
                 EditBackendField::ProcDir(v) => self.edit_backend_form.proc_dir = v,
                 EditBackendField::ProcPort(v) => self.edit_backend_form.proc_port = v,
-                EditBackendField::ProcEnv(v) => self.edit_backend_form.proc_env = v,
                 EditBackendField::ProcAutoStart(v) => self.edit_backend_form.proc_auto_start = v,
                 EditBackendField::ProcExcludeFromStartAll(v) => {
                     self.edit_backend_form.proc_exclude_from_start_all = v;
@@ -1652,6 +1826,36 @@ impl OddBoxGui {
             Message::EditBackendBinPicked(path) => {
                 if let Some(p) = path {
                     self.edit_backend_form.proc_bin = p;
+                }
+            }
+            Message::EditBackendEnvKeyChanged(idx, val) => {
+                if let Some(entry) = self.edit_backend_form.proc_env.get_mut(idx) {
+                    entry.0 = val;
+                }
+            }
+            Message::EditBackendEnvValueChanged(idx, val) => {
+                if let Some(entry) = self.edit_backend_form.proc_env.get_mut(idx) {
+                    entry.1 = val;
+                }
+            }
+            Message::EditBackendEnvRemove(idx) => {
+                if idx < self.edit_backend_form.proc_env.len() {
+                    self.edit_backend_form.proc_env.remove(idx);
+                }
+            }
+            Message::EditBackendEnvNewKeyChanged(val) => {
+                self.edit_backend_env_new_key = val;
+            }
+            Message::EditBackendEnvNewValueChanged(val) => {
+                self.edit_backend_env_new_value = val;
+            }
+            Message::EditBackendEnvAdd => {
+                let key = self.edit_backend_env_new_key.trim().to_string();
+                let value = self.edit_backend_env_new_value.trim().to_string();
+                if !key.is_empty() {
+                    self.edit_backend_form.proc_env.push((key, value));
+                    self.edit_backend_env_new_key.clear();
+                    self.edit_backend_env_new_value.clear();
                 }
             }
             Message::EditBackendResolveDir(dir) => {

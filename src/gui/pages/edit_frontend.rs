@@ -209,7 +209,6 @@ impl OddBoxGui {
         });
 
         let mut content = column![
-            text("Edit Frontend").size(super::super::text_size(20)),
             text("Route settings (HTTP frontend)")
                 .size(super::super::text_size(13))
                 .style(muted_text),

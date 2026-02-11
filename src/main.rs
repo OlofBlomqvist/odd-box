@@ -81,6 +81,7 @@ pub mod global_state {
         pub cruma_config: std::sync::Arc<arc_swap::ArcSwap<cruma_proxy_lib::types::Configuration>>,
         pub docker_discovery: std::sync::Arc<arc_swap::ArcSwap<Vec<crate::docker::DiscoveredContainer>>>,
         pub tui_log_buffer: std::sync::Arc<crate::logging::SharedLogBuffer>,
+        pub tokio_handle: tokio::runtime::Handle,
     }
     impl GlobalState {
         pub fn uptime(&self) -> Result<std::time::Duration, SystemTimeError> {
@@ -91,6 +92,7 @@ pub mod global_state {
             cruma_config: std::sync::Arc<arc_swap::ArcSwap<cruma_proxy_lib::types::Configuration>>,
             log_handle: crate::OddLogHandle,
             tui_log_buffer: std::sync::Arc<crate::logging::SharedLogBuffer>,
+            tokio_handle: tokio::runtime::Handle,
         ) -> Self {
             Self {
                 enable_global_traffic_inspection: AtomicBool::new(false),
@@ -106,6 +108,7 @@ pub mod global_state {
                 cruma_config,
                 docker_discovery: Arc::new(arc_swap::ArcSwap::from_pointee(Vec::new())),
                 tui_log_buffer,
+                tokio_handle,
             }
         }
 
@@ -403,6 +406,7 @@ async fn main() -> anyhow::Result<()> {
         cruma_config_arc.clone(),
         OddLogHandle::None,
         tui_log_buffer.clone(),
+        tokio::runtime::Handle::current(),
     );
 
     let gui_log_state = if gui_flag {
