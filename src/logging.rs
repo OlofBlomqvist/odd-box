@@ -93,7 +93,7 @@ impl<S: Subscriber> tracing_subscriber::Layer<S> for NonTuiLoggerLayer {
         let current_thread_name = current_thread
             .name()
             .and_then(|x| Some(x.to_string()))
-            .unwrap_or(format!("HAH!"));
+            .unwrap_or(format!("Unknown"));
         let mut skip_src = false;
         let thread_name = if current_thread_name == "tokio-runtime-worker" {
             skip_src = true;
@@ -208,7 +208,7 @@ impl<S: Subscriber> Layer<S> for TuiLoggerLayer {
         let current_thread_name = current_thread
             .name()
             .and_then(|x| Some(x.to_string()))
-            .unwrap_or(format!("HAH!"));
+            .unwrap_or(format!("Unknown"));
         let mut skip_src = false;
         let mut thread_name = if current_thread_name == "tokio-runtime-worker" {
             skip_src = true;

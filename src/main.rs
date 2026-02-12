@@ -72,15 +72,15 @@ pub mod global_state {
         pub exit: AtomicBool,
         pub process_registry: Arc<crate::process_registry::ProcessRegistry>,
         pub cruma_assignment: Arc<arc_swap::ArcSwapOption<CrumaAssignedDomain>>,
-        pub cruma_transports:
-            Arc<arc_swap::ArcSwap<Vec<cruma_tunnels_lib::TransportDescriptor>>>,
+        pub cruma_transports: Arc<arc_swap::ArcSwap<Vec<cruma_tunnels_lib::TransportDescriptor>>>,
 
         pub started_at_time_stamp: std::time::SystemTime,
         pub log_handle: crate::OddLogHandle,
         pub config: std::sync::Arc<arc_swap::ArcSwap<crate::configuration::ConfigWrapper>>,
         pub target_request_counts: dashmap::DashMap<String, AtomicU64>,
         pub cruma_config: std::sync::Arc<arc_swap::ArcSwap<cruma_proxy_lib::types::Configuration>>,
-        pub docker_discovery: std::sync::Arc<arc_swap::ArcSwap<Vec<crate::docker::DiscoveredContainer>>>,
+        pub docker_discovery:
+            std::sync::Arc<arc_swap::ArcSwap<Vec<crate::docker::DiscoveredContainer>>>,
         pub tui_log_buffer: std::sync::Arc<crate::logging::SharedLogBuffer>,
         pub tokio_handle: tokio::runtime::Handle,
         /// HTTP traffic capture store from cruma_proxy_lib.
@@ -629,12 +629,12 @@ async fn main() -> anyhow::Result<()> {
     }
 
     match &cruma_mode {
-        None => tracing::info!("Cruma mode: disabled"),
+        None => tracing::debug!("Cruma mode: disabled"),
         Some(crate::configuration::v4::CrumaMode::Anonymous) => {
-            tracing::info!("Cruma mode: anonymous")
+            tracing::debug!("Cruma mode: anonymous")
         }
         Some(crate::configuration::v4::CrumaMode::Authenticated { .. }) => {
-            tracing::info!("Cruma mode: authenticated")
+            tracing::debug!("Cruma mode: authenticated")
         }
     }
 
@@ -665,9 +665,13 @@ async fn main() -> anyhow::Result<()> {
 
             let ct_clone = cancel.clone();
             let capture_store = Some(state_for_cruma.http_capture_store.clone());
-            if let Err(e) =
-                cruma_proxy_lib::hosting::run_from_config(cruma_cfg_arc, persistence, ct_clone, capture_store)
-                    .await
+            if let Err(e) = cruma_proxy_lib::hosting::run_from_config(
+                cruma_cfg_arc,
+                persistence,
+                ct_clone,
+                capture_store,
+            )
+            .await
             {
                 tracing::error!(error=%e, "cruma hosting failed");
             }
@@ -932,8 +936,14 @@ fn connect_container_runtimes() -> Vec<(String, bollard::Docker)> {
 
     let mut socket_candidates: Vec<(String, String)> = vec![
         ("docker".to_string(), "/var/run/docker.sock".to_string()),
-        ("podman-system".to_string(), "/run/podman/podman.sock".to_string()),
-        ("podman-system".to_string(), "/var/run/podman/podman.sock".to_string()),
+        (
+            "podman-system".to_string(),
+            "/run/podman/podman.sock".to_string(),
+        ),
+        (
+            "podman-system".to_string(),
+            "/var/run/podman/podman.sock".to_string(),
+        ),
     ];
     if let Ok(xdg_runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
         socket_candidates.push((
@@ -972,7 +982,9 @@ pub async fn docker_thread(state: Arc<GlobalState>) {
             > = std::collections::BTreeMap::new();
 
             for (runtime, docker) in runtime_clients {
-                let mut discovered = docker::discover_containers(&docker).await.unwrap_or_default();
+                let mut discovered = docker::discover_containers(&docker)
+                    .await
+                    .unwrap_or_default();
                 for item in &mut discovered {
                     item.runtime = runtime.clone();
                 }

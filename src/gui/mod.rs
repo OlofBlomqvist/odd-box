@@ -4,14 +4,14 @@ mod macos_app_icon;
 mod pages;
 mod tray;
 
-use iced::widget::{
-    Column, Scrollable, button, column, container, image, row, scrollable, text,
-};
 use iced::widget::scrollable::RelativeOffset;
+use iced::widget::{
+    Column, Scrollable, Space, button, column, container, image, row, scrollable, text,
+};
 
 use iced::{
-    Background, Border, Color, Element, Length, Padding, Subscription,
-    Task, Theme, system, theme, time, window,
+    Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, system, theme,
+    time, window,
 };
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
@@ -95,7 +95,7 @@ pub fn run(
     // Initialize system tray icon
     let tray_handle = match tray::TrayHandle::new("ODD-BOX") {
         Ok(handle) => {
-            tracing::info!("System tray initialized successfully");
+            tracing::trace!("System tray initialized successfully");
             Some(handle)
         }
         Err(e) => {
@@ -117,8 +117,12 @@ pub fn run(
     iced::daemon(
         move || {
             let tray = tray_handle_clone.lock().unwrap().take();
-            let (mut gui, init_task) =
-                OddBoxGui::new(state_clone.clone(), theme_mode, log_state_clone.clone(), tray);
+            let (mut gui, init_task) = OddBoxGui::new(
+                state_clone.clone(),
+                theme_mode,
+                log_state_clone.clone(),
+                tray,
+            );
             let (window_id, open_window_task) = window::open(make_window_settings());
             gui.window_id = Some(window_id);
             (
@@ -170,6 +174,7 @@ pub enum Page {
     Backends,
     Frontends,
     ManagedProcesses,
+    Updates,
     EditFrontend,
     EditBackend,
 }
@@ -184,6 +189,7 @@ impl Page {
             Page::Backends => "Backends",
             Page::Frontends => "Frontends",
             Page::ManagedProcesses => "Managed Processes",
+            Page::Updates => "Updates",
             Page::EditFrontend => "Edit Frontend",
             Page::EditBackend => "Edit Backend",
         }
@@ -199,6 +205,7 @@ impl Page {
             Page::Backends => "⬚",
             Page::Frontends => "◧",
             Page::ManagedProcesses => "⚙",
+            Page::Updates => "⬆",
             Page::EditFrontend => "✎",
             Page::EditBackend => "✎",
         }
@@ -340,6 +347,11 @@ pub enum Message {
     TrayQuitPhase2,
     // Config data updated
     ConfigUpdated(CachedConfig),
+    // Updates page actions
+    UpdatesCheck,
+    UpdatesCheckResult(Result<String, String>),
+    UpdatesRunSelfUpdate,
+    UpdatesRunSelfUpdateResult(Result<crate::self_update::UpdateAction, String>),
     // Frontend port settings
     FrontendHttpPortChanged(String),
     FrontendHttpsPortChanged(String),
@@ -571,6 +583,17 @@ pub struct OddBoxGui {
     frontend_https_port_input: String,
     frontend_port_notice: Option<String>,
     frontend_ports_dirty: bool,
+    pub(in crate::gui) update_current_version: String,
+    pub(in crate::gui) update_install_source: String,
+    pub(in crate::gui) update_hint: String,
+    pub(in crate::gui) update_install_path: Option<String>,
+    pub(in crate::gui) update_is_package_managed: bool,
+    pub(in crate::gui) update_latest_tag: Option<String>,
+    pub(in crate::gui) update_check_in_progress: bool,
+    pub(in crate::gui) update_check_error: Option<String>,
+    pub(in crate::gui) update_action_in_progress: bool,
+    pub(in crate::gui) update_notice: Option<String>,
+    pub(in crate::gui) update_notice_is_error: bool,
 }
 
 fn log_scroll_id() -> iced::widget::Id {
@@ -804,24 +827,22 @@ async fn save_global_env(
 ) -> Result<(), String> {
     let mut guard = (*state.config.load_full()).clone();
 
-    let env: std::collections::HashMap<String, String> = vars
-        .into_iter()
-        .filter(|(k, _)| !k.is_empty())
-        .collect();
+    let env: std::collections::HashMap<String, String> =
+        vars.into_iter().filter(|(k, _)| !k.is_empty()).collect();
     guard.env = env;
 
     guard.is_valid().map_err(|e| e.to_string())?;
     guard.write_to_disk().map_err(|e| e.to_string())?;
-    
+
     // Collect all process backend IDs before storing (global env affects all)
     let process_ids: Vec<String> = guard
         .hosted_processes
         .iter()
         .map(|e| e.key().clone())
         .collect();
-    
+
     state.config.store(std::sync::Arc::new(guard));
-    
+
     // Restart all process backends to pick up new global env vars
     for backend_id in process_ids {
         restart_process_backend_sync(&state, &backend_id);
@@ -830,34 +851,77 @@ async fn save_global_env(
     Ok(())
 }
 
+fn normalize_release_tag(tag: &str) -> &str {
+    tag.trim_start_matches(|c| c == 'v' || c == 'V')
+}
+
+fn should_include_prerelease_for_checks(current_version: &str) -> bool {
+    current_version.contains('-')
+}
+
+pub(in crate::gui) fn compare_release_versions(
+    current_version: &str,
+    latest_tag: &str,
+) -> Option<std::cmp::Ordering> {
+    let latest = normalize_release_tag(latest_tag);
+    let latest_is_newer = self_update::version::bump_is_greater(current_version, latest).ok()?;
+    if latest_is_newer {
+        return Some(std::cmp::Ordering::Greater);
+    }
+    let current_is_newer = self_update::version::bump_is_greater(latest, current_version).ok()?;
+    if current_is_newer {
+        Some(std::cmp::Ordering::Less)
+    } else {
+        Some(std::cmp::Ordering::Equal)
+    }
+}
+
+async fn check_latest_release(
+    tokio_handle: tokio::runtime::Handle,
+    include_pre: bool,
+) -> Result<String, String> {
+    tokio_handle
+        .spawn(async move { crate::self_update::find_latest_version(include_pre).await })
+        .await
+        .map_err(|err| format!("Update check task failed: {err}"))?
+        .map_err(|err| err.to_string())
+}
+
+async fn run_self_update(
+    tokio_handle: tokio::runtime::Handle,
+) -> Result<crate::self_update::UpdateAction, String> {
+    tokio_handle
+        .spawn(async { crate::self_update::update().await })
+        .await
+        .map_err(|err| format!("Self-update task failed: {err}"))?
+        .map_err(|err| err.to_string())
+}
+
 /// Restart a process backend with freshly resolved configuration.
 /// This is used after env var changes to ensure the process picks up new values.
 /// Note: This function bridges from iced's smol runtime to tokio.
 fn restart_process_backend_sync(state: &Arc<GlobalState>, backend_id: &str) {
     use tokio_util::sync::CancellationToken;
-    
+
     let handle = state.tokio_handle.clone();
     let config = state.config.load_full();
-    
+
     // Get the process backend config
     let Some(proc) = config.hosted_processes.get(backend_id).map(|e| e.clone()) else {
         return;
     };
-    
+
     // Check if process is currently registered
     let was_enabled = state.process_registry.is_enabled(backend_id);
-    
+
     // Mark for removal and wait for it to stop (using tokio runtime)
     if let Some(token) = state.process_registry.mark_for_removal(backend_id) {
         let _ = handle.block_on(async {
-            tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                token.cancelled()
-            ).await
+            tokio::time::timeout(std::time::Duration::from_secs(10), token.cancelled()).await
         });
     }
     state.process_registry.cleanup_finished();
-    
+
     // Resolve and spawn with fresh config
     match config.resolve_process_backend(backend_id, &proc) {
         Ok(resolved) => {
@@ -882,7 +946,7 @@ fn restart_process_backend_sync(state: &Arc<GlobalState>, backend_id: &str) {
             tracing::error!("Failed to restart process {}: {:?}", backend_id, e);
         }
     }
-    
+
     crate::cruma_integration::rebuild_cruma_config(state.clone());
 }
 
@@ -950,7 +1014,8 @@ async fn load_backend_form(state: Arc<GlobalState>, backend_id: String) -> EditB
                 form.proc_auto_start = p.auto_start.unwrap_or(true);
                 form.proc_exclude_from_start_all = p.exclude_from_start_all;
                 form.proc_log_level = ProcessLogLevelChoice::from_option(&p.log_level);
-                let mut env_vec: Vec<(String, String)> = p.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                let mut env_vec: Vec<(String, String)> =
+                    p.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                 env_vec.sort_by(|a, b| a.0.cmp(&b.0));
                 form.proc_env = env_vec;
             }
@@ -1152,14 +1217,14 @@ async fn save_backend_form(
                     log_format,
                 }),
             );
-            
+
             guard.is_valid().map_err(|e| e.to_string())?;
             guard.write_to_disk().map_err(|e| e.to_string())?;
             state.config.store(std::sync::Arc::new(guard));
-            
+
             // Restart the process to pick up config changes
             restart_process_backend_sync(&state, &key);
-            
+
             return Ok(());
         }
         BackendKind::Unknown => {
@@ -1324,6 +1389,13 @@ impl OddBoxGui {
         log_state.set_filter(log_filter.clone());
 
         let initial_cruma_mode = cruma_mode_from_config(&state.config.load_full());
+        let install_source_info = crate::self_update::install_source_info();
+        let current_version = crate::self_update::current_version().to_string();
+        let include_pre = should_include_prerelease_for_checks(&current_version);
+        tasks.push(Task::perform(
+            check_latest_release(state.tokio_handle.clone(), include_pre),
+            Message::UpdatesCheckResult,
+        ));
 
         (
             Self {
@@ -1382,6 +1454,17 @@ impl OddBoxGui {
                 frontend_https_port_input: String::new(),
                 frontend_port_notice: None,
                 frontend_ports_dirty: false,
+                update_current_version: current_version,
+                update_install_source: install_source_info.source.to_string(),
+                update_hint: install_source_info.update_hint.to_string(),
+                update_install_path: install_source_info.resolved_path,
+                update_is_package_managed: install_source_info.package_managed,
+                update_latest_tag: None,
+                update_check_in_progress: true,
+                update_check_error: None,
+                update_action_in_progress: false,
+                update_notice: None,
+                update_notice_is_error: false,
             },
             Task::batch(tasks),
         )
@@ -1410,17 +1493,24 @@ impl OddBoxGui {
         // Listen for window close requests (to hide instead of quit when tray is active)
         let close_sub = window::close_requests().map(Message::WindowCloseRequested);
         // Listen for window events (focus/unfocus to detect minimize)
-        let window_events_sub = window::events().map(|(id, event)| {
-            match event {
-                iced::window::Event::Focused => Message::WindowFocused(id),
-                iced::window::Event::Unfocused => Message::WindowUnfocused(id),
-                _ => Message::NoOp,
-            }
+        let window_events_sub = window::events().map(|(id, event)| match event {
+            iced::window::Event::Focused => Message::WindowFocused(id),
+            iced::window::Event::Unfocused => Message::WindowUnfocused(id),
+            _ => Message::NoOp,
         });
         // Poll for tray commands
-        let tray_sub = time::every(std::time::Duration::from_millis(100)).map(|_| Message::TrayCommandReceived);
+        let tray_sub = time::every(std::time::Duration::from_millis(100))
+            .map(|_| Message::TrayCommandReceived);
 
-        Subscription::batch(vec![page_sub, theme_sub, resize_sub, exit_sub, close_sub, window_events_sub, tray_sub])
+        Subscription::batch(vec![
+            page_sub,
+            theme_sub,
+            resize_sub,
+            exit_sub,
+            close_sub,
+            window_events_sub,
+            tray_sub,
+        ])
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -1547,21 +1637,27 @@ impl OddBoxGui {
                         tray.set_window_visible(false);
                     }
                     // Remove from Dock when hidden (macOS only)
-                    macos_app_icon::set_activation_policy(macos_app_icon::ActivationPolicy::Accessory);
+                    macos_app_icon::set_activation_policy(
+                        macos_app_icon::ActivationPolicy::Accessory,
+                    );
                     return window::set_mode(id, window::Mode::Hidden);
                 }
-                
+
                 // On other platforms or if no tray on macOS, close normally
                 #[cfg(not(target_os = "macos"))]
                 {
-                    self.state.exit.store(true, std::sync::atomic::Ordering::SeqCst);
+                    self.state
+                        .exit
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
                     return window::close(id);
                 }
-                
+
                 // macOS without tray - also close normally
                 #[cfg(target_os = "macos")]
                 {
-                    self.state.exit.store(true, std::sync::atomic::Ordering::SeqCst);
+                    self.state
+                        .exit
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
                     return window::close(id);
                 }
             }
@@ -1600,7 +1696,9 @@ impl OddBoxGui {
                                 // Show in Dock when window is visible and reapply icon
                                 #[cfg(target_os = "macos")]
                                 {
-                                    macos_app_icon::set_activation_policy(macos_app_icon::ActivationPolicy::Regular);
+                                    macos_app_icon::set_activation_policy(
+                                        macos_app_icon::ActivationPolicy::Regular,
+                                    );
                                     macos_app_icon::apply_default_icon();
                                 }
                                 if let Some(id) = self.window_id {
@@ -1624,7 +1722,9 @@ impl OddBoxGui {
                                 }
                                 // Remove from Dock when hidden
                                 #[cfg(target_os = "macos")]
-                                macos_app_icon::set_activation_policy(macos_app_icon::ActivationPolicy::Accessory);
+                                macos_app_icon::set_activation_policy(
+                                    macos_app_icon::ActivationPolicy::Accessory,
+                                );
                                 if let Some(id) = self.window_id {
                                     return window::set_mode(id, window::Mode::Hidden);
                                 }
@@ -1633,25 +1733,30 @@ impl OddBoxGui {
                                 // Phase 1: Immediate visual feedback
                                 // Gray out the tray icon and disable menu items
                                 tray.set_shutting_down();
-                                
+
                                 // Remove from Dock immediately
                                 #[cfg(target_os = "macos")]
-                                macos_app_icon::set_activation_policy(macos_app_icon::ActivationPolicy::Accessory);
-                                
+                                macos_app_icon::set_activation_policy(
+                                    macos_app_icon::ActivationPolicy::Accessory,
+                                );
+
                                 // Mark that we're in quit pending state
                                 self.tray_quit_pending = true;
-                                
+
                                 // Hide window immediately, then trigger phase 2 after a small delay
                                 // to ensure the window system has time to actually hide the window
                                 if let Some(id) = self.window_id {
-                                    return window::set_mode(id, window::Mode::Hidden)
-                                        .chain(Task::perform(
+                                    return window::set_mode(id, window::Mode::Hidden).chain(
+                                        Task::perform(
                                             async {
                                                 // Small delay to let the window hide visually
-                                                std::thread::sleep(std::time::Duration::from_millis(50));
+                                                std::thread::sleep(
+                                                    std::time::Duration::from_millis(50),
+                                                );
                                             },
                                             |_| Message::TrayQuitPhase2,
-                                        ));
+                                        ),
+                                    );
                                 }
                                 // No window, go directly to phase 2
                                 return Task::perform(async {}, |_| Message::TrayQuitPhase2);
@@ -1667,15 +1772,14 @@ impl OddBoxGui {
                 // waiting for processes to stop (up to 30 seconds).
                 if self.tray_quit_pending {
                     self.tray_quit_pending = false;
-                    self.state.exit.store(true, std::sync::atomic::Ordering::SeqCst);
-                    
+                    self.state
+                        .exit
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+
                     // Exit the GUI - this allows gui::run() to return and main.rs
                     // will handle the graceful shutdown of all processes
                     if let Some(id) = self.window_id {
-                        return Task::batch(vec![
-                            window::close(id),
-                            iced::exit(),
-                        ]);
+                        return Task::batch(vec![window::close(id), iced::exit()]);
                     }
                     return iced::exit();
                 }
@@ -1724,6 +1828,81 @@ impl OddBoxGui {
                     self.edit_backend_pending_reload = false;
                 }
                 self.cruma_auth_mode = cruma_mode_from_config(&self.state.config.load_full());
+            }
+            Message::UpdatesCheck => {
+                if self.update_check_in_progress || self.update_action_in_progress {
+                    return Task::none();
+                }
+                self.update_check_in_progress = true;
+                self.update_check_error = None;
+                let tokio_handle = self.state.tokio_handle.clone();
+                let include_pre =
+                    should_include_prerelease_for_checks(&self.update_current_version);
+                return Task::perform(
+                    check_latest_release(tokio_handle, include_pre),
+                    Message::UpdatesCheckResult,
+                );
+            }
+            Message::UpdatesCheckResult(result) => {
+                self.update_check_in_progress = false;
+                match result {
+                    Ok(tag) => {
+                        self.update_latest_tag = Some(tag);
+                        self.update_check_error = None;
+                        self.update_notice = None;
+                        self.update_notice_is_error = false;
+                    }
+                    Err(err) => {
+                        self.update_check_error = Some(err.clone());
+                        self.update_notice = Some(format!("Failed to check for updates: {err}"));
+                        self.update_notice_is_error = true;
+                    }
+                }
+            }
+            Message::UpdatesRunSelfUpdate => {
+                if self.update_action_in_progress || self.update_check_in_progress {
+                    return Task::none();
+                }
+                self.update_action_in_progress = true;
+                self.update_notice = None;
+                self.update_notice_is_error = false;
+                let tokio_handle = self.state.tokio_handle.clone();
+                return Task::perform(
+                    run_self_update(tokio_handle),
+                    Message::UpdatesRunSelfUpdateResult,
+                );
+            }
+            Message::UpdatesRunSelfUpdateResult(result) => {
+                self.update_action_in_progress = false;
+                match result {
+                    Ok(crate::self_update::UpdateAction::Updated) => {
+                        self.update_notice = Some(
+                            "Self-update completed. Restart odd-box to run the updated binary."
+                                .to_string(),
+                        );
+                        self.update_notice_is_error = false;
+                    }
+                    Ok(crate::self_update::UpdateAction::NoUpdateNeeded) => {
+                        self.update_notice = Some(
+                            "No update needed. You are already on this version (or a newer pre-release build)."
+                                .to_string(),
+                        );
+                        self.update_notice_is_error = false;
+                    }
+                    Err(err) => {
+                        self.update_notice = Some(err);
+                        self.update_notice_is_error = true;
+                    }
+                }
+                self.update_check_error = None;
+                self.update_check_in_progress = true;
+                let tokio_handle = self.state.tokio_handle.clone();
+                let include_pre =
+                    should_include_prerelease_for_checks(&self.update_current_version);
+                return Task::perform(
+                    check_latest_release(tokio_handle, include_pre),
+                    Message::UpdatesCheckResult,
+                );
             }
             Message::LogFilterTextChanged(text) => {
                 self.log_filter.text = text;
@@ -1868,18 +2047,17 @@ impl OddBoxGui {
                     Message::GlobalEnvSaveResult,
                 );
             }
-            Message::GlobalEnvSaveResult(result) => {
-                match result {
-                    Ok(()) => {
-                        self.global_env_notice = Some("Global environment variables saved.".to_string());
-                        self.global_env_dirty = false;
-                        return Task::perform(fetch_config(self.state.clone()), Message::ConfigUpdated);
-                    }
-                    Err(e) => {
-                        self.global_env_notice = Some(format!("Error: {e}"));
-                    }
+            Message::GlobalEnvSaveResult(result) => match result {
+                Ok(()) => {
+                    self.global_env_notice =
+                        Some("Global environment variables saved.".to_string());
+                    self.global_env_dirty = false;
+                    return Task::perform(fetch_config(self.state.clone()), Message::ConfigUpdated);
                 }
-            }
+                Err(e) => {
+                    self.global_env_notice = Some(format!("Error: {e}"));
+                }
+            },
             Message::DashboardToggleProcessMenu(name) => {
                 if self.dashboard_process_menu.as_ref() == Some(&name) {
                     self.dashboard_process_menu = None;
@@ -2278,6 +2456,7 @@ impl OddBoxGui {
             Page::Backends,
             Page::Frontends,
             Page::ManagedProcesses,
+            Page::Updates,
         ];
 
         let nav_buttons: Vec<Element<'_, Message>> = nav_items
@@ -2294,9 +2473,87 @@ impl OddBoxGui {
                 left: 10.0,
             });
 
-        let sidebar_content = column![header, nav]
-            .width(Length::Fixed(200.0))
-            .height(Length::Fill);
+        let current_tag = format!("v{}", self.update_current_version);
+        let update_status = if self.update_action_in_progress {
+            "Updating...".to_string()
+        } else if self.update_check_in_progress {
+            "Checking updates...".to_string()
+        } else if let Some(err) = &self.update_check_error {
+            format!("Check failed: {err}")
+        } else if let Some(latest) = &self.update_latest_tag {
+            match compare_release_versions(&self.update_current_version, latest) {
+                Some(std::cmp::Ordering::Greater) => format!("Update available: {latest}"),
+                Some(std::cmp::Ordering::Equal) => "Up to date".to_string(),
+                Some(std::cmp::Ordering::Less) => {
+                    format!("Current build is newer than {latest}")
+                }
+                None => format!("Latest release: {latest}"),
+            }
+        } else {
+            "Update status unavailable".to_string()
+        };
+
+        let has_update_available = self
+            .update_latest_tag
+            .as_ref()
+            .and_then(|latest| compare_release_versions(&self.update_current_version, latest))
+            == Some(std::cmp::Ordering::Greater);
+
+        let sidebar_status_color = if self.update_check_error.is_some() {
+            self.theme().extended_palette().danger.strong.color
+        } else if has_update_available {
+            Color::from_rgb(0.90, 0.63, 0.22)
+        } else {
+            self.theme().extended_palette().background.weak.text
+        };
+
+        let sidebar_footer = container(
+            column![
+                text("Version").size(text_size(11)).style(|theme: &Theme| {
+                    iced::widget::text::Style {
+                        color: Some(theme.extended_palette().background.weak.text),
+                        ..Default::default()
+                    }
+                }),
+                text(current_tag).size(text_size(13)),
+                text(update_status)
+                    .size(text_size(11))
+                    .style(move |_theme: &Theme| iced::widget::text::Style {
+                        color: Some(sidebar_status_color),
+                        ..Default::default()
+                    })
+            ]
+            .spacing(4)
+            .width(Length::Fill),
+        )
+        .padding(Padding {
+            top: 10.0,
+            right: 12.0,
+            bottom: 12.0,
+            left: 12.0,
+        })
+        .width(Length::Fill)
+        .style(|theme: &Theme| {
+            let palette = theme.extended_palette();
+            container::Style {
+                background: Some(palette.background.weaker.color.into()),
+                border: Border {
+                    radius: 0.0.into(),
+                    width: 1.0,
+                    color: palette.background.strong.color,
+                },
+                ..Default::default()
+            }
+        });
+
+        let sidebar_content = column![
+            header,
+            nav,
+            Space::new().height(Length::Fill),
+            sidebar_footer
+        ]
+        .width(Length::Fixed(200.0))
+        .height(Length::Fill);
 
         container(sidebar_content)
             .style(|theme: &Theme| {
@@ -2385,6 +2642,7 @@ impl OddBoxGui {
             Page::Backends => self.view_backends(),
             Page::Frontends => self.view_frontends(),
             Page::ManagedProcesses => self.view_processes(),
+            Page::Updates => self.view_updates(),
             Page::EditFrontend => self.view_edit_frontend(),
             Page::EditBackend => self.view_edit_backend(),
         };
@@ -2409,10 +2667,8 @@ impl OddBoxGui {
                             let palette = theme.extended_palette();
                             let bg = palette.background.weak.color;
                             let base_bg = theme.palette().background;
-                            let is_light = (0.299 * base_bg.r
-                                + 0.587 * base_bg.g
-                                + 0.114 * base_bg.b)
-                                > 0.5;
+                            let is_light =
+                                (0.299 * base_bg.r + 0.587 * base_bg.g + 0.114 * base_bg.b) > 0.5;
                             let shade = if is_light { 1.0 } else { 0.5 };
                             let alpha = if use_glass_effects {
                                 if is_light { 0.22 } else { 0.30 }
@@ -2444,11 +2700,11 @@ impl OddBoxGui {
     pub(crate) fn theme(&self) -> Theme {
         match self.theme_mode {
             ThemeMode::Light => Theme::Light,
-            ThemeMode::Dark => Theme::Dracula,
+            ThemeMode::Dark => Theme::Dark,
             ThemeMode::System => match self.system_theme {
                 Some(theme::Mode::Light) => Theme::Light,
-                Some(theme::Mode::Dark) => Theme::Dracula,
-                _ => Theme::Dracula,
+                Some(theme::Mode::Dark) => Theme::Dark,
+                _ => Theme::Dark,
             },
         }
     }
@@ -2527,14 +2783,20 @@ fn maybe_refresh_desktop_caches(data_home: &std::path::Path) {
     let applications_dir = data_home.join("applications");
     if let Ok(path) = std::env::var("PATH") {
         if path.split(':').any(|segment| {
-            !segment.is_empty() && PathBuf::from(segment).join("update-desktop-database").exists()
+            !segment.is_empty()
+                && PathBuf::from(segment)
+                    .join("update-desktop-database")
+                    .exists()
         }) {
             let _ = std::process::Command::new("update-desktop-database")
                 .arg(&applications_dir)
                 .output();
         }
         if path.split(':').any(|segment| {
-            !segment.is_empty() && PathBuf::from(segment).join("gtk-update-icon-cache").exists()
+            !segment.is_empty()
+                && PathBuf::from(segment)
+                    .join("gtk-update-icon-cache")
+                    .exists()
         }) {
             let _ = std::process::Command::new("gtk-update-icon-cache")
                 .args(["-f", "-t"])
@@ -2548,7 +2810,12 @@ fn maybe_refresh_desktop_caches(data_home: &std::path::Path) {
 fn ensure_linux_desktop_entry() -> Result<(), String> {
     if std::env::var("ODD_BOX_DISABLE_AUTO_DESKTOP_ENTRY")
         .ok()
-        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
         .unwrap_or(false)
     {
         return Ok(());

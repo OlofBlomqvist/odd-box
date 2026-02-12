@@ -197,7 +197,10 @@ impl LogWorker {
         let filtered_entries: Vec<Arc<LogEntry>> = self
             .logs
             .iter()
-            .filter(|e| self.filter.matches_with_text_lower(e.as_ref(), text_lower.as_deref()))
+            .filter(|e| {
+                self.filter
+                    .matches_with_text_lower(e.as_ref(), text_lower.as_deref())
+            })
             .cloned()
             .collect();
 
@@ -285,7 +288,9 @@ pub fn spawn_filter_task(log_state: SharedLogState) -> tokio::task::JoinHandle<(
 
             if changed {
                 let filtered_snapshot = worker.rebuild_filtered_snapshot();
-                log_state.filtered_snapshot.store(Arc::new(filtered_snapshot));
+                log_state
+                    .filtered_snapshot
+                    .store(Arc::new(filtered_snapshot));
             }
         }
     })
@@ -334,7 +339,7 @@ impl<S: Subscriber> Layer<S> for GuiLoggerLayer {
         let current_thread_name = current_thread
             .name()
             .map(|x| x.to_string())
-            .unwrap_or_else(|| "HAH!".to_string());
+            .unwrap_or_else(|| "Unknown".to_string());
         let mut skip_src = false;
         let mut thread_name = if current_thread_name == "tokio-runtime-worker" {
             skip_src = true;

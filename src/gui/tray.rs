@@ -9,9 +9,9 @@
 
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use tracing::{info, trace, warn};
 #[cfg(not(target_os = "linux"))]
 use tracing::error;
+use tracing::{info, trace, warn};
 
 #[cfg(target_os = "linux")]
 use ksni::TrayMethods;
@@ -98,7 +98,7 @@ impl TrayHandle {
     ///
     /// Returns a TrayHandle that can be used to receive commands and update menu state.
     pub fn new(app_name: &str) -> Result<TrayHandle, String> {
-        info!("Initializing system tray icon for '{}'", app_name);
+        trace!("Initializing system tray icon for '{}'", app_name);
 
         let (command_tx, command_rx): (Sender<TrayCommand>, Receiver<TrayCommand>) =
             mpsc::channel();
@@ -108,7 +108,7 @@ impl TrayHandle {
 
         #[cfg(target_os = "linux")]
         {
-            info!("Linux detected: using ksni tray backend");
+            trace!("Linux detected: using ksni tray backend");
             let (tray_tx, mut tray_rx) = tokio::sync::mpsc::unbounded_channel();
             let app_name = app_name.to_string();
 
@@ -305,7 +305,7 @@ impl TrayHandle {
             }
         }
 
-        trace!("Tray toggle label updated: visible={}", visible);
+        //trace!("Tray toggle label updated: visible={}", visible);
     }
 
     /// Set the tray to shutting down state - disables and grays out menu items.
@@ -764,9 +764,7 @@ fn build_box_icon_rgba() -> Vec<u8> {
 
     trace!(
         "Generated procedural tray icon ({}x{}, template={})",
-        ICON_SIZE,
-        ICON_SIZE,
-        use_template
+        ICON_SIZE, ICON_SIZE, use_template
     );
 
     rgba

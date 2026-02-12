@@ -1,8 +1,14 @@
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use self_update::cargo_crate_version;
 use serde::Deserialize;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateAction {
+    Updated,
+    NoUpdateNeeded,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InstallSource {
@@ -63,7 +69,9 @@ fn update_from_github(target_tag: &str, current_version: &str) -> anyhow::Result
         .repo_owner("OlofBlomqvist")
         .repo_name("odd-box")
         .bin_name("odd-box")
-        .show_download_progress(true)
+        .show_download_progress(false)
+        .show_output(false)
+        .no_confirm(true)
         .target_version_tag(target_tag)
         .current_version(current_version)
         .build()?
@@ -151,7 +159,11 @@ pub fn install_source_info() -> InstallSourceInfo {
     }
 }
 
-pub async fn update() -> anyhow::Result<()> {
+fn normalize_release_tag(tag: &str) -> &str {
+    tag.trim_start_matches(|c| c == 'v' || c == 'V')
+}
+
+pub async fn update() -> anyhow::Result<UpdateAction> {
     let source_info = install_source_info();
     if source_info.package_managed {
         let install_path_hint = source_info
@@ -167,14 +179,22 @@ pub async fn update() -> anyhow::Result<()> {
         );
     }
 
-    let current_version = current_version();
-    let latest_tag = find_latest_version(false).await?;
-    if format!("v{current_version}") == latest_tag {
-        println!("already running latest version: {latest_tag}");
-        return Ok(());
+    let current_version = current_version().to_string();
+    let include_pre = current_version.contains('-');
+    let latest_tag = find_latest_version(include_pre).await?;
+    let latest = normalize_release_tag(&latest_tag);
+    let latest_is_newer = self_update::version::bump_is_greater(&current_version, latest)
+        .map_err(|err| anyhow!("Failed to compare versions: {err}"))?;
+    if !latest_is_newer {
+        println!("already running latest/newer version (current: v{current_version}, latest reported: {latest_tag})");
+        return Ok(UpdateAction::NoUpdateNeeded);
     }
 
-    update_from_github(&latest_tag, &current_version)
+    tokio::task::spawn_blocking(move || update_from_github(&latest_tag, &current_version))
+        .await
+        .map_err(|err| anyhow!("Self-update worker failed: {err}"))??;
+
+    Ok(UpdateAction::Updated)
 }
 
 pub fn current_version() -> &'static str {
