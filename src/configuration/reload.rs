@@ -221,6 +221,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
         &new_configuration,
         &runtime_ports,
         &runtime_states,
+        Some(global_state.clone()),
     ) {
         Ok((cfg, notes)) => {
             if !notes.unsupported.is_empty() {

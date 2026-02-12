@@ -771,7 +771,7 @@ async fn save_frontend_ports(
     guard.is_valid().map_err(|e| e.to_string())?;
     guard.write_to_disk().map_err(|e| e.to_string())?;
     state.config.store(std::sync::Arc::new(guard));
-    crate::cruma_integration::rebuild_cruma_config(&state);
+    crate::cruma_integration::rebuild_cruma_config(state.clone());
 
     Ok(())
 }
@@ -861,7 +861,7 @@ fn restart_process_backend_sync(state: &Arc<GlobalState>, backend_id: &str) {
         }
     }
     
-    crate::cruma_integration::rebuild_cruma_config(state);
+    crate::cruma_integration::rebuild_cruma_config(state.clone());
 }
 
 async fn save_cruma_mode(state: Arc<GlobalState>, mode: CrumaAuthMode) -> Result<(), String> {

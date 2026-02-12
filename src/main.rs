@@ -34,6 +34,7 @@ mod proc_host;
 use tracing_subscriber::util::SubscriberInitExt;
 mod self_update;
 use lazy_static::lazy_static;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool as StdAtomicBool, Ordering as StdOrdering};
 
 mod docker;
@@ -388,6 +389,7 @@ async fn main() -> anyhow::Result<()> {
             &cfg_guard,
             &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
+            None,
         )?;
 
         if !notes.unsupported.is_empty() {
@@ -563,6 +565,22 @@ async fn main() -> anyhow::Result<()> {
     })
     .expect("Error setting Ctrl-C handler");
 
+    // Register an atexit handler so that managed child processes are cleaned up even
+    // when the process exits abruptly.  On macOS the native "Quit" menu item (⌘Q)
+    // causes Cocoa to call exit() from within the event loop, which means gui::run()
+    // never returns and our normal graceful-shutdown code is skipped entirely.
+    // The atexit handler is a safety net that signals all known child process groups.
+    PROCESS_REGISTRY_FOR_CLEANUP
+        .set(global_state.process_registry.clone())
+        .ok();
+    #[cfg(unix)]
+    {
+        unsafe extern "C" {
+            safe fn atexit(func: extern "C" fn()) -> std::os::raw::c_int;
+        }
+        atexit(cleanup_managed_processes_on_exit);
+    }
+
     // Before starting the proxy thread(s) we need to initialize the tracing system and the tui if enabled.
     if tui_flag {
         tui::init();
@@ -670,7 +688,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     drop(config_guard);
-    crate::cruma_integration::rebuild_cruma_config(&global_state);
+    crate::cruma_integration::rebuild_cruma_config(global_state.clone());
 
     tokio::task::spawn(docker_thread(global_state.clone()));
 
@@ -986,6 +1004,7 @@ pub async fn docker_thread(state: Arc<GlobalState>) {
                 &guard,
                 &runtime_ports,
                 &runtime_states,
+                Some(state.clone()),
             ) {
                 if !notes.unsupported.is_empty() {
                     tracing::warn!(
@@ -1001,3 +1020,61 @@ pub async fn docker_thread(state: Arc<GlobalState>) {
     }
 }
 static CTRL_C_TRIPPED: StdAtomicBool = StdAtomicBool::new(false);
+
+/// Global reference to the process registry, used by the atexit handler to clean up
+/// managed child processes when the process exits abruptly (e.g. macOS native Quit menu
+/// triggers `exit()` from within the Cocoa event loop, bypassing our normal shutdown path).
+static PROCESS_REGISTRY_FOR_CLEANUP: OnceLock<Arc<crate::process_registry::ProcessRegistry>> =
+    OnceLock::new();
+
+/// Safety-net cleanup that runs via `atexit` when the process calls `exit()`.
+///
+/// On macOS, selecting "Quit" from the application menu bar (⌘Q) causes the Cocoa
+/// framework to call `exit()` directly from within the event loop. This means
+/// `gui::run()` never returns and our normal graceful shutdown code never executes.
+/// This handler ensures managed child processes are signaled to terminate even in
+/// that scenario.
+///
+/// The handler is idempotent: if the normal shutdown path already stopped all
+/// processes, sending signals to dead PIDs is harmless (returns ESRCH, ignored).
+#[cfg(unix)]
+extern "C" fn cleanup_managed_processes_on_exit() {
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+
+    let Some(registry) = PROCESS_REGISTRY_FOR_CLEANUP.get() else {
+        return;
+    };
+
+    let snapshot = registry.snapshot();
+    let pids: Vec<i32> = snapshot
+        .entries
+        .iter()
+        .filter_map(|e| {
+            let state = e.state();
+            // Only signal processes that are (or were recently) running
+            state.pid.map(|p| p as i32)
+        })
+        .collect();
+
+    if pids.is_empty() {
+        return;
+    }
+
+    // Phase 1: SIGINT – many processes handle this for graceful shutdown
+    for &pid in &pids {
+        let _ = kill(Pid::from_raw(-pid), Signal::SIGINT);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+
+    // Phase 2: SIGTERM – stronger hint
+    for &pid in &pids {
+        let _ = kill(Pid::from_raw(-pid), Signal::SIGTERM);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+
+    // Phase 3: SIGKILL – last resort
+    for &pid in &pids {
+        let _ = kill(Pid::from_raw(-pid), Signal::SIGKILL);
+    }
+}

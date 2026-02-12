@@ -1,8 +1,14 @@
 use std::collections::HashMap;
 use std::num::NonZeroU16;
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, bail};
+use bytes::Bytes;
 use cruma_proxy_lib::types::*;
+use http_body_util::StreamBody;
+use cruma_proxy_lib::hyper::body::Frame;
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::configuration::{ConfigWrapper, v4};
 use crate::docker::ContainerProxyTarget;
@@ -11,7 +17,285 @@ use crate::global_state::ProcState;
 use crate::process_registry::ProcessRegistry;
 
 const DEFAULT_404_HTML: &[u8] = include_bytes!("assets/404.html");
-const DEFAULT_STARTING_HTML: &[u8] = include_bytes!("assets/starting.html");
+const DEFAULT_STARTING_HTML: &str = include_str!("assets/starting.html");
+
+/// The ID used for the shared "backend offline" hyper handler.
+const OFFLINE_HANDLER_ID: &str = "odd-box::backend-offline";
+
+/// If the backend process is stopped or faulty, auto-start it by setting
+/// its state to Starting and enabling it — same as `http_events.rs` does.
+fn try_auto_start(state: &GlobalState, backend_id: &str) {
+    let registry = &state.process_registry;
+    let Some(proc_state) = registry.snapshot().state_of(backend_id) else {
+        return;
+    };
+    if matches!(proc_state, ProcState::Stopped | ProcState::Faulty) {
+        tracing::info!(
+            backend_id = %backend_id,
+            "auto-starting process from offline handler due to incoming request"
+        );
+        registry.update_state(
+            backend_id,
+            ProcState::Starting,
+            None,
+            None,
+            Some(true),
+            None,
+            None,
+            None,
+            None,
+        );
+    }
+}
+
+/// Build an SSE streaming response that monitors backend state and tells the
+/// browser to reload once the backend comes online (or periodically sends
+/// status updates so the page can show live info).
+fn sse_response(
+    state: Arc<GlobalState>,
+    request_host: String,
+) -> cruma_proxy_lib::hyper::Response<HyperResponseBody> {
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Frame<Bytes>, HyperHandlerError>>(4);
+
+    tokio::spawn(async move {
+        // Send an initial comment to flush connection headers
+        let _ = tx.send(Ok(Frame::data(Bytes::from(": connected\n\n")))).await;
+
+        let mut last_status = String::new();
+        let mut tried_auto_start = false;
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+
+            let cfg = state.config.load();
+            let backend_id = lookup_backend_for_host(&cfg, &request_host);
+
+            // On the first tick, try to auto-start a stopped/faulty process
+            if !tried_auto_start {
+                tried_auto_start = true;
+                if let Some(id) = &backend_id {
+                    try_auto_start(&state, id);
+                }
+            }
+
+            let (bid_str, status_str, is_online) = if let Some(id) = &backend_id {
+                let snapshot = state.process_registry.snapshot();
+                if let Some(handle) = snapshot.get(id) {
+                    let ps = handle.state();
+                    let status = format!("{:?}", ps.proc_state);
+                    let online = ps.proc_state == ProcState::Running
+                        || ps.proc_state == ProcState::Remote
+                        || ps.proc_state == ProcState::Docker
+                        || ps.proc_state == ProcState::DirServer;
+                    (id.clone(), status, online)
+                } else {
+                    (id.clone(), "Unknown".to_string(), false)
+                }
+            } else {
+                ("unknown".to_string(), "Not found".to_string(), false)
+            };
+
+            if is_online {
+                // Backend is up – tell the browser to reload
+                let msg = format!("event: reload\ndata: {{}}\n\n");
+                let _ = tx.send(Ok(Frame::data(Bytes::from(msg)))).await;
+                break;
+            }
+
+            // Only send a status event when the status text actually changed
+            if status_str != last_status {
+                last_status = status_str.clone();
+                let data = format!(
+                    "event: status\ndata: {{\"backend_id\":\"{bid_str}\",\"status\":\"{status_str}\"}}\n\n"
+                );
+                if tx.send(Ok(Frame::data(Bytes::from(data)))).await.is_err() {
+                    break; // client disconnected
+                }
+            }
+        }
+    });
+
+    let stream = ReceiverStream::new(rx);
+    use http_body_util::BodyExt as _;
+    let body: HyperResponseBody = StreamBody::new(stream).boxed();
+
+    cruma_proxy_lib::hyper::Response::builder()
+        .status(200)
+        .header("content-type", "text/event-stream")
+        .header("cache-control", "no-cache")
+        .header("connection", "keep-alive")
+        .header("x-accel-buffering", "no")
+        .body(body)
+        .expect("building SSE response should not fail")
+}
+
+/// Render the offline HTML template with the given placeholders filled in.
+fn render_offline_html(backend_id: &str, status: &str, host: &str) -> String {
+    DEFAULT_STARTING_HTML
+        .replace("@@BACKEND_ID@@", backend_id)
+        .replace("@@STATUS@@", status)
+        .replace("@@HOST@@", host)
+}
+
+/// Look up the backend_id for a given request host from the config.
+/// This is called dynamically on each request to ensure fresh data.
+fn lookup_backend_for_host(cfg: &ConfigWrapper, request_host: &str) -> Option<String> {
+    // Strip port if present
+    let host = request_host
+        .split(':')
+        .next()
+        .unwrap_or(request_host)
+        .to_lowercase();
+
+    // Check HTTP frontend routes
+    if let Some(http_frontend) = &cfg.frontends.http {
+        for (route_host, target) in &http_frontend.routes {
+            let route_host_lower = route_host.to_lowercase();
+            if target.capture_subdomains() {
+                // Base domain matching
+                if host == route_host_lower || host.ends_with(&format!(".{}", route_host_lower)) {
+                    return Some(target.backend_id().to_string());
+                }
+            } else {
+                // Exact match
+                if host == route_host_lower {
+                    return Some(target.backend_id().to_string());
+                }
+            }
+        }
+    }
+
+    // Check HTTPS frontend routes (if explicit, not inherited)
+    if let Some(https_frontend) = &cfg.frontends.https {
+        if let Some(routes) = &https_frontend.routes {
+            if let v4::HttpsRoutes::Explicit(route_map) = routes {
+                for (route_host, target) in route_map {
+                    let route_host_lower = route_host.to_lowercase();
+                    if target.capture_subdomains() {
+                        if host == route_host_lower || host.ends_with(&format!(".{}", route_host_lower)) {
+                            return Some(target.backend_id().to_string());
+                        }
+                    } else {
+                        if host == route_host_lower {
+                            return Some(target.backend_id().to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Creates the shared HyperHandler for the "backend is offline" page.
+///
+/// This handler has access to:
+/// - `state`: The global application state including process registry and config
+///
+/// The handler dynamically looks up the host-to-backend mapping from the current
+/// config on each request, ensuring it always has fresh data even if backends
+/// are added/removed without a full config rebuild.
+fn create_offline_handler(
+    state: Arc<GlobalState>,
+) -> HyperHandler {
+    Arc::new(move |req| {
+        let state = state.clone();
+
+        Box::pin(async move {
+            // Extract the host from the request
+            let request_host = req
+                .headers()
+                .get("host")
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or("unknown")
+                .to_string();
+
+            // SSE endpoint – stream status updates to the browser
+            if req.uri().path() == "/__odd-box-sse" {
+                return Ok(sse_response(state, request_host));
+            }
+
+            // Look up which backend this host maps to (dynamically from current config)
+            let cfg = state.config.load();
+            let backend_id = lookup_backend_for_host(&cfg, &request_host);
+
+            // Auto-start the process if it's stopped or faulty
+            if let Some(id) = &backend_id {
+                try_auto_start(&state, id);
+            }
+
+            // Get process state if we found the backend
+            let (bid_str, status_str, is_running) = if let Some(id) = &backend_id {
+                let snapshot = state.process_registry.snapshot();
+                if let Some(handle) = snapshot.get(id) {
+                    let ps = handle.state();
+                    let running = ps.proc_state == ProcState::Running
+                        || ps.proc_state == ProcState::Remote
+                        || ps.proc_state == ProcState::Docker
+                        || ps.proc_state == ProcState::DirServer;
+                    (id.clone(), format!("{:?}", ps.proc_state), running)
+                } else {
+                    (id.clone(), "Unknown".to_string(), false)
+                }
+            } else {
+                ("unknown".to_string(), "Not found".to_string(), false)
+            };
+
+
+
+
+            let body =  if req.headers().get("accept").and_then(|v| v.to_str().ok()).map(|v| v.contains("text/html")).unwrap_or(false) {
+                render_offline_html(&bid_str, &status_str, &request_host)
+            } else {
+                format!("Service Unavailable: backend '{}' is {}", bid_str, status_str)
+            };
+
+            let mut response = hyper_response_with_content_type(
+                cruma_proxy_lib::hyper::StatusCode::SERVICE_UNAVAILABLE,
+                "text/html; charset=utf-8",
+                body,
+            );
+
+            response.headers_mut().insert("Retry-After", "2".parse().unwrap());
+            response.headers_mut().insert("Cache-Control", "no-store".parse().unwrap());
+
+            // If the process is already running, tell the browser to close this
+            // TCP connection so the next request opens a fresh one that the proxy
+            // can route to the now-online backend.
+            if is_running {
+                response.headers_mut().insert("Connection", "close".parse().unwrap());
+            }
+
+            Ok(response)
+        })
+    })
+}
+
+/// Creates a simple offline handler without state access (for tests).
+fn create_offline_handler_simple() -> HyperHandler {
+    Arc::new(|req| {
+        Box::pin(async move {
+            let request_host = req
+                .headers()
+                .get("host")
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or("unknown");
+
+            let body = render_offline_html("unknown", "Starting", request_host);
+
+            let mut response = hyper_response_with_content_type(
+                cruma_proxy_lib::hyper::StatusCode::SERVICE_UNAVAILABLE,
+                "text/html; charset=utf-8",
+                body,
+            );
+
+            response.headers_mut().insert("Retry-After", "2".parse().unwrap());
+            response.headers_mut().insert("Cache-Control", "no-store".parse().unwrap());
+
+            Ok(response)
+        })
+    })
+}
 
 #[derive(Debug, Default, Clone)]
 pub struct BuildNotes {
@@ -135,6 +419,21 @@ fn respond_route_with_html(
     }
 }
 
+/// Creates an HTTP route that delegates to a HyperService handler.
+fn hyper_service_route(
+    name: String,
+    pat: HostPattern,
+    backend: HyperBackendId,
+) -> HttpRoute {
+    HttpRoute {
+        name,
+        priority: 0,
+        filter: HttpMatch::Host { hosts: vec![pat] },
+        middlewares: vec![],
+        target: Target::HyperService { backend },
+    }
+}
+
 fn serve_dir_route(
     name: String,
     pat: HostPattern,
@@ -174,17 +473,39 @@ fn to_endpoint(addr: &str, port: u16) -> Option<Endpoint> {
 
 /// Build a cruma_proxy_lib Configuration from the current OddBox V4 config.
 pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, BuildNotes)> {
-    build_config_with_runtime_ports(cfg, &HashMap::new(), &HashMap::new())
+    build_config_with_runtime_ports(cfg, &HashMap::new(), &HashMap::new(), None)
 }
 
+/// Build a cruma_proxy_lib Configuration with access to global state.
+///
+/// When `state` is provided, the offline handler will have access to:
+/// - Process registry for live process state
+/// - Host-to-backend mapping for identifying which process is being requested
 pub fn build_config_with_runtime_ports(
     cfg: &ConfigWrapper,
     runtime_ports: &HashMap<String, u16>,
     runtime_states: &HashMap<String, ProcState>,
+    state: Option<Arc<GlobalState>>,
 ) -> anyhow::Result<(Configuration, BuildNotes)> {
     let mut notes = BuildNotes::default();
     let mut web_backends: HashMap<WebBackendId, WebBackend> = HashMap::new();
+    let mut hyper_backends: HashMap<HyperBackendId, HyperHandler> = HashMap::new();
     let mut http_routes: Vec<HttpRoute> = Vec::new();
+
+    // Register the shared offline handler with state access
+    // The handler looks up host-to-backend mappings dynamically from the config,
+    // so it always has fresh data even if backends are added/removed.
+    let offline_handler = if let Some(state) = state {
+        create_offline_handler(state)
+    } else {
+        // Fallback handler without state (for tests or when state isn't available)
+        create_offline_handler_simple()
+    };
+
+    hyper_backends.insert(
+        HyperBackendId::from(OFFLINE_HANDLER_ID),
+        offline_handler,
+    );
 
     // Get ports from frontends
     let http_port = cfg.frontends.http.as_ref().map(|f| f.port).unwrap_or(80);
@@ -212,16 +533,10 @@ pub fn build_config_with_runtime_ports(
                             .unwrap_or(true);
 
                         if !is_running {
-                            http_routes.push(respond_route_with_html(
+                            http_routes.push(hyper_service_route(
                                 format!("{host}-starting"),
                                 host_pattern(host, capture_subdomains),
-                                503,
-                                DEFAULT_STARTING_HTML,
-                                vec![
-                                    ("Retry-After".to_string(), "2".to_string()),
-                                    ("Connection".to_string(), "close".to_string()),
-                                    ("Cache-Control".to_string(), "no-store".to_string()),
-                                ],
+                                HyperBackendId::from(OFFLINE_HANDLER_ID),
                             ));
                             continue;
                         }
@@ -234,16 +549,10 @@ pub fn build_config_with_runtime_ports(
                                 "Process backend '{}' has no port; using starting response for route '{}'",
                                 backend_id_str, host
                             ));
-                            http_routes.push(respond_route_with_html(
+                            http_routes.push(hyper_service_route(
                                 format!("{host}-starting"),
                                 host_pattern(host, capture_subdomains),
-                                503,
-                                DEFAULT_STARTING_HTML,
-                                vec![
-                                    ("Retry-After".to_string(), "2".to_string()),
-                                    ("Connection".to_string(), "close".to_string()),
-                                    ("Cache-Control".to_string(), "no-store".to_string()),
-                                ],
+                                HyperBackendId::from(OFFLINE_HANDLER_ID),
                             ));
                             continue;
                         };
@@ -482,6 +791,7 @@ pub fn build_config_with_runtime_ports(
         listeners,
         web_backends,
         tcp_backends: HashMap::new(),
+        hyper_backends,
         acme,
     };
 
@@ -514,11 +824,11 @@ pub fn runtime_states_from_registry(registry: &ProcessRegistry) -> HashMap<Strin
         .collect()
 }
 
-pub fn rebuild_cruma_config(state: &GlobalState) {
+pub fn rebuild_cruma_config(state: Arc<GlobalState>) {
     let cfg = state.config.load_full();
     let runtime_ports = runtime_ports_from_registry(&state.process_registry);
     let runtime_states = runtime_states_from_registry(&state.process_registry);
-    match build_config_with_runtime_ports(&cfg, &runtime_ports, &runtime_states) {
+    match build_config_with_runtime_ports(&cfg, &runtime_ports, &runtime_states, Some(state.clone())) {
         Ok((cfg, notes)) => {
             if !notes.unsupported.is_empty() {
                 tracing::trace!(

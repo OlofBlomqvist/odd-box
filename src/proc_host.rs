@@ -189,7 +189,7 @@ pub async fn host(
                 &mut previous_state,
                 crate::global_state::ProcState::Stopped,
             );
-            crate::cruma_integration::rebuild_cruma_config(&state);
+            crate::cruma_integration::rebuild_cruma_config(state.clone());
             break;
         }
 
@@ -203,7 +203,7 @@ pub async fn host(
                 &mut previous_state,
                 crate::global_state::ProcState::Stopped,
             );
-            crate::cruma_integration::rebuild_cruma_config(&state);
+            crate::cruma_integration::rebuild_cruma_config(state.clone());
             continue;
         }
 
@@ -243,7 +243,7 @@ pub async fn host(
                     &mut previous_state,
                     crate::global_state::ProcState::Faulty,
                 );
-                crate::cruma_integration::rebuild_cruma_config(&state);
+                crate::cruma_integration::rebuild_cruma_config(state.clone());
                 missing_bin = true;
                 continue;
             };
@@ -344,7 +344,7 @@ pub async fn host(
                     Some(resolved_bin_path.clone().to_string_lossy().to_string()),
                 );
                 previous_state = crate::global_state::ProcState::Running;
-                crate::cruma_integration::rebuild_cruma_config(&state);
+                crate::cruma_integration::rebuild_cruma_config(state.clone());
 
                 let stdout = child.stdout.take().expect("Failed to capture stdout");
                 let stderr = child.stderr.take().expect("Failed to capture stderr");
@@ -415,7 +415,7 @@ pub async fn host(
                     &mut previous_state,
                     crate::global_state::ProcState::Stopped,
                 );
-                crate::cruma_integration::rebuild_cruma_config(&state);
+                crate::cruma_integration::rebuild_cruma_config(state.clone());
             }
             Err(e) => {
                 tracing::error!("[{}] Failed to start: {:?}", backend_id, e);
@@ -425,7 +425,7 @@ pub async fn host(
                     &mut previous_state,
                     crate::global_state::ProcState::Faulty,
                 );
-                crate::cruma_integration::rebuild_cruma_config(&state);
+                crate::cruma_integration::rebuild_cruma_config(state.clone());
             }
         }
 
@@ -446,7 +446,7 @@ pub async fn host(
                 &mut previous_state,
                 crate::global_state::ProcState::Faulty,
             );
-            crate::cruma_integration::rebuild_cruma_config(&state);
+            crate::cruma_integration::rebuild_cruma_config(state.clone());
             time_to_sleep_ms = 5000;
         }
 

@@ -1,5 +1,6 @@
 use iced::widget::{Column, column, container, radio, row, text};
 use iced::{Alignment, Color, Element, Font, Length, Theme};
+use iced::widget::text::Wrapping;
 
 use super::super::{CrumaAuthMode, Message, OddBoxGui};
 
@@ -39,17 +40,29 @@ impl OddBoxGui {
 
         let fqdn_row = row![
             text("Assigned FQDN:").font(Font::MONOSPACE),
-            text(fqdn).font(Font::MONOSPACE)
+            container(
+                text(fqdn)
+                    .font(Font::MONOSPACE)
+                    .wrapping(Wrapping::WordOrGlyph),
+            )
+            .width(Length::Fill)
         ]
         .spacing(8)
-        .align_y(Alignment::Center);
+        .align_y(Alignment::Start)
+        .width(Length::Fill);
 
         let motd_row = row![
             text("MOTD:").font(Font::MONOSPACE),
-            text(motd).font(Font::MONOSPACE)
+            container(
+                text(motd)
+                    .font(Font::MONOSPACE)
+                    .wrapping(Wrapping::WordOrGlyph),
+            )
+            .width(Length::Fill)
         ]
         .spacing(8)
-        .align_y(Alignment::Center);
+        .align_y(Alignment::Start)
+        .width(Length::Fill);
 
         let connection_box = container(
             column![status_row, fqdn_row, motd_row]

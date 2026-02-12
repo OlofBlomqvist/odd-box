@@ -11,11 +11,13 @@ license-file = "LICENSE"
 anyhow = "1.0"
 arc-swap = "1.7"
 bollard = "0.18"
+bytes = "1"
 chrono = { version = "0.4", features= ["serde"] }
 clap = { version="4.4", features=["derive"]}
 cruma-tunnels-lib = { path = "/Users/olof/repos/uy/cruma-sdk/cruma-tunnels-lib"}
 cruma-proxy-lib = { path = "/Users/olof/repos/uy/cruma-sdk/cruma-proxy-lib"}
 dashmap = "6.0"
+http-body-util = "0.1"
 lazy_static = "1.4"
 notify = "6.1"
 regex = "1.9"
@@ -29,6 +31,7 @@ sysinfo = "0.33"
 self_update = { version = "0.42", default-features = false, features = ["rustls"] }
 time = {version="0.3",features=["macros","formatting","parsing"]}
 tokio = { version = "1.42", features = ["full"] }
+tokio-stream = "0.1"
 tokio-util = "0.7"
 toml = "0.8"
 tracing = "0.1"
