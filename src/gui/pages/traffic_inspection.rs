@@ -1,5 +1,5 @@
 use iced::widget::{Column, Row, Scrollable, button, column, container, row, text, toggler};
-use iced::{Color, Element, Font, Length, Padding, Theme};
+use iced::{Background, Color, Element, Font, Length, Padding, Theme};
 use iced::widget::text::Wrapping;
 
 use super::super::{Message, OddBoxGui};
@@ -13,6 +13,8 @@ use std::sync::Arc;
 
 impl OddBoxGui {
     pub(in crate::gui) fn view_traffic_inspection(&self) -> Element<'_, Message> {
+        let page_title = text("Traffic Inspection").size(super::super::text_size(20));
+
         let enabled = self
             .state
             .enable_global_traffic_inspection
@@ -207,8 +209,8 @@ impl OddBoxGui {
                 .width(Length::Fill),
             );
         } else {
-            // Iterate newest-first
-            for req_id in snapshot.order.iter().rev() {
+            // Iterate oldest-first
+            for req_id in snapshot.order.iter() {
                 if let Some(exchange) = snapshot.entries.get(req_id) {
                     let is_selected = self.traffic_inspection_selected == Some(*req_id);
                     let rid = *req_id;
@@ -316,10 +318,38 @@ impl OddBoxGui {
                 }
             });
 
-            column![controls_box, header, exchange_list, detail_container]
-                .spacing(0)
+            let inner = column![page_title, controls_box, header, exchange_list, detail_container]
+                .spacing(4)
+                .padding(30)
+                .width(Length::Fill)
+                .height(Length::Fill);
+
+            container(inner)
                 .width(Length::Fill)
                 .height(Length::Fill)
+                .style(|theme: &Theme| {
+                    let use_glass_effects = cfg!(target_os = "macos");
+                    let palette = theme.extended_palette();
+                    let bg = palette.background.weak.color;
+                    let base_bg = theme.palette().background;
+                    let is_light =
+                        (0.299 * base_bg.r + 0.587 * base_bg.g + 0.114 * base_bg.b) > 0.5;
+                    let shade = if is_light { 1.0 } else { 0.5 };
+                    let alpha = if use_glass_effects {
+                        if is_light { 0.22 } else { 0.30 }
+                    } else {
+                        1.0
+                    };
+                    iced::widget::container::Style {
+                        background: Some(Background::Color(Color::from_rgba(
+                            bg.r * shade,
+                            bg.g * shade,
+                            bg.b * shade,
+                            alpha,
+                        ))),
+                        ..Default::default()
+                    }
+                })
                 .into()
         } else {
             // No detail selected: full-height list
@@ -343,10 +373,38 @@ impl OddBoxGui {
                 }
             });
 
-            column![controls_box, header, exchange_list]
-                .spacing(0)
+            let inner = column![page_title, controls_box, header, exchange_list]
+                .spacing(4)
+                .padding(30)
+                .width(Length::Fill)
+                .height(Length::Fill);
+
+            container(inner)
                 .width(Length::Fill)
                 .height(Length::Fill)
+                .style(|theme: &Theme| {
+                    let use_glass_effects = cfg!(target_os = "macos");
+                    let palette = theme.extended_palette();
+                    let bg = palette.background.weak.color;
+                    let base_bg = theme.palette().background;
+                    let is_light =
+                        (0.299 * base_bg.r + 0.587 * base_bg.g + 0.114 * base_bg.b) > 0.5;
+                    let shade = if is_light { 1.0 } else { 0.5 };
+                    let alpha = if use_glass_effects {
+                        if is_light { 0.22 } else { 0.30 }
+                    } else {
+                        1.0
+                    };
+                    iced::widget::container::Style {
+                        background: Some(Background::Color(Color::from_rgba(
+                            bg.r * shade,
+                            bg.g * shade,
+                            bg.b * shade,
+                            alpha,
+                        ))),
+                        ..Default::default()
+                    }
+                })
                 .into()
         }
     }
