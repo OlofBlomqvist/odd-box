@@ -11,8 +11,19 @@ use super::super::{Message, OddBoxGui};
 
 impl OddBoxGui {
     pub(in crate::gui) fn view_frontends(&self) -> Element<'_, Message> {
-        let actions =
-            row![button(text("Add Route").size(super::super::text_size(14))).on_press(Message::OpenNewFrontend),].spacing(8);
+        let use_kde_buttons = self.use_kde_system_styles();
+        let table_theme = self.theme();
+        let table_header_bg = self.surface_panel_alt_bg(&table_theme);
+        let table_row_even_bg = self.surface_panel_bg(&table_theme);
+        let table_row_odd_bg = self.surface_panel_alt_bg(&table_theme);
+        let table_border = self.surface_border_color(&table_theme);
+
+        let mut add_route_btn =
+            button(text("Add Route").size(super::super::text_size(14))).on_press(Message::OpenNewFrontend);
+        if use_kde_buttons {
+            add_route_btn = add_route_btn.style(super::super::kde_neutral_button_style);
+        }
+        let actions = row![add_route_btn].spacing(8);
 
         let http_placeholder = self
             .cached_config
@@ -32,12 +43,18 @@ impl OddBoxGui {
             .on_input(Message::FrontendHttpsPortChanged)
             .size(super::super::text_size(14));
 
+        let mut apply_ports_btn =
+            button(text("Apply Ports").size(super::super::text_size(14))).on_press(Message::FrontendPortsSave);
+        if use_kde_buttons {
+            apply_ports_btn = apply_ports_btn.style(super::super::kde_primary_button_style);
+        }
+
         let ports_row = row![
             text("HTTP Port").size(super::super::text_size(14)),
             http_input,
             text("HTTPS Port").size(super::super::text_size(14)),
             https_input,
-            button(text("Apply Ports").size(super::super::text_size(14))).on_press(Message::FrontendPortsSave),
+            apply_ports_btn,
         ]
         .spacing(8);
 
@@ -68,7 +85,12 @@ impl OddBoxGui {
             TableColumn::fixed("Subdomains", 100.0),
         ];
 
-        let mut table = Table::new(columns);
+        let mut table = Table::new(columns).surface_colors(
+            table_header_bg,
+            table_row_even_bg,
+            table_row_odd_bg,
+            table_border,
+        );
         let mut known_backends: Vec<String> = self
             .cached_config
             .processes

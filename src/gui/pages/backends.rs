@@ -12,15 +12,38 @@ use crate::global_state::ProcState;
 impl OddBoxGui {
     pub(in crate::gui) fn view_backends(&self) -> Element<'_, Message> {
         let mut sections: Vec<Element<'_, Message>> = Vec::new();
+        let use_kde_buttons = self.use_kde_system_styles();
+        let table_theme = self.theme();
+        let table_header_bg = self.surface_panel_alt_bg(&table_theme);
+        let table_row_even_bg = self.surface_panel_bg(&table_theme);
+        let table_row_odd_bg = self.surface_panel_alt_bg(&table_theme);
+        let table_border = self.surface_border_color(&table_theme);
+
+        let mut add_remote_btn = button(text("Add Remote").size(super::super::text_size(14)))
+            .on_press(Message::OpenNewBackend(super::super::BackendKind::Remote));
+        let mut add_static_btn = button(text("Add Static").size(super::super::text_size(14)))
+            .on_press(Message::OpenNewBackend(super::super::BackendKind::Static));
+        let mut add_process_btn = button(text("Add Process").size(super::super::text_size(14)))
+            .on_press(Message::OpenNewBackend(super::super::BackendKind::Process));
+        let mut start_all_btn =
+            button(text("Start All").size(super::super::text_size(14))).on_press(Message::ProcessStartAll);
+        let mut stop_all_btn =
+            button(text("Stop All").size(super::super::text_size(14))).on_press(Message::ProcessStopAll);
+
+        if use_kde_buttons {
+            add_remote_btn = add_remote_btn.style(super::super::kde_neutral_button_style);
+            add_static_btn = add_static_btn.style(super::super::kde_neutral_button_style);
+            add_process_btn = add_process_btn.style(super::super::kde_neutral_button_style);
+            start_all_btn = start_all_btn.style(super::super::kde_success_button_style);
+            stop_all_btn = stop_all_btn.style(super::super::kde_danger_button_style);
+        }
+
         let actions = row![
-            button(text("Add Remote").size(super::super::text_size(14)))
-                .on_press(Message::OpenNewBackend(super::super::BackendKind::Remote)),
-            button(text("Add Static").size(super::super::text_size(14)))
-                .on_press(Message::OpenNewBackend(super::super::BackendKind::Static)),
-            button(text("Add Process").size(super::super::text_size(14)))
-                .on_press(Message::OpenNewBackend(super::super::BackendKind::Process)),
-            button(text("Start All").size(super::super::text_size(14))).on_press(Message::ProcessStartAll),
-            button(text("Stop All").size(super::super::text_size(14))).on_press(Message::ProcessStopAll),
+            add_remote_btn,
+            add_static_btn,
+            add_process_btn,
+            start_all_btn,
+            stop_all_btn,
         ]
         .spacing(8);
 
@@ -35,7 +58,12 @@ impl OddBoxGui {
                 TableColumn::fixed("Auto", 60.0),
             ];
 
-            let mut table = Table::new(columns);
+            let mut table = Table::new(columns).surface_colors(
+                table_header_bg,
+                table_row_even_bg,
+                table_row_odd_bg,
+                table_border,
+            );
 
             for proc in &self.cached_config.processes {
                 let state_color = match proc.state {
@@ -75,7 +103,12 @@ impl OddBoxGui {
                 TableColumn::fixed("HTTPS", 60.0),
             ];
 
-            let mut table = Table::new(columns);
+            let mut table = Table::new(columns).surface_colors(
+                table_header_bg,
+                table_row_even_bg,
+                table_row_odd_bg,
+                table_border,
+            );
 
             for backend in &self.cached_config.remote_backends {
                 table = table.push_row_with_message(
@@ -104,7 +137,12 @@ impl OddBoxGui {
                 TableColumn::fixed("List Dir", 80.0),
             ];
 
-            let mut table = Table::new(columns);
+            let mut table = Table::new(columns).surface_colors(
+                table_header_bg,
+                table_row_even_bg,
+                table_row_odd_bg,
+                table_border,
+            );
 
             for backend in &self.cached_config.static_backends {
                 table = table.push_row_with_message(

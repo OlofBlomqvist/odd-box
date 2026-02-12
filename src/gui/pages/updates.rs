@@ -6,6 +6,7 @@ use super::super::{Message, OddBoxGui};
 
 impl OddBoxGui {
     pub(in crate::gui) fn view_updates(&self) -> Element<'_, Message> {
+        let use_kde_buttons = self.use_kde_system_styles();
         let current_tag = format!("v{}", self.update_current_version);
 
         let (status_text, status_color) = if self.update_action_in_progress {
@@ -57,13 +58,12 @@ impl OddBoxGui {
         .padding(12)
         .width(Length::Fill)
         .style(|theme: &Theme| {
-            let palette = theme.extended_palette();
             container::Style {
-                background: Some(palette.background.weaker.color.into()),
+                background: Some(self.surface_panel_bg(theme).into()),
                 border: Border {
                     radius: 6.0.into(),
                     width: 1.0,
-                    color: palette.background.strong.color,
+                    color: self.surface_border_color(theme),
                 },
                 ..Default::default()
             }
@@ -80,6 +80,9 @@ impl OddBoxGui {
             bottom: 8.0,
             left: 14.0,
         });
+        if use_kde_buttons {
+            check_button = check_button.style(super::super::kde_neutral_button_style);
+        }
 
         if !self.update_check_in_progress && !self.update_action_in_progress {
             check_button = check_button.on_press(Message::UpdatesCheck);
@@ -99,6 +102,9 @@ impl OddBoxGui {
             bottom: 8.0,
             left: 14.0,
         });
+        if use_kde_buttons {
+            self_update_button = self_update_button.style(super::super::kde_primary_button_style);
+        }
         if self_update_allowed {
             self_update_button = self_update_button.on_press(Message::UpdatesRunSelfUpdate);
         }
@@ -178,13 +184,12 @@ impl OddBoxGui {
                 .padding(16)
                 .width(Length::Fill)
                 .style(|theme: &Theme| {
-                    let palette = theme.extended_palette();
                     container::Style {
-                        background: Some(palette.background.weaker.color.into()),
+                        background: Some(self.surface_panel_bg(theme).into()),
                         border: Border {
                             radius: 6.0.into(),
                             width: 1.0,
-                            color: palette.background.strong.color,
+                            color: self.surface_border_color(theme),
                         },
                         ..Default::default()
                     }

@@ -1,6 +1,6 @@
 use iced::border;
 use iced::widget::{Column as IcedColumn, Row, button, column, container, text};
-use iced::{Border, Color, Element, Font, Length, Padding, Theme};
+use iced::{Border, Color, Element, Font, Length, Padding, Theme, theme};
 
 /// Column width specification
 #[derive(Clone, Copy)]
@@ -51,6 +51,10 @@ pub struct Table<'a, M: Clone + 'a> {
     columns: Vec<Column>,
     rows: Vec<RowKind<'a, M>>,
     row_messages: Vec<Option<M>>,
+    header_background: Option<Color>,
+    row_even_background: Option<Color>,
+    row_odd_background: Option<Color>,
+    border_color: Option<Color>,
     spacing: f32,
     row_padding: Padding,
     header_padding: Padding,
@@ -62,12 +66,49 @@ enum RowKind<'a, M: Clone + 'a> {
     Full(Element<'a, M>),
 }
 
+fn header_background(theme: &Theme) -> Color {
+    let palette = theme.extended_palette();
+    if palette.is_dark {
+        theme::palette::mix(theme.palette().background, Color::BLACK, 0.32)
+    } else {
+        palette.background.strong.color
+    }
+}
+
+fn row_background(theme: &Theme, is_even: bool) -> Color {
+    let palette = theme.extended_palette();
+    if palette.is_dark {
+        if is_even {
+            theme::palette::mix(theme.palette().background, Color::BLACK, 0.16)
+        } else {
+            theme::palette::mix(theme.palette().background, Color::BLACK, 0.23)
+        }
+    } else if is_even {
+        palette.background.weakest.color
+    } else {
+        palette.background.weaker.color
+    }
+}
+
+fn table_border_color(theme: &Theme) -> Color {
+    let palette = theme.extended_palette();
+    if palette.is_dark {
+        theme::palette::mix(theme.palette().background, Color::BLACK, 0.40)
+    } else {
+        palette.background.strong.color
+    }
+}
+
 impl<'a, M: Clone + 'a> Table<'a, M> {
     pub fn new(columns: Vec<Column>) -> Self {
         Self {
             columns,
             rows: Vec::new(),
             row_messages: Vec::new(),
+            header_background: None,
+            row_even_background: None,
+            row_odd_background: None,
+            border_color: None,
             spacing: 10.0,
             row_padding: Padding {
                 top: 10.0,
@@ -83,6 +124,21 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
             },
             hover_message: None,
         }
+    }
+
+    /// Override table surface colors (header, even row, odd row, border).
+    pub fn surface_colors(
+        mut self,
+        header_bg: Color,
+        row_even_bg: Color,
+        row_odd_bg: Color,
+        border: Color,
+    ) -> Self {
+        self.header_background = Some(header_bg);
+        self.row_even_background = Some(row_even_bg);
+        self.row_odd_background = Some(row_odd_bg);
+        self.border_color = Some(border);
+        self
     }
 
     /// Enable hover effect on rows (requires a no-op message for button interactivity)
@@ -116,6 +172,10 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
     pub fn build(self) -> Element<'a, M> {
         let row_count = self.rows.len();
         let hover_message = self.hover_message.clone();
+        let header_background_override = self.header_background;
+        let row_even_background_override = self.row_even_background;
+        let row_odd_background_override = self.row_odd_background;
+        let border_color_override = self.border_color;
 
         // Build header row
         let header_cells: Vec<Element<'a, M>> = self
@@ -149,10 +209,11 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
 
         let header_container: Element<'a, M> = container(header_row)
             .width(Length::Fill)
-            .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
+            .style(move |theme: &Theme| {
+                let header_bg =
+                    header_background_override.unwrap_or_else(|| header_background(theme));
                 container::Style {
-                    background: Some(palette.background.strong.color.into()),
+                    background: Some(header_bg.into()),
                     border: Border {
                         radius: border::top(6.0),
                         width: 0.0,
@@ -199,13 +260,19 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
                         .style(move |theme: &Theme, status| {
                             let palette = theme.extended_palette();
                             let base_bg = if is_even {
-                                palette.background.weakest.color
+                                row_even_background_override
+                                    .unwrap_or_else(|| row_background(theme, true))
                             } else {
-                                palette.background.weaker.color
+                                row_odd_background_override
+                                    .unwrap_or_else(|| row_background(theme, false))
                             };
                             let bg = match status {
                                 button::Status::Hovered | button::Status::Pressed => {
-                                    palette.primary.weak.color
+                                    if palette.is_dark {
+                                        theme::palette::mix(palette.primary.weak.color, base_bg, 0.70)
+                                    } else {
+                                        palette.primary.weak.color
+                                    }
                                 }
                                 _ => base_bg,
                             };
@@ -237,11 +304,12 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
                         .width(Length::Fill)
                         .padding(self.row_padding)
                         .style(move |theme: &Theme| {
-                            let palette = theme.extended_palette();
                             let bg = if is_even {
-                                palette.background.weakest.color
+                                row_even_background_override
+                                    .unwrap_or_else(|| row_background(theme, true))
                             } else {
-                                palette.background.weaker.color
+                                row_odd_background_override
+                                    .unwrap_or_else(|| row_background(theme, false))
                             };
                             let radius = if is_last {
                                 border::bottom(6.0)
@@ -271,14 +339,13 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
         // Wrap in outer container with subtle border
         container(table_content)
             .width(Length::Fill)
-            .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
+            .style(move |theme: &Theme| {
                 container::Style {
                     background: None,
                     border: Border {
                         radius: 6.0.into(),
                         width: 1.0,
-                        color: palette.background.strong.color,
+                        color: border_color_override.unwrap_or_else(|| table_border_color(theme)),
                     },
                     ..Default::default()
                 }

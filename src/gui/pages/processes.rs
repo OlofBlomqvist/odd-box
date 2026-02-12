@@ -15,7 +15,18 @@ fn tab_button_style(
     theme: &Theme,
     status: button::Status,
     is_active: bool,
+    use_kde_buttons: bool,
 ) -> button::Style {
+    if use_kde_buttons {
+        if is_active {
+            let active_status = match status {
+                button::Status::Hovered | button::Status::Pressed => status,
+                _ => button::Status::Pressed,
+            };
+            return super::super::kde_primary_button_style(theme, active_status);
+        }
+        return super::super::kde_neutral_button_style(theme, status);
+    }
     let palette = theme.extended_palette();
     if is_active {
         button::Style {
@@ -48,6 +59,7 @@ fn tab_button_style(
 impl OddBoxGui {
     pub(in crate::gui) fn view_processes(&self) -> Element<'_, Message> {
         let current_tab = self.processes_tab;
+        let use_kde_buttons = self.use_kde_system_styles();
 
         // Tab bar
         let processes_tab_btn = button(
@@ -65,7 +77,12 @@ impl OddBoxGui {
             left: 16.0,
         })
         .style(move |theme: &Theme, status| {
-            tab_button_style(theme, status, current_tab == ProcessesTab::Processes)
+            tab_button_style(
+                theme,
+                status,
+                current_tab == ProcessesTab::Processes,
+                use_kde_buttons,
+            )
         })
         .on_press(Message::ProcessesTabChanged(ProcessesTab::Processes));
 
@@ -84,7 +101,12 @@ impl OddBoxGui {
             left: 16.0,
         })
         .style(move |theme: &Theme, status| {
-            tab_button_style(theme, status, current_tab == ProcessesTab::GlobalVariables)
+            tab_button_style(
+                theme,
+                status,
+                current_tab == ProcessesTab::GlobalVariables,
+                use_kde_buttons,
+            )
         })
         .on_press(Message::ProcessesTabChanged(ProcessesTab::GlobalVariables));
 
@@ -92,11 +114,10 @@ impl OddBoxGui {
             row![processes_tab_btn, global_vars_tab_btn].spacing(2),
         )
         .style(|theme: &Theme| {
-            let palette = theme.extended_palette();
             container::Style {
                 border: Border {
                     width: 0.0,
-                    color: palette.background.strong.color,
+                    color: self.surface_border_color(theme),
                     radius: 0.0.into(),
                 },
                 ..Default::default()
@@ -108,9 +129,8 @@ impl OddBoxGui {
             .height(1)
             .width(Length::Fill)
             .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
                 container::Style {
-                    background: Some(palette.background.strong.color.into()),
+                    background: Some(self.surface_border_color(theme).into()),
                     ..Default::default()
                 }
             });
@@ -130,6 +150,11 @@ impl OddBoxGui {
         if self.cached_config.processes.is_empty() {
             return text("No managed processes configured").into();
         }
+        let table_theme = self.theme();
+        let table_header_bg = self.surface_panel_alt_bg(&table_theme);
+        let table_row_even_bg = self.surface_panel_bg(&table_theme);
+        let table_row_odd_bg = self.surface_panel_alt_bg(&table_theme);
+        let table_border = self.surface_border_color(&table_theme);
 
         let columns = vec![
             TableColumn::portion("Name", 2),
@@ -140,7 +165,12 @@ impl OddBoxGui {
             TableColumn::fixed("Auto", 60.0),
         ];
 
-        let mut table = Table::new(columns);
+        let mut table = Table::new(columns).surface_colors(
+            table_header_bg,
+            table_row_even_bg,
+            table_row_odd_bg,
+            table_border,
+        );
 
         for proc in &self.cached_config.processes {
             let is_expanded = self.expanded_process.as_deref() == Some(&proc.name);
@@ -213,6 +243,7 @@ impl OddBoxGui {
     }
 
     fn view_global_variables_tab(&self) -> Element<'_, Message> {
+        let use_kde_buttons = self.use_kde_system_styles();
         let description = text(
             "Global environment variables are available to all process backends. \
              Process-level variables override global ones with the same key.",
@@ -259,12 +290,11 @@ impl OddBoxGui {
         })
         .width(Length::Fill)
         .style(|theme: &Theme| {
-            let palette = theme.extended_palette();
             container::Style {
                 border: Border {
                     radius: 6.0.into(),
                     width: 1.0,
-                    color: palette.background.strong.color,
+                    color: self.surface_border_color(theme),
                 },
                 ..Default::default()
             }
@@ -329,11 +359,10 @@ impl OddBoxGui {
             })
             .width(Length::Fill)
             .style(move |theme: &Theme| {
-                let palette = theme.extended_palette();
                 let bg = if idx % 2 == 0 {
                     Color::TRANSPARENT
                 } else {
-                    let c = palette.background.weak.color;
+                    let c = self.surface_panel_alt_bg(theme);
                     Color::from_rgba(c.r, c.g, c.b, 0.3)
                 };
                 container::Style {
@@ -371,12 +400,11 @@ impl OddBoxGui {
         )
         .width(Length::Fill)
         .style(|theme: &Theme| {
-            let palette = theme.extended_palette();
             container::Style {
                 border: Border {
                     radius: 6.0.into(),
                     width: 1.0,
-                    color: palette.background.strong.color,
+                    color: self.surface_border_color(theme),
                 },
                 ..Default::default()
             }
@@ -411,7 +439,10 @@ impl OddBoxGui {
             bottom: 6.0,
             left: 12.0,
         })
-        .style(|theme: &Theme, status| {
+        .style(move |theme: &Theme, status| {
+            if use_kde_buttons {
+                return super::super::kde_primary_button_style(theme, status);
+            }
             let palette = theme.extended_palette();
             let (bg, fg) = match status {
                 button::Status::Hovered => {
@@ -452,7 +483,10 @@ impl OddBoxGui {
             bottom: 8.0,
             left: 20.0,
         })
-        .style(|theme: &Theme, status| {
+        .style(move |theme: &Theme, status| {
+            if use_kde_buttons {
+                return super::super::kde_success_button_style(theme, status);
+            }
             let palette = theme.extended_palette();
             let (bg, fg) = match status {
                 button::Status::Hovered => {
@@ -508,6 +542,7 @@ impl OddBoxGui {
     }
 
     fn build_process_actions(&self, proc_name: &str, state: ProcState) -> Element<'_, Message> {
+        let use_kde_buttons = self.use_kde_system_styles();
         let proc_name_start = proc_name.to_string();
         let proc_name_stop = proc_name.to_string();
         let proc_name_edit = proc_name.to_string();
@@ -523,7 +558,10 @@ impl OddBoxGui {
                 bottom: 4.0,
                 left: 8.0,
             })
-            .style(|theme: &Theme, status| {
+            .style(move |theme: &Theme, status| {
+                if use_kde_buttons {
+                    return super::super::kde_success_button_style(theme, status);
+                }
                 let palette = theme.extended_palette();
                 let (bg, fg) = match status {
                     button::Status::Hovered => {
@@ -560,7 +598,10 @@ impl OddBoxGui {
                 bottom: 4.0,
                 left: 8.0,
             })
-            .style(|theme: &Theme, status| {
+            .style(move |theme: &Theme, status| {
+                if use_kde_buttons {
+                    return super::super::kde_danger_button_style(theme, status);
+                }
                 let palette = theme.extended_palette();
                 let (bg, fg) = match status {
                     button::Status::Hovered => {
@@ -597,7 +638,10 @@ impl OddBoxGui {
                 bottom: 4.0,
                 left: 8.0,
             })
-            .style(|theme: &Theme, status| {
+            .style(move |theme: &Theme, status| {
+                if use_kde_buttons {
+                    return super::super::kde_primary_button_style(theme, status);
+                }
                 let palette = theme.extended_palette();
                 let (bg, fg) = match status {
                     button::Status::Hovered => {

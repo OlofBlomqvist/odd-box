@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 impl OddBoxGui {
     pub(in crate::gui) fn view_traffic_inspection(&self) -> Element<'_, Message> {
+        let use_kde_buttons = self.use_kde_system_styles();
         let page_title = text("Traffic Inspection").size(super::super::text_size(20));
 
         let enabled = self
@@ -40,8 +41,11 @@ impl OddBoxGui {
                 bottom: 6.0,
                 left: 12.0,
             })
-            .style(|theme: &Theme, status| {
+            .style(move |theme: &Theme, status| {
                 use iced::widget::button;
+                if use_kde_buttons {
+                    return super::super::kde_danger_button_style(theme, status);
+                }
                 let palette = theme.extended_palette();
                 let bg = match status {
                     button::Status::Hovered => palette.danger.strong.color,
@@ -82,8 +86,11 @@ impl OddBoxGui {
                     bottom: 6.0,
                     left: 12.0,
                 })
-                .style(|theme: &Theme, status| {
+                .style(move |theme: &Theme, status| {
                     use iced::widget::button;
+                    if use_kde_buttons {
+                        return super::super::kde_primary_button_style(theme, status);
+                    }
                     let palette = theme.extended_palette();
                     let bg = match status {
                         button::Status::Hovered => palette.primary.strong.color,
@@ -108,13 +115,12 @@ impl OddBoxGui {
             .padding(16)
             .width(Length::Fill)
             .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
                 iced::widget::container::Style {
-                    background: Some(palette.background.weaker.color.into()),
+                    background: Some(self.surface_panel_bg(theme).into()),
                     border: iced::Border {
                         radius: 6.0.into(),
                         width: 1.0,
-                        color: palette.background.strong.color,
+                        color: self.surface_border_color(theme),
                     },
                     ..Default::default()
                 }
@@ -177,13 +183,12 @@ impl OddBoxGui {
         })
         .width(Length::Fill)
         .style(|theme: &Theme| {
-            let palette = theme.extended_palette();
             iced::widget::container::Style {
-                background: Some(palette.background.strong.color.into()),
+                background: Some(self.surface_panel_alt_bg(theme).into()),
                 border: iced::Border {
                     radius: 6.0.into(),
                     width: 1.0,
-                    color: palette.background.strong.color,
+                    color: self.surface_border_color(theme),
                 },
                 ..Default::default()
             }
@@ -251,11 +256,8 @@ impl OddBoxGui {
                             .height(Length::Fixed(1.0))
                             .width(Length::Fill)
                             .style(|theme: &Theme| {
-                                let palette = theme.extended_palette();
                                 iced::widget::container::Style {
-                                    background: Some(
-                                        palette.background.strong.color.into(),
-                                    ),
+                                    background: Some(self.surface_border_color(theme).into()),
                                     ..Default::default()
                                 }
                             }),
@@ -281,13 +283,12 @@ impl OddBoxGui {
             .width(Length::Fill)
             .height(Length::FillPortion(2))
             .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
                 iced::widget::container::Style {
-                    background: Some(palette.background.weaker.color.into()),
+                    background: Some(self.surface_panel_bg(theme).into()),
                     border: iced::Border {
                         radius: 6.0.into(),
                         width: 1.0,
-                        color: palette.background.strong.color,
+                        color: self.surface_border_color(theme),
                     },
                     ..Default::default()
                 }
@@ -306,13 +307,12 @@ impl OddBoxGui {
             .width(Length::Fill)
             .height(Length::FillPortion(3))
             .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
                 iced::widget::container::Style {
-                    background: Some(palette.background.weaker.color.into()),
+                    background: Some(self.surface_panel_bg(theme).into()),
                     border: iced::Border {
                         radius: 6.0.into(),
                         width: 1.0,
-                        color: palette.background.strong.color,
+                        color: self.surface_border_color(theme),
                     },
                     ..Default::default()
                 }
@@ -328,24 +328,16 @@ impl OddBoxGui {
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(|theme: &Theme| {
-                    let use_glass_effects = cfg!(target_os = "macos");
                     let palette = theme.extended_palette();
-                    let bg = palette.background.weak.color;
-                    let base_bg = theme.palette().background;
-                    let is_light =
-                        (0.299 * base_bg.r + 0.587 * base_bg.g + 0.114 * base_bg.b) > 0.5;
-                    let shade = if is_light { 1.0 } else { 0.5 };
-                    let alpha = if use_glass_effects {
-                        if is_light { 0.22 } else { 0.30 }
+                    let bg = self.surface_page_bg(theme);
+                    let alpha = if super::super::use_glass_effects() {
+                        if palette.is_dark { 0.32 } else { 0.22 }
                     } else {
                         1.0
                     };
                     iced::widget::container::Style {
-                        background: Some(Background::Color(Color::from_rgba(
-                            bg.r * shade,
-                            bg.g * shade,
-                            bg.b * shade,
-                            alpha,
+                        background: Some(Background::Color(super::super::platform_surface_color(
+                            bg, alpha,
                         ))),
                         ..Default::default()
                     }
@@ -361,13 +353,12 @@ impl OddBoxGui {
             .width(Length::Fill)
             .height(Length::Fill)
             .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
                 iced::widget::container::Style {
-                    background: Some(palette.background.weaker.color.into()),
+                    background: Some(self.surface_panel_bg(theme).into()),
                     border: iced::Border {
                         radius: 6.0.into(),
                         width: 1.0,
-                        color: palette.background.strong.color,
+                        color: self.surface_border_color(theme),
                     },
                     ..Default::default()
                 }
@@ -383,24 +374,16 @@ impl OddBoxGui {
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(|theme: &Theme| {
-                    let use_glass_effects = cfg!(target_os = "macos");
                     let palette = theme.extended_palette();
-                    let bg = palette.background.weak.color;
-                    let base_bg = theme.palette().background;
-                    let is_light =
-                        (0.299 * base_bg.r + 0.587 * base_bg.g + 0.114 * base_bg.b) > 0.5;
-                    let shade = if is_light { 1.0 } else { 0.5 };
-                    let alpha = if use_glass_effects {
-                        if is_light { 0.22 } else { 0.30 }
+                    let bg = self.surface_page_bg(theme);
+                    let alpha = if super::super::use_glass_effects() {
+                        if palette.is_dark { 0.32 } else { 0.22 }
                     } else {
                         1.0
                     };
                     iced::widget::container::Style {
-                        background: Some(Background::Color(Color::from_rgba(
-                            bg.r * shade,
-                            bg.g * shade,
-                            bg.b * shade,
-                            alpha,
+                        background: Some(Background::Color(super::super::platform_surface_color(
+                            bg, alpha,
                         ))),
                         ..Default::default()
                     }

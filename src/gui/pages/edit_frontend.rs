@@ -55,19 +55,31 @@ impl OddBoxGui {
             .as_ref()
             .map(|msg| text(msg).size(super::super::text_size(13)).style(muted_text));
 
+        let use_kde_buttons = self.use_kde_system_styles();
+
+        let mut save_btn = button(text("Save").size(super::super::text_size(14)))
+            .on_press(Message::EditFrontendSave);
+        if use_kde_buttons {
+            save_btn = save_btn.style(super::super::kde_primary_button_style);
+        }
+        let mut back_btn = button(text("Back").size(super::super::text_size(14)))
+            .on_press(Message::NavigateTo(super::super::Page::Frontends));
+        if use_kde_buttons {
+            back_btn = back_btn.style(super::super::kde_neutral_button_style);
+        }
+
         let mut actions_children: Vec<Element<'_, Message>> = vec![
-            button(text("Save").size(super::super::text_size(14)))
-                .on_press(Message::EditFrontendSave)
-                .into(),
-            button(text("Back").size(super::super::text_size(14)))
-                .on_press(Message::NavigateTo(super::super::Page::Frontends))
-                .into(),
+            save_btn.into(),
+            back_btn.into(),
         ];
         if !self.edit_frontend_is_new {
+            let mut delete_btn = button(text("Delete").size(super::super::text_size(14)))
+                .on_press(Message::EditFrontendDelete);
+            if use_kde_buttons {
+                delete_btn = delete_btn.style(super::super::kde_danger_button_style);
+            }
             actions_children.push(
-                button(text("Delete").size(super::super::text_size(14)))
-                    .on_press(Message::EditFrontendDelete)
-                    .into(),
+                delete_btn.into(),
             );
         }
         let actions = row::Row::with_children(actions_children).spacing(10);
@@ -173,13 +185,12 @@ impl OddBoxGui {
             .spacing(6);
 
             let card_style = |theme: &Theme| {
-                let palette = theme.extended_palette();
                 container::Style {
-                    background: Some(palette.background.weaker.color.into()),
+                    background: Some(self.surface_panel_bg(theme).into()),
                     border: Border {
                         radius: 6.0.into(),
                         width: 1.0,
-                        color: palette.background.strong.color,
+                        color: self.surface_border_color(theme),
                     },
                     ..Default::default()
                 }

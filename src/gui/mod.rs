@@ -6,7 +6,7 @@ mod tray;
 
 use iced::widget::scrollable::RelativeOffset;
 use iced::widget::{
-    Column, Scrollable, Space, button, column, container, image, row, scrollable, text,
+    Column, Scrollable, button, column, container, image, row, scrollable, text,
 };
 
 use iced::{
@@ -39,10 +39,15 @@ static SIDEBAR_LOGO_DARK: LazyLock<iced::widget::image::Handle> = LazyLock::new(
 });
 
 static GUI_TEXT_SCALE_BITS: AtomicU32 = AtomicU32::new(1.0f32.to_bits());
+const WINDOW_INITIAL_WIDTH: f32 = 1200.0;
+const WINDOW_INITIAL_HEIGHT: f32 = 800.0;
+const WINDOW_MIN_WIDTH: f32 = 920.0;
+const WINDOW_MIN_HEIGHT: f32 = 560.0;
+const SIDEBAR_WIDTH: f32 = 220.0;
 
 fn compute_text_scale(size: iced::Size) -> f32 {
-    let width_scale = (size.width / 1200.0).clamp(0.85, 1.35);
-    let height_scale = (size.height / 800.0).clamp(0.85, 1.35);
+    let width_scale = (size.width / WINDOW_INITIAL_WIDTH).clamp(0.85, 1.35);
+    let height_scale = (size.height / WINDOW_INITIAL_HEIGHT).clamp(0.85, 1.35);
     width_scale.min(height_scale)
 }
 
@@ -50,9 +55,391 @@ fn set_gui_text_scale(size: iced::Size) {
     GUI_TEXT_SCALE_BITS.store(compute_text_scale(size).to_bits(), Ordering::Relaxed);
 }
 
+fn use_glass_effects() -> bool {
+    cfg!(target_os = "macos")
+}
+
+fn platform_surface_color(color: Color, glass_alpha: f32) -> Color {
+    if use_glass_effects() {
+        Color::from_rgba(color.r, color.g, color.b, glass_alpha)
+    } else {
+        Color::from_rgb(color.r, color.g, color.b)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::gui) enum KdeButtonRole {
+    Neutral,
+    Primary,
+    Success,
+    Danger,
+}
+
+fn muted(color: Color, alpha: f32) -> Color {
+    Color::from_rgba(color.r, color.g, color.b, alpha)
+}
+
+fn srgb_to_linear(value: f32) -> f32 {
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn relative_luminance(color: Color) -> f32 {
+    0.2126 * srgb_to_linear(color.r) + 0.7152 * srgb_to_linear(color.g) + 0.0722 * srgb_to_linear(color.b)
+}
+
+fn contrast_ratio(a: Color, b: Color) -> f32 {
+    let l1 = relative_luminance(a);
+    let l2 = relative_luminance(b);
+    let (lighter, darker) = if l1 >= l2 { (l1, l2) } else { (l2, l1) };
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+fn readable_on(background: Color, preferred: Color, fallback: Color) -> Color {
+    const MIN_CONTRAST: f32 = 3.0;
+    let preferred_ratio = contrast_ratio(background, preferred);
+    if preferred_ratio >= MIN_CONTRAST {
+        return preferred;
+    }
+
+    let fallback_ratio = contrast_ratio(background, fallback);
+    let white_ratio = contrast_ratio(background, Color::WHITE);
+    let black_ratio = contrast_ratio(background, Color::BLACK);
+
+    let mut best = fallback;
+    let mut best_ratio = fallback_ratio;
+    if white_ratio > best_ratio {
+        best = Color::WHITE;
+        best_ratio = white_ratio;
+    }
+    if black_ratio > best_ratio {
+        best = Color::BLACK;
+    }
+    best
+}
+
+pub(in crate::gui) fn kde_button_style(
+    theme: &Theme,
+    status: button::Status,
+    role: KdeButtonRole,
+) -> button::Style {
+    let palette = theme.extended_palette();
+    let base_bg = palette.background.base.color;
+
+    let (default_text, accent) = match role {
+        KdeButtonRole::Neutral => (palette.background.base.text, palette.primary.base.color),
+        KdeButtonRole::Primary => (palette.primary.base.color, palette.primary.base.color),
+        KdeButtonRole::Success => (palette.success.base.color, palette.success.base.color),
+        KdeButtonRole::Danger => (palette.danger.base.color, palette.danger.base.color),
+    };
+
+    let neutral_hover_bg = if palette.is_dark {
+        theme::palette::mix(base_bg, Color::WHITE, 0.10)
+    } else {
+        theme::palette::mix(base_bg, Color::BLACK, 0.06)
+    };
+    let neutral_pressed_bg = if palette.is_dark {
+        theme::palette::mix(base_bg, Color::WHITE, 0.16)
+    } else {
+        theme::palette::mix(base_bg, Color::BLACK, 0.10)
+    };
+    let role_hover_bg = theme::palette::mix(accent, base_bg, if palette.is_dark { 0.88 } else { 0.92 });
+    let role_pressed_bg = theme::palette::mix(accent, base_bg, if palette.is_dark { 0.80 } else { 0.86 });
+
+    let (background, text_color, border_color, border_width) = match status {
+        button::Status::Disabled => (
+            Color::TRANSPARENT,
+            muted(default_text, 0.45),
+            Color::TRANSPARENT,
+            0.0,
+        ),
+        button::Status::Hovered => {
+            let bg = if matches!(role, KdeButtonRole::Neutral) {
+                neutral_hover_bg
+            } else {
+                role_hover_bg
+            };
+            (bg, default_text, muted(accent, 0.65), 1.0)
+        }
+        button::Status::Pressed => {
+            let bg = if matches!(role, KdeButtonRole::Neutral) {
+                neutral_pressed_bg
+            } else {
+                role_pressed_bg
+            };
+            (bg, default_text, muted(accent, 0.75), 1.0)
+        }
+        _ => (Color::TRANSPARENT, default_text, Color::TRANSPARENT, 0.0),
+    };
+
+    button::Style {
+        background: Some(background.into()),
+        text_color,
+        border: Border {
+            radius: 6.0.into(),
+            width: border_width,
+            color: border_color,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+pub(in crate::gui) fn kde_neutral_button_style(
+    theme: &Theme,
+    status: button::Status,
+) -> button::Style {
+    kde_button_style(theme, status, KdeButtonRole::Neutral)
+}
+
+pub(in crate::gui) fn kde_primary_button_style(
+    theme: &Theme,
+    status: button::Status,
+) -> button::Style {
+    kde_button_style(theme, status, KdeButtonRole::Primary)
+}
+
+pub(in crate::gui) fn kde_success_button_style(
+    theme: &Theme,
+    status: button::Status,
+) -> button::Style {
+    kde_button_style(theme, status, KdeButtonRole::Success)
+}
+
+pub(in crate::gui) fn kde_danger_button_style(
+    theme: &Theme,
+    status: button::Status,
+) -> button::Style {
+    kde_button_style(theme, status, KdeButtonRole::Danger)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_config_home() -> Option<PathBuf> {
+    if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
+        let config_home = config_home.trim();
+        if !config_home.is_empty() {
+            return Some(PathBuf::from(config_home));
+        }
+    }
+    let home = std::env::var("HOME").ok()?;
+    let home = home.trim();
+    if home.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(home).join(".config"))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn parse_kde_rgb(value: &str) -> Option<Color> {
+    let mut parts = value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .take(3)
+        .map(|part| part.parse::<u16>().ok());
+
+    let r = parts.next().flatten()?;
+    let g = parts.next().flatten()?;
+    let b = parts.next().flatten()?;
+
+    if r > 255 || g > 255 || b > 255 {
+        return None;
+    }
+
+    Some(Color::from_rgb(
+        r as f32 / 255.0,
+        g as f32 / 255.0,
+        b as f32 / 255.0,
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn read_kdeglobals_colors() -> Option<HashMap<String, Color>> {
+    let path = linux_config_home()?.join("kdeglobals");
+    let contents = std::fs::read_to_string(path).ok()?;
+
+    let mut colors = HashMap::new();
+    let mut section = String::new();
+
+    for raw_line in contents.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+
+        if line.starts_with('[') && line.ends_with(']') && line.len() > 2 {
+            section = line[1..line.len() - 1].trim().to_string();
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+
+        if let Some(color) = parse_kde_rgb(value) {
+            let key = key.trim();
+            if !section.is_empty() && !key.is_empty() {
+                colors.insert(format!("{section}.{key}"), color);
+            }
+        }
+    }
+
+    if colors.is_empty() { None } else { Some(colors) }
+}
+
+#[cfg(target_os = "linux")]
+fn kde_color(
+    colors: &HashMap<String, Color>,
+    section: &'static str,
+    key: &'static str,
+) -> Option<Color> {
+    colors.get(&format!("{section}.{key}")).copied()
+}
+
+#[cfg(target_os = "linux")]
+fn kde_system_theme(mode: theme::Mode) -> Option<Theme> {
+    let base_theme = match mode {
+        theme::Mode::Light => Theme::Light,
+        _ => Theme::Dark,
+    };
+
+    let mut palette = base_theme.palette();
+    let colors = read_kdeglobals_colors()?;
+
+    // Use the KDE window background as the app base surface.
+    // "View" colors are commonly used for list/table areas and are often darker.
+    if let Some(background) = kde_color(&colors, "Colors:Window", "BackgroundNormal")
+        .or_else(|| kde_color(&colors, "Colors:View", "BackgroundNormal"))
+    {
+        palette.background = background;
+    }
+
+    if let Some(text) = kde_color(&colors, "Colors:Window", "ForegroundNormal")
+        .or_else(|| kde_color(&colors, "Colors:View", "ForegroundNormal"))
+    {
+        palette.text = text;
+    }
+
+    if let Some(primary) = kde_color(&colors, "Colors:Selection", "BackgroundNormal")
+        .or_else(|| kde_color(&colors, "Colors:Window", "DecorationFocus"))
+    {
+        palette.primary = primary;
+    }
+
+    if let Some(success) = kde_color(&colors, "Colors:Positive", "ForegroundNormal")
+        .or_else(|| kde_color(&colors, "Colors:Positive", "DecorationFocus"))
+        .or_else(|| kde_color(&colors, "Colors:Positive", "BackgroundNormal"))
+    {
+        palette.success = success;
+    }
+
+    if let Some(warning) = kde_color(&colors, "Colors:Neutral", "ForegroundNormal")
+        .or_else(|| kde_color(&colors, "Colors:Neutral", "DecorationFocus"))
+        .or_else(|| kde_color(&colors, "Colors:Neutral", "BackgroundNormal"))
+    {
+        palette.warning = warning;
+    }
+
+    if let Some(danger) = kde_color(&colors, "Colors:Negative", "ForegroundNormal")
+        .or_else(|| kde_color(&colors, "Colors:Negative", "DecorationFocus"))
+        .or_else(|| kde_color(&colors, "Colors:Negative", "BackgroundNormal"))
+    {
+        palette.danger = danger;
+    }
+
+    Some(Theme::custom("KDE System", palette))
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, Default)]
+struct KdeSidebarColors {
+    window_bg: Option<Color>,
+    window_alt_bg: Option<Color>,
+    view_bg: Option<Color>,
+    view_alt_bg: Option<Color>,
+    sidebar_bg: Option<Color>,
+    footer_bg: Option<Color>,
+    border: Option<Color>,
+    nav_text: Option<Color>,
+    nav_hover_bg: Option<Color>,
+    nav_hover_text: Option<Color>,
+    nav_selected_bg: Option<Color>,
+    nav_selected_text: Option<Color>,
+}
+
+#[cfg(target_os = "linux")]
+fn kde_system_sidebar_colors() -> KdeSidebarColors {
+    let Some(colors) = read_kdeglobals_colors() else {
+        return KdeSidebarColors::default();
+    };
+
+    let window_bg = kde_color(&colors, "Colors:Window", "BackgroundNormal")
+        .or_else(|| kde_color(&colors, "Colors:View", "BackgroundNormal"));
+
+    let window_alt_bg = kde_color(&colors, "Colors:Window", "BackgroundAlternate")
+        .or_else(|| kde_color(&colors, "Colors:Button", "BackgroundNormal"));
+
+    let view_bg = kde_color(&colors, "Colors:View", "BackgroundNormal")
+        .or(window_bg)
+        .or(window_alt_bg);
+
+    let view_alt_bg = kde_color(&colors, "Colors:View", "BackgroundAlternate")
+        .or(window_alt_bg);
+
+    // Prefer alternate surfaces for sidebar so it remains distinct from page content.
+    let sidebar_bg = window_alt_bg.or(view_alt_bg).or(view_bg).or(window_bg);
+
+    let footer_bg = view_alt_bg.or(window_alt_bg).or(sidebar_bg);
+
+    let border = window_alt_bg.or(view_alt_bg).or(sidebar_bg);
+
+    let nav_text = kde_color(&colors, "Colors:View", "ForegroundNormal")
+        .or_else(|| kde_color(&colors, "Colors:Window", "ForegroundNormal"));
+
+    let nav_hover_bg = kde_color(&colors, "Colors:Selection", "BackgroundAlternate")
+        .or_else(|| kde_color(&colors, "Colors:View", "DecorationHover"))
+        .or_else(|| kde_color(&colors, "Colors:Button", "DecorationHover"));
+
+    let nav_hover_text = kde_color(&colors, "Colors:Selection", "ForegroundNormal")
+        .or_else(|| kde_color(&colors, "Colors:View", "ForegroundNormal"))
+        .or_else(|| kde_color(&colors, "Colors:Window", "ForegroundNormal"))
+        .or(nav_text);
+
+    let nav_selected_bg = kde_color(&colors, "Colors:Selection", "BackgroundNormal")
+        .or_else(|| kde_color(&colors, "Colors:View", "DecorationFocus"))
+        .or_else(|| kde_color(&colors, "Colors:Window", "DecorationFocus"));
+
+    let nav_selected_text = kde_color(&colors, "Colors:Selection", "ForegroundNormal")
+        .or_else(|| kde_color(&colors, "Colors:Selection", "ForegroundActive"))
+        .or(nav_text);
+
+    KdeSidebarColors {
+        window_bg,
+        window_alt_bg,
+        view_bg,
+        view_alt_bg,
+        sidebar_bg,
+        footer_bg,
+        border,
+        nav_text,
+        nav_hover_bg,
+        nav_hover_text,
+        nav_selected_bg,
+        nav_selected_text,
+    }
+}
+
 pub(in crate::gui) fn text_size(base: u16) -> f32 {
     let scale = f32::from_bits(GUI_TEXT_SCALE_BITS.load(Ordering::Relaxed));
     (base as f32 * scale).round()
+}
+
+pub(in crate::gui) fn gui_scale() -> f32 {
+    f32::from_bits(GUI_TEXT_SCALE_BITS.load(Ordering::Relaxed))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,7 +491,7 @@ pub fn run(
         }
     };
 
-    let initial_window_size = iced::Size::new(1200.0, 800.0);
+    let initial_window_size = iced::Size::new(WINDOW_INITIAL_WIDTH, WINDOW_INITIAL_HEIGHT);
     set_gui_text_scale(initial_window_size);
 
     let state_clone = state.clone();
@@ -138,15 +525,14 @@ pub fn run(
     )
     .style(|_state, theme: &Theme| {
         let bg = theme.palette().background;
-        let use_glass_effects = cfg!(target_os = "macos");
         let is_light = (0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b) > 0.5;
-        let alpha = if use_glass_effects {
+        let alpha = if use_glass_effects() {
             if is_light { 0.68 } else { 0.80 }
         } else {
             1.0
         };
         theme::Style {
-            background_color: Color::from_rgba(bg.r, bg.g, bg.b, alpha),
+            background_color: platform_surface_color(bg, alpha),
             text_color: theme.palette().text,
         }
     })
@@ -403,6 +789,9 @@ pub enum Message {
     EditBackendEnvNewValueChanged(String),
     EditBackendEnvAdd,
     CrumaAuthModeChanged(CrumaAuthMode),
+    CrumaAuthIdChanged(String),
+    CrumaAuthKeyChanged(String),
+    CrumaAuthSave,
     CrumaAuthModeSaveResult(Result<(), String>),
     TrafficInspectionToggled(bool),
     TrafficInspectionClear,
@@ -525,6 +914,32 @@ pub struct OddBoxGui {
     current_page: Page,
     theme_mode: ThemeMode,
     system_theme: Option<theme::Mode>,
+    #[cfg(target_os = "linux")]
+    system_kde_theme: Option<Theme>,
+    #[cfg(target_os = "linux")]
+    system_kde_sidebar_bg: Option<Color>,
+    #[cfg(target_os = "linux")]
+    system_kde_sidebar_footer_bg: Option<Color>,
+    #[cfg(target_os = "linux")]
+    system_kde_sidebar_border: Option<Color>,
+    #[cfg(target_os = "linux")]
+    system_kde_window_bg: Option<Color>,
+    #[cfg(target_os = "linux")]
+    system_kde_window_alt_bg: Option<Color>,
+    #[cfg(target_os = "linux")]
+    system_kde_view_bg: Option<Color>,
+    #[cfg(target_os = "linux")]
+    system_kde_view_alt_bg: Option<Color>,
+    #[cfg(target_os = "linux")]
+    system_kde_nav_text: Option<Color>,
+    #[cfg(target_os = "linux")]
+    system_kde_nav_hover_bg: Option<Color>,
+    #[cfg(target_os = "linux")]
+    system_kde_nav_hover_text: Option<Color>,
+    #[cfg(target_os = "linux")]
+    system_kde_nav_selected_bg: Option<Color>,
+    #[cfg(target_os = "linux")]
+    system_kde_nav_selected_text: Option<Color>,
     log_is_at_bottom: bool,
     // Window and tray management
     window_id: Option<window::Id>,
@@ -569,6 +984,8 @@ pub struct OddBoxGui {
     pub(in crate::gui) edit_backend_env_new_key: String,
     pub(in crate::gui) edit_backend_env_new_value: String,
     pub(in crate::gui) cruma_auth_mode: CrumaAuthMode,
+    pub(in crate::gui) cruma_auth_id: String,
+    pub(in crate::gui) cruma_auth_key: String,
     pub(in crate::gui) cruma_mode_notice: Option<String>,
     pub(in crate::gui) processes_tab: ProcessesTab,
     pub(in crate::gui) global_env_vars: Vec<(String, String)>,
@@ -617,6 +1034,13 @@ fn cruma_mode_from_config(cfg: &crate::configuration::ConfigWrapper) -> CrumaAut
             CrumaAuthMode::Authenticated
         }
         None => CrumaAuthMode::Disabled,
+    }
+}
+
+fn cruma_auth_from_config(cfg: &crate::configuration::ConfigWrapper) -> (String, String) {
+    match cfg.cruma.as_ref().and_then(|c| c.mode()) {
+        Some(crate::configuration::v4::CrumaMode::Authenticated { id, key }) => (id, key),
+        _ => (String::new(), String::new()),
     }
 }
 
@@ -950,7 +1374,12 @@ fn restart_process_backend_sync(state: &Arc<GlobalState>, backend_id: &str) {
     crate::cruma_integration::rebuild_cruma_config(state.clone());
 }
 
-async fn save_cruma_mode(state: Arc<GlobalState>, mode: CrumaAuthMode) -> Result<(), String> {
+async fn save_cruma_mode(
+    state: Arc<GlobalState>,
+    mode: CrumaAuthMode,
+    auth_id: String,
+    auth_key: String,
+) -> Result<(), String> {
     let mut guard = (*state.config.load_full()).clone();
 
     match mode {
@@ -961,9 +1390,14 @@ async fn save_cruma_mode(state: Arc<GlobalState>, mode: CrumaAuthMode) -> Result
             guard.cruma = Some(v4::CrumaConfig::Mode("anon".to_string()));
         }
         CrumaAuthMode::Authenticated => {
-            let Some(v4::CrumaConfig::Auth { id, key }) = guard.cruma.clone() else {
-                return Err("Authenticated credentials are not configured.".to_string());
-            };
+            let id = auth_id.trim().to_string();
+            if id.is_empty() {
+                return Err("Tunnel ID is required for authenticated mode.".to_string());
+            }
+            if auth_key.trim().is_empty() {
+                return Err("Tunnel key is required for authenticated mode.".to_string());
+            }
+            let key = auth_key;
             guard.cruma = Some(v4::CrumaConfig::Auth { id, key });
         }
     }
@@ -1388,7 +1822,23 @@ impl OddBoxGui {
         // Push initial filter to background task
         log_state.set_filter(log_filter.clone());
 
-        let initial_cruma_mode = cruma_mode_from_config(&state.config.load_full());
+        #[cfg(target_os = "linux")]
+        let initial_kde_theme = if matches!(theme_mode, ThemeMode::System) {
+            kde_system_theme(theme::Mode::Dark)
+        } else {
+            None
+        };
+        #[cfg(target_os = "linux")]
+        let initial_kde_sidebar_colors = if matches!(theme_mode, ThemeMode::System) {
+            kde_system_sidebar_colors()
+        } else {
+            KdeSidebarColors::default()
+        };
+
+        let initial_cfg = state.config.load_full();
+        let initial_cruma_mode = cruma_mode_from_config(&initial_cfg);
+        let (initial_cruma_auth_id, initial_cruma_auth_key) =
+            cruma_auth_from_config(&initial_cfg);
         let install_source_info = crate::self_update::install_source_info();
         let current_version = crate::self_update::current_version().to_string();
         let include_pre = should_include_prerelease_for_checks(&current_version);
@@ -1404,6 +1854,32 @@ impl OddBoxGui {
                 current_page: Page::Dashboard,
                 theme_mode,
                 system_theme: None,
+                #[cfg(target_os = "linux")]
+                system_kde_theme: initial_kde_theme,
+                #[cfg(target_os = "linux")]
+                system_kde_sidebar_bg: initial_kde_sidebar_colors.sidebar_bg,
+                #[cfg(target_os = "linux")]
+                system_kde_sidebar_footer_bg: initial_kde_sidebar_colors.footer_bg,
+                #[cfg(target_os = "linux")]
+                system_kde_sidebar_border: initial_kde_sidebar_colors.border,
+                #[cfg(target_os = "linux")]
+                system_kde_window_bg: initial_kde_sidebar_colors.window_bg,
+                #[cfg(target_os = "linux")]
+                system_kde_window_alt_bg: initial_kde_sidebar_colors.window_alt_bg,
+                #[cfg(target_os = "linux")]
+                system_kde_view_bg: initial_kde_sidebar_colors.view_bg,
+                #[cfg(target_os = "linux")]
+                system_kde_view_alt_bg: initial_kde_sidebar_colors.view_alt_bg,
+                #[cfg(target_os = "linux")]
+                system_kde_nav_text: initial_kde_sidebar_colors.nav_text,
+                #[cfg(target_os = "linux")]
+                system_kde_nav_hover_bg: initial_kde_sidebar_colors.nav_hover_bg,
+                #[cfg(target_os = "linux")]
+                system_kde_nav_hover_text: initial_kde_sidebar_colors.nav_hover_text,
+                #[cfg(target_os = "linux")]
+                system_kde_nav_selected_bg: initial_kde_sidebar_colors.nav_selected_bg,
+                #[cfg(target_os = "linux")]
+                system_kde_nav_selected_text: initial_kde_sidebar_colors.nav_selected_text,
                 log_is_at_bottom: true,
                 window_id: None,
                 window_visible: true,
@@ -1440,6 +1916,8 @@ impl OddBoxGui {
                 edit_backend_env_new_key: String::new(),
                 edit_backend_env_new_value: String::new(),
                 cruma_auth_mode: initial_cruma_mode,
+                cruma_auth_id: initial_cruma_auth_id,
+                cruma_auth_key: initial_cruma_auth_key,
                 cruma_mode_notice: None,
                 processes_tab: ProcessesTab::default(),
                 global_env_vars: Vec::new(),
@@ -1543,10 +2021,37 @@ impl OddBoxGui {
                 if self.window_id.is_none() {
                     self.window_id = Some(id);
                 }
+                let clamped_size = iced::Size::new(
+                    size.width.max(WINDOW_MIN_WIDTH),
+                    size.height.max(WINDOW_MIN_HEIGHT),
+                );
+                if (clamped_size.width - size.width).abs() > 0.5
+                    || (clamped_size.height - size.height).abs() > 0.5
+                {
+                    set_gui_text_scale(clamped_size);
+                    return window::resize(id, clamped_size);
+                }
                 set_gui_text_scale(size);
             }
             Message::SystemThemeChanged(mode) => {
                 self.system_theme = Some(mode);
+                #[cfg(target_os = "linux")]
+                if matches!(self.theme_mode, ThemeMode::System) {
+                    self.system_kde_theme = kde_system_theme(mode);
+                    let sidebar_colors = kde_system_sidebar_colors();
+                    self.system_kde_sidebar_bg = sidebar_colors.sidebar_bg;
+                    self.system_kde_sidebar_footer_bg = sidebar_colors.footer_bg;
+                    self.system_kde_sidebar_border = sidebar_colors.border;
+                    self.system_kde_window_bg = sidebar_colors.window_bg;
+                    self.system_kde_window_alt_bg = sidebar_colors.window_alt_bg;
+                    self.system_kde_view_bg = sidebar_colors.view_bg;
+                    self.system_kde_view_alt_bg = sidebar_colors.view_alt_bg;
+                    self.system_kde_nav_text = sidebar_colors.nav_text;
+                    self.system_kde_nav_hover_bg = sidebar_colors.nav_hover_bg;
+                    self.system_kde_nav_hover_text = sidebar_colors.nav_hover_text;
+                    self.system_kde_nav_selected_bg = sidebar_colors.nav_selected_bg;
+                    self.system_kde_nav_selected_text = sidebar_colors.nav_selected_text;
+                }
             }
             Message::LogViewportChanged(viewport) => {
                 let bounds = viewport.bounds();
@@ -1827,7 +2332,11 @@ impl OddBoxGui {
                     self.edit_backend_notice = Some("Saved.".to_string());
                     self.edit_backend_pending_reload = false;
                 }
-                self.cruma_auth_mode = cruma_mode_from_config(&self.state.config.load_full());
+                let cfg = self.state.config.load_full();
+                self.cruma_auth_mode = cruma_mode_from_config(&cfg);
+                let (id, key) = cruma_auth_from_config(&cfg);
+                self.cruma_auth_id = id;
+                self.cruma_auth_key = key;
             }
             Message::UpdatesCheck => {
                 if self.update_check_in_progress || self.update_action_in_progress {
@@ -2355,8 +2864,40 @@ impl OddBoxGui {
             Message::CrumaAuthModeChanged(mode) => {
                 self.cruma_auth_mode = mode;
                 self.cruma_mode_notice = None;
+                if mode == CrumaAuthMode::Authenticated {
+                    self.cruma_mode_notice = Some(
+                        "Enter tunnel ID and key, then click Save Auth Credentials."
+                            .to_string(),
+                    );
+                    return Task::none();
+                }
                 return Task::perform(
-                    save_cruma_mode(self.state.clone(), mode),
+                    save_cruma_mode(
+                        self.state.clone(),
+                        mode,
+                        self.cruma_auth_id.clone(),
+                        self.cruma_auth_key.clone(),
+                    ),
+                    Message::CrumaAuthModeSaveResult,
+                );
+            }
+            Message::CrumaAuthIdChanged(value) => {
+                self.cruma_auth_id = value;
+                self.cruma_mode_notice = None;
+            }
+            Message::CrumaAuthKeyChanged(value) => {
+                self.cruma_auth_key = value;
+                self.cruma_mode_notice = None;
+            }
+            Message::CrumaAuthSave => {
+                self.cruma_mode_notice = None;
+                return Task::perform(
+                    save_cruma_mode(
+                        self.state.clone(),
+                        self.cruma_auth_mode,
+                        self.cruma_auth_id.clone(),
+                        self.cruma_auth_key.clone(),
+                    ),
                     Message::CrumaAuthModeSaveResult,
                 );
             }
@@ -2386,6 +2927,93 @@ impl OddBoxGui {
         Task::none()
     }
 
+    fn use_kde_system_styles(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            matches!(self.theme_mode, ThemeMode::System) && self.system_kde_theme.is_some()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
+        }
+    }
+
+    pub(in crate::gui) fn surface_page_bg(&self, theme: &Theme) -> Color {
+        if self.use_kde_system_styles() {
+            #[cfg(target_os = "linux")]
+            if let Some(bg) = self.system_kde_window_bg.or(self.system_kde_view_bg) {
+                return bg;
+            }
+        }
+
+        let palette = theme.extended_palette();
+        if palette.is_dark {
+            palette.background.base.color
+        } else {
+            palette.background.weak.color
+        }
+    }
+
+    pub(in crate::gui) fn surface_panel_bg(&self, theme: &Theme) -> Color {
+        if self.use_kde_system_styles() {
+            #[cfg(target_os = "linux")]
+            if let Some(bg) = self
+                .system_kde_view_bg
+                .or(self.system_kde_window_alt_bg)
+                .or(self.system_kde_window_bg)
+            {
+                return bg;
+            }
+        }
+
+        let palette = theme.extended_palette();
+        if palette.is_dark {
+            theme::palette::mix(self.surface_page_bg(theme), Color::BLACK, 0.12)
+        } else {
+            palette.background.weaker.color
+        }
+    }
+
+    pub(in crate::gui) fn surface_panel_alt_bg(&self, theme: &Theme) -> Color {
+        if self.use_kde_system_styles() {
+            #[cfg(target_os = "linux")]
+            if let Some(bg) = self
+                .system_kde_view_alt_bg
+                .or(self.system_kde_window_alt_bg)
+                .or(self.system_kde_view_bg)
+            {
+                return bg;
+            }
+        }
+
+        let palette = theme.extended_palette();
+        if palette.is_dark {
+            theme::palette::mix(self.surface_page_bg(theme), Color::BLACK, 0.18)
+        } else {
+            palette.background.weak.color
+        }
+    }
+
+    pub(in crate::gui) fn surface_border_color(&self, theme: &Theme) -> Color {
+        if self.use_kde_system_styles() {
+            #[cfg(target_os = "linux")]
+            if let Some(color) = self
+                .system_kde_window_alt_bg
+                .or(self.system_kde_view_alt_bg)
+                .or(self.system_kde_view_bg)
+            {
+                return color;
+            }
+        }
+
+        let palette = theme.extended_palette();
+        if palette.is_dark {
+            theme::palette::mix(self.surface_page_bg(theme), Color::BLACK, 0.28)
+        } else {
+            palette.background.strong.color
+        }
+    }
+
     fn view(&self) -> Element<'_, Message> {
         let sidebar = self.view_sidebar();
         let content = self.view_content();
@@ -2398,12 +3026,11 @@ impl OddBoxGui {
         )
         .style(|theme: &Theme| {
             let bg = theme.palette().background;
-            let use_glass_effects = cfg!(target_os = "macos");
             container::Style {
-                background: Some(Background::Color(if use_glass_effects {
+                background: Some(Background::Color(if use_glass_effects() {
                     Color::TRANSPARENT
                 } else {
-                    Color::from_rgba(bg.r, bg.g, bg.b, 1.0)
+                    platform_surface_color(bg, 1.0)
                 })),
                 ..Default::default()
             }
@@ -2472,6 +3099,33 @@ impl OddBoxGui {
                 bottom: 10.0,
                 left: 10.0,
             });
+        let nav_scroll = Scrollable::new(nav)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(|theme: &Theme, status| scrollable::Style {
+                container: container::Style {
+                    background: None,
+                    ..Default::default()
+                },
+                ..scrollable::default(theme, status)
+            });
+        #[cfg(target_os = "linux")]
+        let (kde_sidebar_bg, kde_sidebar_footer_bg, kde_sidebar_border) =
+            if matches!(self.theme_mode, ThemeMode::System) {
+                (
+                    self.system_kde_sidebar_bg,
+                    self.system_kde_sidebar_footer_bg,
+                    self.system_kde_sidebar_border,
+                )
+            } else {
+                (None, None, None)
+            };
+        #[cfg(not(target_os = "linux"))]
+        let (kde_sidebar_bg, kde_sidebar_footer_bg, kde_sidebar_border): (
+            Option<Color>,
+            Option<Color>,
+            Option<Color>,
+        ) = (None, None, None);
 
         let current_tag = format!("v{}", self.update_current_version);
         let update_status = if self.update_action_in_progress {
@@ -2533,59 +3187,127 @@ impl OddBoxGui {
             left: 12.0,
         })
         .width(Length::Fill)
-        .style(|theme: &Theme| {
+        .style(move |theme: &Theme| {
+            if let Some(background) = kde_sidebar_footer_bg {
+                return container::Style {
+                    background: Some(background.into()),
+                    border: Border {
+                        radius: 0.0.into(),
+                        width: 1.0,
+                        color: kde_sidebar_border.unwrap_or(background),
+                    },
+                    ..Default::default()
+                };
+            }
             let palette = theme.extended_palette();
+            let base_bg = palette.background.base.color;
+            let (background, border_color) = if palette.is_dark {
+                (
+                    theme::palette::mix(base_bg, Color::BLACK, 0.18),
+                    theme::palette::mix(base_bg, Color::BLACK, 0.34),
+                )
+            } else {
+                (palette.background.weaker.color, palette.background.strong.color)
+            };
             container::Style {
-                background: Some(palette.background.weaker.color.into()),
+                background: Some(background.into()),
                 border: Border {
                     radius: 0.0.into(),
                     width: 1.0,
-                    color: palette.background.strong.color,
+                    color: border_color,
                 },
                 ..Default::default()
             }
         });
 
-        let sidebar_content = column![
-            header,
-            nav,
-            Space::new().height(Length::Fill),
-            sidebar_footer
-        ]
-        .width(Length::Fixed(200.0))
-        .height(Length::Fill);
+        let sidebar_content = column![header, nav_scroll, sidebar_footer]
+            .width(Length::Fixed(SIDEBAR_WIDTH))
+            .height(Length::Fill);
 
         container(sidebar_content)
-            .style(|theme: &Theme| {
-                let use_glass_effects = cfg!(target_os = "macos");
-                let bg = theme.extended_palette().background.base.color;
-                let base_bg = theme.palette().background;
-                let is_light = (0.299 * base_bg.r + 0.587 * base_bg.g + 0.114 * base_bg.b) > 0.5;
-                let (shade, alpha) = if use_glass_effects {
-                    let shade = if is_light { 0.7 } else { 0.52 };
-                    let alpha = if is_light { 0.07 } else { 0.106 };
-                    (shade, alpha)
+            .style(move |theme: &Theme| {
+                if let Some(sidebar_bg) = kde_sidebar_bg {
+                    return container::Style {
+                        background: Some(Background::Color(platform_surface_color(
+                            sidebar_bg,
+                            if theme.extended_palette().is_dark {
+                                0.48
+                            } else {
+                                0.24
+                            },
+                        ))),
+                        border: Border {
+                            width: if use_glass_effects() { 0.0 } else { 1.0 },
+                            color: kde_sidebar_border.unwrap_or(sidebar_bg),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    };
+                }
+                let palette = theme.extended_palette();
+                let base_bg = palette.background.base.color;
+                let sidebar_bg = if palette.is_dark {
+                    theme::palette::mix(base_bg, Color::BLACK, 0.24)
                 } else {
-                    (1.0, 1.0)
+                    palette.background.weak.color
+                };
+                let border_color = if palette.is_dark {
+                    theme::palette::mix(base_bg, Color::BLACK, 0.40)
+                } else {
+                    palette.background.strong.color
                 };
                 container::Style {
-                    background: Some(Background::Color(Color::from_rgba(
-                        bg.r * shade,
-                        bg.g * shade,
-                        bg.b * shade,
-                        alpha,
+                    background: Some(Background::Color(platform_surface_color(
+                        sidebar_bg,
+                        if palette.is_dark { 0.48 } else { 0.24 },
                     ))),
-                    border: Border::default(),
+                    border: Border {
+                        width: if use_glass_effects() { 0.0 } else { 1.0 },
+                        color: border_color,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 }
             })
-            .width(Length::Fixed(200.0))
+            .width(Length::Fixed(SIDEBAR_WIDTH))
             .height(Length::Fill)
             .into()
     }
 
     fn nav_button(&self, page: Page) -> Element<'_, Message> {
         let is_active = self.current_page == page;
+        #[cfg(target_os = "linux")]
+        let use_system_selection =
+            matches!(self.theme_mode, ThemeMode::System) && self.system_kde_theme.is_some();
+        #[cfg(not(target_os = "linux"))]
+        let use_system_selection = false;
+
+        #[cfg(target_os = "linux")]
+        let (
+            kde_nav_text,
+            kde_nav_hover_bg,
+            kde_nav_hover_text,
+            kde_nav_selected_bg,
+            kde_nav_selected_text,
+        ) = if use_system_selection {
+            (
+                self.system_kde_nav_text,
+                self.system_kde_nav_hover_bg,
+                self.system_kde_nav_hover_text,
+                self.system_kde_nav_selected_bg,
+                self.system_kde_nav_selected_text,
+            )
+        } else {
+            (None, None, None, None, None)
+        };
+        #[cfg(not(target_os = "linux"))]
+        let (kde_nav_text, kde_nav_hover_bg, kde_nav_hover_text, kde_nav_selected_bg, kde_nav_selected_text): (
+            Option<Color>,
+            Option<Color>,
+            Option<Color>,
+            Option<Color>,
+            Option<Color>,
+        ) = (None, None, None, None, None);
 
         let label = row![
             text(page.icon()).width(Length::Fixed(24.0)),
@@ -2604,17 +3326,95 @@ impl OddBoxGui {
             })
             .style(move |theme: &Theme, status| {
                 let palette = theme.extended_palette();
-
-                let (background, text_color) = if is_active {
-                    let bg_color = palette.primary.strong.color;
-                    // Always use white on active to ensure contrast on purple background.
-                    (bg_color, Color::WHITE)
+                let (background, text_color, border_color, border_width) = if is_active {
+                    if use_system_selection {
+                        let selected_bg =
+                            kde_nav_selected_bg.unwrap_or(palette.primary.base.color);
+                        let selected_fg_preferred = kde_nav_selected_text
+                            .or(kde_nav_text)
+                            .unwrap_or(palette.primary.base.text);
+                        let selected_fg_fallback = palette.background.base.text;
+                        (
+                            selected_bg,
+                            readable_on(selected_bg, selected_fg_preferred, selected_fg_fallback),
+                            Color::TRANSPARENT,
+                            0.0,
+                        )
+                    } else if palette.is_dark {
+                        (
+                            theme::palette::mix(palette.background.base.color, Color::BLACK, 0.28),
+                            palette.background.base.text,
+                            theme::palette::mix(palette.background.base.color, Color::BLACK, 0.45),
+                            1.0,
+                        )
+                    } else {
+                        (
+                            palette.primary.strong.color,
+                            Color::WHITE,
+                            Color::TRANSPARENT,
+                            0.0,
+                        )
+                    }
                 } else {
                     match status {
                         button::Status::Hovered => {
-                            (palette.background.weak.color, palette.background.weak.text)
+                            if use_system_selection {
+                                let hover_bg = kde_nav_hover_bg.unwrap_or_else(|| {
+                                    theme::palette::mix(
+                                        kde_nav_selected_bg.unwrap_or(palette.primary.base.color),
+                                        palette.background.base.color,
+                                        0.82,
+                                    )
+                                });
+                                let hover_fg_preferred = kde_nav_hover_text
+                                    .or(kde_nav_text)
+                                    .unwrap_or(palette.background.base.text);
+                                let hover_fg_fallback = kde_nav_selected_text
+                                    .or(kde_nav_text)
+                                    .unwrap_or(palette.background.base.text);
+                                (
+                                    hover_bg,
+                                    readable_on(hover_bg, hover_fg_preferred, hover_fg_fallback),
+                                    Color::TRANSPARENT,
+                                    0.0,
+                                )
+                            } else if palette.is_dark {
+                                (
+                                    theme::palette::mix(
+                                        palette.background.base.color,
+                                        Color::BLACK,
+                                        0.18,
+                                    ),
+                                    palette.background.base.text,
+                                    Color::TRANSPARENT,
+                                    0.0,
+                                )
+                            } else {
+                                (
+                                    palette.background.weak.color,
+                                    palette.background.weak.text,
+                                    Color::TRANSPARENT,
+                                    0.0,
+                                )
+                            }
                         }
-                        _ => (Color::TRANSPARENT, palette.background.weak.text),
+                        _ => {
+                            if use_system_selection {
+                                (
+                                    Color::TRANSPARENT,
+                                    kde_nav_text.unwrap_or(palette.background.weak.text),
+                                    Color::TRANSPARENT,
+                                    0.0,
+                                )
+                            } else {
+                                (
+                                    Color::TRANSPARENT,
+                                    palette.background.weak.text,
+                                    Color::TRANSPARENT,
+                                    0.0,
+                                )
+                            }
+                        }
                     }
                 };
 
@@ -2623,6 +3423,8 @@ impl OddBoxGui {
                     text_color,
                     border: Border {
                         radius: 6.0.into(),
+                        width: border_width,
+                        color: border_color,
                         ..Default::default()
                     },
                     ..Default::default()
@@ -2647,9 +3449,27 @@ impl OddBoxGui {
             Page::EditBackend => self.view_edit_backend(),
         };
 
-        // These pages handle their own layout (no extra scrollable wrapper)
-        if self.current_page == Page::Monitoring || self.current_page == Page::TrafficInspection {
+        // Traffic inspection handles its own top-level layout and background.
+        if self.current_page == Page::TrafficInspection {
             page_content
+        } else if self.current_page == Page::Monitoring {
+            container(page_content)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(move |theme: &Theme| container::Style {
+                    background: Some(Background::Color({
+                        let bg = self.surface_page_bg(theme);
+                        let palette = theme.extended_palette();
+                        let alpha = if use_glass_effects() {
+                            if palette.is_dark { 0.32 } else { 0.22 }
+                        } else {
+                            1.0
+                        };
+                        platform_surface_color(bg, alpha)
+                    })),
+                    ..Default::default()
+                })
+                .into()
         } else {
             let page_title = text(self.current_page.title()).size(text_size(20));
             let content = column![page_title, page_content]
@@ -2660,22 +3480,17 @@ impl OddBoxGui {
             Scrollable::new(content)
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(|theme: &Theme, status| scrollable::Style {
+                .style(move |theme: &Theme, status| scrollable::Style {
                     container: container::Style {
                         background: Some(Background::Color({
-                            let use_glass_effects = cfg!(target_os = "macos");
+                            let bg = self.surface_page_bg(theme);
                             let palette = theme.extended_palette();
-                            let bg = palette.background.weak.color;
-                            let base_bg = theme.palette().background;
-                            let is_light =
-                                (0.299 * base_bg.r + 0.587 * base_bg.g + 0.114 * base_bg.b) > 0.5;
-                            let shade = if is_light { 1.0 } else { 0.5 };
-                            let alpha = if use_glass_effects {
-                                if is_light { 0.22 } else { 0.30 }
+                            let alpha = if use_glass_effects() {
+                                if palette.is_dark { 0.32 } else { 0.22 }
                             } else {
                                 1.0
                             };
-                            Color::from_rgba(bg.r * shade, bg.g * shade, bg.b * shade, alpha)
+                            platform_surface_color(bg, alpha)
                         })),
                         ..Default::default()
                     },
@@ -2701,11 +3516,27 @@ impl OddBoxGui {
         match self.theme_mode {
             ThemeMode::Light => Theme::Light,
             ThemeMode::Dark => Theme::Dark,
-            ThemeMode::System => match self.system_theme {
-                Some(theme::Mode::Light) => Theme::Light,
-                Some(theme::Mode::Dark) => Theme::Dark,
-                _ => Theme::Dark,
-            },
+            ThemeMode::System => {
+                #[cfg(target_os = "linux")]
+                {
+                    return self
+                    .system_kde_theme
+                    .clone()
+                    .unwrap_or_else(|| match self.system_theme {
+                        Some(theme::Mode::Light) => Theme::Light,
+                        Some(theme::Mode::Dark) => Theme::Dark,
+                        _ => Theme::Dark,
+                    });
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    match self.system_theme {
+                        Some(theme::Mode::Light) => Theme::Light,
+                        Some(theme::Mode::Dark) => Theme::Dark,
+                        _ => Theme::Dark,
+                    }
+                }
+            }
         }
     }
 }
@@ -2716,10 +3547,10 @@ fn load_window_icon() -> Option<window::Icon> {
 }
 
 fn make_window_settings() -> iced::window::Settings {
-    let use_glass_effects = cfg!(target_os = "macos");
+    let use_glass_effects = use_glass_effects();
     let mut window_settings = iced::window::Settings {
-        size: iced::Size::new(1200.0, 800.0),
-        min_size: Some(iced::Size::new(900.0, 400.0)),
+        size: iced::Size::new(WINDOW_INITIAL_WIDTH, WINDOW_INITIAL_HEIGHT),
+        min_size: Some(iced::Size::new(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)),
         decorations: true, // Use native window decorations (KDE/GNOME title bar)
         blur: use_glass_effects,
         transparent: use_glass_effects,
@@ -2732,6 +3563,9 @@ fn make_window_settings() -> iced::window::Settings {
     #[cfg(target_os = "linux")]
     {
         window_settings.platform_specific.application_id = linux_application_id();
+        // Force fully opaque windows on Linux.
+        window_settings.blur = false;
+        window_settings.transparent = false;
     }
     window_settings
 }

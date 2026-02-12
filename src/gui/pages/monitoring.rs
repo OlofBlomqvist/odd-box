@@ -27,11 +27,10 @@ struct LogEntriesDeps {
 /// Maximum number of log entries to render for performance
 pub(in crate::gui) const MAX_RENDERED_LOGS: usize = 100;
 
-
-
 impl OddBoxGui {
     pub(in crate::gui) fn view_monitoring(&self) -> Element<'_, Message> {
         let start = Instant::now();
+        let use_kde_buttons = self.use_kde_system_styles();
         
         let title_row = row![
             text("Monitoring").size(super::super::text_size(20)),
@@ -43,7 +42,10 @@ impl OddBoxGui {
                     bottom: 6.0,
                     left: 12.0,
                 })
-                .style(|theme: &Theme, status| {
+                .style(move |theme: &Theme, status| {
+                    if use_kde_buttons {
+                        return super::super::kde_danger_button_style(theme, status);
+                    }
                     let palette = theme.extended_palette();
                     let bg = match status {
                         button::Status::Hovered => palette.danger.strong.color,
@@ -76,7 +78,20 @@ impl OddBoxGui {
         let source_filter = self.view_source_filter();
 
         // Log entries
-        let log_entries = self.view_log_entries();
+        let log_entries = container(self.view_log_entries())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(|theme: &Theme| {
+                container::Style {
+                    background: Some(self.surface_panel_bg(theme).into()),
+                    border: Border {
+                        radius: 6.0.into(),
+                        width: 1.0,
+                        color: self.surface_border_color(theme),
+                    },
+                    ..Default::default()
+                }
+            });
 
         let content = column![title_row, filter_bar, source_filter, log_entries]
             .spacing(15)
@@ -155,6 +170,7 @@ impl OddBoxGui {
     }
 
     fn view_source_filter(&self) -> Element<'_, Message> {
+        let use_kde_buttons = self.use_kde_system_styles();
         let known_sources = self.log_state.filtered_snapshot().known_sources.clone();
         if known_sources.is_empty() {
             return Space::new().height(Length::Fixed(0.0)).into();
@@ -172,7 +188,10 @@ impl OddBoxGui {
                         bottom: 4.0,
                         left: 8.0,
                     })
-                    .style(|theme: &Theme, status| {
+                    .style(move |theme: &Theme, status| {
+                        if use_kde_buttons {
+                            return super::super::kde_danger_button_style(theme, status);
+                        }
                         let palette = theme.extended_palette();
                         let (bg, fg) = match status {
                             button::Status::Hovered => {
@@ -209,6 +228,16 @@ impl OddBoxGui {
                     left: 8.0,
                 })
                 .style(move |theme: &Theme, status| {
+                    if use_kde_buttons {
+                        if is_selected {
+                            let selected_status = match status {
+                                button::Status::Hovered | button::Status::Pressed => status,
+                                _ => button::Status::Pressed,
+                            };
+                            return super::super::kde_primary_button_style(theme, selected_status);
+                        }
+                        return super::super::kde_neutral_button_style(theme, status);
+                    }
                     let palette = theme.extended_palette();
                     let (bg, fg) = if is_selected {
                         (palette.primary.strong.color, palette.primary.strong.text)

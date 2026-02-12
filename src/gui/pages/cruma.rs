@@ -1,11 +1,12 @@
-use iced::widget::{Column, column, container, radio, row, text};
-use iced::{Alignment, Color, Element, Font, Length, Theme};
+use iced::widget::{Column, button, column, container, radio, row, text, text_input};
+use iced::{Alignment, Element, Font, Length, Padding, Theme};
 use iced::widget::text::Wrapping;
 
 use super::super::{CrumaAuthMode, Message, OddBoxGui};
 
 impl OddBoxGui {
     pub(in crate::gui) fn view_cruma_ingress(&self) -> Element<'_, Message> {
+        let use_kde_buttons = self.use_kde_system_styles();
         let assignment = self.state.cruma_assignment.load_full();
         let is_disabled = matches!(self.cruma_auth_mode, CrumaAuthMode::Disabled);
         let (status_label, status_color, fqdn, motd) = if is_disabled {
@@ -72,13 +73,12 @@ impl OddBoxGui {
         .padding(16)
         .width(Length::Fill)
         .style(|theme: &Theme| {
-            let palette = theme.extended_palette();
             iced::widget::container::Style {
-                background: Some(palette.background.weaker.color.into()),
+                background: Some(self.surface_panel_bg(theme).into()),
                 border: iced::Border {
                     radius: 6.0.into(),
                     width: 1.0,
-                    color: palette.background.strong.color,
+                    color: self.surface_border_color(theme),
                 },
                 ..Default::default()
             }
@@ -127,13 +127,12 @@ impl OddBoxGui {
         .padding(16)
         .width(Length::Fill)
         .style(|theme: &Theme| {
-            let palette = theme.extended_palette();
             iced::widget::container::Style {
-                background: Some(palette.background.weaker.color.into()),
+                background: Some(self.surface_panel_bg(theme).into()),
                 border: iced::Border {
                     radius: 6.0.into(),
                     width: 1.0,
-                    color: palette.background.strong.color,
+                    color: self.surface_border_color(theme),
                 },
                 ..Default::default()
             }
@@ -167,18 +166,53 @@ impl OddBoxGui {
             .push(auth_radio)
             .spacing(8);
 
+        if self.cruma_auth_mode == CrumaAuthMode::Authenticated {
+            let id_input = text_input("Tunnel ID", &self.cruma_auth_id)
+                .on_input(Message::CrumaAuthIdChanged)
+                .on_submit(Message::CrumaAuthSave)
+                .padding(8)
+                .width(Length::Fill);
+
+            let key_input = text_input("Tunnel Key", &self.cruma_auth_key)
+                .on_input(Message::CrumaAuthKeyChanged)
+                .on_submit(Message::CrumaAuthSave)
+                .padding(8)
+                .secure(true)
+                .width(Length::Fill);
+
+            let mut save_button = button(text("Save Auth Credentials"))
+                .padding(Padding {
+                    top: 8.0,
+                    right: 14.0,
+                    bottom: 8.0,
+                    left: 14.0,
+                })
+                .on_press(Message::CrumaAuthSave);
+            if use_kde_buttons {
+                save_button = save_button.style(super::super::kde_primary_button_style);
+            }
+
+            mode_col = mode_col.push(
+                column![
+                    text("Tunnel ID")
+                        .font(Font::MONOSPACE)
+                        .size(super::super::text_size(12)),
+                    id_input,
+                    text("Tunnel Key")
+                        .font(Font::MONOSPACE)
+                        .size(super::super::text_size(12)),
+                    key_input,
+                    save_button,
+                ]
+                .spacing(8)
+                .width(Length::Fill),
+            );
+        }
+
         if let Some(msg) = &self.cruma_mode_notice {
             mode_col = mode_col.push(
                 text(msg)
                     .color(self.theme().extended_palette().background.weak.text)
-                    .size(super::super::text_size(12)),
-            );
-        }
-
-        if self.cruma_auth_mode == CrumaAuthMode::Authenticated {
-            mode_col = mode_col.push(
-                text("Authenticated credentials are not configured yet.")
-                    .color(Color::from_rgb(0.9, 0.6, 0.2))
                     .size(super::super::text_size(12)),
             );
         }
@@ -188,13 +222,12 @@ impl OddBoxGui {
                 .padding(16)
                 .width(Length::Fill)
                 .style(|theme: &Theme| {
-                    let palette = theme.extended_palette();
                     iced::widget::container::Style {
-                        background: Some(palette.background.weaker.color.into()),
+                        background: Some(self.surface_panel_bg(theme).into()),
                         border: iced::Border {
                             radius: 6.0.into(),
                             width: 1.0,
-                            color: palette.background.strong.color,
+                            color: self.surface_border_color(theme),
                         },
                         ..Default::default()
                     }

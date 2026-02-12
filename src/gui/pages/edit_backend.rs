@@ -1,5 +1,5 @@
 use iced::widget::{
-    button, checkbox, column, container, pick_list, responsive, row, text, text_input, Row, Space,
+    button, checkbox, column, container, pick_list, responsive, row, text, text_input,
 };
 use iced::{Border, Color, Element, Font, Length, Padding, Theme};
 
@@ -102,32 +102,44 @@ impl OddBoxGui {
             .as_ref()
             .map(|msg| text(msg).size(super::super::text_size(13)).style(muted_text));
 
+        let use_kde_buttons = self.use_kde_system_styles();
+
+        let mut save_btn = button(text("Save").size(super::super::text_size(14)))
+            .on_press(Message::EditBackendSave);
+        if use_kde_buttons {
+            save_btn = save_btn.style(super::super::kde_primary_button_style);
+        }
+        let mut back_btn = button(text("Back").size(super::super::text_size(14)))
+            .on_press(Message::NavigateTo(super::super::Page::Backends));
+        if use_kde_buttons {
+            back_btn = back_btn.style(super::super::kde_neutral_button_style);
+        }
+
         let mut actions_children: Vec<Element<'_, Message>> = vec![
-            button(text("Save").size(super::super::text_size(14)))
-                .on_press(Message::EditBackendSave)
-                .into(),
-            button(text("Back").size(super::super::text_size(14)))
-                .on_press(Message::NavigateTo(super::super::Page::Backends))
-                .into(),
+            save_btn.into(),
+            back_btn.into(),
         ];
         if !self.edit_backend_is_new {
+            let mut delete_btn = button(text("Delete").size(super::super::text_size(14)))
+                .on_press(Message::EditBackendDelete);
+            if use_kde_buttons {
+                delete_btn = delete_btn.style(super::super::kde_danger_button_style);
+            }
             actions_children.push(
-                button(text("Delete").size(super::super::text_size(14)))
-                    .on_press(Message::EditBackendDelete)
-                    .into(),
+                delete_btn.into(),
             );
         }
         let actions = row::Row::with_children(actions_children).spacing(10);
 
         let layout = responsive(|size| {
+            let use_kde_buttons = self.use_kde_system_styles();
             let card_style = |theme: &Theme| {
-                let palette = theme.extended_palette();
                 container::Style {
-                    background: Some(palette.background.weaker.color.into()),
+                    background: Some(self.surface_panel_bg(theme).into()),
                     border: Border {
                         radius: 6.0.into(),
                         width: 1.0,
-                        color: palette.background.strong.color,
+                        color: self.surface_border_color(theme),
                     },
                     ..Default::default()
                 }
@@ -247,9 +259,12 @@ impl OddBoxGui {
                         .on_input(|v| Message::EditBackendFieldChanged(EditBackendField::Dir(v)))
                         .padding(8)
                         .width(Length::Fill);
-                    let dir_browse = button(text("Browse").size(super::super::text_size(12)))
+                    let mut dir_browse = button(text("Browse").size(super::super::text_size(12)))
                         .padding(8)
                         .on_press(Message::EditBackendPickDir);
+                    if use_kde_buttons {
+                        dir_browse = dir_browse.style(super::super::kde_neutral_button_style);
+                    }
                     let resolved_dir = self.edit_backend_resolved_dir.as_ref().map(|path| {
                         text(format!("Resolved: {}", path))
                             .size(super::super::text_size(12))
@@ -349,9 +364,12 @@ impl OddBoxGui {
                         })
                         .padding(8)
                         .width(Length::Fill);
-                    let bin_browse = button(text("Browse").size(super::super::text_size(12)))
+                    let mut bin_browse = button(text("Browse").size(super::super::text_size(12)))
                         .padding(8)
                         .on_press(Message::EditBackendPickBin);
+                    if use_kde_buttons {
+                        bin_browse = bin_browse.style(super::super::kde_neutral_button_style);
+                    }
                     let bin_help = text("Path or command to execute")
                         .size(super::super::text_size(12))
                         .style(muted_text);
@@ -492,7 +510,10 @@ impl OddBoxGui {
                             bottom: 4.0,
                             left: 8.0,
                         })
-                        .style(|theme: &Theme, status| {
+                        .style(move |theme: &Theme, status| {
+                            if use_kde_buttons {
+                                return super::super::kde_primary_button_style(theme, status);
+                            }
                             let palette = theme.extended_palette();
                             let (bg, fg) = match status {
                                 button::Status::Hovered => {
@@ -526,13 +547,12 @@ impl OddBoxGui {
                         .padding(8)
                         .width(Length::Fill)
                         .style(|theme: &Theme| {
-                            let palette = theme.extended_palette();
                             container::Style {
-                                background: Some(palette.background.weak.color.into()),
+                                background: Some(self.surface_panel_alt_bg(theme).into()),
                                 border: Border {
                                     radius: 4.0.into(),
                                     width: 1.0,
-                                    color: palette.background.strong.color,
+                                    color: self.surface_border_color(theme),
                                 },
                                 ..Default::default()
                             }

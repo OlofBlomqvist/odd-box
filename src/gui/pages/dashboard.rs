@@ -10,8 +10,13 @@ use super::super::{Message, OddBoxGui};
 /// Minimum card width for responsive layout
 const CARD_MIN_WIDTH: f32 = 220.0;
 const CARD_GAP: f32 = 12.0;
-/// Fixed card height so all cards are the same size
-const CARD_HEIGHT: f32 = 72.0;
+/// Base card height – scaled by the global text scale factor so cards
+/// grow proportionally with font size when the window is resized.
+const CARD_BASE_HEIGHT: f32 = 72.0;
+
+fn card_height() -> f32 {
+    CARD_BASE_HEIGHT * super::super::gui_scale()
+}
 
 /// Category accent colors
 const COLOR_PROCESS: Color = Color::from_rgb(0.4, 0.6, 1.0);
@@ -50,15 +55,16 @@ fn card_button_style_with_accent(
     theme: &Theme,
     status: button::Status,
     accent: Color,
+    surface_bg: Color,
+    surface_border: Color,
 ) -> button::Style {
     let palette = theme.extended_palette();
-    let bg = palette.background.weaker.color;
     let (border_color, border_width) = match status {
         button::Status::Hovered | button::Status::Pressed => (accent, 2.0),
-        _ => (palette.background.strong.color, 1.0),
+        _ => (surface_border, 1.0),
     };
     button::Style {
-        background: Some(Color::from_rgba(bg.r, bg.g, bg.b, 0.8).into()),
+        background: Some(surface_bg.into()),
         text_color: palette.background.base.text,
         border: Border {
             radius: 8.0.into(),
@@ -71,13 +77,12 @@ fn card_button_style_with_accent(
 
 /// Selected card container style
 fn selected_card_style(
-    theme: &Theme,
+    _theme: &Theme,
     accent: Color,
+    surface_bg: Color,
 ) -> container::Style {
-    let palette = theme.extended_palette();
-    let bg = palette.background.weaker.color;
     container::Style {
-        background: Some(Color::from_rgba(bg.r, bg.g, bg.b, 0.8).into()),
+        background: Some(surface_bg.into()),
         border: Border {
             radius: 8.0.into(),
             width: 2.0,
@@ -109,6 +114,8 @@ fn action_btn<'a>(
     bg_normal: Color,
     bg_hover: Color,
     fg: Color,
+    use_kde_buttons: bool,
+    kde_role: super::super::KdeButtonRole,
 ) -> Element<'a, Message> {
     let mut btn = button(
         text(label)
@@ -124,7 +131,10 @@ fn action_btn<'a>(
         bottom: 3.0,
         left: 10.0,
     })
-    .style(move |_theme: &Theme, status| {
+    .style(move |theme: &Theme, status| {
+        if use_kde_buttons {
+            return super::super::kde_button_style(theme, status, kde_role);
+        }
         let bg = match status {
             button::Status::Hovered | button::Status::Pressed => bg_hover,
             button::Status::Disabled => {
@@ -160,6 +170,8 @@ fn site_card<'a>(
     display_name: &str,
     subtitle: &str,
     accent_color: Color,
+    surface_bg: Color,
+    surface_border: Color,
     state: &ProcState,
     card_width: f32,
     is_selected: bool,
@@ -204,9 +216,9 @@ fn site_card<'a>(
                 left: 14.0,
             })
             .width(Length::Fixed(card_width))
-            .height(Length::Fixed(CARD_HEIGHT))
+            .height(Length::Fixed(card_height()))
             .clip(true)
-            .style(move |theme: &Theme| selected_card_style(theme, accent))
+            .style(move |theme: &Theme| selected_card_style(theme, accent, surface_bg))
             .into()
     } else {
         // Normal state: clickable card with subtitle
@@ -230,9 +242,17 @@ fn site_card<'a>(
                 left: 14.0,
             })
             .width(Length::Fixed(card_width))
-            .height(Length::Fixed(CARD_HEIGHT))
+            .height(Length::Fixed(card_height()))
             .clip(true)
-            .style(move |theme, status| card_button_style_with_accent(theme, status, accent_color));
+            .style(move |theme, status| {
+                card_button_style_with_accent(
+                    theme,
+                    status,
+                    accent_color,
+                    surface_bg,
+                    surface_border,
+                )
+            });
 
         if let Some(msg) = on_press {
             card = card.on_press(msg);
@@ -248,7 +268,13 @@ fn theme_aware_color(is_light: bool, light_variant: Color, dark_variant: Color) 
 }
 
 /// Build a small stat box for the summary row
-fn stat_box<'a>(label: &'a str, value: usize, color: Color) -> Element<'a, Message> {
+fn stat_box<'a>(
+    label: &'a str,
+    value: usize,
+    color: Color,
+    surface_bg: Color,
+    surface_border: Color,
+) -> Element<'a, Message> {
     let content = column![
         text(value.to_string())
             .size(super::super::text_size(22))
@@ -269,15 +295,13 @@ fn stat_box<'a>(label: &'a str, value: usize, color: Color) -> Element<'a, Messa
             bottom: 10.0,
             left: 20.0,
         })
-        .style(|theme: &Theme| {
-            let palette = theme.extended_palette();
-            let bg = palette.background.weaker.color;
+        .style(move |_theme: &Theme| {
             container::Style {
-                background: Some(Color::from_rgba(bg.r, bg.g, bg.b, 0.6).into()),
+                background: Some(surface_bg.into()),
                 border: Border {
                     radius: 6.0.into(),
                     width: 1.0,
-                    color: palette.background.strong.color,
+                    color: surface_border,
                 },
                 ..Default::default()
             }
@@ -338,6 +362,7 @@ fn header_action_btn<'a>(
     disabled_label: &'a str,
     msg: Message,
     is_light: bool,
+    use_kde_buttons: bool,
     kind: HeaderBtnKind,
     cooldown_since: Option<std::time::Instant>,
 ) -> Element<'a, Message> {
@@ -378,7 +403,14 @@ fn header_action_btn<'a>(
         bottom: 3.0,
         left: 10.0,
     })
-    .style(move |_theme: &Theme, status| {
+    .style(move |theme: &Theme, status| {
+        if use_kde_buttons {
+            let role = match kind {
+                HeaderBtnKind::Start => super::super::KdeButtonRole::Success,
+                HeaderBtnKind::Stop => super::super::KdeButtonRole::Danger,
+            };
+            return super::super::kde_button_style(theme, status, role);
+        }
         let background = match status {
             button::Status::Disabled => Color::from_rgba(bg.r, bg.g, bg.b, 0.35),
             button::Status::Hovered | button::Status::Pressed => bg_hover,
@@ -406,6 +438,7 @@ fn header_action_btn<'a>(
     btn.into()
 }
 
+#[derive(Clone, Copy)]
 enum HeaderBtnKind { Start, Stop }
 
 /// Section header with category name, count badge, and trailing action buttons
@@ -498,6 +531,7 @@ fn process_actions<'a>(
     backend_name: &str,
     state: &ProcState,
     is_light: bool,
+    use_kde_buttons: bool,
 ) -> Vec<Element<'a, Message>> {
     let name = backend_name.to_string();
     let mut actions: Vec<Element<'a, Message>> = Vec::new();
@@ -519,6 +553,8 @@ fn process_actions<'a>(
         edit_bg,
         edit_hover,
         Color::WHITE,
+        use_kde_buttons,
+        super::super::KdeButtonRole::Primary,
     ));
 
     // Manage button (navigate to processes page)
@@ -538,6 +574,8 @@ fn process_actions<'a>(
         manage_bg,
         manage_hover,
         Color::WHITE,
+        use_kde_buttons,
+        super::super::KdeButtonRole::Neutral,
     ));
 
     // Start / Stop
@@ -562,6 +600,8 @@ fn process_actions<'a>(
             stop_bg,
             stop_hover,
             Color::WHITE,
+            use_kde_buttons,
+            super::super::KdeButtonRole::Danger,
         ));
     } else if can_start && !is_transitioning {
         let start_bg = if is_light {
@@ -580,6 +620,8 @@ fn process_actions<'a>(
             start_bg,
             start_hover,
             Color::WHITE,
+            use_kde_buttons,
+            super::super::KdeButtonRole::Success,
         ));
     } else {
         // Transitioning – show disabled
@@ -591,6 +633,8 @@ fn process_actions<'a>(
             disabled_bg,
             disabled_bg,
             Color::WHITE,
+            use_kde_buttons,
+            super::super::KdeButtonRole::Neutral,
         ));
     }
 
@@ -598,7 +642,11 @@ fn process_actions<'a>(
 }
 
 /// Build action buttons for a remote or static backend (no start/stop)
-fn simple_actions<'a>(backend_name: &str, is_light: bool) -> Vec<Element<'a, Message>> {
+fn simple_actions<'a>(
+    backend_name: &str,
+    is_light: bool,
+    use_kde_buttons: bool,
+) -> Vec<Element<'a, Message>> {
     let name = backend_name.to_string();
     let edit_bg = if is_light {
         Color::from_rgb(0.22, 0.42, 0.72)
@@ -616,6 +664,8 @@ fn simple_actions<'a>(backend_name: &str, is_light: bool) -> Vec<Element<'a, Mes
         edit_bg,
         edit_hover,
         Color::WHITE,
+        use_kde_buttons,
+        super::super::KdeButtonRole::Primary,
     )]
 }
 
@@ -626,9 +676,13 @@ impl OddBoxGui {
             .uptime()
             .map(|d| format!("{:.0?}", d))
             .unwrap_or_else(|_| "Unknown".to_string());
+        let theme_snapshot = self.theme();
+        let dashboard_surface_bg = self.surface_panel_bg(&theme_snapshot);
+        let dashboard_surface_border = self.surface_border_color(&theme_snapshot);
 
         let dashboard_content: Element<'_, Message> = responsive(move |size| {
             let (cols, card_width) = card_layout(size);
+            let use_kde_buttons = self.use_kde_system_styles();
 
             // Detect light theme for theme-aware colors
             let is_light = match self.theme_mode {
@@ -659,14 +713,13 @@ impl OddBoxGui {
             )
             .padding(14)
             .width(Length::Fill)
-            .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
+            .style(move |_theme: &Theme| {
                 container::Style {
-                    background: Some(palette.background.weaker.color.into()),
+                    background: Some(dashboard_surface_bg.into()),
                     border: Border {
                         radius: 6.0.into(),
                         width: 1.0,
-                        color: palette.background.strong.color,
+                        color: dashboard_surface_border,
                     },
                     ..Default::default()
                 }
@@ -757,10 +810,34 @@ impl OddBoxGui {
             );
 
             let summary_row = Row::with_children(vec![
-                stat_box("Sites", total, sites_color),
-                stat_box("Running", running, running_color),
-                stat_box("Stopped", stopped, stopped_color),
-                stat_box("Faulty", faulty, faulty_color),
+                stat_box(
+                    "Sites",
+                    total,
+                    sites_color,
+                    dashboard_surface_bg,
+                    dashboard_surface_border,
+                ),
+                stat_box(
+                    "Running",
+                    running,
+                    running_color,
+                    dashboard_surface_bg,
+                    dashboard_surface_border,
+                ),
+                stat_box(
+                    "Stopped",
+                    stopped,
+                    stopped_color,
+                    dashboard_surface_bg,
+                    dashboard_surface_border,
+                ),
+                stat_box(
+                    "Faulty",
+                    faulty,
+                    faulty_color,
+                    dashboard_surface_bg,
+                    dashboard_surface_border,
+                ),
             ])
             .spacing(12);
 
@@ -787,7 +864,7 @@ impl OddBoxGui {
                         let subtitle = format!("{} · :{}", basename(&proc.bin), proc.port);
                         let is_sel = selected == Some(proc.name.as_str());
                         let actions = if is_sel {
-                            process_actions(&proc.name, &proc.state, is_light)
+                            process_actions(&proc.name, &proc.state, is_light, use_kde_buttons)
                         } else {
                             vec![]
                         };
@@ -795,6 +872,8 @@ impl OddBoxGui {
                             &display_name,
                             &subtitle,
                             COLOR_PROCESS,
+                            dashboard_surface_bg,
+                            dashboard_surface_border,
                             &proc.state,
                             card_width,
                             is_sel,
@@ -810,8 +889,24 @@ impl OddBoxGui {
                         COLOR_PROCESS,
                         is_light,
                         vec![
-                            header_action_btn("▶ Start All", "Starting…", Message::ProcessStartAll, is_light, HeaderBtnKind::Start, start_cd),
-                            header_action_btn("■ Stop All", "Stopping…", Message::ProcessStopAll, is_light, HeaderBtnKind::Stop, stop_cd),
+                            header_action_btn(
+                                "▶ Start All",
+                                "Starting…",
+                                Message::ProcessStartAll,
+                                is_light,
+                                use_kde_buttons,
+                                HeaderBtnKind::Start,
+                                start_cd,
+                            ),
+                            header_action_btn(
+                                "■ Stop All",
+                                "Stopping…",
+                                Message::ProcessStopAll,
+                                is_light,
+                                use_kde_buttons,
+                                HeaderBtnKind::Stop,
+                                stop_cd,
+                            ),
                         ],
                     );
                     sections.push(
@@ -828,7 +923,7 @@ impl OddBoxGui {
                 for proc in unbound {
                     let is_sel = selected == Some(proc.name.as_str());
                     let actions = if is_sel {
-                        process_actions(&proc.name, &proc.state, is_light)
+                        process_actions(&proc.name, &proc.state, is_light, use_kde_buttons)
                     } else {
                         vec![]
                     };
@@ -837,6 +932,8 @@ impl OddBoxGui {
                         &proc.name,
                         &subtitle,
                         COLOR_UNBOUND,
+                        dashboard_surface_bg,
+                        dashboard_surface_border,
                         &proc.state,
                         card_width,
                         is_sel,
@@ -862,7 +959,7 @@ impl OddBoxGui {
                         let subtitle = format!("{}://{}", proto, remote.endpoints);
                         let is_sel = selected == Some(remote.name.as_str());
                         let actions = if is_sel {
-                            simple_actions(&remote.name, is_light)
+                            simple_actions(&remote.name, is_light, use_kde_buttons)
                         } else {
                             vec![]
                         };
@@ -870,6 +967,8 @@ impl OddBoxGui {
                             &display_name,
                             &subtitle,
                             COLOR_REMOTE,
+                            dashboard_surface_bg,
+                            dashboard_surface_border,
                             &remote.state,
                             card_width,
                             is_sel,
@@ -890,7 +989,7 @@ impl OddBoxGui {
                 for remote in unbound {
                     let is_sel = selected == Some(remote.name.as_str());
                     let actions = if is_sel {
-                        simple_actions(&remote.name, is_light)
+                        simple_actions(&remote.name, is_light, use_kde_buttons)
                     } else {
                         vec![]
                     };
@@ -900,6 +999,8 @@ impl OddBoxGui {
                         &remote.name,
                         &subtitle,
                         COLOR_UNBOUND,
+                        dashboard_surface_bg,
+                        dashboard_surface_border,
                         &remote.state,
                         card_width,
                         is_sel,
@@ -924,7 +1025,7 @@ impl OddBoxGui {
                         let subtitle = format!("dir: {}", sb.dir);
                         let is_sel = selected == Some(sb.name.as_str());
                         let actions = if is_sel {
-                            simple_actions(&sb.name, is_light)
+                            simple_actions(&sb.name, is_light, use_kde_buttons)
                         } else {
                             vec![]
                         };
@@ -932,6 +1033,8 @@ impl OddBoxGui {
                             &display_name,
                             &subtitle,
                             COLOR_DIR_SERVER,
+                            dashboard_surface_bg,
+                            dashboard_surface_border,
                             &sb.state,
                             card_width,
                             is_sel,
@@ -952,7 +1055,7 @@ impl OddBoxGui {
                 for sb in unbound {
                     let is_sel = selected == Some(sb.name.as_str());
                     let actions = if is_sel {
-                        simple_actions(&sb.name, is_light)
+                        simple_actions(&sb.name, is_light, use_kde_buttons)
                     } else {
                         vec![]
                     };
@@ -961,6 +1064,8 @@ impl OddBoxGui {
                         &sb.name,
                         &subtitle,
                         COLOR_UNBOUND,
+                        dashboard_surface_bg,
+                        dashboard_surface_border,
                         &sb.state,
                         card_width,
                         is_sel,
@@ -981,6 +1086,8 @@ impl OddBoxGui {
                         &route.hostname,
                         &format!("Missing backend: {}", route.backend),
                         Color::from_rgb(0.9, 0.3, 0.3),
+                        dashboard_surface_bg,
+                        dashboard_surface_border,
                         &ProcState::Faulty,
                         card_width,
                         false,

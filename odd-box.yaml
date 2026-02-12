@@ -6,18 +6,11 @@ env: {}
 root_dir: "~"
 default_log_format: standard
 auto_start: true
+cruma: anon
 admin_api_host: null
 admin_api_password: null
 
 backends:
-
-  BE2:
-    type: static
-    dir: $cfg_dir/temp
-    index: index.html
-    list_dir: true
-    render_markdown: true
-    cache_max_age: 3600
 
   BE3:
     type: process
@@ -42,13 +35,44 @@ backends:
     log_level: null
     log_format: null
 
-  BE1:
+  BE5:
+    type: remote
+
+    endpoints:
+
+      - addr: lobste.rs
+        port: 443
+
+    protocol: h1
+    https: true
+    keep_original_host_header: false
+
+  BE6:
+    type: process
+    bin: python
+
+    args:
+      - -m
+      - http.server
+      - $port
+
+    dir: null
+    env: {}
+    protocol: h1
+    https: false
+    port: null
+    auto_start: false
+    exclude_from_start_all: false
+    log_level: null
+    log_format: null
+
+  BE2:
     type: static
-    dir: $cfg_dir/docs/book
+    dir: $cfg_dir/temp
     index: index.html
     list_dir: true
     render_markdown: true
-    cache_max_age: null
+    cache_max_age: 3600
 
   BE4:
     type: process
@@ -71,36 +95,13 @@ backends:
     log_level: null
     log_format: null
 
-  BE6:
-    type: process
-    bin: python
-
-    args:
-      - -m
-      - http.server
-      - $port
-
-    dir: null
-    env: {}
-    protocol: h1
-    https: false
-    port: null
-    auto_start: false
-    exclude_from_start_all: false
-    log_level: null
-    log_format: null
-
-  BE5:
-    type: remote
-
-    endpoints:
-
-      - addr: lobste.rs
-        port: 443
-
-    protocol: h1
-    https: true
-    keep_original_host_header: false
+  BE1:
+    type: static
+    dir: $cfg_dir/docs/book
+    index: index.html
+    list_dir: true
+    render_markdown: true
+    cache_max_age: null
 
 frontends:
 
@@ -108,15 +109,14 @@ frontends:
     port: 80
 
     routes:
-      py.localtest.me: BE4
       B.localhost: BE1
-      lobsters.localtest.me: BE3
-      B2.localhost: BE1
-      C3.localhost: BE2
       odd-box-docs.localhost: BE2
-      C.localhost: BE2
-      hello-hi: BE2
+      A1.localtest.me: BE6
+      C3.localhost: BE2
       A.localtest.me: BE1
+      lobsters.localtest.me: BE3
+      C.localhost: BE2
+      py.localtest.me: BE4
 
       images1.local:
         backend: BE2
@@ -125,9 +125,10 @@ frontends:
         redirect_to_https: true
         lets_encrypt: false
 
-      test2.localhost: BE1
-      A1.localtest.me: BE6
       nginx.localhost: BE4
+      B2.localhost: BE1
+      hello-hi: BE2
+      test2.localhost: BE1
 
   https:
     port: 443
