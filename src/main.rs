@@ -83,6 +83,10 @@ pub mod global_state {
         pub docker_discovery: std::sync::Arc<arc_swap::ArcSwap<Vec<crate::docker::DiscoveredContainer>>>,
         pub tui_log_buffer: std::sync::Arc<crate::logging::SharedLogBuffer>,
         pub tokio_handle: tokio::runtime::Handle,
+        /// HTTP traffic capture store from cruma_proxy_lib.
+        /// When enabled, records request/response metadata and (optionally) body
+        /// bytes for every proxied HTTP exchange flowing through the cruma proxy stack.
+        pub http_capture_store: Arc<cruma_proxy_lib::proxying::capture_store::HttpCaptureStore>,
     }
     impl GlobalState {
         pub fn uptime(&self) -> Result<std::time::Duration, SystemTimeError> {
@@ -95,6 +99,18 @@ pub mod global_state {
             tui_log_buffer: std::sync::Arc<crate::logging::SharedLogBuffer>,
             tokio_handle: tokio::runtime::Handle,
         ) -> Self {
+            let http_capture_store = Arc::new(
+                cruma_proxy_lib::proxying::capture_store::HttpCaptureStore::new(
+                    cruma_proxy_lib::proxying::capture_store::CaptureConfig {
+                        capture_headers: true,
+                        body_bytes_limit: 65_536,
+                        capacity: 500,
+                    },
+                ),
+            );
+            // Start with capture disabled; toggled via enable_global_traffic_inspection
+            http_capture_store.set_enabled(false);
+
             Self {
                 enable_global_traffic_inspection: AtomicBool::new(false),
                 process_registry: Arc::new(crate::process_registry::ProcessRegistry::new()),
@@ -110,6 +126,7 @@ pub mod global_state {
                 docker_discovery: Arc::new(arc_swap::ArcSwap::from_pointee(Vec::new())),
                 tui_log_buffer,
                 tokio_handle,
+                http_capture_store,
             }
         }
 
@@ -533,6 +550,16 @@ async fn main() -> anyhow::Result<()> {
 
     let global_state = Arc::new(global_state);
 
+    // Enable richer capture in the event-based path too (headers + body bytes).
+    // The HttpCaptureStore has its own CaptureConfig that governs the store;
+    // this global config governs what the legacy HttpEvent sink receives.
+    cruma_proxy_lib::proxying::set_http_capture_config(
+        cruma_proxy_lib::proxying::HttpCaptureConfig {
+            capture_headers: true,
+            body_bytes_limit: 65_536,
+        },
+    );
+
     http_events::install_http_event_sink(global_state.clone());
 
     let cruma_mode = {
@@ -626,8 +653,9 @@ async fn main() -> anyhow::Result<()> {
             });
 
             let ct_clone = cancel.clone();
+            let capture_store = Some(state_for_cruma.http_capture_store.clone());
             if let Err(e) =
-                cruma_proxy_lib::hosting::run_from_config(cruma_cfg_arc, persistence, ct_clone)
+                cruma_proxy_lib::hosting::run_from_config(cruma_cfg_arc, persistence, ct_clone, capture_store)
                     .await
             {
                 tracing::error!(error=%e, "cruma hosting failed");

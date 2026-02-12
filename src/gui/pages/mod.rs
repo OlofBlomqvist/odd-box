@@ -6,6 +6,7 @@ mod edit_frontend;
 mod frontends;
 mod monitoring;
 mod processes;
+mod traffic_inspection;
 
 use std::sync::Arc;
 

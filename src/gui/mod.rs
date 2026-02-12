@@ -153,7 +153,7 @@ pub enum Page {
     Dashboard,
     CrumaIngress,
     Monitoring,
-    Statistics,
+    TrafficInspection,
     Backends,
     Frontends,
     ManagedProcesses,
@@ -167,7 +167,7 @@ impl Page {
             Page::Dashboard => "Dashboard",
             Page::CrumaIngress => "Cruma Ingress",
             Page::Monitoring => "Monitoring",
-            Page::Statistics => "Statistics",
+            Page::TrafficInspection => "Traffic Inspection",
             Page::Backends => "Backends",
             Page::Frontends => "Frontends",
             Page::ManagedProcesses => "Managed Processes",
@@ -182,7 +182,7 @@ impl Page {
             Page::CrumaIngress => "⇄",
 
             Page::Monitoring => "◉",
-            Page::Statistics => "▤",
+            Page::TrafficInspection => "⇆",
             Page::Backends => "⬚",
             Page::Frontends => "◧",
             Page::ManagedProcesses => "⚙",
@@ -377,6 +377,9 @@ pub enum Message {
     EditBackendEnvAdd,
     CrumaAuthModeChanged(CrumaAuthMode),
     CrumaAuthModeSaveResult(Result<(), String>),
+    TrafficInspectionToggled(bool),
+    TrafficInspectionClear,
+    TrafficInspectionSelect(Option<u64>),
     // Processes page tab
     ProcessesTabChanged(ProcessesTab),
     // Global environment variables
@@ -545,6 +548,7 @@ pub struct OddBoxGui {
     pub(in crate::gui) global_env_dirty: bool,
     exit_requested: bool,
     tray_quit_pending: bool,
+    pub(in crate::gui) traffic_inspection_selected: Option<u64>,
     frontend_http_port_input: String,
     frontend_https_port_input: String,
     frontend_port_notice: Option<String>,
@@ -1353,6 +1357,7 @@ impl OddBoxGui {
                 global_env_dirty: false,
                 exit_requested: false,
                 tray_quit_pending: false,
+                traffic_inspection_selected: None,
                 frontend_http_port_input: String::new(),
                 frontend_https_port_input: String::new(),
                 frontend_port_notice: None,
@@ -2138,6 +2143,19 @@ impl OddBoxGui {
                     self.cruma_mode_notice = Some(err);
                 }
             },
+            Message::TrafficInspectionToggled(enabled) => {
+                self.state
+                    .enable_global_traffic_inspection
+                    .store(enabled, std::sync::atomic::Ordering::Relaxed);
+                self.state.http_capture_store.set_enabled(enabled);
+            }
+            Message::TrafficInspectionClear => {
+                self.state.http_capture_store.clear();
+                self.traffic_inspection_selected = None;
+            }
+            Message::TrafficInspectionSelect(req_id) => {
+                self.traffic_inspection_selected = req_id;
+            }
         }
         Task::none()
     }
@@ -2208,7 +2226,7 @@ impl OddBoxGui {
             Page::Dashboard,
             Page::CrumaIngress,
             Page::Monitoring,
-            Page::Statistics,
+            Page::TrafficInspection,
             Page::Backends,
             Page::Frontends,
             Page::ManagedProcesses,
@@ -2315,7 +2333,7 @@ impl OddBoxGui {
             Page::Dashboard => self.view_dashboard(),
             Page::CrumaIngress => self.view_cruma_ingress(),
             Page::Monitoring => self.view_monitoring(),
-            Page::Statistics => self.view_placeholder("Traffic statistics and metrics"),
+            Page::TrafficInspection => self.view_traffic_inspection(),
             Page::Backends => self.view_backends(),
             Page::Frontends => self.view_frontends(),
             Page::ManagedProcesses => self.view_processes(),
@@ -2323,8 +2341,8 @@ impl OddBoxGui {
             Page::EditBackend => self.view_edit_backend(),
         };
 
-        // Monitoring page handles its own layout (no extra scrollable wrapper)
-        if self.current_page == Page::Monitoring {
+        // These pages handle their own layout (no extra scrollable wrapper)
+        if self.current_page == Page::Monitoring || self.current_page == Page::TrafficInspection {
             page_content
         } else {
             let page_title = text(self.current_page.title()).size(text_size(20));

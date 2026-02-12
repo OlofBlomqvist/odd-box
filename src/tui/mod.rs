@@ -16,7 +16,7 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
-    Table, TableState,
+    Table, TableState, Wrap,
 };
 use ratatui::{Frame, Terminal};
 use tracing::Level;
@@ -98,6 +98,7 @@ enum TuiPage {
     Sites,
     Docker,
     Logs,
+    Traffic,
 }
 
 const TUI_HEADER_HEIGHT: u16 = 6;
@@ -302,6 +303,9 @@ fn draw_ui(
     log_level_filter: LogLevelFilter,
     confirm_quit: bool,
     hovered_row: Option<usize>,
+    capture_snapshot: &cruma_proxy_lib::proxying::capture_store::CaptureSnapshot,
+    traffic_inspection_enabled: bool,
+    http_capture_store: &Arc<cruma_proxy_lib::proxying::capture_store::HttpCaptureStore>,
 ) {
     let root = Layout::default()
         .direction(Direction::Vertical)
@@ -413,6 +417,36 @@ fn draw_ui(
                 f.render_stateful_widget(scrollbar, scroll_area, &mut state);
             }
         }
+        TuiPage::Traffic => {
+            let detailed = TRAFFIC_DETAILED_MODE.load(std::sync::atomic::Ordering::Relaxed);
+            let zoom = TRAFFIC_ZOOM_MODE.load(std::sync::atomic::Ordering::Relaxed);
+            if detailed || zoom {
+                let (view, total, start, visible, scroll_area) =
+                    build_traffic_detailed_view(capture_snapshot, traffic_inspection_enabled, root[1], light_theme, http_capture_store, zoom);
+                f.render_widget(view, root[1]);
+                if total > visible {
+                    let content_len = total.saturating_sub(visible).saturating_add(1).max(1);
+                    let mut state = ScrollbarState::new(content_len)
+                        .position(start.min(content_len.saturating_sub(1)))
+                        .viewport_content_length(visible.max(1));
+                    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
+                    f.render_stateful_widget(scrollbar, scroll_area, &mut state);
+                }
+            } else {
+                let (table, mut tbl_state, total, start, visible, scroll_area) =
+                    build_traffic_table(capture_snapshot, traffic_inspection_enabled, root[1], light_theme);
+                f.render_stateful_widget(table, root[1], &mut tbl_state);
+
+                if total > visible {
+                    let content_len = total.saturating_sub(visible).saturating_add(1).max(1);
+                    let mut state = ScrollbarState::new(content_len)
+                        .position(start.min(content_len.saturating_sub(1)))
+                        .viewport_content_length(visible.max(1));
+                    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
+                    f.render_stateful_widget(scrollbar, scroll_area, &mut state);
+                }
+            }
+        }
     }
 
     let mut footer_spans = vec![
@@ -435,6 +469,36 @@ fn draw_ui(
             }),
         ]),
         TuiPage::Docker => {}
+        TuiPage::Traffic => {
+            let detailed = TRAFFIC_DETAILED_MODE.load(std::sync::atomic::Ordering::Relaxed);
+            let zoom = TRAFFIC_ZOOM_MODE.load(std::sync::atomic::Ordering::Relaxed);
+            footer_spans.extend([
+                Span::styled("i", Style::default().fg(muted_color(light_theme))),
+                Span::raw(if traffic_inspection_enabled {
+                    " (capture:on)  "
+                } else {
+                    " (capture:off)  "
+                }),
+                Span::styled("d", Style::default().fg(muted_color(light_theme))),
+                Span::raw(if zoom {
+                    " (zoom)  "
+                } else if detailed {
+                    " (detailed)  "
+                } else {
+                    " (simple)  "
+                }),
+            ]);
+            if detailed {
+                footer_spans.extend([
+                    Span::styled("z", Style::default().fg(muted_color(light_theme))),
+                    Span::raw(if zoom { " (zoom:on)  " } else { " (zoom:off)  " }),
+                ]);
+            }
+            footer_spans.extend([
+                Span::styled("c", Style::default().fg(muted_color(light_theme))),
+                Span::raw(" (clear)  "),
+            ]);
+        }
         TuiPage::Logs => footer_spans.extend([
             Span::styled("f", Style::default().fg(muted_color(light_theme))),
             Span::raw(if log_tail {
@@ -1113,7 +1177,776 @@ fn scroll_pos_from_mouse(scroll_area: Rect, mouse_row: u16, max_start: usize) ->
 static TUI_SCROLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static TUI_DOCKER_SCROLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static TUI_LOG_SCROLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static TUI_TRAFFIC_SCROLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static SHOW_FULL_PATH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static TRAFFIC_DETAILED_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static TRAFFIC_ZOOM_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Cached total line count from the last detailed/zoom render pass.
+/// Used by mouse scroll handlers so they don't need to recompute it.
+static TRAFFIC_TOTAL_LINES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+// ─── Traffic inspection: detailed / zoom view helpers ─────────────────────
+
+fn traffic_truncate(input: &str, max: usize) -> String {
+    if input.len() <= max {
+        input.to_string()
+    } else if max <= 1 {
+        "…".into()
+    } else {
+        let mut truncated: String = input.chars().take(max - 1).collect();
+        truncated.push('…');
+        truncated
+    }
+}
+
+/// Replace control characters that would corrupt the terminal with safe
+/// visual substitutes. Keeps `\n`, `\r`, `\t` (handled by the TUI layout),
+/// replaces everything else < 0x20 and DEL (0x7f) with the Unicode
+/// "Control Pictures" block (U+2400–U+2421) or a `·` placeholder.
+fn sanitize_for_tui(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\n' | '\r' | '\t' => out.push(ch),
+            // ASCII control 0x00–0x1F → Unicode Control Pictures U+2400–U+241F
+            c if (c as u32) < 0x20 => {
+                out.push(char::from_u32(0x2400 + c as u32).unwrap_or('.'));
+            }
+            '\x7f' => out.push('␡'),
+            // BOM / zero-width chars / other invisible Unicode
+            '\u{feff}' | '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{fffe}' => out.push('·'),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Try to interpret `bytes` as UTF-8 text and return a sanitized preview.
+/// Returns `None` when the content is not valid UTF-8 (i.e. binary data).
+/// Callers should fall back to a simple byte-count label when this returns `None`.
+fn body_preview_string(bytes: &[u8], max_len: usize) -> Option<String> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let text = std::str::from_utf8(bytes).ok()?;
+    let sanitized = sanitize_for_tui(text);
+    if sanitized.len() <= max_len {
+        Some(sanitized)
+    } else {
+        let mut preview: String = sanitized.chars().take(max_len.saturating_sub(1)).collect();
+        preview.push('…');
+        Some(preview)
+    }
+}
+
+fn find_header_value(headers: &[(String, String)], name: &str) -> Option<String> {
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.clone())
+}
+
+fn try_decompress(bytes: &[u8], content_encoding: Option<&str>) -> Vec<u8> {
+    let encoding = match content_encoding {
+        Some(e) => e.trim().to_ascii_lowercase(),
+        None => return try_decompress_magic(bytes),
+    };
+    match encoding.as_str() {
+        "gzip" | "x-gzip" => decompress_gzip(bytes).unwrap_or_else(|| bytes.to_vec()),
+        "deflate" => decompress_deflate(bytes).unwrap_or_else(|| bytes.to_vec()),
+        "identity" | "" => bytes.to_vec(),
+        _ => bytes.to_vec(),
+    }
+}
+
+fn try_decompress_magic(bytes: &[u8]) -> Vec<u8> {
+    if bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b {
+        decompress_gzip(bytes).unwrap_or_else(|| bytes.to_vec())
+    } else {
+        bytes.to_vec()
+    }
+}
+
+fn decompress_gzip(bytes: &[u8]) -> Option<Vec<u8>> {
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+    let mut decoder = GzDecoder::new(bytes);
+    let mut out = Vec::new();
+    decoder.read_to_end(&mut out).ok()?;
+    Some(out)
+}
+
+fn decompress_deflate(bytes: &[u8]) -> Option<Vec<u8>> {
+    use flate2::read::DeflateDecoder;
+    use std::io::Read;
+    let mut decoder = DeflateDecoder::new(bytes);
+    let mut out = Vec::new();
+    decoder.read_to_end(&mut out).ok()?;
+    Some(out)
+}
+
+fn read_body_preview(
+    capture_store: &Arc<cruma_proxy_lib::proxying::capture_store::HttpCaptureStore>,
+    req_id: u64,
+    is_request: bool,
+    content_encoding: Option<&str>,
+) -> Option<String> {
+    let captured = capture_store.body_bytes(req_id)?;
+    let raw = if is_request {
+        captured.req_body.as_ref()?
+    } else {
+        captured.resp_body.as_ref()?
+    };
+    if raw.is_empty() {
+        return None;
+    }
+    let bytes = try_decompress(raw, content_encoding);
+    body_preview_string(&bytes, 4096)
+}
+
+fn format_headers_preview(headers: &[(String, String)], max_headers: usize) -> String {
+    let preview: Vec<String> = headers
+        .iter()
+        .take(max_headers)
+        .map(|(k, v)| format!("{}: {}", sanitize_for_tui(k), traffic_truncate(&sanitize_for_tui(v), 40)))
+        .collect();
+    let mut result = preview.join(", ");
+    if headers.len() > max_headers {
+        result.push_str(&format!(" (+{} more)", headers.len() - max_headers));
+    }
+    result
+}
+
+fn traffic_kind_badge(kind: &cruma_proxy_lib::proxying::HttpRequestKind) -> (&'static str, Color) {
+    use cruma_proxy_lib::proxying::HttpRequestKind;
+    match kind {
+        HttpRequestKind::Regular => ("HTTP", Color::DarkGray),
+        HttpRequestKind::SSE => ("SSE", Color::LightGreen),
+        HttpRequestKind::WebSocket => ("WS", Color::LightMagenta),
+        HttpRequestKind::H2cUpgrade => ("H2C", Color::LightCyan),
+    }
+}
+
+fn is_streaming(entry: &cruma_proxy_lib::proxying::capture_store::CapturedExchange) -> bool {
+    use cruma_proxy_lib::proxying::HttpRequestKind;
+    entry.is_inflight
+        && matches!(entry.kind, HttpRequestKind::SSE | HttpRequestKind::WebSocket)
+}
+
+fn format_traffic_request_detailed<'a>(
+    entry: &cruma_proxy_lib::proxying::capture_store::CapturedExchange,
+    capture_store: &Arc<cruma_proxy_lib::proxying::capture_store::HttpCaptureStore>,
+    light_theme: bool,
+) -> Vec<Line<'a>> {
+    use cruma_proxy_lib::proxying::HttpRequestKind;
+    let mut lines = Vec::new();
+
+    // Line 1: Request line with response status
+    let mut request_line = vec![
+        Span::styled(
+            entry.client_addr.as_ref().map(|s| format!("[{}] ", sanitize_for_tui(s))).unwrap_or_else(|| "[?] ".to_string()),
+            Style::default().fg(muted_color(light_theme)),
+        ),
+    ];
+
+    if entry.kind != HttpRequestKind::Regular {
+        let (badge_text, badge_color) = traffic_kind_badge(&entry.kind);
+        request_line.push(Span::styled(
+            format!("[{badge_text}] "),
+            Style::default().fg(badge_color).bold(),
+        ));
+    }
+
+    if let Some(ref ver) = entry.http_version {
+        request_line.push(Span::styled(
+            format!("{} ", sanitize_for_tui(ver)),
+            Style::default().fg(muted_color(light_theme)),
+        ));
+    }
+
+    request_line.extend([
+        Span::styled(format!("→ {}", sanitize_for_tui(&entry.method)), Style::default().fg(Color::Cyan).bold()),
+        Span::raw(" "),
+        Span::styled(
+            sanitize_for_tui(&entry.host.clone().unwrap_or_else(|| "<no-host>".into())),
+            Style::default().fg(Color::Yellow),
+        ),
+        Span::raw(sanitize_for_tui(&entry.path)),
+    ]);
+
+    request_line.push(Span::raw("  "));
+    if is_streaming(entry) {
+        let stream_label = match entry.kind {
+            HttpRequestKind::SSE => "⇣ streaming (SSE)",
+            HttpRequestKind::WebSocket => "⇅ open (WS)",
+            _ => "⇣ streaming",
+        };
+        request_line.push(Span::styled(stream_label, Style::default().fg(Color::LightGreen).bold()));
+        if let Some(status) = entry.status {
+            request_line.push(Span::styled(format!(" {status}"), Style::default().fg(Color::Green)));
+        }
+    } else {
+        match (entry.status, entry.duration_ms) {
+            (Some(status), Some(duration)) => {
+                let status_style = if status >= 200 && status < 300 {
+                    Style::default().fg(Color::Green)
+                } else if status >= 400 {
+                    Style::default().fg(Color::Red)
+                } else {
+                    Style::default().fg(Color::Yellow)
+                };
+                request_line.push(Span::styled(format!("← {} ({} ms)", status, duration), status_style.bold()));
+            }
+            _ => {
+                request_line.push(Span::styled("↻ pending...", Style::default().fg(muted_color(light_theme))));
+            }
+        }
+    }
+    lines.push(Line::from(request_line));
+
+    // Request headers preview
+    if let Some(headers) = &entry.req_headers {
+        if !headers.is_empty() {
+            let header_preview = format_headers_preview(headers, 3);
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled("Req Headers: ", Style::default().fg(muted_color(light_theme))),
+                Span::styled(header_preview, Style::default().fg(Color::Blue)),
+            ]));
+        }
+    }
+
+    // Request body preview
+    if entry.req_body_size.unwrap_or(0) > 0 {
+        let truncated_marker = if entry.req_body_truncated { " (truncated)" } else { "" };
+        let content_encoding = entry.req_headers.as_ref().and_then(|h| find_header_value(h, "content-encoding"));
+        if let Some(preview) = read_body_preview(capture_store, entry.req_id, true, content_encoding.as_deref()) {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled("Req Body: ", Style::default().fg(muted_color(light_theme))),
+                Span::styled(
+                    format!("({} bytes{}) ", entry.req_body_size.unwrap_or(0), truncated_marker),
+                    Style::default().fg(muted_color(light_theme)),
+                ),
+                Span::styled(traffic_truncate(&preview, 200), Style::default().fg(Color::Blue)),
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled("Req Body: ", Style::default().fg(muted_color(light_theme))),
+                Span::styled(
+                    format!("[binary data, {} bytes{}]", entry.req_body_size.unwrap_or(0), truncated_marker),
+                    Style::default().fg(muted_color(light_theme)),
+                ),
+            ]));
+        }
+    }
+
+    // Response headers preview
+    if let Some(headers) = &entry.resp_headers {
+        if !headers.is_empty() {
+            let header_preview = format_headers_preview(headers, 3);
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled("Resp Headers: ", Style::default().fg(muted_color(light_theme))),
+                Span::styled(header_preview, Style::default().fg(Color::Magenta)),
+            ]));
+        }
+    }
+
+    // Response body preview
+    if entry.resp_body_size.unwrap_or(0) > 0 {
+        let truncated_marker = if entry.resp_body_truncated { " (truncated)" } else { "" };
+        let content_encoding = entry.resp_headers.as_ref().and_then(|h| find_header_value(h, "content-encoding"));
+        if let Some(preview) = read_body_preview(capture_store, entry.req_id, false, content_encoding.as_deref()) {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled("Resp Body: ", Style::default().fg(muted_color(light_theme))),
+                Span::styled(
+                    format!("({} bytes{}) ", entry.resp_body_size.unwrap_or(0), truncated_marker),
+                    Style::default().fg(muted_color(light_theme)),
+                ),
+                Span::styled(traffic_truncate(&preview, 200), Style::default().fg(Color::Magenta)),
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled("Resp Body: ", Style::default().fg(muted_color(light_theme))),
+                Span::styled(
+                    format!("[binary data, {} bytes{}]", entry.resp_body_size.unwrap_or(0), truncated_marker),
+                    Style::default().fg(muted_color(light_theme)),
+                ),
+            ]));
+        }
+    }
+
+    // WebSocket messages (compact)
+    if entry.kind == HttpRequestKind::WebSocket {
+        if let Some(snap) = capture_store.ws_messages(entry.req_id) {
+            use cruma_proxy_lib::proxying::ws_capture::{WsDirection, WsMessageKind};
+            let total = snap.total_message_count;
+            let shown = snap.messages.len();
+            let c2o = snap.total_client_to_origin;
+            let o2c = snap.total_origin_to_client;
+            let summary = if shown as u64 == total {
+                format!("{total} messages  ↑ {c2o} B  ↓ {o2c} B")
+            } else {
+                format!("{shown}/{total} messages (oldest evicted)  ↑ {c2o} B  ↓ {o2c} B")
+            };
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled("WS Messages: ", Style::default().fg(Color::LightMagenta).bold()),
+                Span::styled(summary, Style::default().fg(muted_color(light_theme))),
+            ]));
+            let display_count = snap.messages.len().min(8);
+            let start = snap.messages.len().saturating_sub(display_count);
+            for msg in &snap.messages[start..] {
+                let (arrow, arrow_color) = match msg.direction {
+                    WsDirection::ClientToOrigin => ("↑", Color::Cyan),
+                    WsDirection::OriginToClient => ("↓", Color::LightMagenta),
+                };
+                let kind_label = match msg.kind {
+                    WsMessageKind::Text => "text",
+                    WsMessageKind::Binary => "bin",
+                    WsMessageKind::Ping => "ping",
+                    WsMessageKind::Pong => "pong",
+                    WsMessageKind::Close => "close",
+                };
+                let payload_preview = if msg.kind == WsMessageKind::Text {
+                    match std::str::from_utf8(&msg.payload) {
+                        Ok(s) => traffic_truncate(&sanitize_for_tui(s), 120),
+                        Err(_) => format!("[binary, {} B]", msg.original_len),
+                    }
+                } else if msg.payload.is_empty() {
+                    String::new()
+                } else {
+                    format!("[binary, {} B]", msg.original_len)
+                };
+                let size_info = if msg.original_len != msg.payload.len() {
+                    format!("{} B (truncated)", msg.original_len)
+                } else {
+                    format!("{} B", msg.original_len)
+                };
+                lines.push(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled(arrow, Style::default().fg(arrow_color).bold()),
+                    Span::styled(format!(" [{kind_label}] "), Style::default().fg(muted_color(light_theme))),
+                    Span::styled(format!("({size_info}) "), Style::default().fg(muted_color(light_theme))),
+                    Span::styled(payload_preview, Style::default().fg(arrow_color)),
+                ]));
+            }
+            if start > 0 {
+                lines.push(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled(format!("… {start} older messages not shown"), Style::default().fg(muted_color(light_theme))),
+                ]));
+            }
+        }
+    }
+
+    // SSE events (compact)
+    if entry.kind == HttpRequestKind::SSE {
+        if let Some(snap) = capture_store.sse_events(entry.req_id) {
+            let total = snap.total_event_count;
+            let shown = snap.events.len();
+            let total_bytes = snap.total_bytes;
+            let summary = if shown as u64 == total {
+                format!("{total} events  ↓ {total_bytes} B")
+            } else {
+                format!("{shown}/{total} events (oldest evicted)  ↓ {total_bytes} B")
+            };
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled("SSE Events: ", Style::default().fg(Color::LightGreen).bold()),
+                Span::styled(summary, Style::default().fg(muted_color(light_theme))),
+            ]));
+            let display_count = snap.events.len().min(8);
+            let start = snap.events.len().saturating_sub(display_count);
+            for evt in &snap.events[start..] {
+                let event_type = sanitize_for_tui(evt.event_type.as_deref().unwrap_or("message"));
+                let is_comment_only = evt.data.is_empty() && !evt.comments.is_empty();
+                let label = if is_comment_only { "comment".to_string() } else { event_type };
+                let payload_preview = if is_comment_only {
+                    traffic_truncate(&sanitize_for_tui(evt.comments.first().map(|s| s.as_str()).unwrap_or("")), 120)
+                } else {
+                    traffic_truncate(&sanitize_for_tui(&evt.data), 120)
+                };
+                let size_info = if evt.truncated {
+                    format!("{} B (truncated)", evt.original_data_len)
+                } else if !evt.data.is_empty() {
+                    format!("{} B", evt.data.len())
+                } else {
+                    String::new()
+                };
+                let mut spans = vec![
+                    Span::raw("    "),
+                    Span::styled("↓", Style::default().fg(Color::LightGreen).bold()),
+                    Span::styled(format!(" [{label}] "), Style::default().fg(muted_color(light_theme))),
+                ];
+                if let Some(id) = &evt.id {
+                    spans.push(Span::styled(format!("id={} ", sanitize_for_tui(id)), Style::default().fg(muted_color(light_theme))));
+                }
+                if !size_info.is_empty() {
+                    spans.push(Span::styled(format!("({size_info}) "), Style::default().fg(muted_color(light_theme))));
+                }
+                spans.push(Span::styled(payload_preview, Style::default().fg(Color::LightGreen)));
+                lines.push(Line::from(spans));
+            }
+            if start > 0 {
+                lines.push(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled(format!("… {start} older events not shown"), Style::default().fg(muted_color(light_theme))),
+                ]));
+            }
+        }
+    }
+
+    // Blank separator
+    lines.push(Line::from(""));
+    lines
+}
+
+fn format_traffic_request_zoom<'a>(
+    entry: &cruma_proxy_lib::proxying::capture_store::CapturedExchange,
+    capture_store: &Arc<cruma_proxy_lib::proxying::capture_store::HttpCaptureStore>,
+    light_theme: bool,
+) -> Vec<Line<'a>> {
+    use cruma_proxy_lib::proxying::HttpRequestKind;
+    let mut lines = Vec::new();
+
+    // Line 1: Request line with response status
+    let mut request_line = vec![
+        Span::styled(
+            entry.client_addr.as_ref().map(|s| format!("[{}] ", sanitize_for_tui(s))).unwrap_or_else(|| "[?] ".to_string()),
+            Style::default().fg(muted_color(light_theme)),
+        ),
+    ];
+
+    if entry.kind != HttpRequestKind::Regular {
+        let (badge_text, badge_color) = traffic_kind_badge(&entry.kind);
+        request_line.push(Span::styled(format!("[{badge_text}] "), Style::default().fg(badge_color).bold()));
+    }
+
+    if let Some(ref ver) = entry.http_version {
+        request_line.push(Span::styled(format!("{} ", sanitize_for_tui(ver)), Style::default().fg(muted_color(light_theme))));
+    }
+
+    request_line.extend([
+        Span::styled(format!("→ {}", sanitize_for_tui(&entry.method)), Style::default().fg(Color::Cyan).bold()),
+        Span::raw(" "),
+        Span::styled(sanitize_for_tui(&entry.host.clone().unwrap_or_else(|| "<no-host>".into())), Style::default().fg(Color::Yellow)),
+        Span::raw(sanitize_for_tui(&entry.path)),
+    ]);
+
+    request_line.push(Span::raw("  "));
+    if is_streaming(entry) {
+        let stream_label = match entry.kind {
+            HttpRequestKind::SSE => "⇣ streaming (SSE)",
+            HttpRequestKind::WebSocket => "⇅ open (WS)",
+            _ => "⇣ streaming",
+        };
+        request_line.push(Span::styled(stream_label, Style::default().fg(Color::LightGreen).bold()));
+        if let Some(status) = entry.status {
+            request_line.push(Span::styled(format!(" {status}"), Style::default().fg(Color::Green)));
+        }
+    } else {
+        match (entry.status, entry.duration_ms) {
+            (Some(status), Some(duration)) => {
+                let status_style = if status >= 200 && status < 300 {
+                    Style::default().fg(Color::Green)
+                } else if status >= 400 {
+                    Style::default().fg(Color::Red)
+                } else {
+                    Style::default().fg(Color::Yellow)
+                };
+                request_line.push(Span::styled(format!("← {} ({} ms)", status, duration), status_style.bold()));
+            }
+            _ => {
+                request_line.push(Span::styled("↻ pending...", Style::default().fg(muted_color(light_theme))));
+            }
+        }
+    }
+    lines.push(Line::from(request_line));
+
+    // Request headers - one per line
+    if let Some(headers) = &entry.req_headers {
+        if !headers.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "REQUEST HEADERS:",
+                Style::default().fg(Color::Blue).bold().underlined(),
+            )));
+            for (key, value) in headers {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {}: ", sanitize_for_tui(key)), Style::default().fg(Color::Blue).bold()),
+                    Span::styled(sanitize_for_tui(value), Style::default().fg(Color::Blue)),
+                ]));
+            }
+        }
+    }
+
+    // Request body - full content
+    if entry.req_body_size.unwrap_or(0) > 0 {
+        let truncated_marker = if entry.req_body_truncated { " (truncated)" } else { "" };
+        let content_encoding = entry.req_headers.as_ref().and_then(|h| find_header_value(h, "content-encoding"));
+        lines.push(Line::from(vec![
+            Span::styled("REQUEST BODY: ", Style::default().fg(Color::Cyan).bold()),
+            Span::styled(
+                format!("{} bytes{}", entry.req_body_size.unwrap_or(0), truncated_marker),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]));
+        if let Some(preview) = read_body_preview(capture_store, entry.req_id, true, content_encoding.as_deref()) {
+            for body_line in sanitize_for_tui(&preview).lines() {
+                lines.push(Line::from(Span::styled(format!("  {}", body_line), Style::default().fg(Color::Cyan))));
+            }
+        } else {
+            lines.push(Line::from(Span::styled(
+                format!("  [binary data, {} bytes{}]", entry.req_body_size.unwrap_or(0), truncated_marker),
+                Style::default().fg(muted_color(light_theme)),
+            )));
+        }
+    }
+
+    // Response headers - one per line
+    if let Some(headers) = &entry.resp_headers {
+        if !headers.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "RESPONSE HEADERS:",
+                Style::default().fg(Color::Magenta).bold().underlined(),
+            )));
+            for (key, value) in headers {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {}: ", sanitize_for_tui(key)), Style::default().fg(Color::Magenta).bold()),
+                    Span::styled(sanitize_for_tui(value), Style::default().fg(Color::Magenta)),
+                ]));
+            }
+        }
+    }
+
+    // Response body - full content
+    if entry.resp_body_size.unwrap_or(0) > 0 {
+        let truncated_marker = if entry.resp_body_truncated { " (truncated)" } else { "" };
+        let content_encoding = entry.resp_headers.as_ref().and_then(|h| find_header_value(h, "content-encoding"));
+        lines.push(Line::from(vec![
+            Span::styled("RESPONSE BODY: ", Style::default().fg(Color::LightMagenta).bold()),
+            Span::styled(
+                format!("{} bytes{}", entry.resp_body_size.unwrap_or(0), truncated_marker),
+                Style::default().fg(Color::LightMagenta),
+            ),
+        ]));
+        if let Some(preview) = read_body_preview(capture_store, entry.req_id, false, content_encoding.as_deref()) {
+            for body_line in sanitize_for_tui(&preview).lines() {
+                lines.push(Line::from(Span::styled(format!("  {}", body_line), Style::default().fg(Color::LightMagenta))));
+            }
+        } else {
+            lines.push(Line::from(Span::styled(
+                format!("  [binary data, {} bytes{}]", entry.resp_body_size.unwrap_or(0), truncated_marker),
+                Style::default().fg(muted_color(light_theme)),
+            )));
+        }
+    }
+
+    // WebSocket messages - full detail
+    if entry.kind == HttpRequestKind::WebSocket {
+        if let Some(snap) = capture_store.ws_messages(entry.req_id) {
+            use cruma_proxy_lib::proxying::ws_capture::{WsDirection, WsMessageKind};
+            let total = snap.total_message_count;
+            let shown = snap.messages.len();
+            let c2o = snap.total_client_to_origin;
+            let o2c = snap.total_origin_to_client;
+            let summary = if shown as u64 == total {
+                format!("{total} messages  ↑ {c2o} B  ↓ {o2c} B")
+            } else {
+                format!("{shown}/{total} messages (oldest evicted)  ↑ {c2o} B  ↓ {o2c} B")
+            };
+            lines.push(Line::from(Span::styled(
+                format!("WEBSOCKET MESSAGES: {summary}"),
+                Style::default().fg(Color::LightMagenta).bold().underlined(),
+            )));
+            for msg in &snap.messages {
+                let (arrow, dir_label, arrow_color) = match msg.direction {
+                    WsDirection::ClientToOrigin => ("↑", "send", Color::Cyan),
+                    WsDirection::OriginToClient => ("↓", "recv", Color::LightMagenta),
+                };
+                let kind_label = match msg.kind {
+                    WsMessageKind::Text => "text",
+                    WsMessageKind::Binary => "bin",
+                    WsMessageKind::Ping => "ping",
+                    WsMessageKind::Pong => "pong",
+                    WsMessageKind::Close => "close",
+                };
+                let size_info = if msg.original_len != msg.payload.len() {
+                    format!("{} B (truncated from {} B)", msg.payload.len(), msg.original_len)
+                } else {
+                    format!("{} B", msg.original_len)
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {arrow} {dir_label} "), Style::default().fg(arrow_color).bold()),
+                    Span::styled(format!("[{kind_label}] "), Style::default().fg(muted_color(light_theme))),
+                    Span::styled(size_info, Style::default().fg(muted_color(light_theme))),
+                ]));
+                let payload_str = if msg.kind == WsMessageKind::Text {
+                    match std::str::from_utf8(&msg.payload) {
+                        Ok(s) => sanitize_for_tui(s),
+                        Err(_) => format!("[binary, {} B]", msg.original_len),
+                    }
+                } else if msg.payload.is_empty() {
+                    String::new()
+                } else {
+                    format!("[binary, {} B]", msg.original_len)
+                };
+                if !payload_str.is_empty() {
+                    for payload_line in payload_str.lines() {
+                        lines.push(Line::from(Span::styled(
+                            format!("    {payload_line}"),
+                            Style::default().fg(arrow_color),
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    // SSE events - full detail
+    if entry.kind == HttpRequestKind::SSE {
+        if let Some(snap) = capture_store.sse_events(entry.req_id) {
+            let total = snap.total_event_count;
+            let shown = snap.events.len();
+            let total_bytes = snap.total_bytes;
+            let summary = if shown as u64 == total {
+                format!("{total} events  ↓ {total_bytes} B")
+            } else {
+                format!("{shown}/{total} events (oldest evicted)  ↓ {total_bytes} B")
+            };
+            lines.push(Line::from(Span::styled(
+                format!("SSE EVENTS: {summary}"),
+                Style::default().fg(Color::LightGreen).bold().underlined(),
+            )));
+            for evt in &snap.events {
+                let event_type = sanitize_for_tui(evt.event_type.as_deref().unwrap_or("message"));
+                let is_comment_only = evt.data.is_empty() && !evt.comments.is_empty();
+                let label = if is_comment_only { "comment".to_string() } else { event_type };
+                let size_info = if evt.truncated {
+                    format!("{} B (truncated from {} B)", evt.data.len(), evt.original_data_len)
+                } else if !evt.data.is_empty() {
+                    format!("{} B", evt.data.len())
+                } else {
+                    String::new()
+                };
+                let mut header_spans = vec![
+                    Span::styled("  ↓ recv ", Style::default().fg(Color::LightGreen).bold()),
+                    Span::styled(format!("[{label}] "), Style::default().fg(muted_color(light_theme))),
+                ];
+                if let Some(id) = &evt.id {
+                    header_spans.push(Span::styled(format!("id={} ", sanitize_for_tui(id)), Style::default().fg(muted_color(light_theme))));
+                }
+                if !size_info.is_empty() {
+                    header_spans.push(Span::styled(size_info, Style::default().fg(muted_color(light_theme))));
+                }
+                lines.push(Line::from(header_spans));
+                if is_comment_only {
+                    for comment in &evt.comments {
+                        lines.push(Line::from(Span::styled(
+                            format!("    : {}", sanitize_for_tui(comment)),
+                            Style::default().fg(Color::LightGreen),
+                        )));
+                    }
+                } else if !evt.data.is_empty() {
+                    for data_line in sanitize_for_tui(&evt.data).lines() {
+                        lines.push(Line::from(Span::styled(
+                            format!("    {data_line}"),
+                            Style::default().fg(Color::LightGreen),
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    // Separator
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("═".repeat(100), Style::default().fg(muted_color(light_theme)))));
+    lines.push(Line::from(""));
+    lines
+}
+
+/// Build a Paragraph-based view for detailed or zoom mode traffic inspection.
+fn build_traffic_detailed_view<'a>(
+    capture_snapshot: &'a cruma_proxy_lib::proxying::capture_store::CaptureSnapshot,
+    enabled: bool,
+    area: Rect,
+    light_theme: bool,
+    capture_store: &Arc<cruma_proxy_lib::proxying::capture_store::HttpCaptureStore>,
+    zoom: bool,
+) -> (Paragraph<'a>, usize, usize, usize, Rect) {
+    use std::sync::atomic::Ordering;
+
+    let start = TUI_TRAFFIC_SCROLL.load(Ordering::Relaxed);
+    let border_rows = 2u16; // top + bottom border
+    let visible = area.height.saturating_sub(border_rows) as usize;
+
+    let mut all_lines: Vec<Line<'a>> = Vec::new();
+
+    if !enabled {
+        all_lines.push(Line::from(Span::styled(
+            "Traffic inspection is disabled. Press 'i' to enable.",
+            Style::default().fg(muted_color(light_theme)),
+        )));
+    } else if capture_snapshot.order.is_empty() {
+        all_lines.push(Line::from(Span::styled(
+            "No captured requests yet.",
+            Style::default().fg(muted_color(light_theme)),
+        )));
+    } else {
+        // Newest first
+        for req_id in capture_snapshot.order.iter().rev() {
+            if let Some(entry) = capture_snapshot.entries.get(req_id) {
+                let entry_lines = if zoom {
+                    format_traffic_request_zoom(entry, capture_store, light_theme)
+                } else {
+                    format_traffic_request_detailed(entry, capture_store, light_theme)
+                };
+                all_lines.extend(entry_lines);
+            }
+        }
+    }
+
+    let total = all_lines.len();
+    // Cache line count so mouse scroll handlers can use it without recomputing.
+    TRAFFIC_TOTAL_LINES.store(total, Ordering::Relaxed);
+    let max_start = total.saturating_sub(visible);
+    let clamped_start = start.min(max_start);
+    if clamped_start != start {
+        TUI_TRAFFIC_SCROLL.store(clamped_start, Ordering::Relaxed);
+    }
+
+    // Slice to visible window
+    let end = (clamped_start + visible).min(total);
+    let visible_lines: Vec<Line<'a>> = if clamped_start < total {
+        all_lines[clamped_start..end].to_vec()
+    } else {
+        Vec::new()
+    };
+
+    let mode_label = if zoom { "zoom" } else { "detailed" };
+    let title = format!(
+        " Traffic [{mode_label}] ({} captured{}) ",
+        capture_snapshot.order.len(),
+        if enabled { "" } else { " — paused" },
+    );
+
+    let paragraph = Paragraph::new(visible_lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title),
+        )
+        .wrap(Wrap { trim: false });
+
+    let scroll_area = scroll_area_for_content(area);
+
+    (paragraph, total, clamped_start, visible, scroll_area)
+}
 
 #[derive(Clone, Debug)]
 struct LogLine {
@@ -1192,6 +2025,204 @@ fn filter_rank(filter: LogLevelFilter) -> u8 {
         LogLevelFilter::Warn => 3,
         LogLevelFilter::Error => 4,
     }
+}
+
+fn fmt_bytes(n: usize) -> String {
+    if n == 0 {
+        "0B".to_string()
+    } else if n < 1024 {
+        format!("{}B", n)
+    } else if n < 1024 * 1024 {
+        format!("{:.1}K", n as f64 / 1024.0)
+    } else {
+        format!("{:.1}M", n as f64 / (1024.0 * 1024.0))
+    }
+}
+
+fn build_traffic_table<'a>(
+    capture_snapshot: &'a cruma_proxy_lib::proxying::capture_store::CaptureSnapshot,
+    enabled: bool,
+    area: Rect,
+    light_theme: bool,
+) -> (Table<'a>, TableState, usize, usize, usize, Rect) {
+    use std::sync::atomic::Ordering;
+
+    let start = TUI_TRAFFIC_SCROLL.load(Ordering::Relaxed);
+    let header_rows = 3u16; // block border + header row + separator
+    let visible = area.height.saturating_sub(header_rows) as usize;
+
+    let mut rows: Vec<Row<'a>> = Vec::new();
+
+    if !enabled {
+        rows.push(Row::new(vec![
+            Cell::from(""),
+            Cell::from(Span::styled(
+                "Traffic inspection is disabled. Press 'i' to enable.",
+                Style::default().fg(muted_color(light_theme)),
+            )),
+            Cell::from(""),
+            Cell::from(""),
+            Cell::from(""),
+            Cell::from(""),
+            Cell::from(""),
+            Cell::from(""),
+        ]));
+    } else if capture_snapshot.order.is_empty() {
+        rows.push(Row::new(vec![
+            Cell::from(""),
+            Cell::from(Span::styled(
+                "No captured requests yet.",
+                Style::default().fg(muted_color(light_theme)),
+            )),
+            Cell::from(""),
+            Cell::from(""),
+            Cell::from(""),
+            Cell::from(""),
+            Cell::from(""),
+            Cell::from(""),
+        ]));
+    } else {
+        // Iterate in reverse order so newest requests appear at the top
+        for req_id in capture_snapshot.order.iter().rev() {
+            if let Some(exchange) = capture_snapshot.entries.get(req_id) {
+                let method_color = match exchange.method.as_str() {
+                    "GET" => Color::Green,
+                    "POST" => Color::Yellow,
+                    "PUT" => Color::Blue,
+                    "DELETE" => Color::Red,
+                    "PATCH" => Color::Magenta,
+                    _ => Color::White,
+                };
+
+                let status_str = match exchange.status {
+                    Some(s) => format!("{}", s),
+                    None if exchange.is_inflight => "...".to_string(),
+                    None => "—".to_string(),
+                };
+                let status_color = match exchange.status {
+                    Some(s) if s < 300 => Color::Green,
+                    Some(s) if s < 400 => Color::Cyan,
+                    Some(s) if s < 500 => Color::Yellow,
+                    Some(_) => Color::Red,
+                    None if exchange.is_inflight => Color::DarkGray,
+                    None => Color::DarkGray,
+                };
+
+                let duration_str = match exchange.duration_ms {
+                    Some(d) if d < 1000 => format!("{}ms", d),
+                    Some(d) => format!("{:.1}s", d as f64 / 1000.0),
+                    None if exchange.is_inflight => "...".to_string(),
+                    None => "—".to_string(),
+                };
+
+                let host_str = sanitize_for_tui(&exchange.host.clone().unwrap_or_default());
+
+                let kind_str = format!("{}", exchange.kind);
+
+                let inflight_marker = if exchange.is_inflight { "●" } else { "" };
+
+                // Format body sizes: "req↑ / resp↓"
+                let size_str = {
+                    let req_sz = exchange.req_body_size.map(|s| fmt_bytes(s)).unwrap_or_default();
+                    let resp_sz = exchange.resp_body_size.map(|s| fmt_bytes(s)).unwrap_or_default();
+                    let req_trunc = if exchange.req_body_truncated { "+" } else { "" };
+                    let resp_trunc = if exchange.resp_body_truncated { "+" } else { "" };
+                    if req_sz.is_empty() && resp_sz.is_empty() {
+                        if exchange.is_inflight { "...".to_string() } else { "—".to_string() }
+                    } else {
+                        format!("{}{}↑ {}{}↓", req_sz, req_trunc, resp_sz, resp_trunc)
+                    }
+                };
+
+                rows.push(Row::new(vec![
+                    Cell::from(Span::styled(
+                        sanitize_for_tui(&exchange.method),
+                        Style::default().fg(method_color).bold(),
+                    )),
+                    Cell::from(Span::styled(
+                        host_str,
+                        Style::default().fg(muted_color(light_theme)),
+                    )),
+                    Cell::from(sanitize_for_tui(&exchange.path)),
+                    Cell::from(Span::styled(
+                        status_str,
+                        Style::default().fg(status_color),
+                    )),
+                    Cell::from(Span::styled(
+                        duration_str,
+                        Style::default().fg(muted_color(light_theme)),
+                    )),
+                    Cell::from(Span::styled(
+                        size_str,
+                        Style::default().fg(muted_color(light_theme)),
+                    )),
+                    Cell::from(Span::styled(
+                        kind_str,
+                        Style::default().fg(info_color(light_theme)),
+                    )),
+                    Cell::from(Span::styled(
+                        inflight_marker,
+                        Style::default().fg(Color::Yellow),
+                    )),
+                ]));
+            }
+        }
+    }
+
+    let total = rows.len();
+
+    // Clamp scroll
+    let max_start = total.saturating_sub(visible);
+    let clamped_start = start.min(max_start);
+    if clamped_start != start {
+        TUI_TRAFFIC_SCROLL.store(clamped_start, Ordering::Relaxed);
+    }
+
+    let title = format!(
+        " Traffic ({} captured{}) ",
+        capture_snapshot.order.len(),
+        if enabled { "" } else { " — paused" },
+    );
+
+    let header = Row::new(vec![
+        Cell::from(Span::styled("Method", Style::default().bold())),
+        Cell::from(Span::styled("Host", Style::default().bold())),
+        Cell::from(Span::styled("Path", Style::default().bold())),
+        Cell::from(Span::styled("Status", Style::default().bold())),
+        Cell::from(Span::styled("Duration", Style::default().bold())),
+        Cell::from(Span::styled("Size", Style::default().bold())),
+        Cell::from(Span::styled("Kind", Style::default().bold())),
+        Cell::from(Span::styled("", Style::default().bold())),
+    ])
+    .height(1);
+
+    let widths = [
+        Constraint::Length(7),
+        Constraint::Percentage(20),
+        Constraint::Percentage(35),
+        Constraint::Length(6),
+        Constraint::Length(10),
+        Constraint::Length(14),
+        Constraint::Length(4),
+        Constraint::Length(1),
+    ];
+
+    let table = Table::new(rows, widths)
+        .header(header)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title),
+        )
+        .row_highlight_style(Style::default().bg(row_highlight_bg(light_theme)));
+
+    let mut state = TableState::default();
+    state.select(None);
+    *state.offset_mut() = clamped_start;
+
+    let scroll_area = scroll_area_for_content(area);
+
+    (table, state, total, clamped_start, visible, scroll_area)
 }
 
 fn build_log_view<'a>(
@@ -1524,6 +2555,10 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
             dirty = true;
         }
         if dirty {
+            let capture_snap = global_state.http_capture_store.snapshot();
+            let traffic_on = global_state
+                .enable_global_traffic_inspection
+                .load(std::sync::atomic::Ordering::Relaxed);
             let _ = terminal.draw(|f| {
                 draw_ui(
                     f,
@@ -1537,6 +2572,9 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                     log_level_filter,
                     confirm_quit,
                     hovered_row,
+                    &capture_snap,
+                    traffic_on,
+                    &global_state.http_capture_store,
                 )
             });
             dirty = false;
@@ -1609,6 +2647,32 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                             dirty = true;
                                         }
                                     }
+                                    TuiPage::Traffic => {
+                                        let detailed = TRAFFIC_DETAILED_MODE.load(std::sync::atomic::Ordering::Relaxed);
+                                        let zoom = TRAFFIC_ZOOM_MODE.load(std::sync::atomic::Ordering::Relaxed);
+                                        let total = if detailed || zoom {
+                                            // Use cached line count from last render
+                                            TRAFFIC_TOTAL_LINES.load(std::sync::atomic::Ordering::Relaxed)
+                                        } else {
+                                            let snap = global_state.http_capture_store.snapshot();
+                                            snap.order.len()
+                                        };
+                                        let visible =
+                                            content_area.height.saturating_sub(if detailed || zoom { 2 } else { 3 }) as usize;
+                                        let max_start = total.saturating_sub(visible);
+                                        let cur = TUI_TRAFFIC_SCROLL
+                                            .load(std::sync::atomic::Ordering::Relaxed)
+                                            as isize;
+                                        let next =
+                                            (cur + delta).clamp(0, max_start as isize) as usize;
+                                        if next != cur as usize {
+                                            TUI_TRAFFIC_SCROLL.store(
+                                                next,
+                                                std::sync::atomic::Ordering::Relaxed,
+                                            );
+                                            dirty = true;
+                                        }
+                                    }
                                     TuiPage::Logs => {
                                         if log_tail {
                                             log_tail = false;
@@ -1639,7 +2703,7 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                 }
                             }
                             MouseEventKind::Moved => {
-                                if page != TuiPage::Sites && page != TuiPage::Docker {
+                                if page != TuiPage::Sites && page != TuiPage::Docker && page != TuiPage::Traffic {
                                     continue;
                                 }
                                 if drag_scroll.is_some() {
@@ -1661,7 +2725,7 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                 }
                             }
                             MouseEventKind::Down(MouseButton::Left) => {
-                                if matches!(page, TuiPage::Sites | TuiPage::Docker | TuiPage::Logs)
+                                if matches!(page, TuiPage::Sites | TuiPage::Docker | TuiPage::Logs | TuiPage::Traffic)
                                 {
                                     let scroll_area = scroll_area_for_content(content_area);
                                     if mouse.column == scroll_area.x
@@ -1737,6 +2801,33 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                                     .load(std::sync::atomic::Ordering::Relaxed);
                                                 if next != cur {
                                                     TUI_LOG_SCROLL.store(
+                                                        next,
+                                                        std::sync::atomic::Ordering::Relaxed,
+                                                    );
+                                                    dirty = true;
+                                                }
+                                            }
+                                            TuiPage::Traffic => {
+                                                let detailed = TRAFFIC_DETAILED_MODE.load(std::sync::atomic::Ordering::Relaxed);
+                                                let zoom = TRAFFIC_ZOOM_MODE.load(std::sync::atomic::Ordering::Relaxed);
+                                                let total = if detailed || zoom {
+                                                    TRAFFIC_TOTAL_LINES.load(std::sync::atomic::Ordering::Relaxed)
+                                                } else {
+                                                    let snap = global_state.http_capture_store.snapshot();
+                                                    snap.order.len()
+                                                };
+                                                let visible =
+                                                    content_area.height.saturating_sub(if detailed || zoom { 2 } else { 3 }) as usize;
+                                                let max_start = total.saturating_sub(visible);
+                                                let next = scroll_pos_from_mouse(
+                                                    scroll_area,
+                                                    mouse.row,
+                                                    max_start,
+                                                );
+                                                let cur = TUI_TRAFFIC_SCROLL
+                                                    .load(std::sync::atomic::Ordering::Relaxed);
+                                                if next != cur {
+                                                    TUI_TRAFFIC_SCROLL.store(
                                                         next,
                                                         std::sync::atomic::Ordering::Relaxed,
                                                     );
@@ -1842,6 +2933,32 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                             dirty = true;
                                         }
                                     }
+                                    TuiPage::Traffic => {
+                                        let detailed = TRAFFIC_DETAILED_MODE.load(std::sync::atomic::Ordering::Relaxed);
+                                        let zoom = TRAFFIC_ZOOM_MODE.load(std::sync::atomic::Ordering::Relaxed);
+                                        let total = if detailed || zoom {
+                                            TRAFFIC_TOTAL_LINES.load(std::sync::atomic::Ordering::Relaxed)
+                                        } else {
+                                            let snap = global_state.http_capture_store.snapshot();
+                                            snap.order.len()
+                                        };
+                                        let visible =
+                                            content_area.height.saturating_sub(if detailed || zoom { 2 } else { 3 }) as usize;
+                                        let max_start = total.saturating_sub(visible);
+                                        let scroll_area = scroll_area_for_content(content_area);
+                                        let next = scroll_pos_from_mouse(
+                                            scroll_area,
+                                            mouse.row,
+                                            max_start,
+                                        );
+                                        let cur =
+                                            TUI_TRAFFIC_SCROLL.load(std::sync::atomic::Ordering::Relaxed);
+                                        if next != cur {
+                                            TUI_TRAFFIC_SCROLL
+                                                .store(next, std::sync::atomic::Ordering::Relaxed);
+                                            dirty = true;
+                                        }
+                                    }
                                     TuiPage::Docker => {
                                         let total = data.docker_discovered.len();
                                         let visible =
@@ -1934,7 +3051,8 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                             page = match page {
                                 TuiPage::Sites => TuiPage::Docker,
                                 TuiPage::Docker => TuiPage::Logs,
-                                TuiPage::Logs => TuiPage::Sites,
+                                TuiPage::Logs => TuiPage::Traffic,
+                                TuiPage::Traffic => TuiPage::Sites,
                             };
                             if page == TuiPage::Logs {
                                 let visible = terminal
@@ -1985,6 +3103,37 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                             if changed {
                                 dirty = true;
                             }
+                        } else if page == TuiPage::Traffic && key.code == KeyCode::Char('i') {
+                            let prev = global_state
+                                .enable_global_traffic_inspection
+                                .load(std::sync::atomic::Ordering::Relaxed);
+                            let next = !prev;
+                            global_state
+                                .enable_global_traffic_inspection
+                                .store(next, std::sync::atomic::Ordering::Relaxed);
+                            global_state.http_capture_store.set_enabled(next);
+                            dirty = true;
+                        } else if page == TuiPage::Traffic && key.code == KeyCode::Char('d') {
+                            let was_detailed = TRAFFIC_DETAILED_MODE.load(std::sync::atomic::Ordering::Relaxed);
+                            let new_val = !was_detailed;
+                            TRAFFIC_DETAILED_MODE.store(new_val, std::sync::atomic::Ordering::Relaxed);
+                            if !new_val {
+                                // Turning off detailed mode also turns off zoom
+                                TRAFFIC_ZOOM_MODE.store(false, std::sync::atomic::Ordering::Relaxed);
+                            }
+                            TUI_TRAFFIC_SCROLL.store(0, std::sync::atomic::Ordering::Relaxed);
+                            dirty = true;
+                        } else if page == TuiPage::Traffic && key.code == KeyCode::Char('z') {
+                            if TRAFFIC_DETAILED_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+                                let was_zoom = TRAFFIC_ZOOM_MODE.load(std::sync::atomic::Ordering::Relaxed);
+                                TRAFFIC_ZOOM_MODE.store(!was_zoom, std::sync::atomic::Ordering::Relaxed);
+                                TUI_TRAFFIC_SCROLL.store(0, std::sync::atomic::Ordering::Relaxed);
+                                dirty = true;
+                            }
+                        } else if page == TuiPage::Traffic && key.code == KeyCode::Char('c') {
+                            global_state.http_capture_store.clear();
+                            TUI_TRAFFIC_SCROLL.store(0, std::sync::atomic::Ordering::Relaxed);
+                            dirty = true;
                         } else if page == TuiPage::Sites && key.code == KeyCode::Char('p') {
                             let prev = SHOW_FULL_PATH.load(std::sync::atomic::Ordering::Relaxed);
                             SHOW_FULL_PATH.store(!prev, std::sync::atomic::Ordering::Relaxed);
@@ -2101,6 +3250,7 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                 TuiPage::Sites => &TUI_SCROLL,
                                 TuiPage::Docker => &TUI_DOCKER_SCROLL,
                                 TuiPage::Logs => &TUI_LOG_SCROLL,
+                                TuiPage::Traffic => &TUI_TRAFFIC_SCROLL,
                             };
                             if key.code == KeyCode::Up {
                                 let cur = target_scroll.load(std::sync::atomic::Ordering::Relaxed);
