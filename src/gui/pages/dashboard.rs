@@ -1,5 +1,5 @@
 use iced::widget::text::Wrapping;
-use iced::widget::{Column, Row, button, column, container, mouse_area, responsive, row, text, Space};
+use iced::widget::{Column, Row, button, column, container, mouse_area, responsive, row, text, tooltip, Space};
 use iced::{Alignment, Border, Color, Element, Length, Padding, Size, Theme};
 use iced::theme;
 
@@ -16,6 +16,27 @@ const CARD_BASE_HEIGHT: f32 = 72.0;
 
 fn card_height() -> f32 {
     CARD_BASE_HEIGHT * super::super::gui_scale()
+}
+
+/// Estimate how many characters fit in the given pixel width for a
+/// monospace-ish font at the specified base size, then truncate with "…"
+/// if the string is too long.  Returns the (possibly truncated) string.
+fn truncate_to_fit(s: &str, available_px: f32, font_base_size: u16) -> String {
+    // Approximate character width: ~0.62 × font pixel size for monospace bold
+    let char_w = super::super::text_size(font_base_size) * 0.62;
+    if char_w <= 0.0 {
+        return s.to_string();
+    }
+    let max_chars = (available_px / char_w).floor() as usize;
+    if max_chars == 0 {
+        return String::new();
+    }
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max_chars.saturating_sub(1)).collect();
+        format!("{}…", truncated)
+    }
 }
 
 /// Category accent colors
@@ -180,10 +201,20 @@ fn site_card<'a>(
 ) -> Element<'a, Message> {
     let dot_color = status_color(state);
 
+    // Available text width: card_width minus horizontal padding (14×2),
+    // dot width (~text_size(14)), and spacing (6).
+    let text_avail = card_width - 28.0 - super::super::text_size(14) - 6.0;
+
+    let name_truncated = truncate_to_fit(display_name, text_avail, 14);
+    let name_is_truncated = name_truncated.len() != display_name.len();
+
+    let subtitle_truncated = truncate_to_fit(subtitle, text_avail, 11);
+    let subtitle_is_truncated = subtitle_truncated.len() != subtitle.len();
+
     let name_row = row![
         text("●").color(dot_color).size(super::super::text_size(14)),
         container(
-            text(display_name.to_string())
+            text(name_truncated)
                 .size(super::super::text_size(14))
                 .wrapping(Wrapping::None)
                 .font(iced::Font {
@@ -208,7 +239,7 @@ fn site_card<'a>(
             .width(Length::Fill);
 
         let accent = accent_color;
-        container(card_content)
+        let card_widget: Element<'a, Message> = container(card_content)
             .padding(Padding {
                 top: 12.0,
                 right: 14.0,
@@ -219,11 +250,26 @@ fn site_card<'a>(
             .height(Length::Fixed(card_height()))
             .clip(true)
             .style(move |theme: &Theme| selected_card_style(theme, accent, surface_bg))
-            .into()
+            .into();
+
+        if name_is_truncated {
+            tooltip(card_widget, text(display_name.to_string()).size(super::super::text_size(12)), tooltip::Position::Top)
+                .style(|theme: &Theme| {
+                    let p = theme.extended_palette();
+                    container::Style {
+                        background: Some(p.background.strong.color.into()),
+                        border: Border { radius: 4.0.into(), width: 1.0, color: p.background.weak.color },
+                        ..Default::default()
+                    }
+                })
+                .into()
+        } else {
+            card_widget
+        }
     } else {
         // Normal state: clickable card with subtitle
         let subtitle_row = container(
-            text(subtitle.to_string())
+            text(subtitle_truncated)
                 .size(super::super::text_size(11))
                 .wrapping(Wrapping::None)
                 .style(muted_text),
@@ -258,7 +304,30 @@ fn site_card<'a>(
             card = card.on_press(msg);
         }
 
-        card.into()
+        let card_widget: Element<'a, Message> = card.into();
+
+        // Show a tooltip with full name + subtitle when either was truncated
+        if name_is_truncated || subtitle_is_truncated {
+            let tip = if name_is_truncated && subtitle_is_truncated {
+                format!("{}\n{}", display_name, subtitle)
+            } else if name_is_truncated {
+                display_name.to_string()
+            } else {
+                subtitle.to_string()
+            };
+            tooltip(card_widget, text(tip).size(super::super::text_size(12)), tooltip::Position::Top)
+                .style(|theme: &Theme| {
+                    let p = theme.extended_palette();
+                    container::Style {
+                        background: Some(p.background.strong.color.into()),
+                        border: Border { radius: 4.0.into(), width: 1.0, color: p.background.weak.color },
+                        ..Default::default()
+                    }
+                })
+                .into()
+        } else {
+            card_widget
+        }
     }
 }
 
@@ -674,7 +743,22 @@ impl OddBoxGui {
         let uptime = self
             .state
             .uptime()
-            .map(|d| format!("{:.0?}", d))
+            .map(|d| {
+                let total_secs = d.as_secs();
+                let days = total_secs / 86400;
+                let hours = (total_secs % 86400) / 3600;
+                let mins = (total_secs % 3600) / 60;
+                let secs = total_secs % 60;
+                if days > 0 {
+                    format!("{}d {}h {}m {}s", days, hours, mins, secs)
+                } else if hours > 0 {
+                    format!("{}h {}m {}s", hours, mins, secs)
+                } else if mins > 0 {
+                    format!("{}m {}s", mins, secs)
+                } else {
+                    format!("{}s", secs)
+                }
+            })
             .unwrap_or_else(|_| "Unknown".to_string());
         let theme_snapshot = self.theme();
         let dashboard_surface_bg = self.surface_panel_bg(&theme_snapshot);
@@ -698,19 +782,48 @@ impl OddBoxGui {
             );
 
             // --- Uptime bar ---
-            let uptime_bar = container(
-                row![
-                    text("●").color(status_green).size(super::super::text_size(14)),
+            let http_port = self.cached_config.http_port;
+            let https_port = self.cached_config.https_port;
+
+            let mut uptime_row = Row::new()
+                .spacing(6)
+                .align_y(Alignment::Center)
+                .push(text("●").color(status_green).size(super::super::text_size(14)))
+                .push(
                     text("Status: Running")
                         .size(super::super::text_size(15))
                         .color(status_green),
+                )
+                .push(
                     text(format!("  Uptime: {}", &uptime))
                         .size(super::super::text_size(15))
                         .style(muted_text),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            )
+                )
+                .push(Space::new().width(Length::Fill));
+
+            if let Some(port) = http_port {
+                uptime_row = uptime_row.push(
+                    text(format!("HTTP :{}", port))
+                        .size(super::super::text_size(13))
+                        .style(muted_text),
+                );
+            }
+            if http_port.is_some() && https_port.is_some() {
+                uptime_row = uptime_row.push(
+                    text("·")
+                        .size(super::super::text_size(13))
+                        .style(muted_text),
+                );
+            }
+            if let Some(port) = https_port {
+                uptime_row = uptime_row.push(
+                    text(format!("HTTPS :{}", port))
+                        .size(super::super::text_size(13))
+                        .style(muted_text),
+                );
+            }
+
+            let uptime_bar = container(uptime_row)
             .padding(14)
             .width(Length::Fill)
             .style(move |_theme: &Theme| {

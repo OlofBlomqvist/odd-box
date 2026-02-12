@@ -2,7 +2,7 @@ use std::hash::Hash;
 use std::time::Instant;
 
 use iced::widget::{
-    Row, Scrollable, Space, button, checkbox, column, container, keyed_column, lazy, pick_list,
+    Scrollable, Space, button, checkbox, column, container, keyed_column, lazy, pick_list,
     row, scrollable, text, text_input,
 };
 use iced::{Border, Color, Element, Font, Length, Padding, Theme};
@@ -74,9 +74,6 @@ impl OddBoxGui {
         // Filter controls
         let filter_bar = self.view_log_filter_bar();
 
-        // Source filter
-        let source_filter = self.view_source_filter();
-
         // Log entries
         let log_entries = container(self.view_log_entries())
             .width(Length::Fill)
@@ -93,7 +90,7 @@ impl OddBoxGui {
                 }
             });
 
-        let content = column![title_row, filter_bar, source_filter, log_entries]
+        let content = column![title_row, filter_bar, log_entries]
             .spacing(15)
             .padding(30)
             .width(Length::Fill)
@@ -131,6 +128,8 @@ impl OddBoxGui {
         })
         .width(Length::Fixed(120.0));
 
+        let filtered = self.log_state.filtered_snapshot();
+
         let wrap_toggle = checkbox(self.log_wrap_enabled)
             .label("Wrap")
             .on_toggle(Message::LogToggleWrap);
@@ -144,7 +143,6 @@ impl OddBoxGui {
             .label(tail_label)
             .on_toggle(Message::LogToggleAutoTail);
 
-        let filtered = self.log_state.filtered_snapshot();
         let log_count = if self.has_active_filter() {
             format!("{} / {} logs", filtered.filtered_count, filtered.total_count)
         } else {
@@ -166,124 +164,6 @@ impl OddBoxGui {
         ]
         .spacing(15)
         .align_y(iced::Alignment::Center)
-        .into()
-    }
-
-    fn view_source_filter(&self) -> Element<'_, Message> {
-        let use_kde_buttons = self.use_kde_system_styles();
-        let known_sources = self.log_state.filtered_snapshot().known_sources.clone();
-        if known_sources.is_empty() {
-            return Space::new().height(Length::Fixed(0.0)).into();
-        }
-
-        let mut source_chips: Vec<Element<'_, Message>> = Vec::new();
-
-        // Add "Clear" button if any sources are selected
-        if !self.log_filter.sources.is_empty() {
-            source_chips.push(
-                button(text("Clear"))
-                    .padding(Padding {
-                        top: 4.0,
-                        right: 8.0,
-                        bottom: 4.0,
-                        left: 8.0,
-                    })
-                    .style(move |theme: &Theme, status| {
-                        if use_kde_buttons {
-                            return super::super::kde_danger_button_style(theme, status);
-                        }
-                        let palette = theme.extended_palette();
-                        let (bg, fg) = match status {
-                            button::Status::Hovered => {
-                                (palette.danger.strong.color, palette.danger.strong.text)
-                            }
-                            button::Status::Disabled => {
-                                (palette.background.weak.color, palette.background.weak.text)
-                            }
-                            _ => (palette.danger.weak.color, palette.danger.weak.text),
-                        };
-                        iced::widget::button::Style {
-                            background: Some(bg.into()),
-                            text_color: fg,
-                            border: Border {
-                                radius: 4.0.into(),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        }
-                    })
-                    .on_press(Message::LogFilterClearSources)
-                    .into(),
-            );
-        }
-
-        // Add source chips
-        for source in known_sources {
-            let is_selected = self.log_filter.sources.contains(&source);
-            let chip = button(text(source.clone()))
-                .padding(Padding {
-                    top: 4.0,
-                    right: 8.0,
-                    bottom: 4.0,
-                    left: 8.0,
-                })
-                .style(move |theme: &Theme, status| {
-                    if use_kde_buttons {
-                        if is_selected {
-                            let selected_status = match status {
-                                button::Status::Hovered | button::Status::Pressed => status,
-                                _ => button::Status::Pressed,
-                            };
-                            return super::super::kde_primary_button_style(theme, selected_status);
-                        }
-                        return super::super::kde_neutral_button_style(theme, status);
-                    }
-                    let palette = theme.extended_palette();
-                    let (bg, fg) = if is_selected {
-                        (palette.primary.strong.color, palette.primary.strong.text)
-                    } else {
-                        match status {
-                            button::Status::Hovered => {
-                                (palette.background.weak.color, palette.background.weak.text)
-                            }
-                            _ => (
-                                palette.background.weaker.color,
-                                palette.background.weak.text,
-                            ),
-                        }
-                    };
-                    iced::widget::button::Style {
-                        background: Some(bg.into()),
-                        text_color: fg,
-                        border: Border {
-                            radius: 4.0.into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    }
-                })
-                .on_press(Message::LogFilterToggleSource(source, !is_selected));
-            source_chips.push(chip.into());
-        }
-
-        let chips_row = Row::with_children(source_chips).spacing(6).wrap();
-
-        container(
-            column![
-                text("Filter by source:").style(|theme: &Theme| iced::widget::text::Style {
-                    color: Some(theme.extended_palette().background.weak.text),
-                    ..Default::default()
-                }),
-                chips_row,
-            ]
-            .spacing(6),
-        )
-        .padding(Padding {
-            top: 5.0,
-            right: 0.0,
-            bottom: 5.0,
-            left: 0.0,
-        })
         .into()
     }
 
@@ -512,7 +392,6 @@ impl OddBoxGui {
 
     pub(in crate::gui) fn has_active_filter(&self) -> bool {
         !self.log_filter.text.is_empty()
-            || !self.log_filter.sources.is_empty()
             || self.log_level_preset != LogLevelPreset::All
     }
 

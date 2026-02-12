@@ -1,5 +1,4 @@
-use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
@@ -103,7 +102,6 @@ pub struct FilteredSnapshot {
     pub entries: Arc<Vec<Arc<LogEntry>>>,
     pub total_count: usize,
     pub filtered_count: usize,
-    pub known_sources: Vec<String>,
     pub last_filtered_id: Option<u64>,
 }
 
@@ -113,7 +111,6 @@ impl Default for FilteredSnapshot {
             entries: Arc::new(Vec::new()),
             total_count: 0,
             filtered_count: 0,
-            known_sources: Vec::new(),
             last_filtered_id: None,
         }
     }
@@ -136,7 +133,6 @@ pub struct LogState {
 
 struct LogWorker {
     logs: VecDeque<Arc<LogEntry>>,
-    known_sources: HashSet<String>,
     filter: LogFilter,
     max_entries: usize,
     next_id: u64,
@@ -146,7 +142,6 @@ impl LogWorker {
     fn new(max_entries: usize) -> Self {
         Self {
             logs: VecDeque::new(),
-            known_sources: HashSet::new(),
             filter: LogFilter::default(),
             max_entries,
             next_id: 0,
@@ -156,15 +151,6 @@ impl LogWorker {
     fn apply_command(&mut self, cmd: LogCommand) -> bool {
         match cmd {
             LogCommand::Append(msg) => {
-                if !msg.src.is_empty() {
-                    self.known_sources.insert(msg.src.to_string());
-                }
-                if let Some(ref thread) = msg.thread {
-                    if !thread.is_empty() {
-                        self.known_sources.insert(thread.to_string());
-                    }
-                }
-
                 let id = self.next_id;
                 self.next_id = self.next_id.saturating_add(1);
                 let entry = Arc::new(LogEntry::from((id, msg)));
@@ -181,7 +167,6 @@ impl LogWorker {
             }
             LogCommand::Clear => {
                 self.logs.clear();
-                self.known_sources.clear();
                 true
             }
         }
@@ -207,14 +192,10 @@ impl LogWorker {
         let filtered_count = filtered_entries.len();
         let last_filtered_id = filtered_entries.last().map(|e| e.id);
 
-        let mut sources: Vec<String> = self.known_sources.iter().cloned().collect();
-        sources.sort();
-
         FilteredSnapshot {
             entries: Arc::new(filtered_entries),
             total_count: self.logs.len(),
             filtered_count,
-            known_sources: sources,
             last_filtered_id,
         }
     }
@@ -372,8 +353,6 @@ pub struct LogFilter {
     pub text: String,
     /// Minimum log level to show.
     pub min_level: Option<Level>,
-    /// Only show entries from these sources (empty = show all).
-    pub sources: HashSet<String>,
     /// Show trace level.
     pub show_trace: bool,
     /// Show debug level.
@@ -391,7 +370,6 @@ impl Default for LogFilter {
         Self {
             text: String::new(),
             min_level: None,
-            sources: HashSet::new(),
             show_trace: true,
             show_debug: true,
             show_info: true,
@@ -431,18 +409,6 @@ impl LogFilter {
                 .unwrap_or(false);
 
             if !in_message && !in_source && !in_thread {
-                return false;
-            }
-        }
-
-        if !self.sources.is_empty() {
-            let source_match = self.sources.contains(entry.source.borrow() as &str)
-                || entry
-                    .thread
-                    .as_ref()
-                    .map(|t| self.sources.contains(t.borrow() as &str))
-                    .unwrap_or(false);
-            if !source_match {
                 return false;
             }
         }

@@ -591,7 +591,7 @@ impl Page {
             Page::Backends => "⬚",
             Page::Frontends => "◧",
             Page::ManagedProcesses => "⚙",
-            Page::Updates => "⬆",
+            Page::Updates => "↑",
             Page::EditFrontend => "✎",
             Page::EditBackend => "✎",
         }
@@ -709,8 +709,6 @@ pub enum Message {
     // Log filter messages
     LogFilterTextChanged(String),
     LogLevelPresetChanged(LogLevelPreset),
-    LogFilterToggleSource(String, bool),
-    LogFilterClearSources,
     LogsClear,
     LogToggleWrap(bool),
     LogToggleAutoTail(bool),
@@ -2422,18 +2420,7 @@ impl OddBoxGui {
                 Self::apply_log_level_preset(&mut self.log_filter, preset);
                 self.log_state.set_filter(self.log_filter.clone());
             }
-            Message::LogFilterToggleSource(source, enabled) => {
-                if enabled {
-                    self.log_filter.sources.insert(source);
-                } else {
-                    self.log_filter.sources.remove(&source);
-                }
-                self.log_state.set_filter(self.log_filter.clone());
-            }
-            Message::LogFilterClearSources => {
-                self.log_filter.sources.clear();
-                self.log_state.set_filter(self.log_filter.clone());
-            }
+
             Message::LogsClear => {
                 self.log_state.clear();
                 self.last_seen_filtered_id = None;
@@ -3309,9 +3296,10 @@ impl OddBoxGui {
             Option<Color>,
         ) = (None, None, None, None, None);
 
+        let icon_width = text_size(16) * 1.5;
         let label = row![
-            text(page.icon()).width(Length::Fixed(24.0)),
-            text(page.title()),
+            text(page.icon()).size(text_size(16)).width(Length::Fixed(icon_width)),
+            text(page.title()).size(text_size(14)),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center);
