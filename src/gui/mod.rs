@@ -340,7 +340,9 @@ pub enum Message {
     ProcessToggleDetails(String),
     // Dashboard card menu
     DashboardToggleProcessMenu(String),
+    DashboardDismissMenu,
     DashboardCursorMoved(f32, f32),
+    ManageProcess(String),
     OpenEditFrontend(String),
     OpenEditBackend(String),
     OpenNewFrontend,
@@ -522,6 +524,9 @@ pub struct OddBoxGui {
     pub(in crate::gui) dashboard_process_menu: Option<String>,
     pub(in crate::gui) dashboard_cursor_pos: (f32, f32),
     pub(in crate::gui) dashboard_menu_pos: (f32, f32),
+    // Dashboard: cooldown timestamps for Start All / Stop All feedback
+    pub(in crate::gui) dashboard_startall_cooldown: Option<std::time::Instant>,
+    pub(in crate::gui) dashboard_stopall_cooldown: Option<std::time::Instant>,
     pub(in crate::gui) edit_target: Option<String>,
     pub(in crate::gui) edit_frontend_form: EditFrontendForm,
     pub(in crate::gui) edit_frontend_notice: Option<String>,
@@ -1331,6 +1336,8 @@ impl OddBoxGui {
                 dashboard_process_menu: None,
                 dashboard_cursor_pos: (0.0, 0.0),
                 dashboard_menu_pos: (0.0, 0.0),
+                dashboard_startall_cooldown: None,
+                dashboard_stopall_cooldown: None,
                 edit_target: None,
                 edit_frontend_form: EditFrontendForm::default(),
                 edit_frontend_notice: None,
@@ -1761,17 +1768,21 @@ impl OddBoxGui {
                 }
             },
             Message::ProcessStart(name) => {
+                self.dashboard_process_menu = None;
                 self.state.process_registry.set_enabled(&name, true);
             }
             Message::ProcessStop(name) => {
+                self.dashboard_process_menu = None;
                 self.state.process_registry.set_enabled(&name, false);
             }
             Message::ProcessStartAll => {
+                self.dashboard_startall_cooldown = Some(std::time::Instant::now());
                 for proc in &self.cached_config.processes {
                     self.state.process_registry.set_enabled(&proc.name, true);
                 }
             }
             Message::ProcessStopAll => {
+                self.dashboard_stopall_cooldown = Some(std::time::Instant::now());
                 for proc in &self.cached_config.processes {
                     self.state.process_registry.set_enabled(&proc.name, false);
                 }
@@ -1849,8 +1860,17 @@ impl OddBoxGui {
                     self.dashboard_menu_pos = self.dashboard_cursor_pos;
                 }
             }
+            Message::DashboardDismissMenu => {
+                self.dashboard_process_menu = None;
+            }
             Message::DashboardCursorMoved(x, y) => {
                 self.dashboard_cursor_pos = (x, y);
+            }
+            Message::ManageProcess(name) => {
+                self.dashboard_process_menu = None;
+                self.expanded_process = Some(name);
+                self.current_page = Page::ManagedProcesses;
+                return Task::perform(fetch_config(self.state.clone()), Message::ConfigUpdated);
             }
             Message::OpenEditFrontend(name) => {
                 self.edit_target = Some(name.clone());
