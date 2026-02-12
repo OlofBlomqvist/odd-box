@@ -14,6 +14,8 @@ use iced::{
     Task, Theme, system, theme, time, window,
 };
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -83,6 +85,12 @@ pub fn run(
     log_state: SharedLogState,
 ) -> iced::Result {
     macos_app_icon::apply_default_icon();
+    #[cfg(target_os = "linux")]
+    {
+        if let Err(err) = ensure_linux_desktop_entry() {
+            tracing::warn!("Failed to auto-register linux desktop entry: {err}");
+        }
+    }
 
     // Initialize system tray icon
     let tray_handle = match tray::TrayHandle::new("ODD-BOX") {
@@ -96,20 +104,8 @@ pub fn run(
         }
     };
 
-    let use_glass_effects = cfg!(target_os = "macos");
     let initial_window_size = iced::Size::new(1200.0, 800.0);
     set_gui_text_scale(initial_window_size);
-    let window_settings = iced::window::Settings {
-        size: initial_window_size,
-        min_size: Some(iced::Size::new(900.0, 400.0)),
-        decorations: true, // Use native window decorations (KDE/GNOME title bar)
-        blur: use_glass_effects,
-        transparent: use_glass_effects,
-        // Disable default close behavior so we can intercept and hide instead
-        #[cfg(target_os = "macos")]
-        exit_on_close_request: false,
-        ..Default::default()
-    };
 
     let state_clone = state.clone();
     let log_state_clone = log_state.clone();
@@ -118,13 +114,23 @@ pub fn run(
     let tray_handle = std::sync::Arc::new(std::sync::Mutex::new(tray_handle));
     let tray_handle_clone = tray_handle.clone();
 
-    iced::application(
+    iced::daemon(
         move || {
             let tray = tray_handle_clone.lock().unwrap().take();
-            OddBoxGui::new(state_clone.clone(), theme_mode, log_state_clone.clone(), tray)
+            let (mut gui, init_task) =
+                OddBoxGui::new(state_clone.clone(), theme_mode, log_state_clone.clone(), tray);
+            let (window_id, open_window_task) = window::open(make_window_settings());
+            gui.window_id = Some(window_id);
+            (
+                gui,
+                Task::batch(vec![
+                    init_task,
+                    open_window_task.map(|id| Message::WindowIdResolved(Some(id))),
+                ]),
+            )
         },
         OddBoxGui::update,
-        OddBoxGui::view,
+        daemon_view,
     )
     .style(|_state, theme: &Theme| {
         let bg = theme.palette().background;
@@ -140,11 +146,18 @@ pub fn run(
             text_color: theme.palette().text,
         }
     })
-    .theme(OddBoxGui::theme)
+    .theme(daemon_theme)
     .subscription(OddBoxGui::subscription)
     .title("ODD-BOX")
-    .window(window_settings)
     .run()
+}
+
+fn daemon_view<'a>(state: &'a OddBoxGui, _window: window::Id) -> Element<'a, Message> {
+    state.view()
+}
+
+fn daemon_theme(state: &OddBoxGui, _window: window::Id) -> Theme {
+    state.theme()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1394,7 +1407,7 @@ impl OddBoxGui {
         let resize_sub = window::resize_events().map(|(id, size)| Message::WindowResized(id, size));
         let exit_sub =
             time::every(std::time::Duration::from_millis(250)).map(|_| Message::ExitPoll);
-        // Listen for window close requests (to hide instead of quit on macOS)
+        // Listen for window close requests (to hide instead of quit when tray is active)
         let close_sub = window::close_requests().map(Message::WindowCloseRequested);
         // Listen for window events (focus/unfocus to detect minimize)
         let window_events_sub = window::events().map(|(id, event)| {
@@ -1511,18 +1524,29 @@ impl OddBoxGui {
             }
             Message::ExitWindowId(id) => {
                 if let Some(id) = id {
-                    return window::close(id);
+                    return window::close(id).chain(iced::exit());
                 }
+                return iced::exit();
             }
             Message::WindowCloseRequested(id) => {
-                // On macOS with tray available, hide the window instead of closing
+                // Keep app alive when tray is available.
+                #[cfg(target_os = "linux")]
+                if self.tray_handle.is_some() {
+                    self.window_visible = false;
+                    self.window_id = None;
+                    if let Some(ref tray) = self.tray_handle {
+                        tray.set_window_visible(false);
+                    }
+                    return window::close(id);
+                }
+
                 #[cfg(target_os = "macos")]
                 if self.tray_handle.is_some() {
                     self.window_visible = false;
                     if let Some(ref tray) = self.tray_handle {
                         tray.set_window_visible(false);
                     }
-                    // Remove from Dock when hidden
+                    // Remove from Dock when hidden (macOS only)
                     macos_app_icon::set_activation_policy(macos_app_icon::ActivationPolicy::Accessory);
                     return window::set_mode(id, window::Mode::Hidden);
                 }
@@ -1586,14 +1610,18 @@ impl OddBoxGui {
                                         window::gain_focus(id),
                                     ]);
                                 } else {
-                                    // Window doesn't exist, need to open a new one
-                                    // For now, just log - full implementation would open new window
-                                    tracing::info!("Show requested but no window ID available");
+                                    let (id, open_task) = window::open(make_window_settings());
+                                    self.window_id = Some(id);
+                                    return open_task.map(|id| Message::WindowIdResolved(Some(id)));
                                 }
                             }
                             tray::TrayCommand::Hide => {
                                 self.window_visible = false;
                                 tray.set_window_visible(false);
+                                #[cfg(target_os = "linux")]
+                                if let Some(id) = self.window_id.take() {
+                                    return window::close(id);
+                                }
                                 // Remove from Dock when hidden
                                 #[cfg(target_os = "macos")]
                                 macos_app_icon::set_activation_policy(macos_app_icon::ActivationPolicy::Accessory);
@@ -2424,4 +2452,139 @@ impl OddBoxGui {
             },
         }
     }
+}
+
+fn load_window_icon() -> Option<window::Icon> {
+    let icon_bytes = &include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/ob3.png"))[..];
+    window::icon::from_file_data(icon_bytes, None).ok()
+}
+
+fn make_window_settings() -> iced::window::Settings {
+    let use_glass_effects = cfg!(target_os = "macos");
+    let mut window_settings = iced::window::Settings {
+        size: iced::Size::new(1200.0, 800.0),
+        min_size: Some(iced::Size::new(900.0, 400.0)),
+        decorations: true, // Use native window decorations (KDE/GNOME title bar)
+        blur: use_glass_effects,
+        transparent: use_glass_effects,
+        icon: load_window_icon(),
+        // Disable default close behavior so we can intercept and hide instead
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        exit_on_close_request: false,
+        ..Default::default()
+    };
+    #[cfg(target_os = "linux")]
+    {
+        window_settings.platform_specific.application_id = linux_application_id();
+    }
+    window_settings
+}
+
+#[cfg(target_os = "linux")]
+fn linux_application_id() -> String {
+    const DEFAULT_APPLICATION_ID: &str = "io.odd.box";
+    std::env::var("ODD_BOX_LINUX_APPLICATION_ID")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_APPLICATION_ID.to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_data_home() -> Option<PathBuf> {
+    if let Ok(data_home) = std::env::var("XDG_DATA_HOME") {
+        let data_home = data_home.trim();
+        if !data_home.is_empty() {
+            return Some(PathBuf::from(data_home));
+        }
+    }
+    let home = std::env::var("HOME").ok()?;
+    let home = home.trim();
+    if home.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(home).join(".local/share"))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn desktop_exec_escape(arg: &str) -> String {
+    let mut out = String::with_capacity(arg.len());
+    for ch in arg.chars() {
+        match ch {
+            ' ' | '\t' | '\n' | '"' | '\'' | '\\' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+#[cfg(target_os = "linux")]
+fn maybe_refresh_desktop_caches(data_home: &std::path::Path) {
+    let applications_dir = data_home.join("applications");
+    if let Ok(path) = std::env::var("PATH") {
+        if path.split(':').any(|segment| {
+            !segment.is_empty() && PathBuf::from(segment).join("update-desktop-database").exists()
+        }) {
+            let _ = std::process::Command::new("update-desktop-database")
+                .arg(&applications_dir)
+                .output();
+        }
+        if path.split(':').any(|segment| {
+            !segment.is_empty() && PathBuf::from(segment).join("gtk-update-icon-cache").exists()
+        }) {
+            let _ = std::process::Command::new("gtk-update-icon-cache")
+                .args(["-f", "-t"])
+                .arg(data_home.join("icons/hicolor"))
+                .output();
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn ensure_linux_desktop_entry() -> Result<(), String> {
+    if std::env::var("ODD_BOX_DISABLE_AUTO_DESKTOP_ENTRY")
+        .ok()
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
+    let desktop_id = linux_application_id();
+    let data_home = match linux_data_home() {
+        Some(path) => path,
+        None => return Ok(()),
+    };
+    let applications_dir = data_home.join("applications");
+    let icon_dir = data_home.join("icons/hicolor/256x256/apps");
+    std::fs::create_dir_all(&applications_dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&icon_dir).map_err(|e| e.to_string())?;
+
+    let icon_path = icon_dir.join(format!("{desktop_id}.png"));
+    let icon_bytes = &include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/ob3.png"))[..];
+    if std::fs::read(&icon_path).ok().as_deref() != Some(icon_bytes) {
+        std::fs::write(&icon_path, icon_bytes).map_err(|e| e.to_string())?;
+    }
+
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe = exe.to_string_lossy();
+    let exec = desktop_exec_escape(&exe);
+    let desktop_body = format!(
+        "[Desktop Entry]\nType=Application\nName=ODD-BOX\nComment=odd-box GUI\nExec={exec}\nIcon={desktop_id}\nTerminal=false\nCategories=Network;Development;\nStartupWMClass={desktop_id}\nX-GNOME-WMClass={desktop_id}\n"
+    );
+    let desktop_path = applications_dir.join(format!("{desktop_id}.desktop"));
+    if std::fs::read_to_string(&desktop_path).ok().as_deref() != Some(desktop_body.as_str()) {
+        std::fs::write(&desktop_path, desktop_body).map_err(|e| e.to_string())?;
+        maybe_refresh_desktop_caches(&data_home);
+        tracing::info!(
+            "Installed/updated linux desktop entry for GUI icon mapping: {}",
+            desktop_path.display()
+        );
+    }
+
+    Ok(())
 }

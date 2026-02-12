@@ -1,19 +1,28 @@
-//! System tray icon implementation for macOS and Windows.
+//! System tray icon implementation.
 //!
-//! This module provides a system tray icon with a context menu containing
-//! a Show/Hide toggle and Quit option. On macOS, it uses the `tray-icon` crate
-//! which requires initialization on the main thread.
-//!
-//! The tray icon is procedurally generated as a bold isometric box shape
-//! that remains clearly visible at small sizes (32x32 or 22x22 pixels).
+//! - Linux uses the `ksni` backend (StatusNotifierItem over D-Bus), which does
+//!   not require libappindicator/ayatana shared libraries.
+//! - macOS/Windows use the `tray-icon` crate.
 
 #![allow(unexpected_cfgs)]
 #![allow(deprecated)]
 
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use tracing::{error, info, trace};
+use tracing::{info, trace, warn};
+#[cfg(not(target_os = "linux"))]
+use tracing::error;
+
+#[cfg(target_os = "linux")]
+use ksni::TrayMethods;
+#[cfg(target_os = "linux")]
+use ksni::menu::{MenuItem as KsniMenuItem, StandardItem};
+#[cfg(target_os = "linux")]
+use ksni::{Icon as KsniIcon, ToolTip, Tray};
+
+#[cfg(not(target_os = "linux"))]
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
+#[cfg(not(target_os = "linux"))]
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 #[cfg(target_os = "macos")]
@@ -23,20 +32,9 @@ use cocoa::base::nil;
 
 const ICON_SIZE: u32 = 32;
 
-// On macOS, we use a template-style icon (black + alpha) that the system
-// automatically tints to match the menu bar appearance.
-// On other platforms, we use a colored icon.
-
 // ---------------------------------------------------------------------------
 // Procedural isometric box icon
 // ---------------------------------------------------------------------------
-//
-// A bold, simplified isometric box drawn procedurally at 32×32.
-// The box has three visible faces (top, left, right) with thick edges
-// that remain visible even at small sizes.
-//
-// The icon uses a template-style design (works well on both light and dark
-// menu bars): solid shapes with good contrast.
 
 // Box geometry - isometric projection
 const BOX_CENTER_X: f32 = 16.0;
@@ -79,161 +77,212 @@ pub enum TrayState {
 /// This handle provides methods to update the tray menu state and
 /// receive commands from user interactions.
 pub struct TrayHandle {
-    tray: Arc<Mutex<TrayIcon>>,
     /// Receiver for commands from tray menu interactions
     pub command_rx: Receiver<TrayCommand>,
-    /// The toggle menu item (Show/Hide) - kept for updating text
-    toggle_item: MenuItem,
-    /// The quit menu item - kept for disabling during shutdown
-    quit_item: MenuItem,
     /// Current visibility state
     window_visible: Arc<Mutex<bool>>,
     /// Current tray state
     state: Arc<Mutex<TrayState>>,
+    #[cfg(not(target_os = "linux"))]
+    tray: Arc<Mutex<TrayIcon>>,
+    #[cfg(not(target_os = "linux"))]
+    toggle_item: MenuItem,
+    #[cfg(not(target_os = "linux"))]
+    quit_item: MenuItem,
+    #[cfg(target_os = "linux")]
+    tray: tokio::sync::mpsc::UnboundedSender<LinuxTrayControl>,
 }
 
 impl TrayHandle {
     /// Create a new tray icon synchronously on the main thread.
     ///
-    /// This MUST be called on the main thread, especially on macOS.
-    ///
     /// Returns a TrayHandle that can be used to receive commands and update menu state.
     pub fn new(app_name: &str) -> Result<TrayHandle, String> {
         info!("Initializing system tray icon for '{}'", app_name);
 
-        #[cfg(target_os = "macos")]
-        {
-            let current_thread = std::thread::current();
-            let thread_name = current_thread.name().unwrap_or("<unnamed>");
-            info!(
-                "Current thread: {:?} (id: {:?})",
-                thread_name,
-                current_thread.id()
-            );
-            if thread_name != "main" && !thread_name.is_empty() {
-                error!(
-                    "WARNING: Tray icon may fail - not on main thread! Current thread: {}",
-                    thread_name
-                );
-            }
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            info!("macOS detected: Configuring NSApplication for tray");
-            unsafe {
-                let app = NSApplication::sharedApplication(nil);
-                if app == nil {
-                    error!("Failed to get NSApplication shared instance");
-                    return Err("Failed to initialize NSApplication".to_string());
-                }
-                info!("NSApplication configured for tray support");
-            }
-        }
-
-        // Build the context menu with a single toggle item
-        let menu = Menu::new();
-        let toggle_item = MenuItem::new("Hide", true, None); // Start as "Hide" since window is visible
-        let quit_item = MenuItem::new("Quit", true, None);
-
-        // Clone items before adding to menu (for storing in handle to update later)
-        let toggle_item_for_handle = toggle_item.clone();
-        let quit_item_for_handle = quit_item.clone();
-
-        let _ = menu.append(&toggle_item);
-        let _ = menu.append(&quit_item);
-
-        info!("Building tray icon");
-        let icon = build_tray_icon()?;
-
-        let mut builder = TrayIconBuilder::new()
-            .with_tooltip(app_name)
-            .with_menu(Box::new(menu))
-            .with_icon(icon);
-
-        // On macOS, mark the icon as a template so the system tints it appropriately
-        #[cfg(target_os = "macos")]
-        {
-            builder = builder.with_icon_as_template(true);
-        }
-
-        let tray = match builder.build() {
-            Ok(t) => {
-                info!("Tray icon created successfully");
-                t
-            }
-            Err(e) => {
-                error!("Failed to create tray icon: {:?}", e);
-                return Err(format!("Failed to create tray icon: {:?}", e));
-            }
-        };
-
-        // On non-Linux platforms, show menu on left click as well
-        #[cfg(not(target_os = "linux"))]
-        tray.set_show_menu_on_left_click(true);
-
-        // Create channel for sending commands to the application
         let (command_tx, command_rx): (Sender<TrayCommand>, Receiver<TrayCommand>) =
             mpsc::channel();
 
-        let menu_rx = MenuEvent::receiver();
-        let toggle_id = toggle_item.id().clone();
-        let quit_id = quit_item.id().clone();
-
-        // Track window visibility for determining which command to send
         let window_visible = Arc::new(Mutex::new(true));
-        let window_visible_for_thread = window_visible.clone();
-
-        // Track tray state for shutdown
         let state = Arc::new(Mutex::new(TrayState::Active));
-        let state_for_thread = state.clone();
 
-        info!("Starting tray menu event handler");
+        #[cfg(target_os = "linux")]
+        {
+            info!("Linux detected: using ksni tray backend");
+            let (tray_tx, mut tray_rx) = tokio::sync::mpsc::unbounded_channel();
+            let app_name = app_name.to_string();
 
-        // Spawn a thread to handle menu events
-        std::thread::spawn(move || {
-            trace!("Tray menu event loop started");
-            loop {
-                // Check if shutting down
-                if *state_for_thread.lock().unwrap() == TrayState::ShuttingDown {
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                    continue;
-                }
+            std::thread::spawn(move || {
+                let rt = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        warn!("Failed to create tokio runtime for ksni tray: {e}");
+                        return;
+                    }
+                };
 
-                match menu_rx.try_recv() {
-                    Ok(event) => {
-                        let id = event.id;
-                        if id == toggle_id {
-                            let visible = *window_visible_for_thread.lock().unwrap();
-                            if visible {
-                                info!("Tray: Hide clicked");
-                                let _ = command_tx.send(TrayCommand::Hide);
-                            } else {
-                                info!("Tray: Show clicked");
-                                let _ = command_tx.send(TrayCommand::Show);
+                rt.block_on(async move {
+                    let tray = LinuxTray::new(&app_name, command_tx);
+                    let handle = match tray.assume_sni_available(true).spawn().await {
+                        Ok(handle) => handle,
+                        Err(e) => {
+                            warn!("Failed to initialize ksni tray icon: {:?}", e);
+                            return;
+                        }
+                    };
+
+                    while let Some(control) = tray_rx.recv().await {
+                        match control {
+                            LinuxTrayControl::SetVisible(visible) => {
+                                let _ = handle.update(|tray| tray.set_visible_state(visible)).await;
                             }
-                        } else if id == quit_id {
-                            info!("Tray: Quit clicked");
-                            let _ = command_tx.send(TrayCommand::Quit);
-                            break;
+                            LinuxTrayControl::SetShuttingDown => {
+                                let _ = handle.update(|tray| tray.set_shutting_down()).await;
+                            }
+                            LinuxTrayControl::Shutdown => {
+                                let _ = handle.shutdown().await;
+                                break;
+                            }
                         }
                     }
-                    Err(_) => {
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-                    }
+                });
+            });
+
+            return Ok(TrayHandle {
+                command_rx,
+                window_visible,
+                state,
+                tray: tray_tx,
+            });
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            #[cfg(target_os = "macos")]
+            {
+                let current_thread = std::thread::current();
+                let thread_name = current_thread.name().unwrap_or("<unnamed>");
+                info!(
+                    "Current thread: {:?} (id: {:?})",
+                    thread_name,
+                    current_thread.id()
+                );
+                if thread_name != "main" && !thread_name.is_empty() {
+                    error!(
+                        "WARNING: Tray icon may fail - not on main thread! Current thread: {}",
+                        thread_name
+                    );
                 }
             }
-            trace!("Tray menu event loop exiting");
-        });
 
-        Ok(TrayHandle {
-            tray: Arc::new(Mutex::new(tray)),
-            command_rx,
-            toggle_item: toggle_item_for_handle,
-            quit_item: quit_item_for_handle,
-            window_visible,
-            state,
-        })
+            #[cfg(target_os = "macos")]
+            {
+                info!("macOS detected: Configuring NSApplication for tray");
+                unsafe {
+                    let app = NSApplication::sharedApplication(nil);
+                    if app == nil {
+                        error!("Failed to get NSApplication shared instance");
+                        return Err("Failed to initialize NSApplication".to_string());
+                    }
+                    info!("NSApplication configured for tray support");
+                }
+            }
+
+            // Build the context menu with a single toggle item
+            let menu = Menu::new();
+            let toggle_item = MenuItem::new("Hide", true, None); // Start as "Hide" since window is visible
+            let quit_item = MenuItem::new("Quit", true, None);
+
+            // Clone items before adding to menu (for storing in handle to update later)
+            let toggle_item_for_handle = toggle_item.clone();
+            let quit_item_for_handle = quit_item.clone();
+
+            let _ = menu.append(&toggle_item);
+            let _ = menu.append(&quit_item);
+
+            info!("Building tray icon");
+            let icon = build_tray_icon()?;
+
+            let mut builder = TrayIconBuilder::new()
+                .with_tooltip(app_name)
+                .with_menu(Box::new(menu))
+                .with_icon(icon);
+
+            // On macOS, mark the icon as a template so the system tints it appropriately
+            #[cfg(target_os = "macos")]
+            {
+                builder = builder.with_icon_as_template(true);
+            }
+
+            let tray = match builder.build() {
+                Ok(t) => {
+                    info!("Tray icon created successfully");
+                    t
+                }
+                Err(e) => {
+                    error!("Failed to create tray icon: {:?}", e);
+                    return Err(format!("Failed to create tray icon: {:?}", e));
+                }
+            };
+
+            tray.set_show_menu_on_left_click(true);
+
+            let menu_rx = MenuEvent::receiver();
+            let toggle_id = toggle_item.id().clone();
+            let quit_id = quit_item.id().clone();
+
+            let window_visible_for_thread = window_visible.clone();
+            let state_for_thread = state.clone();
+
+            info!("Starting tray menu event handler");
+
+            std::thread::spawn(move || {
+                trace!("Tray menu event loop started");
+                loop {
+                    // Check if shutting down
+                    if *state_for_thread.lock().unwrap() == TrayState::ShuttingDown {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        continue;
+                    }
+
+                    match menu_rx.try_recv() {
+                        Ok(event) => {
+                            let id = event.id;
+                            if id == toggle_id {
+                                let visible = *window_visible_for_thread.lock().unwrap();
+                                if visible {
+                                    info!("Tray: Hide clicked");
+                                    let _ = command_tx.send(TrayCommand::Hide);
+                                } else {
+                                    info!("Tray: Show clicked");
+                                    let _ = command_tx.send(TrayCommand::Show);
+                                }
+                            } else if id == quit_id {
+                                info!("Tray: Quit clicked");
+                                let _ = command_tx.send(TrayCommand::Quit);
+                                break;
+                            }
+                        }
+                        Err(_) => {
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                        }
+                    }
+                }
+                trace!("Tray menu event loop exiting");
+            });
+
+            Ok(TrayHandle {
+                tray: Arc::new(Mutex::new(tray)),
+                command_rx,
+                toggle_item: toggle_item_for_handle,
+                quit_item: quit_item_for_handle,
+                window_visible,
+                state,
+            })
+        }
     }
 
     /// Update the toggle menu item text based on window visibility.
@@ -241,11 +290,21 @@ impl TrayHandle {
     /// Call this whenever the window visibility changes.
     pub fn set_window_visible(&self, visible: bool) {
         *self.window_visible.lock().unwrap() = visible;
-        if visible {
-            self.toggle_item.set_text("Hide");
-        } else {
-            self.toggle_item.set_text("Show");
+
+        #[cfg(target_os = "linux")]
+        {
+            let _ = self.tray.send(LinuxTrayControl::SetVisible(visible));
         }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            if visible {
+                self.toggle_item.set_text("Hide");
+            } else {
+                self.toggle_item.set_text("Show");
+            }
+        }
+
         trace!("Tray toggle label updated: visible={}", visible);
     }
 
@@ -254,24 +313,187 @@ impl TrayHandle {
     /// Call this when the application begins its shutdown sequence.
     pub fn set_shutting_down(&self) {
         *self.state.lock().unwrap() = TrayState::ShuttingDown;
-        // Disable menu items
-        self.toggle_item.set_enabled(false);
-        self.quit_item.set_enabled(false);
-        // Update text to indicate shutting down
-        self.quit_item.set_text("Quitting...");
-        // Update icon to grayed-out version
-        if let Ok(gray_icon) = build_gray_tray_icon() {
-            if let Ok(tray) = self.tray.lock() {
-                #[cfg(target_os = "macos")]
-                let _ = tray.set_icon_as_template(true);
-                let _ = tray.set_icon(Some(gray_icon));
+
+        #[cfg(target_os = "linux")]
+        {
+            let _ = self.tray.send(LinuxTrayControl::SetShuttingDown);
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            // Disable menu items
+            self.toggle_item.set_enabled(false);
+            self.quit_item.set_enabled(false);
+            // Update text to indicate shutting down
+            self.quit_item.set_text("Quitting...");
+            // Update icon to grayed-out version
+            if let Ok(gray_icon) = build_gray_tray_icon() {
+                if let Ok(tray) = self.tray.lock() {
+                    #[cfg(target_os = "macos")]
+                    let _ = tray.set_icon_as_template(true);
+                    let _ = tray.set_icon(Some(gray_icon));
+                }
             }
         }
+
         info!("Tray menu disabled for shutdown");
     }
 }
 
-/// Build a grayed-out version of the tray icon for shutdown state
+#[cfg(target_os = "linux")]
+impl Drop for TrayHandle {
+    fn drop(&mut self) {
+        let _ = self.tray.send(LinuxTrayControl::Shutdown);
+    }
+}
+
+#[cfg(target_os = "linux")]
+enum LinuxTrayControl {
+    SetVisible(bool),
+    SetShuttingDown,
+    Shutdown,
+}
+
+#[cfg(target_os = "linux")]
+struct LinuxTray {
+    app_name: String,
+    command_tx: Sender<TrayCommand>,
+    visible: bool,
+    shutting_down: bool,
+    active_icon: KsniIcon,
+    shutdown_icon: KsniIcon,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxTray {
+    fn new(app_name: &str, command_tx: Sender<TrayCommand>) -> Self {
+        Self {
+            app_name: app_name.to_string(),
+            command_tx,
+            visible: true,
+            shutting_down: false,
+            active_icon: build_ksni_icon(build_box_icon_rgba()),
+            shutdown_icon: build_ksni_icon(build_gray_box_icon_rgba()),
+        }
+    }
+
+    fn set_visible_state(&mut self, visible: bool) {
+        self.visible = visible;
+    }
+
+    fn set_shutting_down(&mut self) {
+        self.shutting_down = true;
+    }
+
+    fn send_command(&self, command: TrayCommand) {
+        let _ = self.command_tx.send(command);
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Tray for LinuxTray {
+    const MENU_ON_ACTIVATE: bool = true;
+
+    fn id(&self) -> String {
+        "odd-box".into()
+    }
+
+    fn title(&self) -> String {
+        self.app_name.clone()
+    }
+
+    fn icon_pixmap(&self) -> Vec<KsniIcon> {
+        if self.shutting_down {
+            vec![self.shutdown_icon.clone()]
+        } else {
+            vec![self.active_icon.clone()]
+        }
+    }
+
+    fn tool_tip(&self) -> ToolTip {
+        ToolTip {
+            title: self.app_name.clone(),
+            description: if self.shutting_down {
+                "odd-box is shutting down".into()
+            } else {
+                "odd-box is running".into()
+            },
+            icon_pixmap: self.icon_pixmap(),
+            ..Default::default()
+        }
+    }
+
+    fn menu(&self) -> Vec<KsniMenuItem<Self>> {
+        if self.shutting_down {
+            return vec![
+                StandardItem {
+                    label: "Quitting...".into(),
+                    enabled: false,
+                    ..Default::default()
+                }
+                .into(),
+            ];
+        }
+
+        let mut items = Vec::new();
+
+        if self.visible {
+            items.push(
+                StandardItem {
+                    label: "Hide".into(),
+                    activate: Box::new(|tray: &mut LinuxTray| {
+                        tray.visible = false;
+                        tray.send_command(TrayCommand::Hide);
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+        } else {
+            items.push(
+                StandardItem {
+                    label: "Show".into(),
+                    activate: Box::new(|tray: &mut LinuxTray| {
+                        tray.visible = true;
+                        tray.send_command(TrayCommand::Show);
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+
+        items.push(KsniMenuItem::Separator);
+        items.push(
+            StandardItem {
+                label: "Quit".into(),
+                activate: Box::new(|tray: &mut LinuxTray| {
+                    tray.send_command(TrayCommand::Quit);
+                }),
+                ..Default::default()
+            }
+            .into(),
+        );
+
+        items
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn build_ksni_icon(mut rgba: Vec<u8>) -> KsniIcon {
+    // ksni expects ARGB in network byte order, convert from RGBA.
+    for pixel in rgba.chunks_exact_mut(4) {
+        pixel.rotate_right(1);
+    }
+
+    KsniIcon {
+        width: ICON_SIZE as i32,
+        height: ICON_SIZE as i32,
+        data: rgba,
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
 fn build_gray_tray_icon() -> Result<Icon, String> {
     let rgba = build_gray_box_icon_rgba();
     Icon::from_rgba(rgba, ICON_SIZE, ICON_SIZE)
@@ -550,6 +772,7 @@ fn build_box_icon_rgba() -> Vec<u8> {
     rgba
 }
 
+#[cfg(not(target_os = "linux"))]
 fn build_tray_icon() -> Result<Icon, String> {
     let rgba = build_box_icon_rgba();
     Icon::from_rgba(rgba, ICON_SIZE, ICON_SIZE)

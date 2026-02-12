@@ -341,6 +341,17 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if args.install_source {
+        let info = self_update::install_source_info();
+        println!("install source: {}", info.source);
+        println!("package managed: {}", info.package_managed);
+        if let Some(path) = info.resolved_path {
+            println!("detected binary: {path}");
+        }
+        println!("recommended updater: {}", info.update_hint);
+        return Ok(());
+    }
+
     if args.update {
         _ = self_update::update().await;
         return Ok(());

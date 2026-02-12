@@ -141,6 +141,10 @@
         }
       }
     },
+    "github:NixOS/nixpkgs/nixpkgs-unstable": {
+      "last_modified": "2026-02-10T02:06:53Z",
+      "resolved": "github:NixOS/nixpkgs/49d75834011c94a120a9cb874ac1c4d8b7bfc767?lastModified=1770689213&narHash=sha256-N6JiSpfi0s8NjUTnjwo3c%2BYAmvYhCDzjCKCrTUC97xM%3D"
+    },
     "stdenv.cc.cc.lib": {
       "resolved": "github:NixOS/nixpkgs/75a52265bda7fd25e06e3a67dee3f0354e73243c#stdenv.cc.cc.lib",
       "source": "nixpkg"

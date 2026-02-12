@@ -28,6 +28,10 @@ pub struct Args {
     #[arg(long)]
     pub update: bool,
 
+    /// Print detected installation source (homebrew/nix/snap/cargo/system/manual) and exit.
+    #[arg(long)]
+    pub install_source: bool,
+
     /// Create a bare minimum example configuration file (odd-box.yaml).
     #[arg(long)]
     pub init: bool,
