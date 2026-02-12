@@ -12,7 +12,7 @@ use crossterm::{
     execute, terminal,
 };
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
@@ -109,10 +109,10 @@ struct Snapshot {
     cruma_fqdn: String,
     cruma_motd: String,
     listen_ports: String,
-    processes: Vec<(String, ProcState, String, String)>,
-    remotes: Vec<(String, ProcState, String)>,
+    processes: Vec<(String, ProcState, String, Vec<String>, String)>,
+    remotes: Vec<(String, ProcState, String, String)>,
     statics: Vec<(String, ProcState, String)>,
-    docker: Vec<(String, ProcState, String)>,
+    docker: Vec<(String, ProcState, String, String)>,
     docker_discovered: Vec<DockerRow>,
     routes: Vec<(String, String, bool)>,
 }
@@ -162,14 +162,26 @@ async fn build_snapshot(global_state: &GlobalState) -> Snapshot {
         .iter()
         .map(|kv| {
             let backend_id = kv.key().clone();
-            let bin = kv.value().bin.clone();
+            let proc = kv.value();
             let handle = snapshot.get(&backend_id);
-            let state = handle.map(|h| h.proc_state()).unwrap_or(ProcState::Stopped);
+            let proc_state = handle.map(|h| h.state());
+            let bin = proc_state
+                .as_ref()
+                .and_then(|s| s.resolved_bin.clone())
+                .unwrap_or_else(|| proc.bin.clone());
+            let args = proc_state
+                .as_ref()
+                .and_then(|s| s.resolved_args.clone())
+                .unwrap_or_else(|| proc.args.clone());
+            let state = proc_state
+                .as_ref()
+                .map(|s| s.proc_state.clone())
+                .unwrap_or(ProcState::Stopped);
             let port = handle
                 .and_then(|h| h.active_port())
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "-".to_string());
-            (backend_id, state, bin, port)
+            (backend_id, state, bin, args, port)
         })
         .collect();
 
@@ -180,14 +192,15 @@ async fn build_snapshot(global_state: &GlobalState) -> Snapshot {
             let backend_id = kv.key().clone();
             let state = snapshot.state_of(&backend_id).unwrap_or(ProcState::Remote);
             let remote = kv.value();
-            let detail = if remote.endpoints.len() == 1 {
+            let (detail, port) = if remote.endpoints.len() == 1 {
                 let ep = &remote.endpoints[0];
                 let scheme = if remote.https { "https" } else { "http" };
-                format!("{}:{} ({})", ep.addr, ep.port, scheme)
+                (format!("{} ({})", ep.addr, scheme), ep.port.to_string())
             } else {
-                format!("{} endpoints", remote.endpoints.len())
+                let ports: Vec<String> = remote.endpoints.iter().map(|ep| ep.port.to_string()).collect();
+                (format!("{} endpoints", remote.endpoints.len()), ports.join(","))
             };
-            (backend_id, state, detail)
+            (backend_id, state, detail, port)
         })
         .collect();
 
@@ -210,7 +223,8 @@ async fn build_snapshot(global_state: &GlobalState) -> Snapshot {
             let cont = kv.value().clone();
             let host = cont.generate_host_name();
             let state = snapshot.state_of(&host).unwrap_or(ProcState::Docker);
-            (host, state, cont.image_name)
+            let port = if cont.port == 0 { "-".to_string() } else { cont.port.to_string() };
+            (host, state, cont.image_name, port)
         })
         .collect();
     let docker_discovered = global_state
@@ -309,14 +323,14 @@ fn draw_ui(
     let header = Paragraph::new(Line::from(vec![
         Span::styled(
             format!("ODD-BOX v{}", data.version),
-            Style::default().fg(Color::Cyan),
+            Style::default().bold(),
         ),
-        Span::raw("  "),
-        Span::raw(match page {
-            TuiPage::Sites => "TUI (sites)",
-            TuiPage::Docker => "TUI (docker)",
-            TuiPage::Logs => "TUI (logs)",
-        }),
+        // Span::raw("  "),
+        // Span::raw(match page {
+        //     TuiPage::Sites => "TUI (sites)",
+        //     TuiPage::Docker => "TUI (docker)",
+        //     TuiPage::Logs => "TUI (logs)",
+        // }),
     ]));
 
     let status = if data.cruma_enabled {
@@ -410,28 +424,34 @@ fn draw_ui(
     match page {
         TuiPage::Sites => footer_spans.extend([
             Span::styled("s", Style::default().fg(muted_color(light_theme))),
-            Span::raw(" start all  "),
+            Span::raw(" (start all)  "),
             Span::styled("x", Style::default().fg(muted_color(light_theme))),
-            Span::raw(" stop all  "),
+            Span::raw(" (stop all)  "),
+            Span::styled("p", Style::default().fg(muted_color(light_theme))),
+            Span::raw(if SHOW_FULL_PATH.load(std::sync::atomic::Ordering::Relaxed) {
+                " (short paths)  "
+            } else {
+                " (full paths)  "
+            }),
         ]),
         TuiPage::Docker => {}
         TuiPage::Logs => footer_spans.extend([
             Span::styled("f", Style::default().fg(muted_color(light_theme))),
             Span::raw(if log_tail {
-                " tail:on  "
+                " (tail:on)  "
             } else {
-                " tail:off  "
+                " (tail:off)  "
             }),
             Span::styled("t", Style::default().fg(muted_color(light_theme))),
             Span::raw(if log_show_timestamp {
-                " ts:on  "
+                " (timestamps:on)  "
             } else {
-                " ts:off  "
+                " (timestamps:off)  "
             }),
             Span::styled("l", Style::default().fg(muted_color(light_theme))),
-            Span::raw(format!(" lvl:{}  ", log_level_filter.label())),
+            Span::raw(format!(" (log-lvl:{})  ", log_level_filter.label())),
             Span::styled("c", Style::default().fg(muted_color(light_theme))),
-            Span::raw(" clear  "),
+            Span::raw(" (clear)  "),
         ]),
     }
     if page == TuiPage::Docker {
@@ -526,6 +546,7 @@ struct RowData {
     state_label: Option<&'static str>,
     state_color: Option<Color>,
     detail: String,
+    port: String,
     muted: bool,
     alert: bool,
 }
@@ -533,26 +554,26 @@ struct RowData {
 fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
     let mut rows = Vec::new();
     let mut backend_ids: Vec<String> = Vec::new();
-    backend_ids.extend(data.processes.iter().map(|(n, _, _, _)| n.clone()));
-    backend_ids.extend(data.remotes.iter().map(|(n, _, _)| n.clone()));
+    backend_ids.extend(data.processes.iter().map(|(n, _, _, _, _)| n.clone()));
+    backend_ids.extend(data.remotes.iter().map(|(n, _, _, _)| n.clone()));
     backend_ids.extend(data.statics.iter().map(|(n, _, _)| n.clone()));
-    backend_ids.extend(data.docker.iter().map(|(n, _, _)| n.clone()));
+    backend_ids.extend(data.docker.iter().map(|(n, _, _, _)| n.clone()));
 
     let process_ids: std::collections::HashSet<String> = data
         .processes
         .iter()
-        .map(|(n, _, _, _)| n.clone())
+        .map(|(n, _, _, _, _)| n.clone())
         .collect();
 
     let mut backend_state: std::collections::BTreeMap<String, ProcState> =
         std::collections::BTreeMap::new();
     let mut backend_kind: std::collections::BTreeMap<String, &'static str> =
         std::collections::BTreeMap::new();
-    for (name, state, _, _) in &data.processes {
+    for (name, state, _, _, _) in &data.processes {
         backend_state.insert(name.clone(), state.clone());
         backend_kind.insert(name.clone(), "process");
     }
-    for (name, state, _) in &data.remotes {
+    for (name, state, _, _) in &data.remotes {
         backend_state.insert(name.clone(), state.clone());
         backend_kind.insert(name.clone(), "remote");
     }
@@ -560,7 +581,7 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
         backend_state.insert(name.clone(), state.clone());
         backend_kind.insert(name.clone(), "static");
     }
-    for (name, state, _) in &data.docker {
+    for (name, state, _, _) in &data.docker {
         backend_state.insert(name.clone(), state.clone());
         backend_kind.insert(name.clone(), "docker");
     }
@@ -616,23 +637,37 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
             state_label: None,
             state_color: None,
             detail,
+            port: String::new(),
             muted: false,
             alert: missing || !backend_ok,
         });
     }
-    for (name, state, bin, port) in &data.processes {
+    for (name, state, bin, args, port) in &data.processes {
         let combined = routes_by_backend.get(name).and_then(|r| r.first()).cloned();
         let is_unused = !routes_by_backend.contains_key(name);
+        let display_bin = if SHOW_FULL_PATH.load(std::sync::atomic::Ordering::Relaxed) {
+            bin.clone()
+        } else {
+            std::path::Path::new(bin.as_str())
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| bin.clone())
+        };
+        let bin_and_args = if args.is_empty() {
+            display_bin
+        } else {
+            format!("{} {}", display_bin, args.join(" "))
+        };
         let (display_name, suffix) = if let Some((host, https_only)) = combined {
             let marker = if https_only { " (https-only)" } else { "" };
             (
                 host,
-                format!("backend: {}{} · {} · port: {}", name, marker, bin, port),
+                format!("{}{}", bin_and_args, marker),
             )
         } else {
             (
                 name.clone(),
-                format!("{} · port: {} (no frontend)", bin, port),
+                format!("{} (no frontend)", bin_and_args),
             )
         };
         rows.push(RowData {
@@ -643,18 +678,19 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
             state_label: is_unused.then_some("unused"),
             state_color: is_unused.then_some(unused_color(light_theme)),
             detail: suffix,
+            port: port.clone(),
             muted: false,
             alert: false,
         });
     }
-    for (name, state, detail) in &data.remotes {
+    for (name, state, detail, remote_port) in &data.remotes {
         let combined = routes_by_backend.get(name).and_then(|r| r.first()).cloned();
         let is_unused = !routes_by_backend.contains_key(name);
         let (display_name, suffix, muted, alert) = if let Some((host, https_only)) = combined {
             let marker = if https_only { " (https-only)" } else { "" };
             (
                 host,
-                format!("backend: {}{} · {}", name, marker, detail),
+                format!("{}{} · {}", name, marker, detail),
                 false,
                 false,
             )
@@ -674,6 +710,7 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
             state_label: is_unused.then_some("unused"),
             state_color: is_unused.then_some(unused_color(light_theme)),
             detail: suffix,
+            port: remote_port.clone(),
             muted,
             alert,
         });
@@ -685,7 +722,7 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
             let marker = if https_only { " (https-only)" } else { "" };
             (
                 host,
-                format!("backend: {}{} · {}", name, marker, dir),
+                format!("{}{} · {}", name, marker, dir),
                 false,
                 false,
             )
@@ -700,16 +737,17 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
             state_label: is_unused.then_some("unused"),
             state_color: is_unused.then_some(unused_color(light_theme)),
             detail: suffix,
+            port: data.listen_ports.clone(),
             muted,
             alert,
         });
     }
-    for (name, state, image) in &data.docker {
+    for (name, state, image, docker_port) in &data.docker {
         let combined = routes_by_backend.get(name).and_then(|r| r.first()).cloned();
         let is_unused = !routes_by_backend.contains_key(name);
         let (display_name, suffix) = if let Some((host, https_only)) = combined {
             let marker = if https_only { " (https-only)" } else { "" };
-            (host, format!("backend: {}{} · {}", name, marker, image))
+            (host, format!("{}{} · {}", name, marker, image))
         } else {
             (name.clone(), format!("{image} (no frontend)"))
         };
@@ -721,6 +759,7 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
             state_label: is_unused.then_some("unused"),
             state_color: is_unused.then_some(unused_color(light_theme)),
             detail: suffix,
+            port: docker_port.clone(),
             muted: false,
             alert: false,
         });
@@ -760,17 +799,20 @@ fn build_flat_table<'a>(
             let mut name_cell = Cell::from(row.name.clone());
             let mut detail_cell = Cell::from(row.detail.clone());
             let mut kind_cell = Cell::from(row.kind);
+            let mut port_cell = Cell::from(row.port.clone());
             if row.alert {
                 let alert_style = Style::default().fg(Color::Red);
                 name_cell = name_cell.style(alert_style);
                 detail_cell = detail_cell.style(alert_style);
                 kind_cell = kind_cell.style(alert_style);
+                port_cell = port_cell.style(alert_style);
             }
             let mut table_row = Row::new(vec![
                 kind_cell,
-                name_cell,
                 Cell::from(label).style(Style::default().fg(color)),
+                name_cell,
                 detail_cell,
+                port_cell,
             ]);
             if row.muted {
                 table_row = table_row.style(Style::default().fg(muted_color(light_theme)));
@@ -781,9 +823,10 @@ fn build_flat_table<'a>(
 
     let header = Row::new(vec![
         Cell::from("Type"),
-        Cell::from("Name"),
         Cell::from("State"),
+        Cell::from("Name"),
         Cell::from("Detail"),
+        Cell::from("Port"),
     ])
     .style(Style::default().fg(muted_color(light_theme)));
 
@@ -791,9 +834,10 @@ fn build_flat_table<'a>(
         rows_vec,
         [
             Constraint::Length(8),
-            Constraint::Percentage(35),
             Constraint::Length(10),
-            Constraint::Percentage(47),
+            Constraint::Length(30),
+            Constraint::Fill(1),
+            Constraint::Length(16),
         ],
     )
     .header(header)
@@ -1027,6 +1071,7 @@ fn scroll_pos_from_mouse(scroll_area: Rect, mouse_row: u16, max_start: usize) ->
 static TUI_SCROLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static TUI_DOCKER_SCROLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static TUI_LOG_SCROLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static SHOW_FULL_PATH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Clone, Debug)]
 struct LogLine {
@@ -1720,7 +1765,7 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                                 if let Some(entry) = data
                                                     .processes
                                                     .iter_mut()
-                                                    .find(|(n, _, _, _)| n == proc_id)
+                                                    .find(|(n, _, _, _, _)| n == proc_id)
                                                 {
                                                     entry.1 = state;
                                                 }
@@ -1878,7 +1923,7 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                             dirty = true;
                         } else if page == TuiPage::Sites && key.code == KeyCode::Char('s') {
                             let mut changed = false;
-                            for (name, state, _, _) in data.processes.iter_mut() {
+                            for (name, state, _, _, _) in data.processes.iter_mut() {
                                 if matches!(state, ProcState::Stopped | ProcState::Faulty) {
                                     global_state.process_registry.update_state(
                                         name,
@@ -1898,9 +1943,13 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                             if changed {
                                 dirty = true;
                             }
+                        } else if page == TuiPage::Sites && key.code == KeyCode::Char('p') {
+                            let prev = SHOW_FULL_PATH.load(std::sync::atomic::Ordering::Relaxed);
+                            SHOW_FULL_PATH.store(!prev, std::sync::atomic::Ordering::Relaxed);
+                            dirty = true;
                         } else if page == TuiPage::Sites && key.code == KeyCode::Char('x') {
                             let mut changed = false;
-                            for (name, state, _, _) in data.processes.iter_mut() {
+                            for (name, state, _, _, _) in data.processes.iter_mut() {
                                 if matches!(
                                     state,
                                     ProcState::Running | ProcState::Starting | ProcState::Faulty
