@@ -198,8 +198,15 @@ async fn build_snapshot(global_state: &GlobalState) -> Snapshot {
                 let scheme = if remote.https { "https" } else { "http" };
                 (format!("{} ({})", ep.addr, scheme), ep.port.to_string())
             } else {
-                let ports: Vec<String> = remote.endpoints.iter().map(|ep| ep.port.to_string()).collect();
-                (format!("{} endpoints", remote.endpoints.len()), ports.join(","))
+                let ports: Vec<String> = remote
+                    .endpoints
+                    .iter()
+                    .map(|ep| ep.port.to_string())
+                    .collect();
+                (
+                    format!("{} endpoints", remote.endpoints.len()),
+                    ports.join(","),
+                )
             };
             (backend_id, state, detail, port)
         })
@@ -224,7 +231,11 @@ async fn build_snapshot(global_state: &GlobalState) -> Snapshot {
             let cont = kv.value().clone();
             let host = cont.generate_host_name();
             let state = snapshot.state_of(&host).unwrap_or(ProcState::Docker);
-            let port = if cont.port == 0 { "-".to_string() } else { cont.port.to_string() };
+            let port = if cont.port == 0 {
+                "-".to_string()
+            } else {
+                cont.port.to_string()
+            };
             (host, state, cont.image_name, port)
         })
         .collect();
@@ -340,11 +351,17 @@ fn draw_ui(
     let status = if data.cruma_enabled {
         Paragraph::new(vec![
             Line::from(vec![
-                Span::styled("Cruma FQDN: ", Style::default().fg(muted_color(light_theme))),
+                Span::styled(
+                    "Cruma FQDN: ",
+                    Style::default().fg(muted_color(light_theme)),
+                ),
                 Span::raw(&data.cruma_fqdn),
             ]),
             Line::from(vec![
-                Span::styled("Cruma MOTD: ", Style::default().fg(muted_color(light_theme))),
+                Span::styled(
+                    "Cruma MOTD: ",
+                    Style::default().fg(muted_color(light_theme)),
+                ),
                 Span::raw(&data.cruma_motd),
             ]),
             Line::from(vec![
@@ -355,7 +372,10 @@ fn draw_ui(
     } else {
         Paragraph::new(vec![
             Line::from(vec![
-                Span::styled("Cruma Ingress: ", Style::default().fg(muted_color(light_theme))),
+                Span::styled(
+                    "Cruma Ingress: ",
+                    Style::default().fg(muted_color(light_theme)),
+                ),
                 Span::raw("Disabled"),
             ]),
             Line::from(""),
@@ -421,8 +441,14 @@ fn draw_ui(
             let detailed = TRAFFIC_DETAILED_MODE.load(std::sync::atomic::Ordering::Relaxed);
             let zoom = TRAFFIC_ZOOM_MODE.load(std::sync::atomic::Ordering::Relaxed);
             if detailed || zoom {
-                let (view, total, start, visible, scroll_area) =
-                    build_traffic_detailed_view(capture_snapshot, traffic_inspection_enabled, root[1], light_theme, http_capture_store, zoom);
+                let (view, total, start, visible, scroll_area) = build_traffic_detailed_view(
+                    capture_snapshot,
+                    traffic_inspection_enabled,
+                    root[1],
+                    light_theme,
+                    http_capture_store,
+                    zoom,
+                );
                 f.render_widget(view, root[1]);
                 if total > visible {
                     let content_len = total.saturating_sub(visible).saturating_add(1).max(1);
@@ -434,7 +460,12 @@ fn draw_ui(
                 }
             } else {
                 let (table, mut tbl_state, total, start, visible, scroll_area) =
-                    build_traffic_table(capture_snapshot, traffic_inspection_enabled, root[1], light_theme);
+                    build_traffic_table(
+                        capture_snapshot,
+                        traffic_inspection_enabled,
+                        root[1],
+                        light_theme,
+                    );
                 f.render_stateful_widget(table, root[1], &mut tbl_state);
 
                 if total > visible {
@@ -462,11 +493,13 @@ fn draw_ui(
             Span::styled("x", Style::default().fg(muted_color(light_theme))),
             Span::raw(" (stop all)  "),
             Span::styled("p", Style::default().fg(muted_color(light_theme))),
-            Span::raw(if SHOW_FULL_PATH.load(std::sync::atomic::Ordering::Relaxed) {
-                " (short paths)  "
-            } else {
-                " (full paths)  "
-            }),
+            Span::raw(
+                if SHOW_FULL_PATH.load(std::sync::atomic::Ordering::Relaxed) {
+                    " (short paths)  "
+                } else {
+                    " (full paths)  "
+                },
+            ),
         ]),
         TuiPage::Docker => {}
         TuiPage::Traffic => {
@@ -491,7 +524,11 @@ fn draw_ui(
             if detailed {
                 footer_spans.extend([
                     Span::styled("z", Style::default().fg(muted_color(light_theme))),
-                    Span::raw(if zoom { " (zoom:on)  " } else { " (zoom:off)  " }),
+                    Span::raw(if zoom {
+                        " (zoom:on)  "
+                    } else {
+                        " (zoom:off)  "
+                    }),
                 ]);
             }
             footer_spans.extend([
@@ -679,9 +716,9 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
         };
         let backend_kind = backend_kind.get(backend).copied().unwrap_or("unknown");
         let mut detail = if *https_only {
-            format!("-> {} ({}, https-only)", backend, backend_kind)
+            format!("{} ({}, https-only)", backend, backend_kind)
         } else {
-            format!("-> {} ({})", backend, backend_kind)
+            format!("{} ({})", backend, backend_kind)
         };
         if missing {
             detail.push_str(" (missing backend)");
@@ -724,15 +761,9 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
         };
         let (display_name, suffix) = if let Some((host, https_only)) = combined {
             let marker = if https_only { " (https-only)" } else { "" };
-            (
-                host,
-                format!("{}{}", bin_and_args, marker),
-            )
+            (host, format!("{}{}", bin_and_args, marker))
         } else {
-            (
-                name.clone(),
-                format!("{} (no frontend)", bin_and_args),
-            )
+            (name.clone(), format!("{} (no frontend)", bin_and_args))
         };
         rows.push(RowData {
             kind: "process",
@@ -784,12 +815,7 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
         let is_unused = !routes_by_backend.contains_key(name);
         let (display_name, suffix, muted, alert) = if let Some((host, https_only)) = combined {
             let marker = if https_only { " (https-only)" } else { "" };
-            (
-                host,
-                format!("{}{} · {}", name, marker, dir),
-                false,
-                false,
-            )
+            (host, format!("{}{} · {}", name, marker, dir), false, false)
         } else {
             (name.clone(), format!("{} (no frontend)", dir), false, false)
         };
@@ -1119,9 +1145,7 @@ fn hit_test_site_row(area: Rect, mouse_y: u16, total: usize) -> Option<usize> {
     Some(row_index)
 }
 
-fn sorted_docker_rows(
-    data: &Snapshot,
-) -> Vec<DockerRow> {
+fn sorted_docker_rows(data: &Snapshot) -> Vec<DockerRow> {
     let mut rows = data.docker_discovered.clone();
     rows.sort_by_cached_key(|row| row.container_name.to_ascii_lowercase());
     rows
@@ -1179,7 +1203,8 @@ static TUI_DOCKER_SCROLL: std::sync::atomic::AtomicUsize = std::sync::atomic::At
 static TUI_LOG_SCROLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static TUI_TRAFFIC_SCROLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static SHOW_FULL_PATH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static TRAFFIC_DETAILED_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static TRAFFIC_DETAILED_MODE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 static TRAFFIC_ZOOM_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Cached total line count from the last detailed/zoom render pass.
 /// Used by mouse scroll handlers so they don't need to recompute it.
@@ -1308,7 +1333,13 @@ fn format_headers_preview(headers: &[(String, String)], max_headers: usize) -> S
     let preview: Vec<String> = headers
         .iter()
         .take(max_headers)
-        .map(|(k, v)| format!("{}: {}", sanitize_for_tui(k), traffic_truncate(&sanitize_for_tui(v), 40)))
+        .map(|(k, v)| {
+            format!(
+                "{}: {}",
+                sanitize_for_tui(k),
+                traffic_truncate(&sanitize_for_tui(v), 40)
+            )
+        })
         .collect();
     let mut result = preview.join(", ");
     if headers.len() > max_headers {
@@ -1330,7 +1361,10 @@ fn traffic_kind_badge(kind: &cruma_proxy_lib::proxying::HttpRequestKind) -> (&'s
 fn is_streaming(entry: &cruma_proxy_lib::proxying::capture_store::CapturedExchange) -> bool {
     use cruma_proxy_lib::proxying::HttpRequestKind;
     entry.is_inflight
-        && matches!(entry.kind, HttpRequestKind::SSE | HttpRequestKind::WebSocket)
+        && matches!(
+            entry.kind,
+            HttpRequestKind::SSE | HttpRequestKind::WebSocket
+        )
 }
 
 fn format_traffic_request_detailed<'a>(
@@ -1342,12 +1376,14 @@ fn format_traffic_request_detailed<'a>(
     let mut lines = Vec::new();
 
     // Line 1: Request line with response status
-    let mut request_line = vec![
-        Span::styled(
-            entry.client_addr.as_ref().map(|s| format!("[{}] ", sanitize_for_tui(s))).unwrap_or_else(|| "[?] ".to_string()),
-            Style::default().fg(muted_color(light_theme)),
-        ),
-    ];
+    let mut request_line = vec![Span::styled(
+        entry
+            .client_addr
+            .as_ref()
+            .map(|s| format!("[{}] ", sanitize_for_tui(s)))
+            .unwrap_or_else(|| "[?] ".to_string()),
+        Style::default().fg(muted_color(light_theme)),
+    )];
 
     if entry.kind != HttpRequestKind::Regular {
         let (badge_text, badge_color) = traffic_kind_badge(&entry.kind);
@@ -1365,7 +1401,10 @@ fn format_traffic_request_detailed<'a>(
     }
 
     request_line.extend([
-        Span::styled(format!("→ {}", sanitize_for_tui(&entry.method)), Style::default().fg(Color::Cyan).bold()),
+        Span::styled(
+            format!("→ {}", sanitize_for_tui(&entry.method)),
+            Style::default().fg(Color::Cyan).bold(),
+        ),
         Span::raw(" "),
         Span::styled(
             sanitize_for_tui(&entry.host.clone().unwrap_or_else(|| "<no-host>".into())),
@@ -1381,9 +1420,15 @@ fn format_traffic_request_detailed<'a>(
             HttpRequestKind::WebSocket => "⇅ open (WS)",
             _ => "⇣ streaming",
         };
-        request_line.push(Span::styled(stream_label, Style::default().fg(Color::LightGreen).bold()));
+        request_line.push(Span::styled(
+            stream_label,
+            Style::default().fg(Color::LightGreen).bold(),
+        ));
         if let Some(status) = entry.status {
-            request_line.push(Span::styled(format!(" {status}"), Style::default().fg(Color::Green)));
+            request_line.push(Span::styled(
+                format!(" {status}"),
+                Style::default().fg(Color::Green),
+            ));
         }
     } else {
         match (entry.status, entry.duration_ms) {
@@ -1395,10 +1440,16 @@ fn format_traffic_request_detailed<'a>(
                 } else {
                     Style::default().fg(Color::Yellow)
                 };
-                request_line.push(Span::styled(format!("← {} ({} ms)", status, duration), status_style.bold()));
+                request_line.push(Span::styled(
+                    format!("← {} ({} ms)", status, duration),
+                    status_style.bold(),
+                ));
             }
             _ => {
-                request_line.push(Span::styled("↻ pending...", Style::default().fg(muted_color(light_theme))));
+                request_line.push(Span::styled(
+                    "↻ pending...",
+                    Style::default().fg(muted_color(light_theme)),
+                ));
             }
         }
     }
@@ -1410,7 +1461,10 @@ fn format_traffic_request_detailed<'a>(
             let header_preview = format_headers_preview(headers, 3);
             lines.push(Line::from(vec![
                 Span::raw("  "),
-                Span::styled("Req Headers: ", Style::default().fg(muted_color(light_theme))),
+                Span::styled(
+                    "Req Headers: ",
+                    Style::default().fg(muted_color(light_theme)),
+                ),
                 Span::styled(header_preview, Style::default().fg(Color::Blue)),
             ]));
         }
@@ -1418,24 +1472,47 @@ fn format_traffic_request_detailed<'a>(
 
     // Request body preview
     if entry.req_body_size.unwrap_or(0) > 0 {
-        let truncated_marker = if entry.req_body_truncated { " (truncated)" } else { "" };
-        let content_encoding = entry.req_headers.as_ref().and_then(|h| find_header_value(h, "content-encoding"));
-        if let Some(preview) = read_body_preview(capture_store, entry.req_id, true, content_encoding.as_deref()) {
+        let truncated_marker = if entry.req_body_truncated {
+            " (truncated)"
+        } else {
+            ""
+        };
+        let content_encoding = entry
+            .req_headers
+            .as_ref()
+            .and_then(|h| find_header_value(h, "content-encoding"));
+        if let Some(preview) = read_body_preview(
+            capture_store,
+            entry.req_id,
+            true,
+            content_encoding.as_deref(),
+        ) {
             lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled("Req Body: ", Style::default().fg(muted_color(light_theme))),
                 Span::styled(
-                    format!("({} bytes{}) ", entry.req_body_size.unwrap_or(0), truncated_marker),
+                    format!(
+                        "({} bytes{}) ",
+                        entry.req_body_size.unwrap_or(0),
+                        truncated_marker
+                    ),
                     Style::default().fg(muted_color(light_theme)),
                 ),
-                Span::styled(traffic_truncate(&preview, 200), Style::default().fg(Color::Blue)),
+                Span::styled(
+                    traffic_truncate(&preview, 200),
+                    Style::default().fg(Color::Blue),
+                ),
             ]));
         } else {
             lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled("Req Body: ", Style::default().fg(muted_color(light_theme))),
                 Span::styled(
-                    format!("[binary data, {} bytes{}]", entry.req_body_size.unwrap_or(0), truncated_marker),
+                    format!(
+                        "[binary data, {} bytes{}]",
+                        entry.req_body_size.unwrap_or(0),
+                        truncated_marker
+                    ),
                     Style::default().fg(muted_color(light_theme)),
                 ),
             ]));
@@ -1448,7 +1525,10 @@ fn format_traffic_request_detailed<'a>(
             let header_preview = format_headers_preview(headers, 3);
             lines.push(Line::from(vec![
                 Span::raw("  "),
-                Span::styled("Resp Headers: ", Style::default().fg(muted_color(light_theme))),
+                Span::styled(
+                    "Resp Headers: ",
+                    Style::default().fg(muted_color(light_theme)),
+                ),
                 Span::styled(header_preview, Style::default().fg(Color::Magenta)),
             ]));
         }
@@ -1456,24 +1536,47 @@ fn format_traffic_request_detailed<'a>(
 
     // Response body preview
     if entry.resp_body_size.unwrap_or(0) > 0 {
-        let truncated_marker = if entry.resp_body_truncated { " (truncated)" } else { "" };
-        let content_encoding = entry.resp_headers.as_ref().and_then(|h| find_header_value(h, "content-encoding"));
-        if let Some(preview) = read_body_preview(capture_store, entry.req_id, false, content_encoding.as_deref()) {
+        let truncated_marker = if entry.resp_body_truncated {
+            " (truncated)"
+        } else {
+            ""
+        };
+        let content_encoding = entry
+            .resp_headers
+            .as_ref()
+            .and_then(|h| find_header_value(h, "content-encoding"));
+        if let Some(preview) = read_body_preview(
+            capture_store,
+            entry.req_id,
+            false,
+            content_encoding.as_deref(),
+        ) {
             lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled("Resp Body: ", Style::default().fg(muted_color(light_theme))),
                 Span::styled(
-                    format!("({} bytes{}) ", entry.resp_body_size.unwrap_or(0), truncated_marker),
+                    format!(
+                        "({} bytes{}) ",
+                        entry.resp_body_size.unwrap_or(0),
+                        truncated_marker
+                    ),
                     Style::default().fg(muted_color(light_theme)),
                 ),
-                Span::styled(traffic_truncate(&preview, 200), Style::default().fg(Color::Magenta)),
+                Span::styled(
+                    traffic_truncate(&preview, 200),
+                    Style::default().fg(Color::Magenta),
+                ),
             ]));
         } else {
             lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled("Resp Body: ", Style::default().fg(muted_color(light_theme))),
                 Span::styled(
-                    format!("[binary data, {} bytes{}]", entry.resp_body_size.unwrap_or(0), truncated_marker),
+                    format!(
+                        "[binary data, {} bytes{}]",
+                        entry.resp_body_size.unwrap_or(0),
+                        truncated_marker
+                    ),
                     Style::default().fg(muted_color(light_theme)),
                 ),
             ]));
@@ -1495,7 +1598,10 @@ fn format_traffic_request_detailed<'a>(
             };
             lines.push(Line::from(vec![
                 Span::raw("  "),
-                Span::styled("WS Messages: ", Style::default().fg(Color::LightMagenta).bold()),
+                Span::styled(
+                    "WS Messages: ",
+                    Style::default().fg(Color::LightMagenta).bold(),
+                ),
                 Span::styled(summary, Style::default().fg(muted_color(light_theme))),
             ]));
             let display_count = snap.messages.len().min(8);
@@ -1530,15 +1636,24 @@ fn format_traffic_request_detailed<'a>(
                 lines.push(Line::from(vec![
                     Span::raw("    "),
                     Span::styled(arrow, Style::default().fg(arrow_color).bold()),
-                    Span::styled(format!(" [{kind_label}] "), Style::default().fg(muted_color(light_theme))),
-                    Span::styled(format!("({size_info}) "), Style::default().fg(muted_color(light_theme))),
+                    Span::styled(
+                        format!(" [{kind_label}] "),
+                        Style::default().fg(muted_color(light_theme)),
+                    ),
+                    Span::styled(
+                        format!("({size_info}) "),
+                        Style::default().fg(muted_color(light_theme)),
+                    ),
                     Span::styled(payload_preview, Style::default().fg(arrow_color)),
                 ]));
             }
             if start > 0 {
                 lines.push(Line::from(vec![
                     Span::raw("    "),
-                    Span::styled(format!("… {start} older messages not shown"), Style::default().fg(muted_color(light_theme))),
+                    Span::styled(
+                        format!("… {start} older messages not shown"),
+                        Style::default().fg(muted_color(light_theme)),
+                    ),
                 ]));
             }
         }
@@ -1557,7 +1672,10 @@ fn format_traffic_request_detailed<'a>(
             };
             lines.push(Line::from(vec![
                 Span::raw("  "),
-                Span::styled("SSE Events: ", Style::default().fg(Color::LightGreen).bold()),
+                Span::styled(
+                    "SSE Events: ",
+                    Style::default().fg(Color::LightGreen).bold(),
+                ),
                 Span::styled(summary, Style::default().fg(muted_color(light_theme))),
             ]));
             let display_count = snap.events.len().min(8);
@@ -1565,9 +1683,16 @@ fn format_traffic_request_detailed<'a>(
             for evt in &snap.events[start..] {
                 let event_type = sanitize_for_tui(evt.event_type.as_deref().unwrap_or("message"));
                 let is_comment_only = evt.data.is_empty() && !evt.comments.is_empty();
-                let label = if is_comment_only { "comment".to_string() } else { event_type };
+                let label = if is_comment_only {
+                    "comment".to_string()
+                } else {
+                    event_type
+                };
                 let payload_preview = if is_comment_only {
-                    traffic_truncate(&sanitize_for_tui(evt.comments.first().map(|s| s.as_str()).unwrap_or("")), 120)
+                    traffic_truncate(
+                        &sanitize_for_tui(evt.comments.first().map(|s| s.as_str()).unwrap_or("")),
+                        120,
+                    )
                 } else {
                     traffic_truncate(&sanitize_for_tui(&evt.data), 120)
                 };
@@ -1581,21 +1706,36 @@ fn format_traffic_request_detailed<'a>(
                 let mut spans = vec![
                     Span::raw("    "),
                     Span::styled("↓", Style::default().fg(Color::LightGreen).bold()),
-                    Span::styled(format!(" [{label}] "), Style::default().fg(muted_color(light_theme))),
+                    Span::styled(
+                        format!(" [{label}] "),
+                        Style::default().fg(muted_color(light_theme)),
+                    ),
                 ];
                 if let Some(id) = &evt.id {
-                    spans.push(Span::styled(format!("id={} ", sanitize_for_tui(id)), Style::default().fg(muted_color(light_theme))));
+                    spans.push(Span::styled(
+                        format!("id={} ", sanitize_for_tui(id)),
+                        Style::default().fg(muted_color(light_theme)),
+                    ));
                 }
                 if !size_info.is_empty() {
-                    spans.push(Span::styled(format!("({size_info}) "), Style::default().fg(muted_color(light_theme))));
+                    spans.push(Span::styled(
+                        format!("({size_info}) "),
+                        Style::default().fg(muted_color(light_theme)),
+                    ));
                 }
-                spans.push(Span::styled(payload_preview, Style::default().fg(Color::LightGreen)));
+                spans.push(Span::styled(
+                    payload_preview,
+                    Style::default().fg(Color::LightGreen),
+                ));
                 lines.push(Line::from(spans));
             }
             if start > 0 {
                 lines.push(Line::from(vec![
                     Span::raw("    "),
-                    Span::styled(format!("… {start} older events not shown"), Style::default().fg(muted_color(light_theme))),
+                    Span::styled(
+                        format!("… {start} older events not shown"),
+                        Style::default().fg(muted_color(light_theme)),
+                    ),
                 ]));
             }
         }
@@ -1615,26 +1755,40 @@ fn format_traffic_request_zoom<'a>(
     let mut lines = Vec::new();
 
     // Line 1: Request line with response status
-    let mut request_line = vec![
-        Span::styled(
-            entry.client_addr.as_ref().map(|s| format!("[{}] ", sanitize_for_tui(s))).unwrap_or_else(|| "[?] ".to_string()),
-            Style::default().fg(muted_color(light_theme)),
-        ),
-    ];
+    let mut request_line = vec![Span::styled(
+        entry
+            .client_addr
+            .as_ref()
+            .map(|s| format!("[{}] ", sanitize_for_tui(s)))
+            .unwrap_or_else(|| "[?] ".to_string()),
+        Style::default().fg(muted_color(light_theme)),
+    )];
 
     if entry.kind != HttpRequestKind::Regular {
         let (badge_text, badge_color) = traffic_kind_badge(&entry.kind);
-        request_line.push(Span::styled(format!("[{badge_text}] "), Style::default().fg(badge_color).bold()));
+        request_line.push(Span::styled(
+            format!("[{badge_text}] "),
+            Style::default().fg(badge_color).bold(),
+        ));
     }
 
     if let Some(ref ver) = entry.http_version {
-        request_line.push(Span::styled(format!("{} ", sanitize_for_tui(ver)), Style::default().fg(muted_color(light_theme))));
+        request_line.push(Span::styled(
+            format!("{} ", sanitize_for_tui(ver)),
+            Style::default().fg(muted_color(light_theme)),
+        ));
     }
 
     request_line.extend([
-        Span::styled(format!("→ {}", sanitize_for_tui(&entry.method)), Style::default().fg(Color::Cyan).bold()),
+        Span::styled(
+            format!("→ {}", sanitize_for_tui(&entry.method)),
+            Style::default().fg(Color::Cyan).bold(),
+        ),
         Span::raw(" "),
-        Span::styled(sanitize_for_tui(&entry.host.clone().unwrap_or_else(|| "<no-host>".into())), Style::default().fg(Color::Yellow)),
+        Span::styled(
+            sanitize_for_tui(&entry.host.clone().unwrap_or_else(|| "<no-host>".into())),
+            Style::default().fg(Color::Yellow),
+        ),
         Span::raw(sanitize_for_tui(&entry.path)),
     ]);
 
@@ -1645,9 +1799,15 @@ fn format_traffic_request_zoom<'a>(
             HttpRequestKind::WebSocket => "⇅ open (WS)",
             _ => "⇣ streaming",
         };
-        request_line.push(Span::styled(stream_label, Style::default().fg(Color::LightGreen).bold()));
+        request_line.push(Span::styled(
+            stream_label,
+            Style::default().fg(Color::LightGreen).bold(),
+        ));
         if let Some(status) = entry.status {
-            request_line.push(Span::styled(format!(" {status}"), Style::default().fg(Color::Green)));
+            request_line.push(Span::styled(
+                format!(" {status}"),
+                Style::default().fg(Color::Green),
+            ));
         }
     } else {
         match (entry.status, entry.duration_ms) {
@@ -1659,10 +1819,16 @@ fn format_traffic_request_zoom<'a>(
                 } else {
                     Style::default().fg(Color::Yellow)
                 };
-                request_line.push(Span::styled(format!("← {} ({} ms)", status, duration), status_style.bold()));
+                request_line.push(Span::styled(
+                    format!("← {} ({} ms)", status, duration),
+                    status_style.bold(),
+                ));
             }
             _ => {
-                request_line.push(Span::styled("↻ pending...", Style::default().fg(muted_color(light_theme))));
+                request_line.push(Span::styled(
+                    "↻ pending...",
+                    Style::default().fg(muted_color(light_theme)),
+                ));
             }
         }
     }
@@ -1677,7 +1843,10 @@ fn format_traffic_request_zoom<'a>(
             )));
             for (key, value) in headers {
                 lines.push(Line::from(vec![
-                    Span::styled(format!("  {}: ", sanitize_for_tui(key)), Style::default().fg(Color::Blue).bold()),
+                    Span::styled(
+                        format!("  {}: ", sanitize_for_tui(key)),
+                        Style::default().fg(Color::Blue).bold(),
+                    ),
                     Span::styled(sanitize_for_tui(value), Style::default().fg(Color::Blue)),
                 ]));
             }
@@ -1686,22 +1855,45 @@ fn format_traffic_request_zoom<'a>(
 
     // Request body - full content
     if entry.req_body_size.unwrap_or(0) > 0 {
-        let truncated_marker = if entry.req_body_truncated { " (truncated)" } else { "" };
-        let content_encoding = entry.req_headers.as_ref().and_then(|h| find_header_value(h, "content-encoding"));
+        let truncated_marker = if entry.req_body_truncated {
+            " (truncated)"
+        } else {
+            ""
+        };
+        let content_encoding = entry
+            .req_headers
+            .as_ref()
+            .and_then(|h| find_header_value(h, "content-encoding"));
         lines.push(Line::from(vec![
             Span::styled("REQUEST BODY: ", Style::default().fg(Color::Cyan).bold()),
             Span::styled(
-                format!("{} bytes{}", entry.req_body_size.unwrap_or(0), truncated_marker),
+                format!(
+                    "{} bytes{}",
+                    entry.req_body_size.unwrap_or(0),
+                    truncated_marker
+                ),
                 Style::default().fg(Color::Cyan),
             ),
         ]));
-        if let Some(preview) = read_body_preview(capture_store, entry.req_id, true, content_encoding.as_deref()) {
+        if let Some(preview) = read_body_preview(
+            capture_store,
+            entry.req_id,
+            true,
+            content_encoding.as_deref(),
+        ) {
             for body_line in sanitize_for_tui(&preview).lines() {
-                lines.push(Line::from(Span::styled(format!("  {}", body_line), Style::default().fg(Color::Cyan))));
+                lines.push(Line::from(Span::styled(
+                    format!("  {}", body_line),
+                    Style::default().fg(Color::Cyan),
+                )));
             }
         } else {
             lines.push(Line::from(Span::styled(
-                format!("  [binary data, {} bytes{}]", entry.req_body_size.unwrap_or(0), truncated_marker),
+                format!(
+                    "  [binary data, {} bytes{}]",
+                    entry.req_body_size.unwrap_or(0),
+                    truncated_marker
+                ),
                 Style::default().fg(muted_color(light_theme)),
             )));
         }
@@ -1716,7 +1908,10 @@ fn format_traffic_request_zoom<'a>(
             )));
             for (key, value) in headers {
                 lines.push(Line::from(vec![
-                    Span::styled(format!("  {}: ", sanitize_for_tui(key)), Style::default().fg(Color::Magenta).bold()),
+                    Span::styled(
+                        format!("  {}: ", sanitize_for_tui(key)),
+                        Style::default().fg(Color::Magenta).bold(),
+                    ),
                     Span::styled(sanitize_for_tui(value), Style::default().fg(Color::Magenta)),
                 ]));
             }
@@ -1725,22 +1920,48 @@ fn format_traffic_request_zoom<'a>(
 
     // Response body - full content
     if entry.resp_body_size.unwrap_or(0) > 0 {
-        let truncated_marker = if entry.resp_body_truncated { " (truncated)" } else { "" };
-        let content_encoding = entry.resp_headers.as_ref().and_then(|h| find_header_value(h, "content-encoding"));
+        let truncated_marker = if entry.resp_body_truncated {
+            " (truncated)"
+        } else {
+            ""
+        };
+        let content_encoding = entry
+            .resp_headers
+            .as_ref()
+            .and_then(|h| find_header_value(h, "content-encoding"));
         lines.push(Line::from(vec![
-            Span::styled("RESPONSE BODY: ", Style::default().fg(Color::LightMagenta).bold()),
             Span::styled(
-                format!("{} bytes{}", entry.resp_body_size.unwrap_or(0), truncated_marker),
+                "RESPONSE BODY: ",
+                Style::default().fg(Color::LightMagenta).bold(),
+            ),
+            Span::styled(
+                format!(
+                    "{} bytes{}",
+                    entry.resp_body_size.unwrap_or(0),
+                    truncated_marker
+                ),
                 Style::default().fg(Color::LightMagenta),
             ),
         ]));
-        if let Some(preview) = read_body_preview(capture_store, entry.req_id, false, content_encoding.as_deref()) {
+        if let Some(preview) = read_body_preview(
+            capture_store,
+            entry.req_id,
+            false,
+            content_encoding.as_deref(),
+        ) {
             for body_line in sanitize_for_tui(&preview).lines() {
-                lines.push(Line::from(Span::styled(format!("  {}", body_line), Style::default().fg(Color::LightMagenta))));
+                lines.push(Line::from(Span::styled(
+                    format!("  {}", body_line),
+                    Style::default().fg(Color::LightMagenta),
+                )));
             }
         } else {
             lines.push(Line::from(Span::styled(
-                format!("  [binary data, {} bytes{}]", entry.resp_body_size.unwrap_or(0), truncated_marker),
+                format!(
+                    "  [binary data, {} bytes{}]",
+                    entry.resp_body_size.unwrap_or(0),
+                    truncated_marker
+                ),
                 Style::default().fg(muted_color(light_theme)),
             )));
         }
@@ -1776,13 +1997,23 @@ fn format_traffic_request_zoom<'a>(
                     WsMessageKind::Close => "close",
                 };
                 let size_info = if msg.original_len != msg.payload.len() {
-                    format!("{} B (truncated from {} B)", msg.payload.len(), msg.original_len)
+                    format!(
+                        "{} B (truncated from {} B)",
+                        msg.payload.len(),
+                        msg.original_len
+                    )
                 } else {
                     format!("{} B", msg.original_len)
                 };
                 lines.push(Line::from(vec![
-                    Span::styled(format!("  {arrow} {dir_label} "), Style::default().fg(arrow_color).bold()),
-                    Span::styled(format!("[{kind_label}] "), Style::default().fg(muted_color(light_theme))),
+                    Span::styled(
+                        format!("  {arrow} {dir_label} "),
+                        Style::default().fg(arrow_color).bold(),
+                    ),
+                    Span::styled(
+                        format!("[{kind_label}] "),
+                        Style::default().fg(muted_color(light_theme)),
+                    ),
                     Span::styled(size_info, Style::default().fg(muted_color(light_theme))),
                 ]));
                 let payload_str = if msg.kind == WsMessageKind::Text {
@@ -1825,9 +2056,17 @@ fn format_traffic_request_zoom<'a>(
             for evt in &snap.events {
                 let event_type = sanitize_for_tui(evt.event_type.as_deref().unwrap_or("message"));
                 let is_comment_only = evt.data.is_empty() && !evt.comments.is_empty();
-                let label = if is_comment_only { "comment".to_string() } else { event_type };
+                let label = if is_comment_only {
+                    "comment".to_string()
+                } else {
+                    event_type
+                };
                 let size_info = if evt.truncated {
-                    format!("{} B (truncated from {} B)", evt.data.len(), evt.original_data_len)
+                    format!(
+                        "{} B (truncated from {} B)",
+                        evt.data.len(),
+                        evt.original_data_len
+                    )
                 } else if !evt.data.is_empty() {
                     format!("{} B", evt.data.len())
                 } else {
@@ -1835,13 +2074,22 @@ fn format_traffic_request_zoom<'a>(
                 };
                 let mut header_spans = vec![
                     Span::styled("  ↓ recv ", Style::default().fg(Color::LightGreen).bold()),
-                    Span::styled(format!("[{label}] "), Style::default().fg(muted_color(light_theme))),
+                    Span::styled(
+                        format!("[{label}] "),
+                        Style::default().fg(muted_color(light_theme)),
+                    ),
                 ];
                 if let Some(id) = &evt.id {
-                    header_spans.push(Span::styled(format!("id={} ", sanitize_for_tui(id)), Style::default().fg(muted_color(light_theme))));
+                    header_spans.push(Span::styled(
+                        format!("id={} ", sanitize_for_tui(id)),
+                        Style::default().fg(muted_color(light_theme)),
+                    ));
                 }
                 if !size_info.is_empty() {
-                    header_spans.push(Span::styled(size_info, Style::default().fg(muted_color(light_theme))));
+                    header_spans.push(Span::styled(
+                        size_info,
+                        Style::default().fg(muted_color(light_theme)),
+                    ));
                 }
                 lines.push(Line::from(header_spans));
                 if is_comment_only {
@@ -1865,7 +2113,10 @@ fn format_traffic_request_zoom<'a>(
 
     // Separator
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("═".repeat(100), Style::default().fg(muted_color(light_theme)))));
+    lines.push(Line::from(Span::styled(
+        "═".repeat(100),
+        Style::default().fg(muted_color(light_theme)),
+    )));
     lines.push(Line::from(""));
     lines
 }
@@ -1936,11 +2187,7 @@ fn build_traffic_detailed_view<'a>(
     );
 
     let paragraph = Paragraph::new(visible_lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title),
-        )
+        .block(Block::default().borders(Borders::ALL).title(title))
         .wrap(Wrap { trim: false });
 
     let scroll_area = scroll_area_for_content(area);
@@ -2123,12 +2370,26 @@ fn build_traffic_table<'a>(
 
                 // Format body sizes: "req↑ / resp↓"
                 let size_str = {
-                    let req_sz = exchange.req_body_size.map(|s| fmt_bytes(s)).unwrap_or_default();
-                    let resp_sz = exchange.resp_body_size.map(|s| fmt_bytes(s)).unwrap_or_default();
+                    let req_sz = exchange
+                        .req_body_size
+                        .map(|s| fmt_bytes(s))
+                        .unwrap_or_default();
+                    let resp_sz = exchange
+                        .resp_body_size
+                        .map(|s| fmt_bytes(s))
+                        .unwrap_or_default();
                     let req_trunc = if exchange.req_body_truncated { "+" } else { "" };
-                    let resp_trunc = if exchange.resp_body_truncated { "+" } else { "" };
+                    let resp_trunc = if exchange.resp_body_truncated {
+                        "+"
+                    } else {
+                        ""
+                    };
                     if req_sz.is_empty() && resp_sz.is_empty() {
-                        if exchange.is_inflight { "...".to_string() } else { "—".to_string() }
+                        if exchange.is_inflight {
+                            "...".to_string()
+                        } else {
+                            "—".to_string()
+                        }
                     } else {
                         format!("{}{}↑ {}{}↓", req_sz, req_trunc, resp_sz, resp_trunc)
                     }
@@ -2144,10 +2405,7 @@ fn build_traffic_table<'a>(
                         Style::default().fg(muted_color(light_theme)),
                     )),
                     Cell::from(sanitize_for_tui(&exchange.path)),
-                    Cell::from(Span::styled(
-                        status_str,
-                        Style::default().fg(status_color),
-                    )),
+                    Cell::from(Span::styled(status_str, Style::default().fg(status_color))),
                     Cell::from(Span::styled(
                         duration_str,
                         Style::default().fg(muted_color(light_theme)),
@@ -2209,11 +2467,7 @@ fn build_traffic_table<'a>(
 
     let table = Table::new(rows, widths)
         .header(header)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title),
-        )
+        .block(Block::default().borders(Borders::ALL).title(title))
         .row_highlight_style(Style::default().bg(row_highlight_bg(light_theme)));
 
     let mut state = TableState::default();
@@ -2439,7 +2693,12 @@ fn restore_terminal(terminal: &mut Terminal<ratatui::backend::CrosstermBackend<S
 fn detect_light_terminal_from_env() -> bool {
     std::env::var("COLORFGBG")
         .ok()
-        .and_then(|value| value.rsplit(';').next().and_then(|bg| bg.parse::<u8>().ok()))
+        .and_then(|value| {
+            value
+                .rsplit(';')
+                .next()
+                .and_then(|bg| bg.parse::<u8>().ok())
+        })
         .map(|bg| bg == 7 || bg == 15)
         .unwrap_or(false)
 }
@@ -2640,25 +2899,28 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                         let next =
                                             (cur + delta).clamp(0, max_start as isize) as usize;
                                         if next != cur as usize {
-                                            TUI_DOCKER_SCROLL.store(
-                                                next,
-                                                std::sync::atomic::Ordering::Relaxed,
-                                            );
+                                            TUI_DOCKER_SCROLL
+                                                .store(next, std::sync::atomic::Ordering::Relaxed);
                                             dirty = true;
                                         }
                                     }
                                     TuiPage::Traffic => {
-                                        let detailed = TRAFFIC_DETAILED_MODE.load(std::sync::atomic::Ordering::Relaxed);
-                                        let zoom = TRAFFIC_ZOOM_MODE.load(std::sync::atomic::Ordering::Relaxed);
+                                        let detailed = TRAFFIC_DETAILED_MODE
+                                            .load(std::sync::atomic::Ordering::Relaxed);
+                                        let zoom = TRAFFIC_ZOOM_MODE
+                                            .load(std::sync::atomic::Ordering::Relaxed);
                                         let total = if detailed || zoom {
                                             // Use cached line count from last render
-                                            TRAFFIC_TOTAL_LINES.load(std::sync::atomic::Ordering::Relaxed)
+                                            TRAFFIC_TOTAL_LINES
+                                                .load(std::sync::atomic::Ordering::Relaxed)
                                         } else {
                                             let snap = global_state.http_capture_store.snapshot();
                                             snap.order.len()
                                         };
-                                        let visible =
-                                            content_area.height.saturating_sub(if detailed || zoom { 2 } else { 3 }) as usize;
+                                        let visible = content_area
+                                            .height
+                                            .saturating_sub(if detailed || zoom { 2 } else { 3 })
+                                            as usize;
                                         let max_start = total.saturating_sub(visible);
                                         let cur = TUI_TRAFFIC_SCROLL
                                             .load(std::sync::atomic::Ordering::Relaxed)
@@ -2666,10 +2928,8 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                         let next =
                                             (cur + delta).clamp(0, max_start as isize) as usize;
                                         if next != cur as usize {
-                                            TUI_TRAFFIC_SCROLL.store(
-                                                next,
-                                                std::sync::atomic::Ordering::Relaxed,
-                                            );
+                                            TUI_TRAFFIC_SCROLL
+                                                .store(next, std::sync::atomic::Ordering::Relaxed);
                                             dirty = true;
                                         }
                                     }
@@ -2703,7 +2963,10 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                 }
                             }
                             MouseEventKind::Moved => {
-                                if page != TuiPage::Sites && page != TuiPage::Docker && page != TuiPage::Traffic {
+                                if page != TuiPage::Sites
+                                    && page != TuiPage::Docker
+                                    && page != TuiPage::Traffic
+                                {
                                     continue;
                                 }
                                 if drag_scroll.is_some() {
@@ -2725,8 +2988,13 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                 }
                             }
                             MouseEventKind::Down(MouseButton::Left) => {
-                                if matches!(page, TuiPage::Sites | TuiPage::Docker | TuiPage::Logs | TuiPage::Traffic)
-                                {
+                                if matches!(
+                                    page,
+                                    TuiPage::Sites
+                                        | TuiPage::Docker
+                                        | TuiPage::Logs
+                                        | TuiPage::Traffic
+                                ) {
                                     let scroll_area = scroll_area_for_content(content_area);
                                     if mouse.column == scroll_area.x
                                         && mouse.row >= scroll_area.y
@@ -2808,16 +3076,22 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                                 }
                                             }
                                             TuiPage::Traffic => {
-                                                let detailed = TRAFFIC_DETAILED_MODE.load(std::sync::atomic::Ordering::Relaxed);
-                                                let zoom = TRAFFIC_ZOOM_MODE.load(std::sync::atomic::Ordering::Relaxed);
+                                                let detailed = TRAFFIC_DETAILED_MODE
+                                                    .load(std::sync::atomic::Ordering::Relaxed);
+                                                let zoom = TRAFFIC_ZOOM_MODE
+                                                    .load(std::sync::atomic::Ordering::Relaxed);
                                                 let total = if detailed || zoom {
-                                                    TRAFFIC_TOTAL_LINES.load(std::sync::atomic::Ordering::Relaxed)
+                                                    TRAFFIC_TOTAL_LINES
+                                                        .load(std::sync::atomic::Ordering::Relaxed)
                                                 } else {
-                                                    let snap = global_state.http_capture_store.snapshot();
+                                                    let snap =
+                                                        global_state.http_capture_store.snapshot();
                                                     snap.order.len()
                                                 };
-                                                let visible =
-                                                    content_area.height.saturating_sub(if detailed || zoom { 2 } else { 3 }) as usize;
+                                                let visible = content_area.height.saturating_sub(
+                                                    if detailed || zoom { 2 } else { 3 },
+                                                )
+                                                    as usize;
                                                 let max_start = total.saturating_sub(visible);
                                                 let next = scroll_pos_from_mouse(
                                                     scroll_area,
@@ -2934,16 +3208,21 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                         }
                                     }
                                     TuiPage::Traffic => {
-                                        let detailed = TRAFFIC_DETAILED_MODE.load(std::sync::atomic::Ordering::Relaxed);
-                                        let zoom = TRAFFIC_ZOOM_MODE.load(std::sync::atomic::Ordering::Relaxed);
+                                        let detailed = TRAFFIC_DETAILED_MODE
+                                            .load(std::sync::atomic::Ordering::Relaxed);
+                                        let zoom = TRAFFIC_ZOOM_MODE
+                                            .load(std::sync::atomic::Ordering::Relaxed);
                                         let total = if detailed || zoom {
-                                            TRAFFIC_TOTAL_LINES.load(std::sync::atomic::Ordering::Relaxed)
+                                            TRAFFIC_TOTAL_LINES
+                                                .load(std::sync::atomic::Ordering::Relaxed)
                                         } else {
                                             let snap = global_state.http_capture_store.snapshot();
                                             snap.order.len()
                                         };
-                                        let visible =
-                                            content_area.height.saturating_sub(if detailed || zoom { 2 } else { 3 }) as usize;
+                                        let visible = content_area
+                                            .height
+                                            .saturating_sub(if detailed || zoom { 2 } else { 3 })
+                                            as usize;
                                         let max_start = total.saturating_sub(visible);
                                         let scroll_area = scroll_area_for_content(content_area);
                                         let next = scroll_pos_from_mouse(
@@ -2951,8 +3230,8 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                             mouse.row,
                                             max_start,
                                         );
-                                        let cur =
-                                            TUI_TRAFFIC_SCROLL.load(std::sync::atomic::Ordering::Relaxed);
+                                        let cur = TUI_TRAFFIC_SCROLL
+                                            .load(std::sync::atomic::Ordering::Relaxed);
                                         if next != cur {
                                             TUI_TRAFFIC_SCROLL
                                                 .store(next, std::sync::atomic::Ordering::Relaxed);
@@ -2973,10 +3252,8 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                         let cur = TUI_DOCKER_SCROLL
                                             .load(std::sync::atomic::Ordering::Relaxed);
                                         if next != cur {
-                                            TUI_DOCKER_SCROLL.store(
-                                                next,
-                                                std::sync::atomic::Ordering::Relaxed,
-                                            );
+                                            TUI_DOCKER_SCROLL
+                                                .store(next, std::sync::atomic::Ordering::Relaxed);
                                             dirty = true;
                                         }
                                     }
@@ -3114,19 +3391,24 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                             global_state.http_capture_store.set_enabled(next);
                             dirty = true;
                         } else if page == TuiPage::Traffic && key.code == KeyCode::Char('d') {
-                            let was_detailed = TRAFFIC_DETAILED_MODE.load(std::sync::atomic::Ordering::Relaxed);
+                            let was_detailed =
+                                TRAFFIC_DETAILED_MODE.load(std::sync::atomic::Ordering::Relaxed);
                             let new_val = !was_detailed;
-                            TRAFFIC_DETAILED_MODE.store(new_val, std::sync::atomic::Ordering::Relaxed);
+                            TRAFFIC_DETAILED_MODE
+                                .store(new_val, std::sync::atomic::Ordering::Relaxed);
                             if !new_val {
                                 // Turning off detailed mode also turns off zoom
-                                TRAFFIC_ZOOM_MODE.store(false, std::sync::atomic::Ordering::Relaxed);
+                                TRAFFIC_ZOOM_MODE
+                                    .store(false, std::sync::atomic::Ordering::Relaxed);
                             }
                             TUI_TRAFFIC_SCROLL.store(0, std::sync::atomic::Ordering::Relaxed);
                             dirty = true;
                         } else if page == TuiPage::Traffic && key.code == KeyCode::Char('z') {
                             if TRAFFIC_DETAILED_MODE.load(std::sync::atomic::Ordering::Relaxed) {
-                                let was_zoom = TRAFFIC_ZOOM_MODE.load(std::sync::atomic::Ordering::Relaxed);
-                                TRAFFIC_ZOOM_MODE.store(!was_zoom, std::sync::atomic::Ordering::Relaxed);
+                                let was_zoom =
+                                    TRAFFIC_ZOOM_MODE.load(std::sync::atomic::Ordering::Relaxed);
+                                TRAFFIC_ZOOM_MODE
+                                    .store(!was_zoom, std::sync::atomic::Ordering::Relaxed);
                                 TUI_TRAFFIC_SCROLL.store(0, std::sync::atomic::Ordering::Relaxed);
                                 dirty = true;
                             }
