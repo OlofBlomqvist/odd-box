@@ -382,6 +382,7 @@ pub enum Message {
     CrumaAuthModeSaveResult(Result<(), String>),
     TrafficInspectionToggled(bool),
     TrafficInspectionClear,
+    TrafficInspectionSelect(Option<u64>),
     // Processes page tab
     ProcessesTabChanged(ProcessesTab),
     // Global environment variables
@@ -550,6 +551,7 @@ pub struct OddBoxGui {
     pub(in crate::gui) global_env_dirty: bool,
     exit_requested: bool,
     tray_quit_pending: bool,
+    pub(in crate::gui) traffic_inspection_selected: Option<u64>,
     frontend_http_port_input: String,
     frontend_https_port_input: String,
     frontend_port_notice: Option<String>,
@@ -1358,6 +1360,7 @@ impl OddBoxGui {
                 global_env_dirty: false,
                 exit_requested: false,
                 tray_quit_pending: false,
+                traffic_inspection_selected: None,
                 frontend_http_port_input: String::new(),
                 frontend_https_port_input: String::new(),
                 frontend_port_notice: None,
@@ -2151,6 +2154,10 @@ impl OddBoxGui {
             }
             Message::TrafficInspectionClear => {
                 self.state.http_capture_store.clear();
+                self.traffic_inspection_selected = None;
+            }
+            Message::TrafficInspectionSelect(req_id) => {
+                self.traffic_inspection_selected = req_id;
             }
         }
         Task::none()

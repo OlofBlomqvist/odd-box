@@ -4669,6 +4669,7 @@ dependencies = [
  "ctrlc",
  "dashmap",
  "dirs 5.0.1",
+ "flate2",
  "http-body-util",
  "iced",
  "lazy_static",

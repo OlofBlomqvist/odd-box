@@ -48,6 +48,7 @@ rfd = "0.14"
 ratatui = "0.29"
 crossterm = "0.28"
 crossbeam-queue = "0.3"
+flate2 = "1"
 
 [patch.crates-io]
 winit = { git = "https://github.com/rust-windowing/winit", branch = "master" }
