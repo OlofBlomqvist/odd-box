@@ -830,14 +830,56 @@ fn build_flat_table<'a>(
     ])
     .style(Style::default().fg(muted_color(light_theme)));
 
+    // Account for table borders and inter-column spacing so we can size columns
+    // using the actual render width.
+    let inner_width = area.width.saturating_sub(2);
+    let spacing = 4; // 5 columns => 4 gaps when column_spacing(1)
+    let table_width = inner_width.saturating_sub(spacing);
+
+    let fixed_left = 7 + 8; // Type + State
+    let available_after_left = table_width.saturating_sub(fixed_left);
+
+    let mut port_width = rows
+        .iter()
+        .map(|r| r.port.chars().count() as u16)
+        .max()
+        .unwrap_or(4)
+        .max(4)
+        .saturating_add(1)
+        .clamp(8, 24);
+
+    // Keep "Name" from greedily consuming space; let "Detail" take the remainder.
+    let min_detail = 16;
+    let max_name = 24;
+    let min_name = 10;
+
+    let name_budget = available_after_left
+        .saturating_sub(port_width)
+        .saturating_sub(min_detail);
+    let name_width = if name_budget < min_name {
+        name_budget
+    } else {
+        name_budget.min(max_name)
+    };
+
+    // If space is tight, shrink port first down to a safe minimum before clipping detail.
+    let need_for_detail = fixed_left
+        .saturating_add(name_width)
+        .saturating_add(port_width)
+        .saturating_add(min_detail);
+    if table_width < need_for_detail {
+        let shortage = need_for_detail - table_width;
+        port_width = port_width.saturating_sub(shortage).max(8);
+    }
+
     let table = Table::new(
         rows_vec,
         [
+            Constraint::Length(7),
             Constraint::Length(8),
-            Constraint::Length(10),
-            Constraint::Length(30),
+            Constraint::Length(name_width),
             Constraint::Fill(1),
-            Constraint::Length(16),
+            Constraint::Length(port_width),
         ],
     )
     .header(header)

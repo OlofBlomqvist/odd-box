@@ -7,10 +7,13 @@
 #![allow(deprecated)]
 #![allow(unexpected_cfgs)]
 
+#[cfg(target_os = "macos")]
 use tracing::warn;
 
 /// macOS application activation policies.
-#[cfg(target_os = "macos")]
+///
+/// This enum is available on all platforms so non-macOS builds can compile
+/// call sites that pass a policy into no-op functions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum ActivationPolicy {
