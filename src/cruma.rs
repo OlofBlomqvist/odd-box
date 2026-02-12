@@ -144,7 +144,11 @@ pub async fn handle_stream(
     cruma_conf: Arc<ArcSwap<cruma_proxy_lib::types::Configuration>>,
 ) -> anyhow::Result<()> {
     let terminator = cruma_proxy_lib::termination::Terminator::new(p.clone(), cruma_conf.clone());
-    let proxy_service = ProxyService::new(cruma_conf, terminator);
+    let mut proxy_service = ProxyService::new(cruma_conf, terminator);
+
+    // Wire the shared HTTP capture store into the proxy so that every proxied
+    // exchange is recorded when traffic inspection is enabled.
+    proxy_service.set_capture_store(_state.http_capture_store.clone());
 
 
     let preface = match &cruma_stream {

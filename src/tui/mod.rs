@@ -98,6 +98,7 @@ enum TuiPage {
     Sites,
     Docker,
     Logs,
+    Traffic,
 }
 
 const TUI_HEADER_HEIGHT: u16 = 6;
@@ -302,6 +303,8 @@ fn draw_ui(
     log_level_filter: LogLevelFilter,
     confirm_quit: bool,
     hovered_row: Option<usize>,
+    capture_snapshot: &cruma_proxy_lib::proxying::capture_store::CaptureSnapshot,
+    traffic_inspection_enabled: bool,
 ) {
     let root = Layout::default()
         .direction(Direction::Vertical)
@@ -413,6 +416,20 @@ fn draw_ui(
                 f.render_stateful_widget(scrollbar, scroll_area, &mut state);
             }
         }
+        TuiPage::Traffic => {
+            let (table, mut tbl_state, total, start, visible, scroll_area) =
+                build_traffic_table(capture_snapshot, traffic_inspection_enabled, root[1], light_theme);
+            f.render_stateful_widget(table, root[1], &mut tbl_state);
+
+            if total > visible {
+                let content_len = total.saturating_sub(visible).saturating_add(1).max(1);
+                let mut state = ScrollbarState::new(content_len)
+                    .position(start.min(content_len.saturating_sub(1)))
+                    .viewport_content_length(visible.max(1));
+                let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
+                f.render_stateful_widget(scrollbar, scroll_area, &mut state);
+            }
+        }
     }
 
     let mut footer_spans = vec![
@@ -435,6 +452,16 @@ fn draw_ui(
             }),
         ]),
         TuiPage::Docker => {}
+        TuiPage::Traffic => footer_spans.extend([
+            Span::styled("i", Style::default().fg(muted_color(light_theme))),
+            Span::raw(if traffic_inspection_enabled {
+                " (capture:on)  "
+            } else {
+                " (capture:off)  "
+            }),
+            Span::styled("c", Style::default().fg(muted_color(light_theme))),
+            Span::raw(" (clear)  "),
+        ]),
         TuiPage::Logs => footer_spans.extend([
             Span::styled("f", Style::default().fg(muted_color(light_theme))),
             Span::raw(if log_tail {
@@ -1071,6 +1098,7 @@ fn scroll_pos_from_mouse(scroll_area: Rect, mouse_row: u16, max_start: usize) ->
 static TUI_SCROLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static TUI_DOCKER_SCROLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static TUI_LOG_SCROLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static TUI_TRAFFIC_SCROLL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static SHOW_FULL_PATH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Clone, Debug)]
@@ -1150,6 +1178,204 @@ fn filter_rank(filter: LogLevelFilter) -> u8 {
         LogLevelFilter::Warn => 3,
         LogLevelFilter::Error => 4,
     }
+}
+
+fn fmt_bytes(n: usize) -> String {
+    if n == 0 {
+        "0B".to_string()
+    } else if n < 1024 {
+        format!("{}B", n)
+    } else if n < 1024 * 1024 {
+        format!("{:.1}K", n as f64 / 1024.0)
+    } else {
+        format!("{:.1}M", n as f64 / (1024.0 * 1024.0))
+    }
+}
+
+fn build_traffic_table<'a>(
+    capture_snapshot: &'a cruma_proxy_lib::proxying::capture_store::CaptureSnapshot,
+    enabled: bool,
+    area: Rect,
+    light_theme: bool,
+) -> (Table<'a>, TableState, usize, usize, usize, Rect) {
+    use std::sync::atomic::Ordering;
+
+    let start = TUI_TRAFFIC_SCROLL.load(Ordering::Relaxed);
+    let header_rows = 3u16; // block border + header row + separator
+    let visible = area.height.saturating_sub(header_rows) as usize;
+
+    let mut rows: Vec<Row<'a>> = Vec::new();
+
+    if !enabled {
+        rows.push(Row::new(vec![
+            Cell::from(""),
+            Cell::from(Span::styled(
+                "Traffic inspection is disabled. Press 'i' to enable.",
+                Style::default().fg(muted_color(light_theme)),
+            )),
+            Cell::from(""),
+            Cell::from(""),
+            Cell::from(""),
+            Cell::from(""),
+            Cell::from(""),
+            Cell::from(""),
+        ]));
+    } else if capture_snapshot.order.is_empty() {
+        rows.push(Row::new(vec![
+            Cell::from(""),
+            Cell::from(Span::styled(
+                "No captured requests yet.",
+                Style::default().fg(muted_color(light_theme)),
+            )),
+            Cell::from(""),
+            Cell::from(""),
+            Cell::from(""),
+            Cell::from(""),
+            Cell::from(""),
+            Cell::from(""),
+        ]));
+    } else {
+        // Iterate in reverse order so newest requests appear at the top
+        for req_id in capture_snapshot.order.iter().rev() {
+            if let Some(exchange) = capture_snapshot.entries.get(req_id) {
+                let method_color = match exchange.method.as_str() {
+                    "GET" => Color::Green,
+                    "POST" => Color::Yellow,
+                    "PUT" => Color::Blue,
+                    "DELETE" => Color::Red,
+                    "PATCH" => Color::Magenta,
+                    _ => Color::White,
+                };
+
+                let status_str = match exchange.status {
+                    Some(s) => format!("{}", s),
+                    None if exchange.is_inflight => "...".to_string(),
+                    None => "—".to_string(),
+                };
+                let status_color = match exchange.status {
+                    Some(s) if s < 300 => Color::Green,
+                    Some(s) if s < 400 => Color::Cyan,
+                    Some(s) if s < 500 => Color::Yellow,
+                    Some(_) => Color::Red,
+                    None if exchange.is_inflight => Color::DarkGray,
+                    None => Color::DarkGray,
+                };
+
+                let duration_str = match exchange.duration_ms {
+                    Some(d) if d < 1000 => format!("{}ms", d),
+                    Some(d) => format!("{:.1}s", d as f64 / 1000.0),
+                    None if exchange.is_inflight => "...".to_string(),
+                    None => "—".to_string(),
+                };
+
+                let host_str = exchange.host.clone().unwrap_or_default();
+
+                let kind_str = format!("{}", exchange.kind);
+
+                let inflight_marker = if exchange.is_inflight { "●" } else { "" };
+
+                // Format body sizes: "req↑ / resp↓"
+                let size_str = {
+                    let req_sz = exchange.req_body_size.map(|s| fmt_bytes(s)).unwrap_or_default();
+                    let resp_sz = exchange.resp_body_size.map(|s| fmt_bytes(s)).unwrap_or_default();
+                    let req_trunc = if exchange.req_body_truncated { "+" } else { "" };
+                    let resp_trunc = if exchange.resp_body_truncated { "+" } else { "" };
+                    if req_sz.is_empty() && resp_sz.is_empty() {
+                        if exchange.is_inflight { "...".to_string() } else { "—".to_string() }
+                    } else {
+                        format!("{}{}↑ {}{}↓", req_sz, req_trunc, resp_sz, resp_trunc)
+                    }
+                };
+
+                rows.push(Row::new(vec![
+                    Cell::from(Span::styled(
+                        exchange.method.clone(),
+                        Style::default().fg(method_color).bold(),
+                    )),
+                    Cell::from(Span::styled(
+                        host_str,
+                        Style::default().fg(muted_color(light_theme)),
+                    )),
+                    Cell::from(exchange.path.clone()),
+                    Cell::from(Span::styled(
+                        status_str,
+                        Style::default().fg(status_color),
+                    )),
+                    Cell::from(Span::styled(
+                        duration_str,
+                        Style::default().fg(muted_color(light_theme)),
+                    )),
+                    Cell::from(Span::styled(
+                        size_str,
+                        Style::default().fg(muted_color(light_theme)),
+                    )),
+                    Cell::from(Span::styled(
+                        kind_str,
+                        Style::default().fg(info_color(light_theme)),
+                    )),
+                    Cell::from(Span::styled(
+                        inflight_marker,
+                        Style::default().fg(Color::Yellow),
+                    )),
+                ]));
+            }
+        }
+    }
+
+    let total = rows.len();
+
+    // Clamp scroll
+    let max_start = total.saturating_sub(visible);
+    let clamped_start = start.min(max_start);
+    if clamped_start != start {
+        TUI_TRAFFIC_SCROLL.store(clamped_start, Ordering::Relaxed);
+    }
+
+    let title = format!(
+        " Traffic ({} captured{}) ",
+        capture_snapshot.order.len(),
+        if enabled { "" } else { " — paused" },
+    );
+
+    let header = Row::new(vec![
+        Cell::from(Span::styled("Method", Style::default().bold())),
+        Cell::from(Span::styled("Host", Style::default().bold())),
+        Cell::from(Span::styled("Path", Style::default().bold())),
+        Cell::from(Span::styled("Status", Style::default().bold())),
+        Cell::from(Span::styled("Duration", Style::default().bold())),
+        Cell::from(Span::styled("Size", Style::default().bold())),
+        Cell::from(Span::styled("Kind", Style::default().bold())),
+        Cell::from(Span::styled("", Style::default().bold())),
+    ])
+    .height(1);
+
+    let widths = [
+        Constraint::Length(7),
+        Constraint::Percentage(20),
+        Constraint::Percentage(35),
+        Constraint::Length(6),
+        Constraint::Length(10),
+        Constraint::Length(14),
+        Constraint::Length(4),
+        Constraint::Length(1),
+    ];
+
+    let table = Table::new(rows, widths)
+        .header(header)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title),
+        )
+        .row_highlight_style(Style::default().bg(row_highlight_bg(light_theme)));
+
+    let mut state = TableState::default();
+    state.select(None);
+    *state.offset_mut() = clamped_start;
+
+    let scroll_area = scroll_area_for_content(area);
+
+    (table, state, total, clamped_start, visible, scroll_area)
 }
 
 fn build_log_view<'a>(
@@ -1482,6 +1708,10 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
             dirty = true;
         }
         if dirty {
+            let capture_snap = global_state.http_capture_store.snapshot();
+            let traffic_on = global_state
+                .enable_global_traffic_inspection
+                .load(std::sync::atomic::Ordering::Relaxed);
             let _ = terminal.draw(|f| {
                 draw_ui(
                     f,
@@ -1495,6 +1725,8 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                     log_level_filter,
                     confirm_quit,
                     hovered_row,
+                    &capture_snap,
+                    traffic_on,
                 )
             });
             dirty = false;
@@ -1567,6 +1799,25 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                             dirty = true;
                                         }
                                     }
+                                    TuiPage::Traffic => {
+                                        let snap = global_state.http_capture_store.snapshot();
+                                        let total = snap.order.len();
+                                        let visible =
+                                            content_area.height.saturating_sub(3) as usize;
+                                        let max_start = total.saturating_sub(visible);
+                                        let cur = TUI_TRAFFIC_SCROLL
+                                            .load(std::sync::atomic::Ordering::Relaxed)
+                                            as isize;
+                                        let next =
+                                            (cur + delta).clamp(0, max_start as isize) as usize;
+                                        if next != cur as usize {
+                                            TUI_TRAFFIC_SCROLL.store(
+                                                next,
+                                                std::sync::atomic::Ordering::Relaxed,
+                                            );
+                                            dirty = true;
+                                        }
+                                    }
                                     TuiPage::Logs => {
                                         if log_tail {
                                             log_tail = false;
@@ -1597,7 +1848,7 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                 }
                             }
                             MouseEventKind::Moved => {
-                                if page != TuiPage::Sites && page != TuiPage::Docker {
+                                if page != TuiPage::Sites && page != TuiPage::Docker && page != TuiPage::Traffic {
                                     continue;
                                 }
                                 if drag_scroll.is_some() {
@@ -1619,7 +1870,7 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                 }
                             }
                             MouseEventKind::Down(MouseButton::Left) => {
-                                if matches!(page, TuiPage::Sites | TuiPage::Docker | TuiPage::Logs)
+                                if matches!(page, TuiPage::Sites | TuiPage::Docker | TuiPage::Logs | TuiPage::Traffic)
                                 {
                                     let scroll_area = scroll_area_for_content(content_area);
                                     if mouse.column == scroll_area.x
@@ -1695,6 +1946,27 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                                     .load(std::sync::atomic::Ordering::Relaxed);
                                                 if next != cur {
                                                     TUI_LOG_SCROLL.store(
+                                                        next,
+                                                        std::sync::atomic::Ordering::Relaxed,
+                                                    );
+                                                    dirty = true;
+                                                }
+                                            }
+                                            TuiPage::Traffic => {
+                                                let snap = global_state.http_capture_store.snapshot();
+                                                let total = snap.order.len();
+                                                let visible =
+                                                    content_area.height.saturating_sub(3) as usize;
+                                                let max_start = total.saturating_sub(visible);
+                                                let next = scroll_pos_from_mouse(
+                                                    scroll_area,
+                                                    mouse.row,
+                                                    max_start,
+                                                );
+                                                let cur = TUI_TRAFFIC_SCROLL
+                                                    .load(std::sync::atomic::Ordering::Relaxed);
+                                                if next != cur {
+                                                    TUI_TRAFFIC_SCROLL.store(
                                                         next,
                                                         std::sync::atomic::Ordering::Relaxed,
                                                     );
@@ -1800,6 +2072,26 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                             dirty = true;
                                         }
                                     }
+                                    TuiPage::Traffic => {
+                                        let snap = global_state.http_capture_store.snapshot();
+                                        let total = snap.order.len();
+                                        let visible =
+                                            content_area.height.saturating_sub(3) as usize;
+                                        let max_start = total.saturating_sub(visible);
+                                        let scroll_area = scroll_area_for_content(content_area);
+                                        let next = scroll_pos_from_mouse(
+                                            scroll_area,
+                                            mouse.row,
+                                            max_start,
+                                        );
+                                        let cur =
+                                            TUI_TRAFFIC_SCROLL.load(std::sync::atomic::Ordering::Relaxed);
+                                        if next != cur {
+                                            TUI_TRAFFIC_SCROLL
+                                                .store(next, std::sync::atomic::Ordering::Relaxed);
+                                            dirty = true;
+                                        }
+                                    }
                                     TuiPage::Docker => {
                                         let total = data.docker_discovered.len();
                                         let visible =
@@ -1892,7 +2184,8 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                             page = match page {
                                 TuiPage::Sites => TuiPage::Docker,
                                 TuiPage::Docker => TuiPage::Logs,
-                                TuiPage::Logs => TuiPage::Sites,
+                                TuiPage::Logs => TuiPage::Traffic,
+                                TuiPage::Traffic => TuiPage::Sites,
                             };
                             if page == TuiPage::Logs {
                                 let visible = terminal
@@ -1943,6 +2236,20 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                             if changed {
                                 dirty = true;
                             }
+                        } else if page == TuiPage::Traffic && key.code == KeyCode::Char('i') {
+                            let prev = global_state
+                                .enable_global_traffic_inspection
+                                .load(std::sync::atomic::Ordering::Relaxed);
+                            let next = !prev;
+                            global_state
+                                .enable_global_traffic_inspection
+                                .store(next, std::sync::atomic::Ordering::Relaxed);
+                            global_state.http_capture_store.set_enabled(next);
+                            dirty = true;
+                        } else if page == TuiPage::Traffic && key.code == KeyCode::Char('c') {
+                            global_state.http_capture_store.clear();
+                            TUI_TRAFFIC_SCROLL.store(0, std::sync::atomic::Ordering::Relaxed);
+                            dirty = true;
                         } else if page == TuiPage::Sites && key.code == KeyCode::Char('p') {
                             let prev = SHOW_FULL_PATH.load(std::sync::atomic::Ordering::Relaxed);
                             SHOW_FULL_PATH.store(!prev, std::sync::atomic::Ordering::Relaxed);
@@ -2059,6 +2366,7 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                 TuiPage::Sites => &TUI_SCROLL,
                                 TuiPage::Docker => &TUI_DOCKER_SCROLL,
                                 TuiPage::Logs => &TUI_LOG_SCROLL,
+                                TuiPage::Traffic => &TUI_TRAFFIC_SCROLL,
                             };
                             if key.code == KeyCode::Up {
                                 let cur = target_scroll.load(std::sync::atomic::Ordering::Relaxed);

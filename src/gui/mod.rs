@@ -153,6 +153,7 @@ pub enum Page {
     Dashboard,
     CrumaIngress,
     Monitoring,
+    TrafficInspection,
     Statistics,
     Backends,
     Frontends,
@@ -167,6 +168,7 @@ impl Page {
             Page::Dashboard => "Dashboard",
             Page::CrumaIngress => "Cruma Ingress",
             Page::Monitoring => "Monitoring",
+            Page::TrafficInspection => "Traffic Inspection",
             Page::Statistics => "Statistics",
             Page::Backends => "Backends",
             Page::Frontends => "Frontends",
@@ -182,6 +184,7 @@ impl Page {
             Page::CrumaIngress => "⇄",
 
             Page::Monitoring => "◉",
+            Page::TrafficInspection => "⇆",
             Page::Statistics => "▤",
             Page::Backends => "⬚",
             Page::Frontends => "◧",
@@ -377,6 +380,8 @@ pub enum Message {
     EditBackendEnvAdd,
     CrumaAuthModeChanged(CrumaAuthMode),
     CrumaAuthModeSaveResult(Result<(), String>),
+    TrafficInspectionToggled(bool),
+    TrafficInspectionClear,
     // Processes page tab
     ProcessesTabChanged(ProcessesTab),
     // Global environment variables
@@ -2138,6 +2143,15 @@ impl OddBoxGui {
                     self.cruma_mode_notice = Some(err);
                 }
             },
+            Message::TrafficInspectionToggled(enabled) => {
+                self.state
+                    .enable_global_traffic_inspection
+                    .store(enabled, std::sync::atomic::Ordering::Relaxed);
+                self.state.http_capture_store.set_enabled(enabled);
+            }
+            Message::TrafficInspectionClear => {
+                self.state.http_capture_store.clear();
+            }
         }
         Task::none()
     }
@@ -2208,6 +2222,7 @@ impl OddBoxGui {
             Page::Dashboard,
             Page::CrumaIngress,
             Page::Monitoring,
+            Page::TrafficInspection,
             Page::Statistics,
             Page::Backends,
             Page::Frontends,
@@ -2315,6 +2330,7 @@ impl OddBoxGui {
             Page::Dashboard => self.view_dashboard(),
             Page::CrumaIngress => self.view_cruma_ingress(),
             Page::Monitoring => self.view_monitoring(),
+            Page::TrafficInspection => self.view_traffic_inspection(),
             Page::Statistics => self.view_placeholder("Traffic statistics and metrics"),
             Page::Backends => self.view_backends(),
             Page::Frontends => self.view_frontends(),
@@ -2323,8 +2339,8 @@ impl OddBoxGui {
             Page::EditBackend => self.view_edit_backend(),
         };
 
-        // Monitoring page handles its own layout (no extra scrollable wrapper)
-        if self.current_page == Page::Monitoring {
+        // These pages handle their own layout (no extra scrollable wrapper)
+        if self.current_page == Page::Monitoring || self.current_page == Page::TrafficInspection {
             page_content
         } else {
             let page_title = text(self.current_page.title()).size(text_size(20));
