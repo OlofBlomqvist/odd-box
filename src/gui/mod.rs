@@ -10,8 +10,8 @@ use iced::widget::{
 };
 
 use iced::{
-    Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, system, theme,
-    time, window,
+    Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, event, keyboard,
+    system, theme, time, window,
 };
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
@@ -702,6 +702,10 @@ impl std::fmt::Display for v4::Protocol {
 pub enum Message {
     /// No-op message for hover-only interactive elements
     NoOp,
+    /// Move keyboard focus to the next focusable widget (Tab)
+    FocusNext,
+    /// Move keyboard focus to the previous focusable widget (Shift+Tab)
+    FocusPrevious,
     NavigateTo(Page),
     WindowResized(window::Id, iced::Size),
     SystemThemeChanged(theme::Mode),
@@ -1947,6 +1951,20 @@ impl OddBoxGui {
     }
 
     fn subscription(&self) -> Subscription<Message> {
+        // Tab / Shift+Tab focus navigation (handled regardless of widget capture status)
+        let tab_sub = event::listen_with(|ev, _status, _window| {
+            if let iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::Tab),
+                modifiers,
+                ..
+            }) = &ev
+            {
+                Some(if modifiers.shift() { Message::FocusPrevious } else { Message::FocusNext })
+            } else {
+                None
+            }
+        });
+
         // Tick for pages that need live updates
         let page_sub = match self.current_page {
             Page::Monitoring => {
@@ -1979,6 +1997,7 @@ impl OddBoxGui {
             .map(|_| Message::TrayCommandReceived);
 
         Subscription::batch(vec![
+            tab_sub,
             page_sub,
             theme_sub,
             resize_sub,
@@ -1992,6 +2011,12 @@ impl OddBoxGui {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::NoOp => {}
+            Message::FocusNext => {
+                return iced::widget::operation::focus_next();
+            }
+            Message::FocusPrevious => {
+                return iced::widget::operation::focus_previous();
+            }
             Message::NavigateTo(page) => {
                 self.current_page = page;
                 self.dashboard_process_menu = None;
