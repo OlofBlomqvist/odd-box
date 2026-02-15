@@ -2,7 +2,10 @@ version: V4
 log_level: Trace
 port_range_start: 6666
 ip: 0.0.0.0
-env: {}
+
+env:
+  kale: erik
+
 root_dir: "~"
 default_log_format: standard
 auto_start: true
@@ -11,29 +14,6 @@ admin_api_host: null
 admin_api_password: null
 
 backends:
-
-  BE3:
-    type: process
-    bin: podman
-
-    args:
-      - run
-      - --replace
-      - --quiet
-      - -p$port:80
-      - --name
-      - odd-nginx
-      - nginx
-
-    dir: null
-    env: {}
-    protocol: h1
-    https: false
-    port: null
-    auto_start: false
-    exclude_from_start_all: false
-    log_level: null
-    log_format: null
 
   BE5:
     type: remote
@@ -47,9 +27,18 @@ backends:
     https: true
     keep_original_host_header: false
 
+  BE1:
+    type: static
+    dir: $cfg_dir/docs/book
+    index: index.html
+    list_dir: true
+    render_markdown: true
+    cache_max_age: null
+    spa_fallback: false
+
   BE6:
     type: process
-    bin: python
+    bin: python3
 
     args:
       - -m
@@ -73,35 +62,16 @@ backends:
     list_dir: true
     render_markdown: true
     cache_max_age: 3600
+    spa_fallback: false
 
-  BE4:
-    type: process
-    bin: /nix/store/n9xlfadcp7avgi4w87w41k8vnnyi4hm8-user-environment/bin/caddy
-
-    args:
-      - run
-      - --config
-      - ./CaddyTest1
-      - --adapter
-      - caddyfile
-
-    dir: .
-    env: {}
-    protocol: h2
-    https: false
-    port: 9999
-    auto_start: false
-    exclude_from_start_all: false
-    log_level: null
-    log_format: null
-
-  BE1:
+  hello-world:
     type: static
-    dir: $cfg_dir/docs/book
+    dir: "~"
     index: index.html
     list_dir: true
-    render_markdown: true
+    render_markdown: false
     cache_max_age: null
+    spa_fallback: false
 
 frontends:
 
@@ -110,11 +80,6 @@ frontends:
 
     routes:
       B.localhost: BE1
-      odd-box-docs.localhost: BE2
-      A1.localtest.me: BE6
-      C3.localhost: BE2
-      A.localtest.me: BE1
-      lobsters.localtest.me: BE3
       C.localhost: BE2
       py.localtest.me: BE4
 
@@ -125,10 +90,16 @@ frontends:
         redirect_to_https: true
         lets_encrypt: false
 
-      nginx.localhost: BE4
-      B2.localhost: BE1
-      hello-hi: BE2
       test2.localhost: BE1
+      A.localtest.me: BE1
+      B2.localhost: BE1
+      test.localhost: hello-world
+      nginx.localhost: BE4
+      lobsters.localtest.me: BE3
+      hello-hi: BE2
+      C3.localhost: BE2
+      odd-box-docs.localhost: BE2
+      A1.localtest.me: BE6
 
   https:
     port: 443

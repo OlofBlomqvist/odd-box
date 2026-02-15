@@ -254,161 +254,79 @@ impl OddBoxGui {
             ..Default::default()
         });
 
-        let mut rows: Vec<Element<'_, Message>> = Vec::new();
+        // Build the table of existing variables (only when non-empty)
+        let var_table: Option<Element<'_, Message>> = if self.global_env_vars.is_empty() {
+            None
+        } else {
+            let table_theme = self.theme();
+            let table_header_bg = self.surface_panel_alt_bg(&table_theme);
+            let table_row_even_bg = self.surface_panel_bg(&table_theme);
+            let table_row_odd_bg = self.surface_panel_alt_bg(&table_theme);
+            let table_border = self.surface_border_color(&table_theme);
 
-        // Header row
-        let header = container(
-            row![
-                container(
-                    text("Key")
-                        .size(13)
-                        .font(Font {
-                            weight: iced::font::Weight::Bold,
-                            ..Default::default()
-                        })
-                )
-                .width(Length::FillPortion(3)),
-                container(
-                    text("Value")
-                        .size(13)
-                        .font(Font {
-                            weight: iced::font::Weight::Bold,
-                            ..Default::default()
-                        })
-                )
-                .width(Length::FillPortion(5)),
-                container(Space::new().width(Length::Fixed(36.0)).height(Length::Fixed(0.0))).width(Length::Fixed(36.0)),
-            ]
-            .spacing(8)
-            .align_y(iced::Alignment::Center),
-        )
-        .padding(Padding {
-            top: 8.0,
-            right: 12.0,
-            bottom: 8.0,
-            left: 12.0,
-        })
-        .width(Length::Fill)
-        .style(|theme: &Theme| {
-            container::Style {
-                border: Border {
-                    radius: 6.0.into(),
-                    width: 1.0,
-                    color: self.surface_border_color(theme),
-                },
-                ..Default::default()
-            }
-        });
-        rows.push(header.into());
+            let columns = vec![
+                TableColumn::portion("Key", 3),
+                TableColumn::portion("Value", 5),
+                TableColumn::fixed("", 36.0),
+            ];
 
-        // Existing variable rows
-        for (idx, (key, value)) in self.global_env_vars.iter().enumerate() {
-            let key_input = text_input("KEY", key)
-                .on_input(move |v| Message::GlobalEnvKeyChanged(idx, v))
-                .padding(6)
-                .size(13)
-                .font(Font::MONOSPACE)
-                .width(Length::FillPortion(3));
+            let mut table = Table::new(columns).surface_colors(
+                table_header_bg,
+                table_row_even_bg,
+                table_row_odd_bg,
+                table_border,
+            );
 
-            let value_input = text_input("VALUE", value)
-                .on_input(move |v| Message::GlobalEnvValueChanged(idx, v))
-                .padding(6)
-                .size(13)
-                .font(Font::MONOSPACE)
-                .width(Length::FillPortion(5));
-
-            let remove_btn = button(
-                text("✕").size(14),
-            )
-            .padding(Padding {
-                top: 4.0,
-                right: 8.0,
-                bottom: 4.0,
-                left: 8.0,
-            })
-            .style(|theme: &Theme, status| {
-                let palette = theme.extended_palette();
-                let (bg, fg) = match status {
-                    button::Status::Hovered => {
-                        (palette.danger.strong.color, palette.danger.strong.text)
-                    }
-                    _ => (Color::TRANSPARENT, palette.danger.base.color),
-                };
-                button::Style {
-                    background: Some(bg.into()),
-                    text_color: fg,
-                    border: Border {
-                        radius: 4.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }
-            })
-            .on_press(Message::GlobalEnvRemove(idx));
-
-            let env_row = container(
-                row![key_input, value_input, remove_btn]
-                    .spacing(8)
-                    .align_y(iced::Alignment::Center),
-            )
-            .padding(Padding {
-                top: 4.0,
-                right: 12.0,
-                bottom: 4.0,
-                left: 12.0,
-            })
-            .width(Length::Fill)
-            .style(move |theme: &Theme| {
-                let bg = if idx % 2 == 0 {
-                    Color::TRANSPARENT
-                } else {
-                    let c = self.surface_panel_alt_bg(theme);
-                    Color::from_rgba(c.r, c.g, c.b, 0.3)
-                };
-                container::Style {
-                    background: Some(bg.into()),
-                    border: Border {
-                        width: 0.0,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }
-            });
-
-            rows.push(env_row.into());
-        }
-
-        // Empty state message
-        if self.global_env_vars.is_empty() {
-            let empty_msg = container(
-                text("No global environment variables configured")
+            for (idx, (key, value)) in self.global_env_vars.iter().enumerate() {
+                let key_input: Element<'_, Message> = text_input("KEY", key)
+                    .on_input(move |v| Message::GlobalEnvKeyChanged(idx, v))
+                    .padding(6)
                     .size(13)
-                    .style(|theme: &Theme| iced::widget::text::Style {
-                        color: Some(theme.extended_palette().background.weak.text),
-                        ..Default::default()
-                    }),
-            )
-            .padding(20)
-            .width(Length::Fill)
-            .align_x(iced::Alignment::Center);
-            rows.push(empty_msg.into());
-        }
+                    .font(Font::MONOSPACE)
+                    .width(Length::Fill)
+                    .into();
 
-        // Table container
-        let var_table = container(
-            iced::widget::Column::with_children(rows).width(Length::Fill),
-        )
-        .width(Length::Fill)
-        .style(|theme: &Theme| {
-            container::Style {
-                border: Border {
-                    radius: 6.0.into(),
-                    width: 1.0,
-                    color: self.surface_border_color(theme),
-                },
-                ..Default::default()
+                let value_input: Element<'_, Message> = text_input("VALUE", value)
+                    .on_input(move |v| Message::GlobalEnvValueChanged(idx, v))
+                    .padding(6)
+                    .size(13)
+                    .font(Font::MONOSPACE)
+                    .width(Length::Fill)
+                    .into();
+
+                let remove_btn: Element<'_, Message> = button(text("✕").size(14))
+                    .padding(Padding {
+                        top: 4.0,
+                        right: 8.0,
+                        bottom: 4.0,
+                        left: 8.0,
+                    })
+                    .style(|theme: &Theme, status| {
+                        let palette = theme.extended_palette();
+                        let (bg, fg) = match status {
+                            button::Status::Hovered => {
+                                (palette.danger.strong.color, palette.danger.strong.text)
+                            }
+                            _ => (Color::TRANSPARENT, palette.danger.base.color),
+                        };
+                        button::Style {
+                            background: Some(bg.into()),
+                            text_color: fg,
+                            border: Border {
+                                radius: 4.0.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        }
+                    })
+                    .on_press(Message::GlobalEnvRemove(idx))
+                    .into();
+
+                table = table.push_row(vec![key_input, value_input, remove_btn]);
             }
-        });
+
+            Some(table.build())
+        };
 
         // Add new variable row
         let new_key_input = text_input("New key...", &self.global_env_new_key)
@@ -535,10 +453,15 @@ impl OddBoxGui {
             .spacing(12)
             .align_y(iced::Alignment::Center);
 
-        column![description, var_table, add_row, bottom_row]
-            .spacing(14)
-            .width(Length::Fill)
-            .into()
+        let mut content = column![description].spacing(14).width(Length::Fill);
+
+        if let Some(table_el) = var_table {
+            content = content.push(table_el);
+        }
+
+        content = content.push(add_row).push(bottom_row);
+
+        content.into()
     }
 
     fn build_process_actions(&self, proc_name: &str, state: ProcState) -> Element<'_, Message> {

@@ -798,6 +798,11 @@ pub enum Message {
     TrafficInspectionToggled(bool),
     TrafficInspectionClear,
     TrafficInspectionSelect(Option<u64>),
+    TrafficInspectionBodyPreviewReady(CachedBodyPreview),
+    TrafficInspectionExpandBody(BodySide),
+    TrafficInspectionBodyExpandReady(BodySide, Option<String>),
+    TrafficInspectionSaveBody(BodySide),
+    TrafficInspectionSaveBodyResult(Result<String, String>),
     // Processes page tab
     ProcessesTabChanged(ProcessesTab),
     // Global environment variables
@@ -809,6 +814,46 @@ pub enum Message {
     GlobalEnvAdd,
     GlobalEnvSave,
     GlobalEnvSaveResult(Result<(), String>),
+}
+
+/// Which side of the exchange a body action refers to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodySide {
+    Request,
+    Response,
+}
+
+/// Cached body preview so we avoid re-fetching, decompressing, and
+/// converting on every frame while a detail panel is open.
+#[derive(Debug, Clone)]
+pub struct CachedBodyPreview {
+    /// The `req_id` this cache entry belongs to.
+    pub req_id: u64,
+    /// Precomputed request body preview.
+    pub req_body: Option<CachedBody>,
+    /// Precomputed response body preview.
+    pub resp_body: Option<CachedBody>,
+}
+
+/// A single body (request or response) with content-type detection,
+/// a short text preview, an optional expanded preview, and an optional
+/// decoded image handle for inline rendering.
+#[derive(Debug, Clone)]
+pub struct CachedBody {
+    /// Detected content kind (JSON, image, binary, …).
+    pub kind: pages::body_content::BodyContentKind,
+    /// Short text preview (≤512 chars) for text bodies, or a hex dump
+    /// for binary bodies.
+    pub preview: String,
+    /// Expanded text preview (≤4096 chars), populated on demand when the
+    /// user clicks "Load more".
+    pub expanded_preview: Option<String>,
+    /// For inline-renderable images: the decoded iced image handle.
+    pub image: Option<pages::body_content::DecodedImage>,
+    /// Total size of the raw (possibly compressed) body bytes.
+    pub raw_size: usize,
+    /// Whether the capture store truncated this body.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1000,6 +1045,8 @@ pub struct OddBoxGui {
     exit_requested: bool,
     tray_quit_pending: bool,
     pub(in crate::gui) traffic_inspection_selected: Option<u64>,
+    pub(in crate::gui) traffic_cached_body_preview: Option<CachedBodyPreview>,
+    pub(in crate::gui) traffic_body_expanded: bool,
     frontend_http_port_input: String,
     frontend_https_port_input: String,
     frontend_port_notice: Option<String>,
@@ -1935,6 +1982,8 @@ impl OddBoxGui {
                 exit_requested: false,
                 tray_quit_pending: false,
                 traffic_inspection_selected: None,
+                traffic_cached_body_preview: None,
+                traffic_body_expanded: false,
                 frontend_http_port_input: String::new(),
                 frontend_https_port_input: String::new(),
                 frontend_port_notice: None,
@@ -2937,9 +2986,154 @@ impl OddBoxGui {
             Message::TrafficInspectionClear => {
                 self.state.http_capture_store.clear();
                 self.traffic_inspection_selected = None;
+                self.traffic_cached_body_preview = None;
+                self.traffic_body_expanded = false;
             }
             Message::TrafficInspectionSelect(req_id) => {
                 self.traffic_inspection_selected = req_id;
+                self.traffic_cached_body_preview = None;
+                self.traffic_body_expanded = false;
+                if let Some(id) = req_id {
+                    let store = self.state.http_capture_store.clone();
+                    let snap = store.snapshot();
+                    if let Some(entry) = snap.entries.get(&id).cloned() {
+                        let store2 = store.clone();
+                        return Task::perform(
+                            blocking::unblock(move || {
+                                pages::traffic_inspection::compute_body_previews_for_cache(
+                                    id, &entry, &store2,
+                                )
+                            }),
+                            Message::TrafficInspectionBodyPreviewReady,
+                        );
+                    }
+                }
+            }
+            Message::TrafficInspectionBodyPreviewReady(cached) => {
+                if self.traffic_inspection_selected == Some(cached.req_id) {
+                    self.traffic_cached_body_preview = Some(cached);
+                }
+            }
+            Message::TrafficInspectionExpandBody(side) => {
+                self.traffic_body_expanded = true;
+                if let Some(id) = self.traffic_inspection_selected {
+                    let store = self.state.http_capture_store.clone();
+                    let snap = store.snapshot();
+                    if let Some(entry) = snap.entries.get(&id).cloned() {
+                        let side_copy = side;
+                        return Task::perform(
+                            blocking::unblock(move || {
+                                pages::traffic_inspection::compute_expanded_preview(
+                                    id, &entry, &store, side_copy,
+                                )
+                            }),
+                            move |expanded| {
+                                Message::TrafficInspectionBodyExpandReady(side, expanded)
+                            },
+                        );
+                    }
+                }
+            }
+            Message::TrafficInspectionBodyExpandReady(side, expanded_text) => {
+                if let Some(ref mut cached) = self.traffic_cached_body_preview {
+                    let body = match side {
+                        BodySide::Request => cached.req_body.as_mut(),
+                        BodySide::Response => cached.resp_body.as_mut(),
+                    };
+                    if let Some(body) = body {
+                        body.expanded_preview = expanded_text;
+                    }
+                }
+            }
+            Message::TrafficInspectionSaveBody(side) => {
+                if let Some(id) = self.traffic_inspection_selected {
+                    let store = self.state.http_capture_store.clone();
+                    let snap = store.snapshot();
+                    let entry = snap.entries.get(&id).cloned();
+
+                    let ext = self
+                        .traffic_cached_body_preview
+                        .as_ref()
+                        .and_then(|c| match side {
+                            BodySide::Request => c.req_body.as_ref(),
+                            BodySide::Response => c.resp_body.as_ref(),
+                        })
+                        .map(|b| pages::body_content::suggest_extension(b.kind))
+                        .unwrap_or("bin");
+                    let default_name = format!("body.{ext}");
+
+                    let (filter_label, filter_exts) = self
+                        .traffic_cached_body_preview
+                        .as_ref()
+                        .and_then(|c| match side {
+                            BodySide::Request => c.req_body.as_ref(),
+                            BodySide::Response => c.resp_body.as_ref(),
+                        })
+                        .map(|b| pages::body_content::suggest_save_filter(b.kind))
+                        .unwrap_or(("All files", &["bin"]));
+
+                    return Task::perform(
+                        async move {
+                            let path = rfd::FileDialog::new()
+                                .set_title("Save body to file")
+                                .set_file_name(&default_name)
+                                .add_filter(filter_label, filter_exts)
+                                .save_file();
+
+                            let path = match path {
+                                Some(p) => p,
+                                None => return Err("Cancelled".to_string()),
+                            };
+
+                            let captured = store
+                                .body_bytes(id)
+                                .ok_or_else(|| "Body data no longer available".to_string())?;
+
+                            let bytes = match side {
+                                BodySide::Request => captured
+                                    .req_body
+                                    .ok_or_else(|| "No request body".to_string())?,
+                                BodySide::Response => captured
+                                    .resp_body
+                                    .ok_or_else(|| "No response body".to_string())?,
+                            };
+
+                            let content_encoding = entry.as_ref().and_then(|e| {
+                                let hdrs = match side {
+                                    BodySide::Request => e.req_headers.as_ref(),
+                                    BodySide::Response => e.resp_headers.as_ref(),
+                                };
+                                hdrs.and_then(|h| {
+                                    h.iter()
+                                        .find(|(k, _)| k.eq_ignore_ascii_case("content-encoding"))
+                                        .map(|(_, v)| v.clone())
+                                })
+                            });
+
+                            let final_bytes =
+                                pages::traffic_inspection::try_decompress_for_save(
+                                    &bytes,
+                                    content_encoding.as_deref(),
+                                );
+
+                            std::fs::write(&path, &final_bytes).map_err(|e| e.to_string())?;
+                            Ok(path.display().to_string())
+                        },
+                        Message::TrafficInspectionSaveBodyResult,
+                    );
+                }
+            }
+            Message::TrafficInspectionSaveBodyResult(result) => {
+                match result {
+                    Ok(_path) => {
+                        // Could show a notification here in the future
+                    }
+                    Err(msg) => {
+                        if msg != "Cancelled" {
+                            tracing::warn!("Save failed: {msg}");
+                        }
+                    }
+                }
             }
         }
         Task::none()

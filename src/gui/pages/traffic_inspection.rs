@@ -1,8 +1,11 @@
-use iced::widget::{Column, Row, Scrollable, button, column, container, row, text, toggler};
+use iced::widget::{Column, Row, Scrollable, button, column, container, image as iced_image, row, text, toggler};
 use iced::{Background, Color, Element, Font, Length, Padding, Theme};
 use iced::widget::text::Wrapping;
 
-use super::super::{Message, OddBoxGui};
+use super::super::{BodySide, CachedBody, CachedBodyPreview, Message, OddBoxGui};
+use super::body_content::{
+    detect_content_kind, format_size, hex_preview, text_preview, try_decode_image,
+};
 
 use cruma_proxy_lib::proxying::HttpRequestKind;
 use cruma_proxy_lib::proxying::capture_store::{CapturedExchange, HttpCaptureStore};
@@ -10,6 +13,74 @@ use cruma_proxy_lib::proxying::capture_store::{CapturedExchange, HttpCaptureStor
 use flate2::read::{DeflateDecoder, GzDecoder};
 use std::io::Read;
 use std::sync::Arc;
+
+/// Short preview character limit (shown by default).
+const PREVIEW_SHORT: usize = 512;
+/// Expanded preview character limit (shown after "Load more").
+const PREVIEW_EXPANDED: usize = 4096;
+
+// ─── Public helpers called from mod.rs update() ──────────────────────────────
+
+/// Compute both body previews and wrap them in a [`CachedBodyPreview`].
+///
+/// This is intended to be called from a background thread
+/// (`tokio::task::spawn_blocking`) so the UI stays responsive while
+/// decompressing large bodies.
+pub(in crate::gui) fn compute_body_previews_for_cache(
+    req_id: u64,
+    entry: &CapturedExchange,
+    capture_store: &Arc<HttpCaptureStore>,
+) -> CachedBodyPreview {
+    let (req_body, resp_body) = compute_body_previews(entry, capture_store);
+    CachedBodyPreview {
+        req_id,
+        req_body,
+        resp_body,
+    }
+}
+
+/// Compute an expanded preview for one side of the exchange.
+pub(in crate::gui) fn compute_expanded_preview(
+    _req_id: u64,
+    entry: &CapturedExchange,
+    capture_store: &Arc<HttpCaptureStore>,
+    side: BodySide,
+) -> Option<String> {
+    let captured = capture_store.body_bytes(entry.req_id)?;
+    let (raw_bytes, headers) = match side {
+        BodySide::Request => (captured.req_body.as_ref()?, entry.req_headers.as_ref()),
+        BodySide::Response => (captured.resp_body.as_ref()?, entry.resp_headers.as_ref()),
+    };
+    let enc = headers.and_then(|h| find_header_value(h, "content-encoding"));
+    let decompressed = try_decompress_full(raw_bytes, enc.as_deref());
+    let ct = headers.and_then(|h| find_header_value(h, "content-type"));
+    let kind = detect_content_kind(ct.as_deref(), &decompressed);
+    if kind.is_text() {
+        Some(text_preview(&decompressed, PREVIEW_EXPANDED))
+    } else {
+        Some(hex_preview(&decompressed, Some(1024)))
+    }
+}
+
+/// Decompress body bytes for saving to a file — no size cap so the user
+/// gets the full content.
+pub(in crate::gui) fn try_decompress_for_save(
+    bytes: &[u8],
+    content_encoding: Option<&str>,
+) -> Vec<u8> {
+    let encoding = match content_encoding {
+        Some(e) => e.trim().to_ascii_lowercase(),
+        None => return try_decompress_full_magic(bytes),
+    };
+    match encoding.as_str() {
+        "gzip" | "x-gzip" => decompress_gzip_full(bytes).unwrap_or_else(|| bytes.to_vec()),
+        "deflate" => decompress_deflate_full(bytes).unwrap_or_else(|| bytes.to_vec()),
+        "identity" | "" => bytes.to_vec(),
+        _ => bytes.to_vec(),
+    }
+}
+
+// ─── View ────────────────────────────────────────────────────────────────────
 
 impl OddBoxGui {
     pub(in crate::gui) fn view_traffic_inspection(&self) -> Element<'_, Message> {
@@ -114,16 +185,14 @@ impl OddBoxGui {
         let controls_box = container(controls_items)
             .padding(16)
             .width(Length::Fill)
-            .style(|theme: &Theme| {
-                iced::widget::container::Style {
-                    background: Some(self.surface_panel_bg(theme).into()),
-                    border: iced::Border {
-                        radius: 6.0.into(),
-                        width: 1.0,
-                        color: self.surface_border_color(theme),
-                    },
-                    ..Default::default()
-                }
+            .style(|theme: &Theme| iced::widget::container::Style {
+                background: Some(self.surface_panel_bg(theme).into()),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    width: 1.0,
+                    color: self.surface_border_color(theme),
+                },
+                ..Default::default()
             });
 
         // ── Header row ───────────────────────────────────────────────────
@@ -140,13 +209,13 @@ impl OddBoxGui {
                         .font(Font::MONOSPACE)
                         .size(super::super::text_size(11))
                 )
-                .width(Length::Fixed(50.0)),
+                .width(Length::Fixed(56.0)),
                 container(
                     text("Kind")
                         .font(Font::MONOSPACE)
                         .size(super::super::text_size(11))
                 )
-                .width(Length::Fixed(40.0)),
+                .width(Length::Fixed(48.0)),
                 container(
                     text("Duration")
                         .font(Font::MONOSPACE)
@@ -158,7 +227,7 @@ impl OddBoxGui {
                         .font(Font::MONOSPACE)
                         .size(super::super::text_size(11))
                 )
-                .width(Length::Fixed(100.0)),
+                .width(Length::Fixed(80.0)),
                 container(
                     text("Host")
                         .font(Font::MONOSPACE)
@@ -182,16 +251,14 @@ impl OddBoxGui {
             left: 12.0,
         })
         .width(Length::Fill)
-        .style(|theme: &Theme| {
-            iced::widget::container::Style {
-                background: Some(self.surface_panel_alt_bg(theme).into()),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    width: 1.0,
-                    color: self.surface_border_color(theme),
-                },
-                ..Default::default()
-            }
+        .style(|theme: &Theme| iced::widget::container::Style {
+            background: Some(self.surface_panel_alt_bg(theme).into()),
+            border: iced::Border {
+                radius: 6.0.into(),
+                width: 1.0,
+                color: self.surface_border_color(theme),
+            },
+            ..Default::default()
         });
 
         // ── Exchange rows ────────────────────────────────────────────────
@@ -214,8 +281,9 @@ impl OddBoxGui {
                 .width(Length::Fill),
             );
         } else {
-            // Iterate oldest-first
-            for req_id in snapshot.order.iter() {
+            // Limit to most recent 500 to keep the widget tree small
+            let skip = snapshot.order.len().saturating_sub(500);
+            for req_id in snapshot.order.iter().skip(skip) {
                 if let Some(exchange) = snapshot.entries.get(req_id) {
                     let is_selected = self.traffic_inspection_selected == Some(*req_id);
                     let rid = *req_id;
@@ -255,11 +323,9 @@ impl OddBoxGui {
                         container(text(""))
                             .height(Length::Fixed(1.0))
                             .width(Length::Fill)
-                            .style(|theme: &Theme| {
-                                iced::widget::container::Style {
-                                    background: Some(self.surface_border_color(theme).into()),
-                                    ..Default::default()
-                                }
+                            .style(|theme: &Theme| iced::widget::container::Style {
+                                background: Some(self.surface_border_color(theme).into()),
+                                ..Default::default()
                             }),
                     );
                 }
@@ -282,22 +348,25 @@ impl OddBoxGui {
             )
             .width(Length::Fill)
             .height(Length::FillPortion(2))
-            .style(|theme: &Theme| {
-                iced::widget::container::Style {
-                    background: Some(self.surface_panel_bg(theme).into()),
-                    border: iced::Border {
-                        radius: 6.0.into(),
-                        width: 1.0,
-                        color: self.surface_border_color(theme),
-                    },
-                    ..Default::default()
-                }
+            .style(|theme: &Theme| iced::widget::container::Style {
+                background: Some(self.surface_panel_bg(theme).into()),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    width: 1.0,
+                    color: self.surface_border_color(theme),
+                },
+                ..Default::default()
             });
 
             let selected_id = self.traffic_inspection_selected.unwrap();
             let exchange = snapshot.entries.get(&selected_id).unwrap();
 
-            let detail_panel = build_detail_panel(exchange, capture_store);
+            let detail_panel = build_detail_panel(
+                exchange,
+                capture_store,
+                self.traffic_cached_body_preview.as_ref(),
+                self.traffic_body_expanded,
+            );
 
             let detail_container = container(
                 Scrollable::new(detail_panel)
@@ -306,16 +375,14 @@ impl OddBoxGui {
             )
             .width(Length::Fill)
             .height(Length::FillPortion(3))
-            .style(|theme: &Theme| {
-                iced::widget::container::Style {
-                    background: Some(self.surface_panel_bg(theme).into()),
-                    border: iced::Border {
-                        radius: 6.0.into(),
-                        width: 1.0,
-                        color: self.surface_border_color(theme),
-                    },
-                    ..Default::default()
-                }
+            .style(|theme: &Theme| iced::widget::container::Style {
+                background: Some(self.surface_panel_bg(theme).into()),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    width: 1.0,
+                    color: self.surface_border_color(theme),
+                },
+                ..Default::default()
             });
 
             let inner = column![page_title, controls_box, header, exchange_list, detail_container]
@@ -352,16 +419,14 @@ impl OddBoxGui {
             )
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(|theme: &Theme| {
-                iced::widget::container::Style {
-                    background: Some(self.surface_panel_bg(theme).into()),
-                    border: iced::Border {
-                        radius: 6.0.into(),
-                        width: 1.0,
-                        color: self.surface_border_color(theme),
-                    },
-                    ..Default::default()
-                }
+            .style(|theme: &Theme| iced::widget::container::Style {
+                background: Some(self.surface_panel_bg(theme).into()),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    width: 1.0,
+                    color: self.surface_border_color(theme),
+                },
+                ..Default::default()
             });
 
             let inner = column![page_title, controls_box, header, exchange_list]
@@ -395,110 +460,112 @@ impl OddBoxGui {
 
 // ─── Exchange row (table row) ────────────────────────────────────────────────
 
-fn build_exchange_row<'a>(
-    exchange: &CapturedExchange,
-    _is_selected: bool,
-) -> Element<'a, Message> {
-    let method_color = match exchange.method.as_str() {
-        "GET" => Color::from_rgb(0.2, 0.7, 0.3),
-        "POST" => Color::from_rgb(0.9, 0.7, 0.1),
-        "PUT" => Color::from_rgb(0.3, 0.5, 0.9),
-        "DELETE" => Color::from_rgb(0.9, 0.3, 0.3),
-        "PATCH" => Color::from_rgb(0.7, 0.3, 0.8),
-        "HEAD" => Color::from_rgb(0.5, 0.5, 0.5),
-        "OPTIONS" => Color::from_rgb(0.4, 0.7, 0.7),
-        _ => Color::from_rgb(0.6, 0.6, 0.6),
+fn build_exchange_row<'a>(exchange: &CapturedExchange, _is_selected: bool) -> Element<'a, Message> {
+    let method_color = method_color_value(&exchange.method);
+    let status_color = status_code_color(exchange.status);
+
+    let is_streaming = exchange.is_inflight
+        && matches!(
+            exchange.kind,
+            HttpRequestKind::SSE | HttpRequestKind::WebSocket
+        );
+
+    let status_str = if is_streaming {
+        match exchange.status {
+            Some(s) => format!("{s} ⇣"),
+            None => "⇣···".to_string(),
+        }
+    } else {
+        match exchange.status {
+            Some(s) => format!("{}", s),
+            None if exchange.is_inflight => "···".to_string(),
+            None => "—".to_string(),
+        }
+    };
+    let status_display_color = if is_streaming {
+        Color::from_rgb(0.3, 0.85, 0.4)
+    } else {
+        status_color
     };
 
-    let status_str = match exchange.status {
-        Some(s) => format!("{}", s),
-        None if exchange.is_inflight => "···".to_string(),
-        None => "—".to_string(),
+    let duration_str = if is_streaming {
+        match exchange.kind {
+            HttpRequestKind::SSE => "⇣ stream".to_string(),
+            HttpRequestKind::WebSocket => "⇅ open".to_string(),
+            _ => "⇣ stream".to_string(),
+        }
+    } else {
+        format_latency(exchange.duration_ms)
     };
-    let status_color = match exchange.status {
-        Some(s) if s < 300 => Color::from_rgb(0.2, 0.7, 0.3),
-        Some(s) if s < 400 => Color::from_rgb(0.3, 0.7, 0.8),
-        Some(s) if s < 500 => Color::from_rgb(0.9, 0.7, 0.1),
-        Some(_) => Color::from_rgb(0.9, 0.3, 0.3),
-        None => Color::from_rgb(0.5, 0.5, 0.5),
-    };
-
-    let duration_str = match exchange.duration_ms {
-        Some(d) if d < 1 => "<1ms".to_string(),
-        Some(d) if d < 1000 => format!("{}ms", d),
-        Some(d) if d < 60_000 => format!("{:.1}s", d as f64 / 1000.0),
-        Some(d) => format!(
-            "{:.0}m{:.0}s",
-            d / 60_000,
-            (d % 60_000) as f64 / 1000.0
-        ),
-        None if exchange.is_inflight => "···".to_string(),
-        None => "—".to_string(),
+    let duration_color = if is_streaming {
+        Color::from_rgb(0.3, 0.85, 0.4)
+    } else {
+        latency_color_value(exchange.duration_ms)
     };
 
     let size_str = {
-        let req_sz = exchange
-            .req_body_size
-            .map(|s| fmt_body_size(s))
-            .unwrap_or_default();
-        let resp_sz = exchange
-            .resp_body_size
-            .map(|s| fmt_body_size(s))
-            .unwrap_or_default();
-        let req_trunc = if exchange.req_body_truncated {
-            "+"
+        let resp_sz = exchange.resp_body_size.unwrap_or(0);
+        if resp_sz > 0 {
+            format_size(resp_sz)
+        } else if exchange.is_inflight {
+            "···".to_string()
         } else {
-            ""
-        };
-        let resp_trunc = if exchange.resp_body_truncated {
-            "+"
-        } else {
-            ""
-        };
-        if req_sz.is_empty() && resp_sz.is_empty() {
-            if exchange.is_inflight {
-                "···".to_string()
-            } else {
-                "—".to_string()
-            }
-        } else {
-            format!("{}{}↑ {}{}↓", req_sz, req_trunc, resp_sz, resp_trunc)
+            "—".to_string()
         }
     };
 
     let host_str = exchange.host.clone().unwrap_or_default();
-    let kind_str = format!("{}", exchange.kind);
     let path_str = exchange.path.clone();
 
-    let inflight_suffix = if exchange.is_inflight { " ●" } else { "" };
-    let method_display = format!("{}{}", &exchange.method, inflight_suffix);
+    let (kind_label, kind_color) = kind_badge_info(&exchange.kind);
+    // Also show HTTP version for HTTP/2+ next to the kind
+    let kind_display = if let Some(ref ver) = exchange.http_version {
+        match ver.as_str() {
+            "HTTP/2" => format!("{kind_label} h2"),
+            "HTTP/3" => format!("{kind_label} h3"),
+            _ => kind_label.to_string(),
+        }
+    } else {
+        kind_label.to_string()
+    };
 
     container(
         row![
             container(
-                text(method_display)
-                    .font(Font::MONOSPACE)
+                text(exchange.method.clone())
+                    .font(Font {
+                        weight: iced::font::Weight::Bold,
+                        ..Font::MONOSPACE
+                    })
                     .size(super::super::text_size(12))
                     .color(method_color)
             )
             .width(Length::Fixed(60.0)),
             container(
                 text(status_str)
-                    .font(Font::MONOSPACE)
+                    .font(Font {
+                        weight: iced::font::Weight::Bold,
+                        ..Font::MONOSPACE
+                    })
                     .size(super::super::text_size(12))
-                    .color(status_color)
+                    .color(status_display_color)
             )
-            .width(Length::Fixed(50.0)),
+            .width(Length::Fixed(56.0)),
             container(
-                text(kind_str)
-                    .font(Font::MONOSPACE)
-                    .size(super::super::text_size(11))
+                text(kind_display)
+                    .font(Font {
+                        weight: iced::font::Weight::Bold,
+                        ..Font::MONOSPACE
+                    })
+                    .size(super::super::text_size(10))
+                    .color(kind_color)
             )
-            .width(Length::Fixed(40.0)),
+            .width(Length::Fixed(48.0)),
             container(
                 text(duration_str)
                     .font(Font::MONOSPACE)
                     .size(super::super::text_size(11))
+                    .color(duration_color)
             )
             .width(Length::Fixed(80.0)),
             container(
@@ -506,7 +573,7 @@ fn build_exchange_row<'a>(
                     .font(Font::MONOSPACE)
                     .size(super::super::text_size(11))
             )
-            .width(Length::Fixed(100.0)),
+            .width(Length::Fixed(80.0)),
             container(
                 text(host_str)
                     .font(Font::MONOSPACE)
@@ -519,6 +586,13 @@ fn build_exchange_row<'a>(
                     .font(Font::MONOSPACE)
                     .size(super::super::text_size(11))
                     .wrapping(Wrapping::None)
+                    .style(|theme: &Theme| iced::widget::text::Style {
+                        color: Some({
+                            let mut c = theme.extended_palette().background.base.text;
+                            c.a = 0.75;
+                            c
+                        }),
+                    })
             )
             .width(Length::FillPortion(5)),
         ]
@@ -540,39 +614,24 @@ fn build_exchange_row<'a>(
 fn build_detail_panel<'a>(
     exchange: &CapturedExchange,
     capture_store: &Arc<HttpCaptureStore>,
+    cached_preview: Option<&CachedBodyPreview>,
+    body_expanded: bool,
 ) -> Element<'a, Message> {
     let ts = super::super::text_size;
 
     let mut detail_col = Column::new().spacing(4).padding(16).width(Length::Fill);
 
     // ── Title bar ────────────────────────────────────────────────────
-    let method_color = match exchange.method.as_str() {
-        "GET" => Color::from_rgb(0.2, 0.7, 0.3),
-        "POST" => Color::from_rgb(0.9, 0.7, 0.1),
-        "PUT" => Color::from_rgb(0.3, 0.5, 0.9),
-        "DELETE" => Color::from_rgb(0.9, 0.3, 0.3),
-        "PATCH" => Color::from_rgb(0.7, 0.3, 0.8),
-        "HEAD" => Color::from_rgb(0.5, 0.5, 0.5),
-        "OPTIONS" => Color::from_rgb(0.4, 0.7, 0.7),
-        _ => Color::from_rgb(0.6, 0.6, 0.6),
-    };
+    let method_color = method_color_value(&exchange.method);
+    let status_color = status_code_color(exchange.status);
 
-    let status_color = match exchange.status {
-        Some(s) if s < 300 => Color::from_rgb(0.2, 0.7, 0.3),
-        Some(s) if s < 400 => Color::from_rgb(0.3, 0.7, 0.8),
-        Some(s) if s < 500 => Color::from_rgb(0.9, 0.7, 0.1),
-        Some(_) => Color::from_rgb(0.9, 0.3, 0.3),
-        None => Color::from_rgb(0.5, 0.5, 0.5),
-    };
-
-    let kind_badge = kind_badge_str(&exchange.kind);
+    let (badge_text, badge_color) = kind_badge_info(&exchange.kind);
 
     // Request summary line
     let mut title_items: Vec<Element<'_, Message>> = Vec::new();
 
     // Kind badge
     if exchange.kind != HttpRequestKind::Regular {
-        let (badge_text, badge_color) = kind_badge;
         title_items.push(
             container(
                 text(format!(" {} ", badge_text))
@@ -606,7 +665,10 @@ fn build_detail_panel<'a>(
     // Method
     title_items.push(
         text(format!(" {} ", &exchange.method))
-            .font(Font::MONOSPACE)
+            .font(Font {
+                weight: iced::font::Weight::Bold,
+                ..Font::MONOSPACE
+            })
             .size(ts(14))
             .color(method_color)
             .into(),
@@ -642,13 +704,16 @@ fn build_detail_panel<'a>(
             _ => "⇣ streaming",
         };
         let mut parts: Vec<Element<'_, Message>> = vec![text(stream_label)
-            .font(Font::MONOSPACE)
+            .font(Font {
+                weight: iced::font::Weight::Bold,
+                ..Font::MONOSPACE
+            })
             .size(ts(12))
-            .color(Color::from_rgb(0.2, 0.8, 0.3))
+            .color(Color::from_rgb(0.3, 0.85, 0.4))
             .into()];
         if let Some(status) = exchange.status {
             parts.push(
-                text(format!("  Status: {}", status))
+                text(format!("  Status: {} {}", status, status_reason_phrase(status)))
                     .font(Font::MONOSPACE)
                     .size(ts(12))
                     .color(status_color)
@@ -660,20 +725,10 @@ fn build_detail_panel<'a>(
             .align_y(iced::Alignment::Center)
     } else {
         let status_str = match exchange.status {
-            Some(s) => format!("{}", s),
+            Some(s) => format!("{} {}", s, status_reason_phrase(s)),
             None => "pending...".to_string(),
         };
-        let duration_str = match exchange.duration_ms {
-            Some(d) if d < 1 => "<1 ms".to_string(),
-            Some(d) if d < 1000 => format!("{} ms", d),
-            Some(d) if d < 60_000 => format!("{:.1} s", d as f64 / 1000.0),
-            Some(d) => format!(
-                "{:.0}m {:.0}s",
-                d / 60_000,
-                (d % 60_000) as f64 / 1000.0
-            ),
-            None => "—".to_string(),
-        };
+        let duration_str = format_latency(exchange.duration_ms);
         row![
             text(format!("Status: {}", status_str))
                 .font(Font::MONOSPACE)
@@ -708,15 +763,23 @@ fn build_detail_panel<'a>(
         if !headers.is_empty() {
             detail_col = detail_col.push(section_title(
                 "REQUEST HEADERS",
-                Color::from_rgb(0.3, 0.5, 0.9),
+                Color::from_rgb(0.4, 0.7, 0.92),
             ));
-            for (key, value) in headers {
+            for (key, value) in headers.iter().take(30) {
                 detail_col = detail_col.push(header_line(
                     key,
                     value,
-                    Color::from_rgb(0.3, 0.5, 0.9),
+                    Color::from_rgb(0.4, 0.7, 0.92),
                     Color::from_rgb(0.5, 0.6, 0.8),
                 ));
+            }
+            if headers.len() > 30 {
+                detail_col = detail_col.push(
+                    text(format!("  … {} more headers", headers.len() - 30))
+                        .font(Font::MONOSPACE)
+                        .size(ts(11))
+                        .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                );
             }
             detail_col = detail_col.push(section_separator());
         }
@@ -724,45 +787,20 @@ fn build_detail_panel<'a>(
 
     // ── Request Body ─────────────────────────────────────────────────
     if exchange.req_body_size.unwrap_or(0) > 0 {
-        let truncated_marker = if exchange.req_body_truncated {
-            " (truncated)"
-        } else {
-            ""
-        };
-        let content_encoding = exchange
-            .req_headers
-            .as_ref()
-            .and_then(|h| find_header_value(h, "content-encoding"));
-        detail_col = detail_col.push(section_title(
-            &format!(
-                "REQUEST BODY  ({} bytes{})",
-                exchange.req_body_size.unwrap_or(0),
-                truncated_marker
-            ),
-            Color::from_rgb(0.2, 0.6, 0.8),
+        let body_size = exchange.req_body_size.unwrap_or(0);
+        let truncated = exchange.req_body_truncated;
+
+        let cached_req = cached_preview.and_then(|c| c.req_body.as_ref());
+
+        detail_col = detail_col.push(rich_body_section(
+            "REQUEST BODY",
+            body_size,
+            truncated,
+            cached_req,
+            body_expanded,
+            BodySide::Request,
+            Color::from_rgb(0.3, 0.75, 0.9),
         ));
-        if let Some(preview) = read_body_preview(
-            capture_store,
-            exchange.req_id,
-            true,
-            content_encoding.as_deref(),
-        ) {
-            detail_col = detail_col.push(body_text_block(
-                &preview,
-                Color::from_rgb(0.3, 0.6, 0.8),
-            ));
-        } else {
-            detail_col = detail_col.push(
-                text(format!(
-                    "  [binary data, {} bytes{}]",
-                    exchange.req_body_size.unwrap_or(0),
-                    truncated_marker
-                ))
-                .font(Font::MONOSPACE)
-                .size(super::super::text_size(11))
-                .color(Color::from_rgb(0.5, 0.5, 0.5)),
-            );
-        }
         detail_col = detail_col.push(section_separator());
     }
 
@@ -771,15 +809,23 @@ fn build_detail_panel<'a>(
         if !headers.is_empty() {
             detail_col = detail_col.push(section_title(
                 "RESPONSE HEADERS",
-                Color::from_rgb(0.7, 0.3, 0.7),
+                Color::from_rgb(0.75, 0.45, 0.9),
             ));
-            for (key, value) in headers {
+            for (key, value) in headers.iter().take(30) {
                 detail_col = detail_col.push(header_line(
                     key,
                     value,
-                    Color::from_rgb(0.7, 0.3, 0.7),
-                    Color::from_rgb(0.7, 0.4, 0.7),
+                    Color::from_rgb(0.75, 0.45, 0.9),
+                    Color::from_rgb(0.7, 0.5, 0.8),
                 ));
+            }
+            if headers.len() > 30 {
+                detail_col = detail_col.push(
+                    text(format!("  … {} more headers", headers.len() - 30))
+                        .font(Font::MONOSPACE)
+                        .size(ts(11))
+                        .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                );
             }
             detail_col = detail_col.push(section_separator());
         }
@@ -787,46 +833,31 @@ fn build_detail_panel<'a>(
 
     // ── Response Body ────────────────────────────────────────────────
     if exchange.resp_body_size.unwrap_or(0) > 0 {
-        let truncated_marker = if exchange.resp_body_truncated {
-            " (truncated)"
-        } else {
-            ""
-        };
-        let content_encoding = exchange
-            .resp_headers
-            .as_ref()
-            .and_then(|h| find_header_value(h, "content-encoding"));
-        detail_col = detail_col.push(section_title(
-            &format!(
-                "RESPONSE BODY  ({} bytes{})",
-                exchange.resp_body_size.unwrap_or(0),
-                truncated_marker
-            ),
-            Color::from_rgb(0.7, 0.3, 0.7),
+        let body_size = exchange.resp_body_size.unwrap_or(0);
+        let truncated = exchange.resp_body_truncated;
+
+        let cached_resp = cached_preview.and_then(|c| c.resp_body.as_ref());
+
+        detail_col = detail_col.push(rich_body_section(
+            "RESPONSE BODY",
+            body_size,
+            truncated,
+            cached_resp,
+            body_expanded,
+            BodySide::Response,
+            Color::from_rgb(0.75, 0.45, 0.9),
         ));
-        if let Some(preview) = read_body_preview(
-            capture_store,
-            exchange.req_id,
-            false,
-            content_encoding.as_deref(),
-        ) {
-            detail_col = detail_col.push(body_text_block(
-                &preview,
-                Color::from_rgb(0.7, 0.4, 0.7),
-            ));
-        } else {
-            detail_col = detail_col.push(
-                text(format!(
-                    "  [binary data, {} bytes{}]",
-                    exchange.resp_body_size.unwrap_or(0),
-                    truncated_marker
-                ))
-                .font(Font::MONOSPACE)
-                .size(super::super::text_size(11))
-                .color(Color::from_rgb(0.5, 0.5, 0.5)),
-            );
-        }
         detail_col = detail_col.push(section_separator());
+    } else if !is_streaming
+        && exchange.status.is_some()
+        && exchange.kind == HttpRequestKind::Regular
+    {
+        detail_col = detail_col.push(
+            text("No response body")
+                .font(Font::MONOSPACE)
+                .size(ts(11))
+                .color(Color::from_rgb(0.5, 0.5, 0.5)),
+        );
     }
 
     // ── WebSocket Messages ───────────────────────────────────────────
@@ -840,27 +871,43 @@ fn build_detail_panel<'a>(
             let shown = snap.messages.len();
             let summary = if shown as u64 == total {
                 format!(
-                    "WEBSOCKET MESSAGES  ({} messages  ↑{} B  ↓{} B)",
-                    total, c2o, o2c
+                    "WEBSOCKET MESSAGES  ({} messages  ↑{}  ↓{})",
+                    total,
+                    format_size(c2o as usize),
+                    format_size(o2c as usize)
                 )
             } else {
                 format!(
-                    "WEBSOCKET MESSAGES  ({}/{} messages, oldest evicted  ↑{} B  ↓{} B)",
-                    shown, total, c2o, o2c
+                    "WEBSOCKET MESSAGES  ({}/{} messages, oldest evicted  ↑{}  ↓{})",
+                    shown,
+                    total,
+                    format_size(c2o as usize),
+                    format_size(o2c as usize)
                 )
             };
             detail_col = detail_col.push(section_title(
                 &summary,
-                Color::from_rgb(0.7, 0.3, 0.7),
+                Color::from_rgb(0.75, 0.45, 0.9),
             ));
 
-            for msg in &snap.messages {
+            // Cap displayed messages
+            let msg_skip = snap.messages.len().saturating_sub(50);
+            if msg_skip > 0 {
+                detail_col = detail_col.push(
+                    text(format!("  … {msg_skip} older messages not shown"))
+                        .font(Font::MONOSPACE)
+                        .size(super::super::text_size(11))
+                        .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                );
+            }
+
+            for msg in snap.messages.iter().skip(msg_skip) {
                 let (arrow, dir_label, arrow_color) = match msg.direction {
                     WsDirection::ClientToOrigin => {
-                        ("↑", "send", Color::from_rgb(0.2, 0.6, 0.8))
+                        ("↑", "send", Color::from_rgb(0.3, 0.75, 0.9))
                     }
                     WsDirection::OriginToClient => {
-                        ("↓", "recv", Color::from_rgb(0.7, 0.3, 0.7))
+                        ("↓", "recv", Color::from_rgb(0.75, 0.45, 0.9))
                     }
                 };
                 let kind_label = match msg.kind {
@@ -872,18 +919,21 @@ fn build_detail_panel<'a>(
                 };
                 let size_info = if msg.original_len != msg.payload.len() {
                     format!(
-                        "{} B (truncated from {} B)",
-                        msg.payload.len(),
-                        msg.original_len
+                        "{} (truncated from {})",
+                        format_size(msg.payload.len()),
+                        format_size(msg.original_len)
                     )
                 } else {
-                    format!("{} B", msg.original_len)
+                    format_size(msg.original_len)
                 };
 
                 detail_col = detail_col.push(
                     row![
                         text(format!("  {} {} ", arrow, dir_label))
-                            .font(Font::MONOSPACE)
+                            .font(Font {
+                                weight: iced::font::Weight::Bold,
+                                ..Font::MONOSPACE
+                            })
                             .size(super::super::text_size(11))
                             .color(arrow_color),
                         text(format!("[{}] ", kind_label))
@@ -903,15 +953,15 @@ fn build_detail_panel<'a>(
                 let payload_str = if msg.kind == WsMessageKind::Text {
                     match std::str::from_utf8(&msg.payload) {
                         Ok(s) => sanitize(s),
-                        Err(_) => format!("[binary, {} B]", msg.original_len),
+                        Err(_) => format!("[binary, {}]", format_size(msg.original_len)),
                     }
                 } else if msg.payload.is_empty() {
                     String::new()
                 } else {
-                    format!("[binary, {} B]", msg.original_len)
+                    text_preview(&msg.payload, 512)
                 };
                 if !payload_str.is_empty() {
-                    detail_col = detail_col.push(body_text_block(&payload_str, arrow_color));
+                    detail_col = detail_col.push(body_code_block(&payload_str));
                 }
             }
 
@@ -927,23 +977,33 @@ fn build_detail_panel<'a>(
             let total_bytes = snap.total_bytes;
             let summary = if shown as u64 == total {
                 format!(
-                    "SSE EVENTS  ({} events  ↓{} B)",
-                    total, total_bytes
+                    "SSE EVENTS  ({} events  ↓{})",
+                    total,
+                    format_size(total_bytes as usize)
                 )
             } else {
                 format!(
-                    "SSE EVENTS  ({}/{} events, oldest evicted  ↓{} B)",
-                    shown, total, total_bytes
+                    "SSE EVENTS  ({}/{} events, oldest evicted  ↓{})",
+                    shown,
+                    total,
+                    format_size(total_bytes as usize)
                 )
             };
-            let sse_color = Color::from_rgb(0.2, 0.8, 0.3);
+            let sse_color = Color::from_rgb(0.3, 0.85, 0.4);
             detail_col = detail_col.push(section_title(&summary, sse_color));
 
-            for evt in &snap.events {
-                let event_type = evt
-                    .event_type
-                    .as_deref()
-                    .unwrap_or("message");
+            let evt_skip = snap.events.len().saturating_sub(50);
+            if evt_skip > 0 {
+                detail_col = detail_col.push(
+                    text(format!("  … {evt_skip} older events not shown"))
+                        .font(Font::MONOSPACE)
+                        .size(super::super::text_size(11))
+                        .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                );
+            }
+
+            for evt in snap.events.iter().skip(evt_skip) {
+                let event_type = evt.event_type.as_deref().unwrap_or("message");
                 let is_comment_only = evt.data.is_empty() && !evt.comments.is_empty();
                 let label = if is_comment_only {
                     "comment".to_string()
@@ -952,19 +1012,22 @@ fn build_detail_panel<'a>(
                 };
                 let size_info = if evt.truncated {
                     format!(
-                        "{} B (truncated from {} B)",
-                        evt.data.len(),
-                        evt.original_data_len
+                        "{} (truncated from {})",
+                        format_size(evt.data.len()),
+                        format_size(evt.original_data_len)
                     )
                 } else if !evt.data.is_empty() {
-                    format!("{} B", evt.data.len())
+                    format_size(evt.data.len())
                 } else {
                     String::new()
                 };
 
                 let mut info_parts: Vec<Element<'_, Message>> = vec![
-                    text(format!("  ↓ recv "))
-                        .font(Font::MONOSPACE)
+                    text("  ↓ recv ".to_string())
+                        .font(Font {
+                            weight: iced::font::Weight::Bold,
+                            ..Font::MONOSPACE
+                        })
                         .size(super::super::text_size(11))
                         .color(sse_color)
                         .into(),
@@ -1004,16 +1067,10 @@ fn build_detail_panel<'a>(
                 // Show content
                 if is_comment_only {
                     for comment in &evt.comments {
-                        detail_col = detail_col.push(
-                            text(format!("    : {}", sanitize(comment)))
-                                .font(Font::MONOSPACE)
-                                .size(super::super::text_size(11))
-                                .color(sse_color),
-                        );
+                        detail_col = detail_col.push(body_code_block(&format!(": {}", sanitize(comment))));
                     }
                 } else if !evt.data.is_empty() {
-                    detail_col =
-                        detail_col.push(body_text_block(&sanitize(&evt.data), sse_color));
+                    detail_col = detail_col.push(body_code_block(&sanitize(&evt.data)));
                 }
             }
 
@@ -1024,12 +1081,241 @@ fn build_detail_panel<'a>(
     detail_col.into()
 }
 
+// ─── Rich body section ───────────────────────────────────────────────────────
+
+/// Rich body section that renders differently depending on the detected
+/// content kind — text preview with "Load more" / "Save to file" buttons,
+/// inline image, or hex dump.
+fn rich_body_section<'a>(
+    title: &str,
+    body_size: usize,
+    truncated: bool,
+    cached_body: Option<&CachedBody>,
+    body_expanded: bool,
+    side: BodySide,
+    accent_color: Color,
+) -> Element<'a, Message> {
+    let ts = super::super::text_size;
+    let truncated_marker = if truncated { " (truncated)" } else { "" };
+    let size_str = format!("{}{}", format_size(body_size), truncated_marker);
+
+    let mut col = Column::new().spacing(4).width(Length::Fill);
+
+    // Check if body data is being loaded
+    if cached_body.is_none() {
+        // Loading state
+        col = col.push(
+            row![
+                text(title.to_string())
+                    .font(Font {
+                        weight: iced::font::Weight::Bold,
+                        ..Font::MONOSPACE
+                    })
+                    .size(ts(11))
+                    .color(accent_color),
+                text(format!("  ({})", size_str))
+                    .font(Font::MONOSPACE)
+                    .size(ts(11))
+                    .color(Color::from_rgb(0.5, 0.5, 0.5)),
+            ]
+            .spacing(4)
+            .align_y(iced::Alignment::Center),
+        );
+
+        col = col.push(
+            container(
+                text("⏳ Loading body preview…")
+                    .font(Font::MONOSPACE)
+                    .size(ts(11))
+                    .color(Color::from_rgb(0.5, 0.5, 0.5)),
+            )
+            .padding(Padding {
+                top: 6.0,
+                right: 8.0,
+                bottom: 6.0,
+                left: 8.0,
+            })
+            .width(Length::Fill)
+            .style(|theme: &Theme| {
+                let palette = theme.extended_palette();
+                let weak = palette.background.weak.color;
+                iced::widget::container::Style {
+                    background: Some(Color { a: 0.20, ..weak }.into()),
+                    border: iced::Border {
+                        radius: 4.0.into(),
+                        width: 1.0,
+                        color: Color { a: 0.10, ..palette.background.strong.color },
+                    },
+                    ..Default::default()
+                }
+            }),
+        );
+
+        return col.into();
+    }
+
+    let body = cached_body.unwrap();
+    let kind_label = body.kind.label().to_string();
+
+    // ── Header row: title + kind badge + size ────────────────────
+    col = col.push(
+        row![
+            text(title.to_string())
+                .font(Font {
+                    weight: iced::font::Weight::Bold,
+                    ..Font::MONOSPACE
+                })
+                .size(ts(11))
+                .color(accent_color),
+            container(
+                text(kind_label)
+                    .font(Font::MONOSPACE)
+                    .size(ts(10))
+                    .style(|theme: &Theme| iced::widget::text::Style {
+                        color: Some({
+                            let mut c = theme.extended_palette().background.base.text;
+                            c.a = 0.55;
+                            c
+                        }),
+                    })
+            )
+            .padding(Padding {
+                top: 1.0,
+                right: 6.0,
+                bottom: 1.0,
+                left: 6.0,
+            })
+            .style(|theme: &Theme| {
+                let weak = theme.extended_palette().background.weak.color;
+                iced::widget::container::Style {
+                    background: Some(Color { a: 0.30, ..weak }.into()),
+                    border: iced::Border {
+                        radius: 3.0.into(),
+                        width: 0.0,
+                        color: Color::TRANSPARENT,
+                    },
+                    ..Default::default()
+                }
+            }),
+            text(format!("  {}", size_str))
+                .font(Font::MONOSPACE)
+                .size(ts(11))
+                .color(Color::from_rgb(0.5, 0.5, 0.5)),
+        ]
+        .spacing(6)
+        .align_y(iced::Alignment::Center),
+    );
+
+    // ── Inline image ─────────────────────────────────────────────
+    if let Some(ref decoded) = body.image {
+        let img_widget = iced_image(decoded.handle.clone())
+            .content_fit(iced::ContentFit::ScaleDown)
+            .width(Length::Fill);
+
+        col = col.push(
+            container(img_widget)
+                .max_width(480.0)
+                .padding(8)
+                .style(|theme: &Theme| {
+                    let weak = theme.extended_palette().background.weak.color;
+                    iced::widget::container::Style {
+                        background: Some(Color { a: 0.20, ..weak }.into()),
+                        border: iced::Border {
+                            radius: 4.0.into(),
+                            width: 1.0,
+                            color: Color {
+                                a: 0.15,
+                                ..theme.extended_palette().background.strong.color
+                            },
+                        },
+                        ..Default::default()
+                    }
+                }),
+        );
+
+        col = col.push(
+            text(format!(
+                "{}×{} px",
+                decoded.original_width, decoded.original_height
+            ))
+            .font(Font::MONOSPACE)
+            .size(ts(10))
+            .color(Color::from_rgb(0.5, 0.5, 0.5)),
+        );
+    } else {
+        // ── Text / hex code block ────────────────────────────────
+        let display_text = if body_expanded {
+            body.expanded_preview.as_deref().unwrap_or(&body.preview)
+        } else {
+            &body.preview
+        };
+
+        col = col.push(body_code_block(display_text));
+    }
+
+    // ── Action buttons: Load more + Save to file ─────────────────
+    let mut actions = Row::new().spacing(8).align_y(iced::Alignment::Center);
+
+    // "Load more" — only for text bodies that were truncated in the preview
+    if body.image.is_none() {
+        let display_text = if body_expanded {
+            body.expanded_preview.as_deref().unwrap_or(&body.preview)
+        } else {
+            &body.preview
+        };
+        let could_have_more = body.kind.is_text()
+            && !body_expanded
+            && (display_text.ends_with('…') || body.raw_size > display_text.len());
+        if could_have_more {
+            actions = actions.push(
+                button(
+                    text("⤵ Load more")
+                        .font(Font::MONOSPACE)
+                        .size(ts(11)),
+                )
+                .on_press(Message::TrafficInspectionExpandBody(side))
+                .padding(Padding {
+                    top: 3.0,
+                    right: 8.0,
+                    bottom: 3.0,
+                    left: 8.0,
+                })
+                .style(action_link_button_style),
+            );
+        }
+    }
+
+    // "Save to file" — always available
+    actions = actions.push(
+        button(
+            text("💾 Save to file")
+                .font(Font::MONOSPACE)
+                .size(ts(11)),
+        )
+        .on_press(Message::TrafficInspectionSaveBody(side))
+        .padding(Padding {
+            top: 3.0,
+            right: 8.0,
+            bottom: 3.0,
+            left: 8.0,
+        })
+        .style(action_link_button_style),
+    );
+
+    col = col.push(actions);
+
+    col.into()
+}
+
 // ─── UI building helpers ─────────────────────────────────────────────────────
 
 fn section_title<'a>(label: &str, color: Color) -> Element<'a, Message> {
     container(
         text(label.to_string())
-            .font(Font::MONOSPACE)
+            .font(Font {
+                weight: iced::font::Weight::Bold,
+                ..Font::MONOSPACE
+            })
             .size(super::super::text_size(11))
             .color(color),
     )
@@ -1049,7 +1335,10 @@ fn section_separator<'a>() -> Element<'a, Message> {
         .style(|theme: &Theme| {
             let palette = theme.extended_palette();
             iced::widget::container::Style {
-                background: Some(palette.background.strong.color.into()),
+                background: Some(Color {
+                    a: 0.25,
+                    ..palette.background.strong.color
+                }.into()),
                 ..Default::default()
             }
         })
@@ -1078,40 +1367,158 @@ fn header_line<'a>(
     .into()
 }
 
-fn body_text_block<'a>(content: &str, color: Color) -> Element<'a, Message> {
-    let mut col = Column::new().spacing(0);
-    for line in content.lines() {
-        col = col.push(
-            text(format!("    {}", line))
-                .font(Font::MONOSPACE)
-                .size(super::super::text_size(11))
-                .color(color)
-                .wrapping(Wrapping::WordOrGlyph),
-        );
+fn body_code_block<'a>(content: &str) -> Element<'a, Message> {
+    let owned = content.to_string();
+    container(
+        text(owned)
+            .font(Font::MONOSPACE)
+            .size(super::super::text_size(11))
+            .wrapping(Wrapping::None),
+    )
+    .padding(Padding {
+        top: 6.0,
+        right: 8.0,
+        bottom: 6.0,
+        left: 8.0,
+    })
+    .width(Length::Fill)
+    .clip(true)
+    .style(|theme: &Theme| {
+        let palette = theme.extended_palette();
+        let weak = palette.background.weak.color;
+        iced::widget::container::Style {
+            background: Some(Color { a: 0.35, ..weak }.into()),
+            border: iced::Border {
+                radius: 4.0.into(),
+                width: 1.0,
+                color: Color {
+                    a: 0.15,
+                    ..palette.background.strong.color
+                },
+            },
+            ..Default::default()
+        }
+    })
+    .into()
+}
+
+/// Subtle ghost-style for action link buttons in the body section.
+fn action_link_button_style(
+    theme: &Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
+    let palette = theme.extended_palette();
+    let text_color = match status {
+        iced::widget::button::Status::Hovered => palette.primary.base.color,
+        _ => {
+            let mut c = palette.background.base.text;
+            c.a = 0.50;
+            c
+        }
+    };
+    let bg = match status {
+        iced::widget::button::Status::Hovered => {
+            Some(
+                Color {
+                    a: 0.15,
+                    ..palette.primary.weak.color
+                }
+                .into(),
+            )
+        }
+        _ => None,
+    };
+    iced::widget::button::Style {
+        background: bg,
+        text_color,
+        border: iced::Border {
+            radius: 4.0.into(),
+            width: 0.0,
+            color: Color::TRANSPARENT,
+        },
+        ..Default::default()
     }
-    col.into()
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-fn kind_badge_str(kind: &HttpRequestKind) -> (&'static str, Color) {
+fn kind_badge_info(kind: &HttpRequestKind) -> (&'static str, Color) {
     match kind {
-        HttpRequestKind::Regular => ("HTTP", Color::from_rgb(0.5, 0.5, 0.5)),
-        HttpRequestKind::SSE => ("SSE", Color::from_rgb(0.2, 0.8, 0.3)),
-        HttpRequestKind::WebSocket => ("WS", Color::from_rgb(0.7, 0.3, 0.7)),
-        HttpRequestKind::H2cUpgrade => ("H2C", Color::from_rgb(0.3, 0.7, 0.8)),
+        HttpRequestKind::Regular => ("HTTP", Color::from_rgba(0.5, 0.5, 0.5, 0.55)),
+        HttpRequestKind::SSE => ("SSE", Color::from_rgb(0.3, 0.85, 0.4)),
+        HttpRequestKind::WebSocket => ("WS", Color::from_rgb(0.75, 0.45, 0.9)),
+        HttpRequestKind::H2cUpgrade => ("H2C", Color::from_rgb(0.3, 0.75, 0.9)),
     }
 }
 
-fn fmt_body_size(n: usize) -> String {
-    if n == 0 {
-        "0B".to_string()
-    } else if n < 1024 {
-        format!("{}B", n)
-    } else if n < 1024 * 1024 {
-        format!("{:.1}K", n as f64 / 1024.0)
-    } else {
-        format!("{:.1}M", n as f64 / (1024.0 * 1024.0))
+fn method_color_value(method: &str) -> Color {
+    match method.to_uppercase().as_str() {
+        "GET" => Color::from_rgb(0.40, 0.70, 0.92),
+        "POST" => Color::from_rgb(0.30, 0.78, 0.45),
+        "PUT" => Color::from_rgb(0.92, 0.70, 0.20),
+        "PATCH" => Color::from_rgb(0.70, 0.55, 0.90),
+        "DELETE" => Color::from_rgb(0.90, 0.35, 0.35),
+        "HEAD" => Color::from_rgb(0.55, 0.75, 0.70),
+        "OPTIONS" => Color::from_rgb(0.65, 0.65, 0.65),
+        _ => Color::from_rgb(0.60, 0.60, 0.60),
+    }
+}
+
+fn status_code_color(status: Option<u16>) -> Color {
+    match status {
+        None => Color::from_rgba(0.55, 0.55, 0.55, 0.7),
+        Some(code) if code < 200 => Color::from_rgb(0.55, 0.55, 0.55),
+        Some(code) if code < 300 => Color::from_rgb(0.30, 0.75, 0.40),
+        Some(code) if code < 400 => Color::from_rgb(0.40, 0.65, 0.90),
+        Some(code) if code < 500 => Color::from_rgb(0.92, 0.70, 0.20),
+        Some(_) => Color::from_rgb(0.90, 0.30, 0.30),
+    }
+}
+
+fn latency_color_value(ms: Option<u128>) -> Color {
+    match ms {
+        None => Color::from_rgb(0.5, 0.5, 0.5),
+        Some(ms) if ms < 100 => Color::from_rgb(0.30, 0.78, 0.45),
+        Some(ms) if ms < 500 => Color::from_rgb(0.92, 0.70, 0.20),
+        Some(_) => Color::from_rgb(0.90, 0.35, 0.35),
+    }
+}
+
+fn format_latency(ms: Option<u128>) -> String {
+    match ms {
+        None => "—".to_string(),
+        Some(d) if d < 1 => "<1 ms".to_string(),
+        Some(d) if d < 1000 => format!("{d} ms"),
+        Some(d) if d < 60_000 => format!("{:.1} s", d as f64 / 1000.0),
+        Some(d) => format!("{:.0}m {:.0}s", d / 60_000, (d % 60_000) as f64 / 1000.0),
+    }
+}
+
+fn status_reason_phrase(code: u16) -> &'static str {
+    match code {
+        200 => "OK",
+        201 => "Created",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        304 => "Not Modified",
+        307 => "Temporary Redirect",
+        308 => "Permanent Redirect",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        408 => "Request Timeout",
+        409 => "Conflict",
+        410 => "Gone",
+        413 => "Payload Too Large",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
+        _ => "",
     }
 }
 
@@ -1132,41 +1539,68 @@ fn sanitize(s: &str) -> String {
     out
 }
 
-/// Read a body preview from the capture store, decompressing if needed.
-fn read_body_preview(
+// ─── Body preview computation (called on background threads) ─────────────────
+
+/// Compute both request and response body previews for the given entry.
+fn compute_body_previews(
+    entry: &CapturedExchange,
     capture_store: &Arc<HttpCaptureStore>,
-    req_id: u64,
-    is_request: bool,
-    content_encoding: Option<&str>,
-) -> Option<String> {
-    let captured = capture_store.body_bytes(req_id)?;
-    let raw = if is_request {
-        captured.req_body.as_ref()?
+) -> (Option<super::super::CachedBody>, Option<super::super::CachedBody>) {
+    if let Some(captured) = capture_store.body_bytes(entry.req_id) {
+        let req_body = captured.req_body.as_ref().map(|b| {
+            build_cached_body(b, entry.req_headers.as_ref(), captured.req_body_truncated)
+        });
+        let resp_body = captured.resp_body.as_ref().map(|b| {
+            build_cached_body(b, entry.resp_headers.as_ref(), captured.resp_body_truncated)
+        });
+        (req_body, resp_body)
     } else {
-        captured.resp_body.as_ref()?
-    };
-    if raw.is_empty() {
-        return None;
+        (None, None)
     }
-    let bytes = try_decompress(raw, content_encoding);
-    body_preview_string(&bytes, 8192)
 }
 
-/// Try to interpret bytes as UTF-8 text and return a sanitized preview.
-fn body_preview_string(bytes: &[u8], max_len: usize) -> Option<String> {
-    if bytes.is_empty() {
-        return None;
-    }
-    let text_content = std::str::from_utf8(bytes).ok()?;
-    let sanitized = sanitize(text_content);
-    if sanitized.len() <= max_len {
-        Some(sanitized)
+/// Build a [`CachedBody`] for one side of the exchange.
+fn build_cached_body(
+    raw_bytes: &[u8],
+    headers: Option<&Vec<(String, String)>>,
+    truncated: bool,
+) -> super::super::CachedBody {
+    let enc = headers.and_then(|h| find_header_value(h, "content-encoding"));
+    let decompressed = try_decompress_limited(raw_bytes, enc.as_deref());
+
+    let ct = headers.and_then(|h| find_header_value(h, "content-type"));
+    let kind = detect_content_kind(ct.as_deref(), &decompressed);
+
+    let preview;
+    let image;
+
+    if kind.is_inline_image() {
+        // For images, try to decode from the FULL raw bytes (the limited
+        // decompression might have cut the stream short). Images are
+        // rarely compressed with Content-Encoding on top of their native
+        // compression, so raw_bytes is usually the complete image.
+        image = try_decode_image(raw_bytes);
+        preview = format!("[{} image, {}]", kind.label(), format_size(raw_bytes.len()));
+    } else if kind.is_text() {
+        preview = text_preview(&decompressed, PREVIEW_SHORT);
+        image = None;
     } else {
-        let mut preview: String = sanitized.chars().take(max_len.saturating_sub(1)).collect();
-        preview.push('…');
-        Some(preview)
+        // Binary — show hex dump
+        preview = hex_preview(&decompressed, None);
+        image = None;
+    }
+
+    super::super::CachedBody {
+        kind,
+        preview,
+        expanded_preview: None,
+        image,
+        raw_size: raw_bytes.len(),
+        truncated,
     }
 }
+
+// ─── Decompression helpers ───────────────────────────────────────────────────
 
 /// Case-insensitive header lookup.
 fn find_header_value(headers: &[(String, String)], name: &str) -> Option<String> {
@@ -1176,38 +1610,114 @@ fn find_header_value(headers: &[(String, String)], name: &str) -> Option<String>
         .map(|(_, v)| v.clone())
 }
 
-/// Try to decompress bytes according to the Content-Encoding value.
-fn try_decompress(bytes: &[u8], content_encoding: Option<&str>) -> Vec<u8> {
+/// Maximum number of decompressed bytes for a UI preview.
+const DECOMPRESS_LIMIT: usize = 4096;
+
+/// Try to decompress `bytes` according to the Content-Encoding value,
+/// capping output at [`DECOMPRESS_LIMIT`] bytes.
+fn try_decompress_limited(bytes: &[u8], content_encoding: Option<&str>) -> Vec<u8> {
     let encoding = match content_encoding {
         Some(e) => e.trim().to_ascii_lowercase(),
-        None => return try_decompress_magic(bytes),
+        None => return try_decompress_magic_limited(bytes),
     };
 
     match encoding.as_str() {
-        "gzip" | "x-gzip" => decompress_gzip(bytes).unwrap_or_else(|| bytes.to_vec()),
-        "deflate" => decompress_deflate(bytes).unwrap_or_else(|| bytes.to_vec()),
+        "gzip" | "x-gzip" => {
+            decompress_gzip_limited(bytes).unwrap_or_else(|| truncate_bytes(bytes))
+        }
+        "deflate" => {
+            decompress_deflate_limited(bytes).unwrap_or_else(|| truncate_bytes(bytes))
+        }
+        "identity" | "" => truncate_bytes(bytes),
+        _ => truncate_bytes(bytes),
+    }
+}
+
+/// When there's no Content-Encoding header, sniff for gzip magic bytes.
+fn try_decompress_magic_limited(bytes: &[u8]) -> Vec<u8> {
+    if bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b {
+        decompress_gzip_limited(bytes).unwrap_or_else(|| truncate_bytes(bytes))
+    } else {
+        truncate_bytes(bytes)
+    }
+}
+
+/// Return at most [`DECOMPRESS_LIMIT`] bytes.
+fn truncate_bytes(bytes: &[u8]) -> Vec<u8> {
+    let end = bytes.len().min(DECOMPRESS_LIMIT);
+    bytes[..end].to_vec()
+}
+
+fn decompress_gzip_limited(bytes: &[u8]) -> Option<Vec<u8>> {
+    let mut decoder = GzDecoder::new(bytes);
+    let mut out = vec![0u8; DECOMPRESS_LIMIT];
+    let mut filled = 0;
+    loop {
+        match decoder.read(&mut out[filled..]) {
+            Ok(0) => break,
+            Ok(n) => {
+                filled += n;
+                if filled >= DECOMPRESS_LIMIT {
+                    break;
+                }
+            }
+            Err(_) => return None,
+        }
+    }
+    out.truncate(filled);
+    Some(out)
+}
+
+fn decompress_deflate_limited(bytes: &[u8]) -> Option<Vec<u8>> {
+    let mut decoder = DeflateDecoder::new(bytes);
+    let mut out = vec![0u8; DECOMPRESS_LIMIT];
+    let mut filled = 0;
+    loop {
+        match decoder.read(&mut out[filled..]) {
+            Ok(0) => break,
+            Ok(n) => {
+                filled += n;
+                if filled >= DECOMPRESS_LIMIT {
+                    break;
+                }
+            }
+            Err(_) => return None,
+        }
+    }
+    out.truncate(filled);
+    Some(out)
+}
+
+/// Decompress without a byte-count cap (for save-to-file / expanded preview).
+fn try_decompress_full(bytes: &[u8], content_encoding: Option<&str>) -> Vec<u8> {
+    let encoding = match content_encoding {
+        Some(e) => e.trim().to_ascii_lowercase(),
+        None => return try_decompress_full_magic(bytes),
+    };
+    match encoding.as_str() {
+        "gzip" | "x-gzip" => decompress_gzip_full(bytes).unwrap_or_else(|| bytes.to_vec()),
+        "deflate" => decompress_deflate_full(bytes).unwrap_or_else(|| bytes.to_vec()),
         "identity" | "" => bytes.to_vec(),
         _ => bytes.to_vec(),
     }
 }
 
-/// Sniff for gzip magic bytes when there's no Content-Encoding header.
-fn try_decompress_magic(bytes: &[u8]) -> Vec<u8> {
+fn try_decompress_full_magic(bytes: &[u8]) -> Vec<u8> {
     if bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b {
-        decompress_gzip(bytes).unwrap_or_else(|| bytes.to_vec())
+        decompress_gzip_full(bytes).unwrap_or_else(|| bytes.to_vec())
     } else {
         bytes.to_vec()
     }
 }
 
-fn decompress_gzip(bytes: &[u8]) -> Option<Vec<u8>> {
+fn decompress_gzip_full(bytes: &[u8]) -> Option<Vec<u8>> {
     let mut decoder = GzDecoder::new(bytes);
     let mut out = Vec::new();
     decoder.read_to_end(&mut out).ok()?;
     Some(out)
 }
 
-fn decompress_deflate(bytes: &[u8]) -> Option<Vec<u8>> {
+fn decompress_deflate_full(bytes: &[u8]) -> Option<Vec<u8>> {
     let mut decoder = DeflateDecoder::new(bytes);
     let mut out = Vec::new();
     decoder.read_to_end(&mut out).ok()?;

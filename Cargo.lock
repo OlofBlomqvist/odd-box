@@ -4675,6 +4675,7 @@ version = "0.1.13-RC2"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "blocking",
  "bollard",
  "bytes",
  "chrono",
@@ -4690,6 +4691,7 @@ dependencies = [
  "flate2",
  "http-body-util",
  "iced",
+ "image",
  "ksni",
  "lazy_static",
  "nix 0.29.0",

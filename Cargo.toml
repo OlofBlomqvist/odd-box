@@ -9,6 +9,7 @@ license-file = "LICENSE"
 
 [dependencies]
 anyhow = "1.0"
+blocking = "1"
 arc-swap = "1.7"
 bollard = "0.18"
 bytes = "1"
@@ -41,6 +42,7 @@ dirs = "5.0"
 rustls = { version = "0.23", features = ["ring","std","tls12"], default-features = false}
 ctrlc = "3.4"
 which = "6.0"
+image = "0.25"
 iced = { version = "0.14", features = ["smol", "image", "lazy"] }
 parking_lot = "0.12"
 rfd = "0.14"

@@ -1,4 +1,5 @@
 mod backends;
+pub(in crate::gui) mod body_content;
 mod cruma;
 mod dashboard;
 mod edit_backend;
@@ -6,7 +7,7 @@ mod edit_frontend;
 mod frontends;
 mod monitoring;
 mod processes;
-mod traffic_inspection;
+pub(in crate::gui) mod traffic_inspection;
 mod updates;
 
 use std::sync::Arc;
