@@ -2,7 +2,7 @@ use iced::widget::{Column, button, column, container, radio, row, text, text_inp
 use iced::{Alignment, Element, Font, Length, Padding, Theme};
 use iced::widget::text::Wrapping;
 
-use super::super::{CrumaAuthMode, Message, OddBoxGui};
+use super::super::{CrumaAuthMode, KdeButtonRole, Message, OddBoxGui, scaled, text_size};
 
 impl OddBoxGui {
     pub(in crate::gui) fn view_cruma_ingress(&self) -> Element<'_, Message> {
@@ -36,7 +36,7 @@ impl OddBoxGui {
             text("Status:").font(Font::MONOSPACE),
             text(status_label).color(status_color).font(Font::MONOSPACE)
         ]
-        .spacing(8)
+        .spacing(scaled(8.0))
         .align_y(Alignment::Center);
 
         let fqdn_row = row![
@@ -48,7 +48,7 @@ impl OddBoxGui {
             )
             .width(Length::Fill)
         ]
-        .spacing(8)
+        .spacing(scaled(8.0))
         .align_y(Alignment::Start)
         .width(Length::Fill);
 
@@ -61,22 +61,22 @@ impl OddBoxGui {
             )
             .width(Length::Fill)
         ]
-        .spacing(8)
+        .spacing(scaled(8.0))
         .align_y(Alignment::Start)
         .width(Length::Fill);
 
         let connection_box = container(
             column![status_row, fqdn_row, motd_row]
-                .spacing(6)
+                .spacing(scaled(6.0))
                 .width(Length::Fill),
         )
-        .padding(16)
+        .padding(scaled(16.0))
         .width(Length::Fill)
         .style(|theme: &Theme| {
             iced::widget::container::Style {
                 background: Some(self.surface_panel_bg(theme).into()),
                 border: iced::Border {
-                    radius: 6.0.into(),
+                    radius: scaled(6.0).into(),
                     width: 1.0,
                     color: self.surface_border_color(theme),
                 },
@@ -98,13 +98,13 @@ impl OddBoxGui {
             text(format!("{} total (H2: {}, QUIC: {})", transports.len(), h2_count, quic_count))
                 .font(Font::MONOSPACE)
         ]
-        .spacing(8)
+        .spacing(scaled(8.0))
         .align_y(Alignment::Center);
 
-        let mut transport_list = Column::new().spacing(4);
+        let mut transport_list = Column::new().spacing(scaled(4.0));
         if transports.is_empty() {
             transport_list =
-                transport_list.push(text("No active channels.").font(Font::MONOSPACE).size(super::super::text_size(12)));
+                transport_list.push(text("No active channels.").font(Font::MONOSPACE).size(text_size(12)));
         } else {
             for t in transports.iter() {
                 let proto = match t.protocol {
@@ -114,23 +114,23 @@ impl OddBoxGui {
                 transport_list = transport_list.push(
                     text(format!("{proto} #{}  {}", t.instance_idx, t.addr))
                         .font(Font::MONOSPACE)
-                        .size(super::super::text_size(12)),
+                        .size(text_size(12)),
                 );
             }
         }
 
         let transports_box = container(
             column![transport_summary, transport_list]
-                .spacing(8)
+                .spacing(scaled(8.0))
                 .width(Length::Fill),
         )
-        .padding(16)
+        .padding(scaled(16.0))
         .width(Length::Fill)
         .style(|theme: &Theme| {
             iced::widget::container::Style {
                 background: Some(self.surface_panel_bg(theme).into()),
                 border: iced::Border {
-                    radius: 6.0.into(),
+                    radius: scaled(6.0).into(),
                     width: 1.0,
                     color: self.surface_border_color(theme),
                 },
@@ -138,7 +138,7 @@ impl OddBoxGui {
             }
         });
 
-        let mode_header = text("Connection Mode").font(Font::MONOSPACE).size(super::super::text_size(14));
+        let mode_header = text("Connection Mode").font(Font::MONOSPACE).size(text_size(14));
 
         let disabled_radio = radio(
             "Disabled",
@@ -164,47 +164,47 @@ impl OddBoxGui {
             .push(disabled_radio)
             .push(anon_radio)
             .push(auth_radio)
-            .spacing(8);
+            .spacing(scaled(8.0));
 
         if self.cruma_auth_mode == CrumaAuthMode::Authenticated {
             let id_input = text_input("Tunnel ID", &self.cruma_auth_id)
                 .on_input(Message::CrumaAuthIdChanged)
                 .on_submit(Message::CrumaAuthSave)
-                .padding(8)
+                .padding(scaled(8.0))
                 .width(Length::Fill);
 
             let key_input = text_input("Tunnel Key", &self.cruma_auth_key)
                 .on_input(Message::CrumaAuthKeyChanged)
                 .on_submit(Message::CrumaAuthSave)
-                .padding(8)
+                .padding(scaled(8.0))
                 .secure(true)
                 .width(Length::Fill);
 
-            let mut save_button = button(text("Save Auth Credentials"))
+            let save_button = button(text("Save Auth Credentials"))
                 .padding(Padding {
-                    top: 8.0,
-                    right: 14.0,
-                    bottom: 8.0,
-                    left: 14.0,
+                    top: scaled(8.0),
+                    right: scaled(14.0),
+                    bottom: scaled(8.0),
+                    left: scaled(14.0),
                 })
-                .on_press(Message::CrumaAuthSave);
-            if use_kde_buttons {
-                save_button = save_button.style(super::super::kde_primary_button_style);
-            }
+                .on_press(Message::CrumaAuthSave)
+                .style(move |theme, status| {
+                    super::super::themed_button_style(theme, status, KdeButtonRole::Primary, use_kde_buttons)
+                });
 
             mode_col = mode_col.push(
                 column![
                     text("Tunnel ID")
                         .font(Font::MONOSPACE)
-                        .size(super::super::text_size(12)),
+                        .size(text_size(12)),
                     id_input,
                     text("Tunnel Key")
                         .font(Font::MONOSPACE)
-                        .size(super::super::text_size(12)),
+                        .size(text_size(12)),
                     key_input,
                     save_button,
                 ]
-                .spacing(8)
+                .spacing(scaled(8.0))
                 .width(Length::Fill),
             );
         }
@@ -213,19 +213,19 @@ impl OddBoxGui {
             mode_col = mode_col.push(
                 text(msg)
                     .color(self.theme().extended_palette().background.weak.text)
-                    .size(super::super::text_size(12)),
+                    .size(text_size(12)),
             );
         }
 
         let mode_box =
             container(mode_col)
-                .padding(16)
+                .padding(scaled(16.0))
                 .width(Length::Fill)
                 .style(|theme: &Theme| {
                     iced::widget::container::Style {
                         background: Some(self.surface_panel_bg(theme).into()),
                         border: iced::Border {
-                            radius: 6.0.into(),
+                            radius: scaled(6.0).into(),
                             width: 1.0,
                             color: self.surface_border_color(theme),
                         },
@@ -234,7 +234,7 @@ impl OddBoxGui {
                 });
 
         column![connection_box, transports_box, mode_box]
-            .spacing(16)
+            .spacing(scaled(16.0))
             .width(Length::Fill)
             .into()
     }

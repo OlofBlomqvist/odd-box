@@ -3,7 +3,7 @@ use iced::widget::{
 };
 use iced::{Border, Color, Element, Length, Theme};
 
-use super::super::{BackendOption, Message, OddBoxGui};
+use super::super::{BackendOption, KdeButtonRole, Message, OddBoxGui, scaled, text_size};
 
 fn muted_text(theme: &Theme) -> iced::widget::text::Style {
     iced::widget::text::Style {
@@ -18,7 +18,7 @@ impl OddBoxGui {
         if self.edit_frontend_form.hostname.trim().is_empty() {
             errors.push(
                 text("Hostname is required.")
-                    .size(super::super::text_size(12))
+                    .size(text_size(12))
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
             );
@@ -26,7 +26,7 @@ impl OddBoxGui {
         if self.edit_frontend_form.backend.trim().is_empty() {
             errors.push(
                 text("Backend is required.")
-                    .size(super::super::text_size(12))
+                    .size(text_size(12))
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
             );
@@ -36,7 +36,7 @@ impl OddBoxGui {
         {
             errors.push(
                 text("Selected backend does not exist.")
-                    .size(super::super::text_size(12))
+                    .size(text_size(12))
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
             );
@@ -44,7 +44,7 @@ impl OddBoxGui {
         if self.edit_frontend_form.capture_subdomains && self.edit_frontend_form.lets_encrypt {
             errors.push(
                 text("LetsEncrypt cannot be used with capture subdomains.")
-                    .size(super::super::text_size(12))
+                    .size(text_size(12))
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
             );
@@ -53,45 +53,45 @@ impl OddBoxGui {
         let notice = self
             .edit_frontend_notice
             .as_ref()
-            .map(|msg| text(msg).size(super::super::text_size(13)).style(muted_text));
+            .map(|msg| text(msg).size(text_size(13)).style(muted_text));
 
         let use_kde_buttons = self.use_kde_system_styles();
 
-        let mut save_btn = button(text("Save").size(super::super::text_size(14)))
-            .on_press(Message::EditFrontendSave);
-        if use_kde_buttons {
-            save_btn = save_btn.style(super::super::kde_primary_button_style);
-        }
-        let mut back_btn = button(text("Back").size(super::super::text_size(14)))
-            .on_press(Message::NavigateTo(super::super::Page::Frontends));
-        if use_kde_buttons {
-            back_btn = back_btn.style(super::super::kde_neutral_button_style);
-        }
+        let save_btn = button(text("Save").size(text_size(14)))
+            .on_press(Message::EditFrontendSave)
+            .style(move |theme, status| {
+                super::super::themed_button_style(theme, status, KdeButtonRole::Primary, use_kde_buttons)
+            });
+        let back_btn = button(text("Back").size(text_size(14)))
+            .on_press(Message::NavigateTo(super::super::Page::Frontends))
+            .style(move |theme, status| {
+                super::super::themed_button_style(theme, status, KdeButtonRole::Neutral, use_kde_buttons)
+            });
 
         let mut actions_children: Vec<Element<'_, Message>> = vec![
             save_btn.into(),
             back_btn.into(),
         ];
         if !self.edit_frontend_is_new {
-            let mut delete_btn = button(text("Delete").size(super::super::text_size(14)))
-                .on_press(Message::EditFrontendDelete);
-            if use_kde_buttons {
-                delete_btn = delete_btn.style(super::super::kde_danger_button_style);
-            }
+            let delete_btn = button(text("Delete").size(text_size(14)))
+                .on_press(Message::EditFrontendDelete)
+                .style(move |theme, status| {
+                    super::super::themed_button_style(theme, status, KdeButtonRole::Danger, use_kde_buttons)
+                });
             actions_children.push(
                 delete_btn.into(),
             );
         }
-        let actions = row::Row::with_children(actions_children).spacing(10);
+        let actions = row::Row::with_children(actions_children).spacing(scaled(10.0));
 
         let layout = responsive(|size| {
-            let hostname_label = text("Hostname").size(super::super::text_size(13)).style(muted_text);
+            let hostname_label = text("Hostname").size(text_size(13)).style(muted_text);
             let hostname_help = text("The public host this route matches (e.g. example.local)")
-                .size(super::super::text_size(12))
+                .size(text_size(12))
                 .style(muted_text);
             let hostname_input = text_input("example.local", &self.edit_frontend_form.hostname)
                 .on_input(Message::EditFrontendHostChanged)
-                .padding(8)
+                .padding(scaled(8.0))
                 .width(Length::Fill);
 
             let mut backend_options: Vec<BackendOption> = Vec::new();
@@ -120,9 +120,9 @@ impl OddBoxGui {
                 .find(|o| o.id == self.edit_frontend_form.backend)
                 .cloned();
 
-            let backend_label = text("Backend").size(super::super::text_size(13)).style(muted_text);
+            let backend_label = text("Backend").size(text_size(13)).style(muted_text);
             let backend_help = text("Select which backend handles requests for this host")
-                .size(super::super::text_size(12))
+                .size(text_size(12))
                 .style(muted_text);
             let backend_picker = pick_list(
                 backend_options,
@@ -130,35 +130,35 @@ impl OddBoxGui {
                 Message::EditFrontendBackendChanged,
             )
             .placeholder("Select backend")
-            .padding(8)
+            .padding(scaled(8.0))
             .width(Length::Fill);
 
-            let capture_toggle = checkbox(self.edit_frontend_form.capture_subdomains)
-                .label("Capture subdomains")
-                .on_toggle(Message::EditFrontendCaptureSubdomainsToggled);
-            let capture_help = text("Match *.example.com as well as the root host")
-                .size(super::super::text_size(12))
+        let capture_toggle = checkbox(self.edit_frontend_form.capture_subdomains)
+            .label("Capture subdomains")
+            .on_toggle(Message::EditFrontendCaptureSubdomainsToggled);
+        let capture_help = text("Match *.example.com as well as the root host")
+            .size(text_size(12))
                 .style(muted_text);
 
             let forward_toggle = checkbox(self.edit_frontend_form.forward_subdomains)
                 .label("Forward subdomains")
                 .on_toggle(Message::EditFrontendForwardSubdomainsToggled);
             let forward_help = text("Preserve the subdomain in the upstream host header")
-                .size(super::super::text_size(12))
+                .size(text_size(12))
                 .style(muted_text);
 
             let redirect_toggle = checkbox(self.edit_frontend_form.redirect_to_https)
                 .label("Redirect HTTP to HTTPS")
                 .on_toggle(Message::EditFrontendRedirectHttpsToggled);
             let redirect_help = text("Send HTTP requests to HTTPS for this host")
-                .size(super::super::text_size(12))
+                .size(text_size(12))
                 .style(muted_text);
 
             let lets_encrypt_toggle = checkbox(self.edit_frontend_form.lets_encrypt)
                 .label("Use Let's Encrypt")
                 .on_toggle(Message::EditFrontendLetsEncryptToggled);
             let lets_encrypt_help = text("Enable ACME certificates for this host")
-                .size(super::super::text_size(12))
+                .size(text_size(12))
                 .style(muted_text);
 
             let fields = column![
@@ -169,10 +169,10 @@ impl OddBoxGui {
                 backend_picker,
                 backend_help,
             ]
-            .spacing(6);
+            .spacing(scaled(6.0));
 
             let options = column![
-                text("Options").size(super::super::text_size(14)).style(muted_text),
+                text("Options").size(text_size(14)).style(muted_text),
                 capture_toggle,
                 capture_help,
                 forward_toggle,
@@ -182,7 +182,7 @@ impl OddBoxGui {
                 lets_encrypt_toggle,
                 lets_encrypt_help,
             ]
-            .spacing(6);
+            .spacing(scaled(6.0));
 
             let card_style = |theme: &Theme| {
                 container::Style {
@@ -196,16 +196,16 @@ impl OddBoxGui {
                 }
             };
 
-            let fields_card = container(fields).padding(12).style(card_style);
+        let fields_card = container(fields).padding(scaled(12.0)).style(card_style);
 
-            let options_card = container(options).padding(12).style(card_style);
+        let options_card = container(options).padding(scaled(12.0)).style(card_style);
 
             if size.width < 760.0 {
                 column![
                     fields_card.width(Length::Fill),
                     options_card.width(Length::Fill)
                 ]
-                .spacing(12)
+                .spacing(scaled(12.0))
                 .width(Length::Fill)
                 .into()
             } else {
@@ -213,7 +213,7 @@ impl OddBoxGui {
                     fields_card.width(Length::FillPortion(3)),
                     options_card.width(Length::FillPortion(2))
                 ]
-                .spacing(12)
+                .spacing(scaled(12.0))
                 .width(Length::Fill)
                 .into()
             }
@@ -221,12 +221,12 @@ impl OddBoxGui {
 
         let mut content = column![
             text("Route settings (HTTP frontend)")
-                .size(super::super::text_size(13))
+                .size(text_size(13))
                 .style(muted_text),
             layout,
             actions,
         ]
-        .spacing(12);
+        .spacing(scaled(12.0));
 
         for err in errors {
             content = content.push(err);

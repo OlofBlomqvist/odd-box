@@ -98,7 +98,7 @@ fn contrast_ratio(a: Color, b: Color) -> f32 {
     (lighter + 0.05) / (darker + 0.05)
 }
 
-fn readable_on(background: Color, preferred: Color, fallback: Color) -> Color {
+pub(in crate::gui) fn readable_on(background: Color, preferred: Color, fallback: Color) -> Color {
     const MIN_CONTRAST: f32 = 3.0;
     let preferred_ratio = contrast_ratio(background, preferred);
     if preferred_ratio >= MIN_CONTRAST {
@@ -202,6 +202,7 @@ pub(in crate::gui) fn kde_primary_button_style(
     kde_button_style(theme, status, KdeButtonRole::Primary)
 }
 
+#[allow(dead_code)]
 pub(in crate::gui) fn kde_success_button_style(
     theme: &Theme,
     status: button::Status,
@@ -209,11 +210,123 @@ pub(in crate::gui) fn kde_success_button_style(
     kde_button_style(theme, status, KdeButtonRole::Success)
 }
 
+#[allow(dead_code)]
 pub(in crate::gui) fn kde_danger_button_style(
     theme: &Theme,
     status: button::Status,
 ) -> button::Style {
     kde_button_style(theme, status, KdeButtonRole::Danger)
+}
+
+/// Unified button style that works for both KDE and non-KDE, light and dark themes.
+/// Use this everywhere instead of ad-hoc inline styles.
+pub(in crate::gui) fn themed_button_style(
+    theme: &Theme,
+    status: button::Status,
+    role: KdeButtonRole,
+    use_kde: bool,
+) -> button::Style {
+    if use_kde {
+        return kde_button_style(theme, status, role);
+    }
+
+    let palette = theme.extended_palette();
+    let is_dark = palette.is_dark;
+
+    match role {
+        KdeButtonRole::Neutral => {
+            let border_color = if is_dark {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.25)
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, 0.20)
+            };
+            let (bg, fg) = match status {
+                button::Status::Hovered => {
+                    let bg = if is_dark {
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.10)
+                    } else {
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.06)
+                    };
+                    (bg, palette.background.base.text)
+                }
+                button::Status::Pressed => {
+                    let bg = if is_dark {
+                        Color::from_rgba(1.0, 1.0, 1.0, 0.15)
+                    } else {
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.10)
+                    };
+                    (bg, palette.background.base.text)
+                }
+                button::Status::Disabled => {
+                    (Color::TRANSPARENT, muted(palette.background.base.text, 0.4))
+                }
+                _ => (Color::TRANSPARENT, palette.background.base.text),
+            };
+            let r = scaled(4.0);
+            button::Style {
+                background: Some(bg.into()),
+                text_color: fg,
+                border: Border {
+                    radius: r.into(),
+                    width: 1.0,
+                    color: if matches!(status, button::Status::Disabled) {
+                        muted(border_color, 0.3)
+                    } else {
+                        border_color
+                    },
+                },
+                ..Default::default()
+            }
+        }
+        KdeButtonRole::Primary | KdeButtonRole::Success | KdeButtonRole::Danger => {
+            let (normal_bg, hover_bg) = match role {
+                KdeButtonRole::Primary => {
+                    if is_dark {
+                        (Color::from_rgb(0.25, 0.48, 0.85), Color::from_rgb(0.35, 0.56, 0.92))
+                    } else {
+                        (Color::from_rgb(0.20, 0.42, 0.75), Color::from_rgb(0.16, 0.36, 0.68))
+                    }
+                }
+                KdeButtonRole::Success => {
+                    if is_dark {
+                        (Color::from_rgb(0.22, 0.58, 0.28), Color::from_rgb(0.30, 0.68, 0.36))
+                    } else {
+                        (Color::from_rgb(0.18, 0.52, 0.22), Color::from_rgb(0.14, 0.45, 0.18))
+                    }
+                }
+                KdeButtonRole::Danger => {
+                    if is_dark {
+                        (Color::from_rgb(0.72, 0.24, 0.24), Color::from_rgb(0.82, 0.32, 0.32))
+                    } else {
+                        (Color::from_rgb(0.65, 0.18, 0.18), Color::from_rgb(0.58, 0.12, 0.12))
+                    }
+                }
+                _ => unreachable!(),
+            };
+
+            let (bg, fg) = match status {
+                button::Status::Hovered | button::Status::Pressed => {
+                    (hover_bg, readable_on(hover_bg, Color::WHITE, Color::BLACK))
+                }
+                button::Status::Disabled => {
+                    let disabled_bg = Color::from_rgba(normal_bg.r, normal_bg.g, normal_bg.b, 0.35);
+                    (disabled_bg, Color::from_rgba(1.0, 1.0, 1.0, 0.45))
+                }
+                _ => (normal_bg, readable_on(normal_bg, Color::WHITE, Color::BLACK)),
+            };
+
+            let r = scaled(4.0);
+            button::Style {
+                background: Some(bg.into()),
+                text_color: fg,
+                border: Border {
+                    radius: r.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -436,6 +549,14 @@ fn kde_system_sidebar_colors() -> KdeSidebarColors {
 pub(in crate::gui) fn text_size(base: u16) -> f32 {
     let scale = f32::from_bits(GUI_TEXT_SCALE_BITS.load(Ordering::Relaxed));
     (base as f32 * scale).round()
+}
+
+/// Scale any pixel value (padding, spacing, radius, …) by the current GUI
+/// scale factor.  Use this instead of hardcoded literals so the UI stays
+/// proportional when the window is resized.
+pub(in crate::gui) fn scaled(base: f32) -> f32 {
+    let scale = f32::from_bits(GUI_TEXT_SCALE_BITS.load(Ordering::Relaxed));
+    (base * scale).round()
 }
 
 pub(in crate::gui) fn gui_scale() -> f32 {

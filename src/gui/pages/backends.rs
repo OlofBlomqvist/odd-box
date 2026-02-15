@@ -6,7 +6,7 @@ use crate::gui::components::{
     table::{bool_cell, colored_text_cell, text_cell, wrap_text_cell},
 };
 
-use super::super::{Message, OddBoxGui};
+use super::super::{KdeButtonRole, Message, OddBoxGui, scaled, text_size};
 use crate::global_state::ProcState;
 
 impl OddBoxGui {
@@ -19,24 +19,31 @@ impl OddBoxGui {
         let table_row_odd_bg = self.surface_panel_alt_bg(&table_theme);
         let table_border = self.surface_border_color(&table_theme);
 
-        let mut add_remote_btn = button(text("Add Remote").size(super::super::text_size(14)))
-            .on_press(Message::OpenNewBackend(super::super::BackendKind::Remote));
-        let mut add_static_btn = button(text("Add Static").size(super::super::text_size(14)))
-            .on_press(Message::OpenNewBackend(super::super::BackendKind::Static));
-        let mut add_process_btn = button(text("Add Process").size(super::super::text_size(14)))
-            .on_press(Message::OpenNewBackend(super::super::BackendKind::Process));
-        let mut start_all_btn =
-            button(text("Start All").size(super::super::text_size(14))).on_press(Message::ProcessStartAll);
-        let mut stop_all_btn =
-            button(text("Stop All").size(super::super::text_size(14))).on_press(Message::ProcessStopAll);
-
-        if use_kde_buttons {
-            add_remote_btn = add_remote_btn.style(super::super::kde_neutral_button_style);
-            add_static_btn = add_static_btn.style(super::super::kde_neutral_button_style);
-            add_process_btn = add_process_btn.style(super::super::kde_neutral_button_style);
-            start_all_btn = start_all_btn.style(super::super::kde_success_button_style);
-            stop_all_btn = stop_all_btn.style(super::super::kde_danger_button_style);
-        }
+        let add_remote_btn = button(text("Add Remote").size(text_size(14)))
+            .on_press(Message::OpenNewBackend(super::super::BackendKind::Remote))
+            .style(move |theme, status| {
+                super::super::themed_button_style(theme, status, KdeButtonRole::Neutral, use_kde_buttons)
+            });
+        let add_static_btn = button(text("Add Static").size(text_size(14)))
+            .on_press(Message::OpenNewBackend(super::super::BackendKind::Static))
+            .style(move |theme, status| {
+                super::super::themed_button_style(theme, status, KdeButtonRole::Neutral, use_kde_buttons)
+            });
+        let add_process_btn = button(text("Add Process").size(text_size(14)))
+            .on_press(Message::OpenNewBackend(super::super::BackendKind::Process))
+            .style(move |theme, status| {
+                super::super::themed_button_style(theme, status, KdeButtonRole::Neutral, use_kde_buttons)
+            });
+        let start_all_btn = button(text("Start All").size(text_size(14)))
+            .on_press(Message::ProcessStartAll)
+            .style(move |theme, status| {
+                super::super::themed_button_style(theme, status, KdeButtonRole::Success, use_kde_buttons)
+            });
+        let stop_all_btn = button(text("Stop All").size(text_size(14)))
+            .on_press(Message::ProcessStopAll)
+            .style(move |theme, status| {
+                super::super::themed_button_style(theme, status, KdeButtonRole::Danger, use_kde_buttons)
+            });
 
         let actions = row![
             add_remote_btn,
@@ -45,7 +52,7 @@ impl OddBoxGui {
             start_all_btn,
             stop_all_btn,
         ]
-        .spacing(8);
+        .spacing(scaled(8.0));
 
         // Process backends section
         if !self.cached_config.processes.is_empty() {
@@ -89,7 +96,7 @@ impl OddBoxGui {
 
             sections.push(
                 column![text("Process Backends"), table.build()]
-                    .spacing(10)
+                    .spacing(scaled(10.0))
                     .into(),
             );
         }
@@ -124,7 +131,7 @@ impl OddBoxGui {
 
             sections.push(
                 column![text("Remote Backends"), table.build()]
-                    .spacing(10)
+                    .spacing(scaled(10.0))
                     .into(),
             );
         }
@@ -157,7 +164,7 @@ impl OddBoxGui {
 
             sections.push(
                 column![text("Static Backends"), table.build()]
-                    .spacing(10)
+                    .spacing(scaled(10.0))
                     .into(),
             );
         }
@@ -168,12 +175,12 @@ impl OddBoxGui {
                 text("No backends configured")
                     .color(self.theme().extended_palette().background.strong.text)
             ]
-            .spacing(12)
+            .spacing(scaled(12.0))
             .into();
         }
 
         let mut content = vec![actions.into()];
         content.extend(sections);
-        Column::with_children(content).spacing(20).into()
+        Column::with_children(content).spacing(scaled(20.0)).into()
     }
 }

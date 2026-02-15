@@ -2,7 +2,7 @@ use iced::widget::text::Wrapping;
 use iced::widget::{button, column, container, row, text};
 use iced::{Border, Color, Element, Length, Padding, Theme};
 
-use super::super::{Message, OddBoxGui};
+use super::super::{KdeButtonRole, Message, OddBoxGui, scaled, text_size};
 
 impl OddBoxGui {
     pub(in crate::gui) fn view_updates(&self) -> Element<'_, Message> {
@@ -52,16 +52,16 @@ impl OddBoxGui {
 
         let status_box = container(
             text(status_text)
-                .size(super::super::text_size(14))
+                .size(text_size(14))
                 .color(status_color),
         )
-        .padding(12)
+        .padding(scaled(12.0))
         .width(Length::Fill)
         .style(|theme: &Theme| {
             container::Style {
                 background: Some(self.surface_panel_bg(theme).into()),
                 border: Border {
-                    radius: 6.0.into(),
+                    radius: scaled(6.0).into(),
                     width: 1.0,
                     color: self.surface_border_color(theme),
                 },
@@ -75,14 +75,14 @@ impl OddBoxGui {
             "Check for Updates"
         }))
         .padding(Padding {
-            top: 8.0,
-            right: 14.0,
-            bottom: 8.0,
-            left: 14.0,
+            top: scaled(8.0),
+            right: scaled(14.0),
+            bottom: scaled(8.0),
+            left: scaled(14.0),
+        })
+        .style(move |theme, status| {
+            super::super::themed_button_style(theme, status, KdeButtonRole::Neutral, use_kde_buttons)
         });
-        if use_kde_buttons {
-            check_button = check_button.style(super::super::kde_neutral_button_style);
-        }
 
         if !self.update_check_in_progress && !self.update_action_in_progress {
             check_button = check_button.on_press(Message::UpdatesCheck);
@@ -97,69 +97,69 @@ impl OddBoxGui {
             "Run Self-Update"
         }))
         .padding(Padding {
-            top: 8.0,
-            right: 14.0,
-            bottom: 8.0,
-            left: 14.0,
+            top: scaled(8.0),
+            right: scaled(14.0),
+            bottom: scaled(8.0),
+            left: scaled(14.0),
+        })
+        .style(move |theme, status| {
+            super::super::themed_button_style(theme, status, KdeButtonRole::Primary, use_kde_buttons)
         });
-        if use_kde_buttons {
-            self_update_button = self_update_button.style(super::super::kde_primary_button_style);
-        }
         if self_update_allowed {
             self_update_button = self_update_button.on_press(Message::UpdatesRunSelfUpdate);
         }
 
         let actions = row![check_button, self_update_button]
-            .spacing(10)
+            .spacing(scaled(10.0))
             .width(Length::Fill);
 
         let mut details = column![
             row![
                 text("Current Version")
-                    .size(super::super::text_size(13))
+                    .size(text_size(13))
                     .color(self.theme().extended_palette().background.weak.text),
-                text(current_tag.clone()).size(super::super::text_size(13)),
+                text(current_tag.clone()).size(text_size(13)),
             ]
-            .spacing(10),
+            .spacing(scaled(10.0)),
             row![
                 text("Install Source")
-                    .size(super::super::text_size(13))
+                    .size(text_size(13))
                     .color(self.theme().extended_palette().background.weak.text),
-                text(self.update_install_source.as_str()).size(super::super::text_size(13)),
+                text(self.update_install_source.as_str()).size(text_size(13)),
             ]
-            .spacing(10),
+            .spacing(scaled(10.0)),
             row![
                 text("Recommended Command")
-                    .size(super::super::text_size(13))
+                    .size(text_size(13))
                     .color(self.theme().extended_palette().background.weak.text),
                 container(
                     text(self.update_hint.as_str())
-                        .size(super::super::text_size(13))
+                        .size(text_size(13))
                         .wrapping(Wrapping::WordOrGlyph),
                 )
                 .width(Length::Fill),
             ]
-            .spacing(10)
+            .spacing(scaled(10.0))
             .align_y(iced::Alignment::Start)
             .width(Length::Fill),
         ]
-        .spacing(10)
+        .spacing(scaled(10.0))
         .width(Length::Fill);
 
         if let Some(path) = &self.update_install_path {
             details = details.push(
                 row![
                     text("Detected Binary")
-                        .size(super::super::text_size(13))
+                        .size(text_size(13))
                         .color(self.theme().extended_palette().background.weak.text),
                     container(
                         text(path.as_str())
-                            .size(super::super::text_size(13))
+                            .size(text_size(13))
                             .wrapping(Wrapping::WordOrGlyph),
                     )
                     .width(Length::Fill),
                 ]
-                .spacing(10)
+                .spacing(scaled(10.0))
                 .align_y(iced::Alignment::Start)
                 .width(Length::Fill),
             );
@@ -168,26 +168,26 @@ impl OddBoxGui {
         if self.update_is_package_managed {
             details = details.push(
                 text("Self-update is disabled for package-managed installs. Use the recommended command above.")
-                    .size(super::super::text_size(12))
+                    .size(text_size(12))
                     .color(self.theme().extended_palette().background.weak.text),
             );
         } else {
             details = details.push(
                 text("Self-update is enabled for this install.")
-                    .size(super::super::text_size(12))
+                    .size(text_size(12))
                     .color(self.theme().extended_palette().background.weak.text),
             );
         }
 
         let details_box =
             container(details)
-                .padding(16)
+                .padding(scaled(16.0))
                 .width(Length::Fill)
                 .style(|theme: &Theme| {
                     container::Style {
                         background: Some(self.surface_panel_bg(theme).into()),
                         border: Border {
-                            radius: 6.0.into(),
+                            radius: scaled(6.0).into(),
                             width: 1.0,
                             color: self.surface_border_color(theme),
                         },
@@ -196,7 +196,7 @@ impl OddBoxGui {
                 });
 
         let mut content = column![status_box, actions, details_box]
-            .spacing(16)
+            .spacing(scaled(16.0))
             .width(Length::Fill);
 
         if let Some(notice) = &self.update_notice {
@@ -207,7 +207,7 @@ impl OddBoxGui {
             };
             content = content.push(
                 text(notice.as_str())
-                    .size(super::super::text_size(13))
+                    .size(text_size(13))
                     .color(notice_color),
             );
         }

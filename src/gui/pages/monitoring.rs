@@ -8,7 +8,7 @@ use iced::widget::{
 use iced::{Border, Color, Element, Font, Length, Padding, Theme};
 use tracing::Level;
 
-use super::super::{LogLevelPreset, Message, OddBoxGui};
+use super::super::{KdeButtonRole, LogLevelPreset, Message, OddBoxGui, scaled, text_size};
 
 /// Dependency for lazy log entries widget - only rebuilds when these change
 /// IMPORTANT: This must be cheap to compute since it runs every frame
@@ -33,39 +33,17 @@ impl OddBoxGui {
         let use_kde_buttons = self.use_kde_system_styles();
         
         let title_row = row![
-            text("Monitoring").size(super::super::text_size(20)),
+            text("Monitoring").size(text_size(20)),
             Space::new().width(Length::Fill),
             button(text("Clear Logs"))
                 .padding(Padding {
-                    top: 6.0,
-                    right: 12.0,
-                    bottom: 6.0,
-                    left: 12.0,
+                    top: scaled(6.0),
+                    right: scaled(12.0),
+                    bottom: scaled(6.0),
+                    left: scaled(12.0),
                 })
                 .style(move |theme: &Theme, status| {
-                    if use_kde_buttons {
-                        return super::super::kde_danger_button_style(theme, status);
-                    }
-                    let palette = theme.extended_palette();
-                    let bg = match status {
-                        button::Status::Hovered => palette.danger.strong.color,
-                        button::Status::Disabled => palette.background.weak.color,
-                        _ => palette.danger.weak.color,
-                    };
-                    let fg = match status {
-                        button::Status::Disabled => palette.background.weak.text,
-                        _ => Color::WHITE,
-                    };
-                    button::Style {
-                        background: Some(bg.into()),
-                        text_color: fg,
-                        border: Border {
-                            radius: 4.0.into(),
-                            width: 1.0,
-                            color: palette.danger.strong.color,
-                        },
-                        ..Default::default()
-                    }
+                    super::super::themed_button_style(theme, status, KdeButtonRole::Danger, use_kde_buttons)
                 })
                 .on_press(Message::LogsClear),
         ]

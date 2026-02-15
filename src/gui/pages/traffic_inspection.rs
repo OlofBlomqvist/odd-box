@@ -2,7 +2,7 @@ use iced::widget::{Column, Row, Scrollable, button, column, container, image as 
 use iced::{Background, Color, Element, Font, Length, Padding, Theme};
 use iced::widget::text::Wrapping;
 
-use super::super::{BodySide, CachedBody, CachedBodyPreview, Message, OddBoxGui};
+use super::super::{BodySide, CachedBody, CachedBodyPreview, Message, OddBoxGui, scaled, text_size};
 use super::body_content::{
     detect_content_kind, format_size, hex_preview, text_preview, try_decode_image,
 };
@@ -85,7 +85,7 @@ pub(in crate::gui) fn try_decompress_for_save(
 impl OddBoxGui {
     pub(in crate::gui) fn view_traffic_inspection(&self) -> Element<'_, Message> {
         let use_kde_buttons = self.use_kde_system_styles();
-        let page_title = text("Traffic Inspection").size(super::super::text_size(20));
+        let page_title = text("Traffic Inspection").size(text_size(20));
 
         let enabled = self
             .state
@@ -103,87 +103,46 @@ impl OddBoxGui {
                 "Capture disabled"
             })
             .on_toggle(Message::TrafficInspectionToggled)
-            .text_size(super::super::text_size(13));
+            .text_size(text_size(13));
 
-        let clear_btn = button(text("Clear").size(super::super::text_size(13)))
+        let clear_btn = button(text("Clear").size(text_size(13)))
             .padding(Padding {
-                top: 6.0,
-                right: 12.0,
-                bottom: 6.0,
-                left: 12.0,
+                top: scaled(6.0),
+                right: scaled(12.0),
+                bottom: scaled(6.0),
+                left: scaled(12.0),
             })
             .style(move |theme: &Theme, status| {
-                use iced::widget::button;
-                if use_kde_buttons {
-                    return super::super::kde_danger_button_style(theme, status);
-                }
-                let palette = theme.extended_palette();
-                let bg = match status {
-                    button::Status::Hovered => palette.danger.strong.color,
-                    button::Status::Disabled => palette.background.weak.color,
-                    _ => palette.danger.weak.color,
-                };
-                let fg = match status {
-                    button::Status::Disabled => palette.background.weak.text,
-                    _ => Color::WHITE,
-                };
-                button::Style {
-                    background: Some(bg.into()),
-                    text_color: fg,
-                    border: iced::Border {
-                        radius: 4.0.into(),
-                        width: 1.0,
-                        color: palette.danger.strong.color,
-                    },
-                    ..Default::default()
-                }
+                super::super::themed_button_style(theme, status, super::super::KdeButtonRole::Danger, use_kde_buttons)
             })
             .on_press(Message::TrafficInspectionClear);
 
         let count_label = text(format!("{} captured exchanges", snapshot.order.len()))
             .font(Font::MONOSPACE)
-            .size(super::super::text_size(12));
+            .size(text_size(12));
 
         let mut controls_items = row![toggle, count_label, clear_btn]
-            .spacing(16)
+            .spacing(scaled(16.0))
             .align_y(iced::Alignment::Center);
 
         // Show a close-detail button when a row is selected
         if self.traffic_inspection_selected.is_some() {
-            let close_btn = button(text("✕ Close Detail").size(super::super::text_size(12)))
+            let close_btn = button(text("✕ Close Detail").size(text_size(12)))
                 .padding(Padding {
-                    top: 6.0,
-                    right: 12.0,
-                    bottom: 6.0,
-                    left: 12.0,
+                    top: scaled(6.0),
+                    right: scaled(12.0),
+                    bottom: scaled(6.0),
+                    left: scaled(12.0),
                 })
                 .style(move |theme: &Theme, status| {
-                    use iced::widget::button;
-                    if use_kde_buttons {
-                        return super::super::kde_primary_button_style(theme, status);
-                    }
-                    let palette = theme.extended_palette();
-                    let bg = match status {
-                        button::Status::Hovered => palette.primary.strong.color,
-                        _ => palette.background.strong.color,
-                    };
-                    button::Style {
-                        background: Some(bg.into()),
-                        text_color: palette.background.base.text,
-                        border: iced::Border {
-                            radius: 4.0.into(),
-                            width: 1.0,
-                            color: palette.background.strong.color,
-                        },
-                        ..Default::default()
-                    }
+                    super::super::themed_button_style(theme, status, super::super::KdeButtonRole::Neutral, use_kde_buttons)
                 })
                 .on_press(Message::TrafficInspectionSelect(None));
             controls_items = controls_items.push(close_btn);
         }
 
         let controls_box = container(controls_items)
-            .padding(16)
+            .padding(scaled(16.0))
             .width(Length::Fill)
             .style(|theme: &Theme| iced::widget::container::Style {
                 background: Some(self.surface_panel_bg(theme).into()),

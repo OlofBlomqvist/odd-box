@@ -1,5 +1,6 @@
 use iced::widget::{button, column, container, row, text, text_input, Row, Space};
 use iced::{Border, Color, Element, Font, Length, Padding, Theme};
+use super::super::readable_on;
 
 use crate::global_state::ProcState;
 use crate::gui::components::{
@@ -7,7 +8,7 @@ use crate::gui::components::{
     table::{bool_cell, colored_text_cell, text_cell},
 };
 
-use super::super::{Message, OddBoxGui, ProcessesTab};
+use super::super::{KdeButtonRole, Message, OddBoxGui, ProcessesTab, scaled, text_size};
 use iced::widget::text::Wrapping;
 
 /// Style for tab buttons
@@ -28,28 +29,56 @@ fn tab_button_style(
         return super::super::kde_neutral_button_style(theme, status);
     }
     let palette = theme.extended_palette();
+    let is_dark = palette.is_dark;
+    let r = scaled(6.0);
     if is_active {
+        let bg = if is_dark {
+            Color::from_rgb(0.25, 0.48, 0.85)
+        } else {
+            palette.primary.strong.color
+        };
+        let fg = readable_on(bg, Color::WHITE, Color::BLACK);
+        let bg = match status {
+            button::Status::Hovered | button::Status::Pressed => {
+                if is_dark {
+                    Color::from_rgb(0.35, 0.56, 0.92)
+                } else {
+                    palette.primary.base.color
+                }
+            }
+            _ => bg,
+        };
         button::Style {
-            background: Some(palette.primary.strong.color.into()),
-            text_color: palette.primary.strong.text,
+            background: Some(bg.into()),
+            text_color: fg,
             border: Border {
-                radius: 6.0.into(),
+                radius: r.into(),
                 ..Default::default()
             },
             ..Default::default()
         }
     } else {
         let bg = match status {
-            button::Status::Hovered => palette.background.weak.color,
+            button::Status::Hovered => {
+                if is_dark {
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                } else {
+                    palette.background.weak.color
+                }
+            }
             _ => Color::TRANSPARENT,
         };
         button::Style {
             background: Some(bg.into()),
             text_color: palette.background.base.text,
             border: Border {
-                radius: 6.0.into(),
+                radius: r.into(),
                 width: 1.0,
-                color: palette.background.strong.color,
+                color: if is_dark {
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.2)
+                } else {
+                    palette.background.strong.color
+                },
             },
             ..Default::default()
         }
@@ -68,13 +97,13 @@ impl OddBoxGui {
                     weight: iced::font::Weight::Bold,
                     ..Default::default()
                 })
-                .size(14),
+                .size(text_size(14)),
         )
         .padding(Padding {
-            top: 8.0,
-            right: 16.0,
-            bottom: 8.0,
-            left: 16.0,
+            top: scaled(8.0),
+            right: scaled(16.0),
+            bottom: scaled(8.0),
+            left: scaled(16.0),
         })
         .style(move |theme: &Theme, status| {
             tab_button_style(
@@ -92,13 +121,13 @@ impl OddBoxGui {
                     weight: iced::font::Weight::Bold,
                     ..Default::default()
                 })
-                .size(14),
+                .size(text_size(14)),
         )
         .padding(Padding {
-            top: 8.0,
-            right: 16.0,
-            bottom: 8.0,
-            left: 16.0,
+            top: scaled(8.0),
+            right: scaled(16.0),
+            bottom: scaled(8.0),
+            left: scaled(16.0),
         })
         .style(move |theme: &Theme, status| {
             tab_button_style(
@@ -111,7 +140,7 @@ impl OddBoxGui {
         .on_press(Message::ProcessesTabChanged(ProcessesTab::GlobalVariables));
 
         let tab_bar = container(
-            row![processes_tab_btn, global_vars_tab_btn].spacing(2),
+            row![processes_tab_btn, global_vars_tab_btn].spacing(scaled(8.0)),
         )
         .style(|theme: &Theme| {
             container::Style {
@@ -141,7 +170,7 @@ impl OddBoxGui {
         };
 
         column![tab_bar, separator, tab_content]
-            .spacing(12)
+            .spacing(scaled(12.0))
             .width(Length::Fill)
             .into()
     }
@@ -223,16 +252,16 @@ impl OddBoxGui {
                 );
                 let detail_text = text(details)
                     .font(Font::MONOSPACE)
-                    .size(super::super::text_size(12))
+                    .size(text_size(12))
                     .wrapping(Wrapping::Word);
                 let actions = self.build_process_actions(&proc.name, proc.state.clone());
-                let detail_content = column![detail_text, actions].spacing(8);
+                let detail_content = column![detail_text, actions].spacing(scaled(8.0));
                 let detail_row = container(detail_content)
                     .padding(Padding {
-                        top: 6.0,
-                        right: 12.0,
-                        bottom: 6.0,
-                        left: 24.0,
+                        top: scaled(6.0),
+                        right: scaled(12.0),
+                        bottom: scaled(6.0),
+                        left: scaled(24.0),
                     })
                     .width(Length::Fill);
                 table = table.push_full_row(detail_row.into());
@@ -248,7 +277,7 @@ impl OddBoxGui {
             "Global environment variables are available to all process backends. \
              Process-level variables override global ones with the same key.",
         )
-        .size(13)
+        .size(text_size(13))
         .style(|theme: &Theme| iced::widget::text::Style {
             color: Some(theme.extended_palette().background.weak.text),
             ..Default::default()
@@ -280,44 +309,34 @@ impl OddBoxGui {
             for (idx, (key, value)) in self.global_env_vars.iter().enumerate() {
                 let key_input: Element<'_, Message> = text_input("KEY", key)
                     .on_input(move |v| Message::GlobalEnvKeyChanged(idx, v))
-                    .padding(6)
-                    .size(13)
+                    .padding(scaled(6.0))
+                    .size(text_size(13))
                     .font(Font::MONOSPACE)
                     .width(Length::Fill)
                     .into();
 
                 let value_input: Element<'_, Message> = text_input("VALUE", value)
                     .on_input(move |v| Message::GlobalEnvValueChanged(idx, v))
-                    .padding(6)
-                    .size(13)
+                    .padding(scaled(6.0))
+                    .size(text_size(13))
                     .font(Font::MONOSPACE)
                     .width(Length::Fill)
                     .into();
 
-                let remove_btn: Element<'_, Message> = button(text("✕").size(14))
+                let remove_btn: Element<'_, Message> = button(text("✕").size(text_size(14)))
                     .padding(Padding {
-                        top: 4.0,
-                        right: 8.0,
-                        bottom: 4.0,
-                        left: 8.0,
+                        top: scaled(4.0),
+                        right: scaled(8.0),
+                        bottom: scaled(4.0),
+                        left: scaled(8.0),
                     })
-                    .style(|theme: &Theme, status| {
-                        let palette = theme.extended_palette();
-                        let (bg, fg) = match status {
-                            button::Status::Hovered => {
-                                (palette.danger.strong.color, palette.danger.strong.text)
-                            }
-                            _ => (Color::TRANSPARENT, palette.danger.base.color),
-                        };
-                        button::Style {
-                            background: Some(bg.into()),
-                            text_color: fg,
-                            border: Border {
-                                radius: 4.0.into(),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        }
+                    .style(move |theme: &Theme, status| {
+                        super::super::themed_button_style(
+                            theme,
+                            status,
+                            KdeButtonRole::Danger,
+                            use_kde_buttons,
+                        )
                     })
                     .on_press(Message::GlobalEnvRemove(idx))
                     .into();
@@ -332,99 +351,65 @@ impl OddBoxGui {
         let new_key_input = text_input("New key...", &self.global_env_new_key)
             .on_input(Message::GlobalEnvNewKeyChanged)
             .on_submit(Message::GlobalEnvAdd)
-            .padding(8)
-            .size(13)
+            .padding(scaled(8.0))
+            .size(text_size(13))
             .font(Font::MONOSPACE)
             .width(Length::FillPortion(3));
 
         let new_value_input = text_input("New value...", &self.global_env_new_value)
             .on_input(Message::GlobalEnvNewValueChanged)
             .on_submit(Message::GlobalEnvAdd)
-            .padding(8)
-            .size(13)
+            .padding(scaled(8.0))
+            .size(text_size(13))
             .font(Font::MONOSPACE)
             .width(Length::FillPortion(5));
 
         let add_btn = button(
-            text("+ Add").size(13).font(Font {
+            text("+ Add").size(text_size(13)).font(Font {
                 weight: iced::font::Weight::Bold,
                 ..Default::default()
             }),
         )
         .padding(Padding {
-            top: 6.0,
-            right: 12.0,
-            bottom: 6.0,
-            left: 12.0,
+            top: scaled(6.0),
+            right: scaled(12.0),
+            bottom: scaled(6.0),
+            left: scaled(12.0),
         })
         .style(move |theme: &Theme, status| {
-            if use_kde_buttons {
-                return super::super::kde_primary_button_style(theme, status);
-            }
-            let palette = theme.extended_palette();
-            let (bg, fg) = match status {
-                button::Status::Hovered => {
-                    (palette.primary.strong.color, palette.primary.strong.text)
-                }
-                button::Status::Disabled => (
-                    palette.background.weak.color,
-                    palette.background.strong.text,
-                ),
-                _ => (palette.primary.weak.color, palette.primary.weak.text),
-            };
-            button::Style {
-                background: Some(bg.into()),
-                text_color: fg,
-                border: Border {
-                    radius: 4.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
+            super::super::themed_button_style(
+                theme,
+                status,
+                KdeButtonRole::Primary,
+                use_kde_buttons,
+            )
         })
         .on_press(Message::GlobalEnvAdd);
 
         let add_row = row![new_key_input, new_value_input, add_btn]
-            .spacing(8)
+            .spacing(scaled(8.0))
             .align_y(iced::Alignment::Center);
 
         // Save button + notice
         let save_btn = button(
-            text("Save").size(14).font(Font {
+            text("Save").size(text_size(14)).font(Font {
                 weight: iced::font::Weight::Bold,
                 ..Default::default()
             }),
         )
         .padding(Padding {
-            top: 8.0,
-            right: 20.0,
-            bottom: 8.0,
-            left: 20.0,
+            top: scaled(8.0),
+            right: scaled(20.0),
+            bottom: scaled(8.0),
+            left: scaled(20.0),
         })
         .style(move |theme: &Theme, status| {
-            if use_kde_buttons {
-                return super::super::kde_success_button_style(theme, status);
-            }
-            let palette = theme.extended_palette();
-            let (bg, fg) = match status {
-                button::Status::Hovered => {
-                    (palette.success.strong.color, palette.success.strong.text)
-                }
-                button::Status::Disabled => (
-                    palette.background.weak.color,
-                    palette.background.strong.text,
-                ),
-                _ => (palette.success.weak.color, palette.success.weak.text),
-            };
-            button::Style {
-                background: Some(bg.into()),
-                text_color: fg,
-                border: Border {
-                    radius: 4.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
+            super::super::themed_button_style(
+                theme,
+                status,
+                KdeButtonRole::Success,
+                use_kde_buttons,
+            )
         })
         .on_press(Message::GlobalEnvSave);
 
@@ -433,7 +418,7 @@ impl OddBoxGui {
         if self.global_env_dirty {
             bottom_row_children.push(
                 text("Unsaved changes")
-                    .size(12)
+                    .size(text_size(12))
                     .color(Color::from_rgb(0.9, 0.7, 0.2))
                     .into(),
             );
@@ -446,14 +431,14 @@ impl OddBoxGui {
             } else {
                 Color::from_rgb(0.4, 0.8, 0.4)
             };
-            bottom_row_children.push(text(notice.clone()).size(13).color(color).into());
+            bottom_row_children.push(text(notice.clone()).size(text_size(13)).color(color).into());
         }
 
         let bottom_row = Row::with_children(bottom_row_children)
-            .spacing(12)
+            .spacing(scaled(12.0))
             .align_y(iced::Alignment::Center);
 
-        let mut content = column![description].spacing(14).width(Length::Fill);
+        let mut content = column![description].spacing(scaled(14.0)).width(Length::Fill);
 
         if let Some(table_el) = var_table {
             content = content.push(table_el);
@@ -473,39 +458,31 @@ impl OddBoxGui {
         let can_stop = matches!(state, ProcState::Running | ProcState::Faulty);
         let is_transitioning = matches!(state, ProcState::Starting | ProcState::Stopping);
 
+        let btn_padding = Padding {
+            top: scaled(6.0),
+            right: scaled(12.0),
+            bottom: scaled(6.0),
+            left: scaled(12.0),
+        };
+
         // Start button
-        let start_btn = button(text("Start").font(Font::MONOSPACE))
-            .padding(Padding {
-                top: 4.0,
-                right: 8.0,
-                bottom: 4.0,
-                left: 8.0,
-            })
-            .style(move |theme: &Theme, status| {
-                if use_kde_buttons {
-                    return super::super::kde_success_button_style(theme, status);
-                }
-                let palette = theme.extended_palette();
-                let (bg, fg) = match status {
-                    button::Status::Hovered => {
-                        (palette.success.strong.color, palette.success.strong.text)
-                    }
-                    button::Status::Disabled => (
-                        palette.background.weak.color,
-                        palette.background.strong.text,
-                    ),
-                    _ => (palette.success.weak.color, palette.success.weak.text),
-                };
-                button::Style {
-                    background: Some(bg.into()),
-                    text_color: fg,
-                    border: Border {
-                        radius: 4.0.into(),
-                        ..Default::default()
-                    },
+        let start_btn = button(
+            text("Start")
+                .size(text_size(13))
+                .font(Font {
+                    weight: iced::font::Weight::Bold,
                     ..Default::default()
-                }
-            });
+                }),
+        )
+        .padding(btn_padding)
+        .style(move |theme: &Theme, status| {
+            super::super::themed_button_style(
+                theme,
+                status,
+                KdeButtonRole::Success,
+                use_kde_buttons,
+            )
+        });
 
         let start_btn = if can_start && !is_transitioning {
             start_btn.on_press(Message::ProcessStart(proc_name_start))
@@ -514,38 +491,23 @@ impl OddBoxGui {
         };
 
         // Stop button
-        let stop_btn = button(text("Stop").font(Font::MONOSPACE))
-            .padding(Padding {
-                top: 4.0,
-                right: 8.0,
-                bottom: 4.0,
-                left: 8.0,
-            })
-            .style(move |theme: &Theme, status| {
-                if use_kde_buttons {
-                    return super::super::kde_danger_button_style(theme, status);
-                }
-                let palette = theme.extended_palette();
-                let (bg, fg) = match status {
-                    button::Status::Hovered => {
-                        (palette.danger.strong.color, palette.danger.strong.text)
-                    }
-                    button::Status::Disabled => (
-                        palette.background.weak.color,
-                        palette.background.strong.text,
-                    ),
-                    _ => (palette.danger.weak.color, palette.danger.weak.text),
-                };
-                button::Style {
-                    background: Some(bg.into()),
-                    text_color: fg,
-                    border: Border {
-                        radius: 4.0.into(),
-                        ..Default::default()
-                    },
+        let stop_btn = button(
+            text("Stop")
+                .size(text_size(13))
+                .font(Font {
+                    weight: iced::font::Weight::Bold,
                     ..Default::default()
-                }
-            });
+                }),
+        )
+        .padding(btn_padding)
+        .style(move |theme: &Theme, status| {
+            super::super::themed_button_style(
+                theme,
+                status,
+                KdeButtonRole::Danger,
+                use_kde_buttons,
+            )
+        });
 
         let stop_btn = if can_stop && !is_transitioning {
             stop_btn.on_press(Message::ProcessStop(proc_name_stop))
@@ -554,36 +516,25 @@ impl OddBoxGui {
         };
 
         // Edit button
-        let edit_btn = button(text("Edit").font(Font::MONOSPACE))
-            .padding(Padding {
-                top: 4.0,
-                right: 8.0,
-                bottom: 4.0,
-                left: 8.0,
-            })
-            .style(move |theme: &Theme, status| {
-                if use_kde_buttons {
-                    return super::super::kde_primary_button_style(theme, status);
-                }
-                let palette = theme.extended_palette();
-                let (bg, fg) = match status {
-                    button::Status::Hovered => {
-                        (palette.primary.strong.color, palette.primary.strong.text)
-                    }
-                    _ => (palette.primary.weak.color, palette.primary.weak.text),
-                };
-                button::Style {
-                    background: Some(bg.into()),
-                    text_color: fg,
-                    border: Border {
-                        radius: 4.0.into(),
-                        ..Default::default()
-                    },
+        let edit_btn = button(
+            text("Edit")
+                .size(text_size(13))
+                .font(Font {
+                    weight: iced::font::Weight::Bold,
                     ..Default::default()
-                }
-            })
-            .on_press(Message::OpenEditBackend(proc_name_edit));
+                }),
+        )
+        .padding(btn_padding)
+        .style(move |theme: &Theme, status| {
+            super::super::themed_button_style(
+                theme,
+                status,
+                KdeButtonRole::Primary,
+                use_kde_buttons,
+            )
+        })
+        .on_press(Message::OpenEditBackend(proc_name_edit));
 
-        row![start_btn, stop_btn, edit_btn].spacing(6).into()
+        row![start_btn, stop_btn, edit_btn].spacing(scaled(8.0)).into()
     }
 }
