@@ -301,6 +301,12 @@ impl OddBoxGui {
                             Message::EditBackendFieldChanged(EditBackendField::RenderMarkdown(v))
                         });
 
+                    let spa_toggle = checkbox(self.edit_backend_form.spa_fallback)
+                        .label("SPA fallback (serve index.html for missing paths)")
+                        .on_toggle(|v| {
+                            Message::EditBackendFieldChanged(EditBackendField::SpaFallback(v))
+                        });
+
                     let cache_label = text("Cache max-age (seconds)").size(super::super::text_size(13)).style(muted_text);
                     let cache_input = text_input("3600", &self.edit_backend_form.cache_max_age)
                         .on_input(|v| {
@@ -331,6 +337,7 @@ impl OddBoxGui {
                         text("Options").size(super::super::text_size(14)).style(muted_text),
                         list_toggle,
                         render_toggle,
+                        spa_toggle,
                         cache_label,
                         cache_input,
                         cache_help,

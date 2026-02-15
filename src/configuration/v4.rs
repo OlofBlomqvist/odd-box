@@ -228,6 +228,13 @@ pub struct StaticBackend {
 
     /// Cache-Control max-age header value in seconds
     pub cache_max_age: Option<u64>,
+
+    /// When enabled, requests that would result in a 404 will instead
+    /// serve the nearest ancestor index file. This is the standard
+    /// behaviour needed by single-page applications (React, Vue, Svelte, etc.)
+    /// whose client-side router handles all navigation paths.
+    #[serde(default)]
+    pub spa_fallback: bool,
 }
 
 /// An upstream endpoint (address + port)
@@ -565,6 +572,7 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                         list_dir: dir.enable_directory_browsing.unwrap_or(false),
                         render_markdown: dir.render_markdown.unwrap_or(false),
                         cache_max_age: dir.cache_control_max_age_in_seconds,
+                        spa_fallback: false,
                     }),
                 );
 
@@ -777,6 +785,7 @@ impl OddBoxV4Config {
                 list_dir: true,
                 render_markdown: true,
                 cache_max_age: Some(3600),
+                spa_fallback: false,
             }),
         );
 

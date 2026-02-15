@@ -877,6 +877,7 @@ pub struct EditBackendForm {
     pub list_dir: bool,
     pub render_markdown: bool,
     pub cache_max_age: String,
+    pub spa_fallback: bool,
     // Process
     pub proc_bin: String,
     pub proc_args: String,
@@ -901,6 +902,7 @@ pub enum EditBackendField {
     ListDir(bool),
     RenderMarkdown(bool),
     CacheMaxAge(String),
+    SpaFallback(bool),
     ProcBin(String),
     ProcArgs(String),
     ProcDir(String),
@@ -1473,6 +1475,7 @@ async fn load_backend_form(state: Arc<GlobalState>, backend_id: String) -> EditB
                 form.list_dir = s.list_dir;
                 form.render_markdown = s.render_markdown;
                 form.cache_max_age = s.cache_max_age.map(|v| v.to_string()).unwrap_or_default();
+                form.spa_fallback = s.spa_fallback;
             }
         }
     } else {
@@ -1596,6 +1599,7 @@ async fn save_backend_form(
                     list_dir: form.list_dir,
                     render_markdown: form.render_markdown,
                     cache_max_age,
+                    spa_fallback: form.spa_fallback,
                 }),
             );
         }
@@ -1735,6 +1739,7 @@ async fn resolve_backend_dir(
         list_dir: false,
         render_markdown: false,
         cache_max_age: None,
+        spa_fallback: false,
     };
 
     let resolved = guard
@@ -2738,6 +2743,7 @@ impl OddBoxGui {
                 EditBackendField::ListDir(v) => self.edit_backend_form.list_dir = v,
                 EditBackendField::RenderMarkdown(v) => self.edit_backend_form.render_markdown = v,
                 EditBackendField::CacheMaxAge(v) => self.edit_backend_form.cache_max_age = v,
+                EditBackendField::SpaFallback(v) => self.edit_backend_form.spa_fallback = v,
                 EditBackendField::ProcBin(v) => self.edit_backend_form.proc_bin = v,
                 EditBackendField::ProcArgs(v) => self.edit_backend_form.proc_args = v,
                 EditBackendField::ProcDir(v) => self.edit_backend_form.proc_dir = v,

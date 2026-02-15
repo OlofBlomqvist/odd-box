@@ -442,6 +442,7 @@ fn serve_dir_route(
     list_dir: bool,
     render_markdown: bool,
     cache_max_age: Option<u64>,
+    spa_fallback: bool,
 ) -> HttpRoute {
     let mut middlewares = Vec::new();
     if let Some(max_age) = cache_max_age {
@@ -460,6 +461,7 @@ fn serve_dir_route(
             index: Some(index),
             list_dir,
             render_markdown,
+            spa_fallback,
         },
     }
 }
@@ -649,6 +651,7 @@ pub fn build_config_with_runtime_ports(
                             resolved.list_dir,
                             resolved.render_markdown,
                             resolved.cache_max_age,
+                            resolved.spa_fallback,
                         ));
                     }
                 }
@@ -792,6 +795,7 @@ pub fn build_config_with_runtime_ports(
         web_backends,
         tcp_backends: HashMap::new(),
         hyper_backends,
+        dynamic_backend_resolvers: HashMap::new(),
         acme,
     };
 
