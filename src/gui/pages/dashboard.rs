@@ -127,6 +127,14 @@ fn muted_text(theme: &Theme) -> iced::widget::text::Style {
 }
 
 /// Build a compact action button for the card context menu
+/// Estimate the pixel width of an action button from its label.
+fn estimate_btn_width(label: &str) -> f32 {
+    let scale = super::super::gui_scale();
+    let char_w = 0.65 * 11.0 * scale; // approximate char width for bold size-11 font
+    let h_pad = 20.0; // 10px padding on each side
+    char_w * label.len() as f32 + h_pad
+}
+
 fn action_btn<'a>(
     label: &'a str,
     msg: Option<Message>,
@@ -135,7 +143,9 @@ fn action_btn<'a>(
     fg: Color,
     use_kde_buttons: bool,
     kde_role: super::super::KdeButtonRole,
-) -> Element<'a, Message> {
+) -> (f32, Element<'a, Message>) {
+    let estimated_width = estimate_btn_width(label);
+
     let mut btn = button(
         text(label)
             .size(super::super::text_size(11))
@@ -180,7 +190,7 @@ fn action_btn<'a>(
         btn = btn.on_press(m);
     }
 
-    btn.into()
+    (estimated_width, btn.into())
 }
 
 /// Build a site card – shows hostname (or backend name for unbound), with status dot.
@@ -194,7 +204,7 @@ fn site_card<'a>(
     state: &ProcState,
     card_width: f32,
     is_selected: bool,
-    actions: Vec<Element<'a, Message>>,
+    actions: Vec<(f32, Element<'a, Message>)>,
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
     let dot_color = status_color(state);
@@ -227,12 +237,40 @@ fn site_card<'a>(
     .width(Length::Fill);
 
     if is_selected {
-        // Selected state: show action buttons instead of subtitle
-        let actions_row = Row::with_children(actions)
-            .spacing(4)
-            .align_y(Alignment::Center);
+        // Selected state: show action buttons in a wrapping layout
+        let content_width = card_width - 28.0; // 14px padding on each side
+        let btn_spacing = 4.0_f32;
 
-        let card_content = column![name_row, actions_row]
+        let mut rows_vec: Vec<Vec<Element<'a, Message>>> = vec![vec![]];
+        let mut current_row_width = 0.0_f32;
+
+        for (est_btn_w, action) in actions {
+            let needed = if current_row_width > 0.0 {
+                btn_spacing + est_btn_w
+            } else {
+                est_btn_w
+            };
+
+            if current_row_width + needed > content_width && current_row_width > 0.0 {
+                // Start a new row
+                rows_vec.push(vec![action]);
+                current_row_width = est_btn_w;
+            } else {
+                current_row_width += needed;
+                rows_vec.last_mut().unwrap().push(action);
+            }
+        }
+
+        let mut actions_col = Column::new().spacing(4);
+        for row_items in rows_vec {
+            actions_col = actions_col.push(
+                Row::with_children(row_items)
+                    .spacing(4)
+                    .align_y(Alignment::Center),
+            );
+        }
+
+        let card_content = column![name_row, actions_col]
             .spacing(8)
             .width(Length::Fill);
 
@@ -617,8 +655,8 @@ fn frontend_actions<'a>(
     use_kde_buttons: bool,
     http_port: Option<u16>,
     https_port: Option<u16>,
-) -> Vec<Element<'a, Message>> {
-    let mut actions: Vec<Element<'a, Message>> = Vec::new();
+) -> Vec<(f32, Element<'a, Message>)> {
+    let mut actions: Vec<(f32, Element<'a, Message>)> = Vec::new();
 
     // Open in browser
     let open_bg = if is_light {
@@ -742,9 +780,9 @@ fn unbound_process_actions<'a>(
     state: &ProcState,
     is_light: bool,
     use_kde_buttons: bool,
-) -> Vec<Element<'a, Message>> {
+) -> Vec<(f32, Element<'a, Message>)> {
     let name = backend_name.to_string();
-    let mut actions: Vec<Element<'a, Message>> = Vec::new();
+    let mut actions: Vec<(f32, Element<'a, Message>)> = Vec::new();
 
     // Bind button — create a new frontend for this backend
     let bind_bg = if is_light {
@@ -881,7 +919,7 @@ fn unbound_simple_actions<'a>(
     backend_name: &str,
     is_light: bool,
     use_kde_buttons: bool,
-) -> Vec<Element<'a, Message>> {
+) -> Vec<(f32, Element<'a, Message>)> {
     let name = backend_name.to_string();
 
     // Bind button — create a new frontend for this backend
