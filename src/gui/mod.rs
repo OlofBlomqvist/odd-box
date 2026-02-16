@@ -1886,6 +1886,7 @@ async fn save_backend_form(
                 }),
             );
 
+            guard.reload_dashmaps();
             guard.is_valid().map_err(|e| e.to_string())?;
             guard.write_to_disk().map_err(|e| e.to_string())?;
             state.config.store(std::sync::Arc::new(guard));
@@ -2322,7 +2323,10 @@ impl OddBoxGui {
             }
         });
 
-        // Tick for pages that need live updates
+        // Tick for pages that need live updates.
+        // All pages get at least a slow tick so the tray icon state
+        // (faulty indicator, start/stop items) stays up-to-date even
+        // when the user is on a non-config page.
         let page_sub = match self.current_page {
             Page::Monitoring => {
                 time::every(std::time::Duration::from_millis(500)).map(|_| Message::Tick)
@@ -2334,7 +2338,10 @@ impl OddBoxGui {
             Page::EditFrontend | Page::EditBackend => {
                 time::every(std::time::Duration::from_millis(1000)).map(|_| Message::Tick)
             }
-            _ => Subscription::none(),
+            _ => {
+                // Slow tick for remaining pages – keeps tray state fresh
+                time::every(std::time::Duration::from_millis(3000)).map(|_| Message::Tick)
+            }
         };
 
         let theme_sub = system::theme_changes().map(Message::SystemThemeChanged);
@@ -2478,7 +2485,10 @@ impl OddBoxGui {
                         }
                     }
                 }
-                // Refresh config for config-related pages
+                // Refresh config for config-related pages and tray state.
+                // Config pages need frequent updates for the UI; other pages
+                // still refresh (at a slower cadence set by the subscription)
+                // so the tray icon stays in sync with process state.
                 if matches!(
                     self.current_page,
                     Page::ManagedProcesses
@@ -2487,7 +2497,8 @@ impl OddBoxGui {
                         | Page::Dashboard
                         | Page::EditFrontend
                         | Page::EditBackend
-                ) {
+                ) || self.tray_handle.is_some()
+                {
                     return Task::perform(fetch_config(self.state.clone()), Message::ConfigUpdated);
                 }
             }
@@ -2615,6 +2626,22 @@ impl OddBoxGui {
                                     return window::set_mode(id, window::Mode::Hidden);
                                 }
                             }
+                            tray::TrayCommand::StartAll => {
+                                tracing::info!("Tray: Start All");
+                                self.dashboard_startall_cooldown = Some(std::time::Instant::now());
+                                for proc in &self.cached_config.processes {
+                                    if !proc.exclude_from_start_all {
+                                        self.state.process_registry.set_enabled(&proc.name, true);
+                                    }
+                                }
+                            }
+                            tray::TrayCommand::StopAll => {
+                                tracing::info!("Tray: Stop All");
+                                self.dashboard_stopall_cooldown = Some(std::time::Instant::now());
+                                for proc in &self.cached_config.processes {
+                                    self.state.process_registry.set_enabled(&proc.name, false);
+                                }
+                            }
                             tray::TrayCommand::Quit => {
                                 // Phase 1: Immediate visual feedback
                                 // Gray out the tray icon and disable menu items
@@ -2718,6 +2745,30 @@ impl OddBoxGui {
                 let (id, key) = cruma_auth_from_config(&cfg);
                 self.cruma_auth_id = id;
                 self.cruma_auth_key = key;
+
+                // Update tray icon and menu based on process state
+                if let Some(ref tray) = self.tray_handle {
+                    let has_faulty = self
+                        .cached_config
+                        .processes
+                        .iter()
+                        .any(|p| matches!(p.state, crate::global_state::ProcState::Faulty));
+                    tray.set_faulty(has_faulty);
+
+                    let has_startable = self.cached_config.processes.iter().any(|p| {
+                        matches!(
+                            p.state,
+                            crate::global_state::ProcState::Stopped
+                                | crate::global_state::ProcState::Faulty
+                        )
+                    });
+                    let has_stoppable = self
+                        .cached_config
+                        .processes
+                        .iter()
+                        .any(|p| matches!(p.state, crate::global_state::ProcState::Running));
+                    tray.set_process_counts(has_startable, has_stoppable);
+                }
             }
             Message::UpdatesCheck => {
                 if self.update_check_in_progress || self.update_action_in_progress {
@@ -2879,7 +2930,9 @@ impl OddBoxGui {
             Message::ProcessStartAll => {
                 self.dashboard_startall_cooldown = Some(std::time::Instant::now());
                 for proc in &self.cached_config.processes {
-                    self.state.process_registry.set_enabled(&proc.name, true);
+                    if !proc.exclude_from_start_all {
+                        self.state.process_registry.set_enabled(&proc.name, true);
+                    }
                 }
             }
             Message::ProcessStopAll => {

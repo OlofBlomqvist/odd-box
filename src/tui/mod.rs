@@ -110,7 +110,7 @@ struct Snapshot {
     cruma_fqdn: String,
     cruma_motd: String,
     listen_ports: String,
-    processes: Vec<(String, ProcState, String, Vec<String>, String)>,
+    processes: Vec<(String, ProcState, String, Vec<String>, String, bool)>,
     remotes: Vec<(String, ProcState, String, String)>,
     statics: Vec<(String, ProcState, String)>,
     docker: Vec<(String, ProcState, String, String)>,
@@ -182,7 +182,8 @@ async fn build_snapshot(global_state: &GlobalState) -> Snapshot {
                 .and_then(|h| h.active_port())
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "-".to_string());
-            (backend_id, state, bin, args, port)
+            let exclude_from_start_all = proc.exclude_from_start_all;
+            (backend_id, state, bin, args, port, exclude_from_start_all)
         })
         .collect();
 
@@ -665,7 +666,7 @@ struct RowData {
 fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
     let mut rows = Vec::new();
     let mut backend_ids: Vec<String> = Vec::new();
-    backend_ids.extend(data.processes.iter().map(|(n, _, _, _, _)| n.clone()));
+    backend_ids.extend(data.processes.iter().map(|(n, _, _, _, _, _)| n.clone()));
     backend_ids.extend(data.remotes.iter().map(|(n, _, _, _)| n.clone()));
     backend_ids.extend(data.statics.iter().map(|(n, _, _)| n.clone()));
     backend_ids.extend(data.docker.iter().map(|(n, _, _, _)| n.clone()));
@@ -673,14 +674,14 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
     let process_ids: std::collections::HashSet<String> = data
         .processes
         .iter()
-        .map(|(n, _, _, _, _)| n.clone())
+        .map(|(n, _, _, _, _, _)| n.clone())
         .collect();
 
     let mut backend_state: std::collections::BTreeMap<String, ProcState> =
         std::collections::BTreeMap::new();
     let mut backend_kind: std::collections::BTreeMap<String, &'static str> =
         std::collections::BTreeMap::new();
-    for (name, state, _, _, _) in &data.processes {
+    for (name, state, _, _, _, _) in &data.processes {
         backend_state.insert(name.clone(), state.clone());
         backend_kind.insert(name.clone(), "process");
     }
@@ -757,7 +758,7 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
             alert: missing || !backend_ok,
         });
     }
-    for (name, state, bin, args, port) in &data.processes {
+    for (name, state, bin, args, port, _) in &data.processes {
         let combined = routes_by_backend.get(name).and_then(|r| r.first()).cloned();
         let is_unused = !routes_by_backend.contains_key(name);
         let display_bin = if SHOW_FULL_PATH.load(std::sync::atomic::Ordering::Relaxed) {
@@ -3197,7 +3198,7 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                                 if let Some(entry) = data
                                                     .processes
                                                     .iter_mut()
-                                                    .find(|(n, _, _, _, _)| n == proc_id)
+                                                    .find(|(n, _, _, _, _, _)| n == proc_id)
                                                 {
                                                     entry.1 = state;
                                                 }
@@ -3385,7 +3386,12 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                             dirty = true;
                         } else if page == TuiPage::Sites && key.code == KeyCode::Char('s') {
                             let mut changed = false;
-                            for (name, state, _, _, _) in data.processes.iter_mut() {
+                            for (name, state, _, _, _, exclude_from_start_all) in
+                                data.processes.iter_mut()
+                            {
+                                if *exclude_from_start_all {
+                                    continue;
+                                }
                                 if matches!(state, ProcState::Stopped | ProcState::Faulty) {
                                     global_state.process_registry.update_state(
                                         name,
@@ -3447,7 +3453,7 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                             dirty = true;
                         } else if page == TuiPage::Sites && key.code == KeyCode::Char('x') {
                             let mut changed = false;
-                            for (name, state, _, _, _) in data.processes.iter_mut() {
+                            for (name, state, _, _, _, _) in data.processes.iter_mut() {
                                 if matches!(
                                     state,
                                     ProcState::Running | ProcState::Starting | ProcState::Faulty

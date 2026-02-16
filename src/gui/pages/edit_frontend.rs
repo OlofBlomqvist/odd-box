@@ -267,6 +267,8 @@ impl OddBoxGui {
                 .on_toggle(Message::EditFrontendCaptureSubdomainsToggled);
             let capture_help = text("Match *.example.com as well as the root host")
                 .size(text_size(12))
+                .wrapping(Wrapping::Word)
+                .width(Length::Fill)
                 .style(muted_text);
 
             let forward_toggle = checkbox(self.edit_frontend_form.forward_subdomains)
@@ -274,6 +276,8 @@ impl OddBoxGui {
                 .on_toggle(Message::EditFrontendForwardSubdomainsToggled);
             let forward_help = text("Preserve the subdomain in the upstream host header")
                 .size(text_size(12))
+                .wrapping(Wrapping::Word)
+                .width(Length::Fill)
                 .style(muted_text);
 
             let redirect_toggle = checkbox(self.edit_frontend_form.redirect_to_https)
@@ -281,6 +285,8 @@ impl OddBoxGui {
                 .on_toggle(Message::EditFrontendRedirectHttpsToggled);
             let redirect_help = text("Send HTTP requests to HTTPS for this host")
                 .size(text_size(12))
+                .wrapping(Wrapping::Word)
+                .width(Length::Fill)
                 .style(muted_text);
 
             let lets_encrypt_toggle = checkbox(self.edit_frontend_form.lets_encrypt)
@@ -288,6 +294,8 @@ impl OddBoxGui {
                 .on_toggle(Message::EditFrontendLetsEncryptToggled);
             let lets_encrypt_help = text("Enable ACME certificates for this host")
                 .size(text_size(12))
+                .wrapping(Wrapping::Word)
+                .width(Length::Fill)
                 .style(muted_text);
 
             let enable_cruma_toggle = checkbox(self.edit_frontend_form.enable_cruma)
@@ -295,6 +303,8 @@ impl OddBoxGui {
                 .on_toggle(Message::EditFrontendEnableCrumaToggled);
             let enable_cruma_help = text("Expose this route through the cruma tunnel")
                 .size(text_size(12))
+                .wrapping(Wrapping::Word)
+                .width(Length::Fill)
                 .style(muted_text);
 
             // Show the resolved cruma FQDN(s) when cruma is enabled on this
@@ -322,7 +332,7 @@ impl OddBoxGui {
                         Some(
                             text(resolved)
                                 .size(text_size(12))
-                                .wrapping(Wrapping::Word)
+                                .wrapping(Wrapping::WordOrGlyph)
                                 .width(Length::Fill)
                                 .color(Color::from_rgb(0.4, 0.75, 0.95))
                                 .into(),
@@ -331,7 +341,7 @@ impl OddBoxGui {
                         Some(
                             text("👻 Waiting for cruma domain assignment…")
                                 .size(text_size(12))
-                                .wrapping(Wrapping::Word)
+                                .wrapping(Wrapping::WordOrGlyph)
                                 .width(Length::Fill)
                                 .style(muted_text)
                                 .into(),

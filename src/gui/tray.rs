@@ -61,6 +61,10 @@ pub enum TrayCommand {
     Hide,
     /// Quit the application
     Quit,
+    /// Start all process backends
+    StartAll,
+    /// Stop all process backends
+    StopAll,
 }
 
 /// State of the tray icon (for disabling during shutdown)
@@ -85,10 +89,19 @@ pub struct TrayHandle {
     state: Arc<Mutex<TrayState>>,
     #[cfg(not(target_os = "linux"))]
     tray: Arc<Mutex<TrayIcon>>,
-    #[cfg(not(target_os = "linux"))]
-    toggle_item: MenuItem,
+    // toggle_item commented out — left click now always means "show"
+    // #[cfg(not(target_os = "linux"))]
+    // toggle_item: MenuItem,
     #[cfg(not(target_os = "linux"))]
     quit_item: MenuItem,
+    #[cfg(not(target_os = "linux"))]
+    start_all_item: MenuItem,
+    #[cfg(not(target_os = "linux"))]
+    stop_all_item: MenuItem,
+    #[cfg(not(target_os = "linux"))]
+    active_icon: Icon,
+    #[cfg(not(target_os = "linux"))]
+    faulty_icon: Icon,
     #[cfg(target_os = "linux")]
     tray: tokio::sync::mpsc::UnboundedSender<LinuxTrayControl>,
 }
@@ -142,6 +155,19 @@ impl TrayHandle {
                             LinuxTrayControl::SetShuttingDown => {
                                 let _ = handle.update(|tray| tray.set_shutting_down()).await;
                             }
+                            LinuxTrayControl::SetFaulty(faulty) => {
+                                let _ = handle.update(|tray| tray.set_faulty(faulty)).await;
+                            }
+                            LinuxTrayControl::SetProcessCounts {
+                                has_startable,
+                                has_stoppable,
+                            } => {
+                                let _ = handle
+                                    .update(|tray| {
+                                        tray.set_process_counts(has_startable, has_stoppable)
+                                    })
+                                    .await;
+                            }
                             LinuxTrayControl::Shutdown => {
                                 let _ = handle.shutdown().await;
                                 break;
@@ -191,20 +217,31 @@ impl TrayHandle {
                 }
             }
 
-            // Build the context menu with a single toggle item
+            // Build the context menu — right-click only shows Quit
+            // (plus conditional Start/Stop All items)
             let menu = Menu::new();
-            let toggle_item = MenuItem::new("Hide", true, None); // Start as "Hide" since window is visible
+            // toggle_item commented out — left click now always means "show"
+            // let toggle_item = MenuItem::new("Hide", true, None);
+            let start_all_item = MenuItem::new("Start All", false, None);
+            let stop_all_item = MenuItem::new("Stop All", false, None);
             let quit_item = MenuItem::new("Quit", true, None);
 
             // Clone items before adding to menu (for storing in handle to update later)
-            let toggle_item_for_handle = toggle_item.clone();
+            // let toggle_item_for_handle = toggle_item.clone();
             let quit_item_for_handle = quit_item.clone();
+            let start_all_item_for_handle = start_all_item.clone();
+            let stop_all_item_for_handle = stop_all_item.clone();
 
-            let _ = menu.append(&toggle_item);
+            // let _ = menu.append(&toggle_item);
+            let _ = menu.append(&start_all_item);
+            let _ = menu.append(&stop_all_item);
             let _ = menu.append(&quit_item);
 
             info!("Building tray icon");
             let icon = build_tray_icon()?;
+
+            let active_icon = icon.clone();
+            let faulty_icon = build_red_tray_icon().unwrap_or_else(|_| icon.clone());
 
             let mut builder = TrayIconBuilder::new()
                 .with_tooltip(app_name)
@@ -228,11 +265,15 @@ impl TrayHandle {
                 }
             };
 
-            tray.set_show_menu_on_left_click(true);
+            // Left click = show window, right click = context menu
+            tray.set_show_menu_on_left_click(false);
 
             let menu_rx = MenuEvent::receiver();
-            let toggle_id = toggle_item.id().clone();
+            let icon_event_rx = tray_icon::TrayIconEvent::receiver();
+            // let toggle_id = toggle_item.id().clone();
             let quit_id = quit_item.id().clone();
+            let start_all_id = start_all_item.id().clone();
+            let stop_all_id = stop_all_item.id().clone();
 
             let window_visible_for_thread = window_visible.clone();
             let state_for_thread = state.clone();
@@ -248,22 +289,44 @@ impl TrayHandle {
                         continue;
                     }
 
+                    // Handle left-click icon events -> always Show
+                    if let Ok(event) = icon_event_rx.try_recv() {
+                        if let tray_icon::TrayIconEvent::Click {
+                            button: tray_icon::MouseButton::Left,
+                            button_state: tray_icon::MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            info!("Tray: Left click -> Show");
+                            let _ = command_tx.send(TrayCommand::Show);
+                        }
+                    }
+
+                    // Handle right-click context menu events
                     match menu_rx.try_recv() {
                         Ok(event) => {
                             let id = event.id;
-                            if id == toggle_id {
-                                let visible = *window_visible_for_thread.lock().unwrap();
-                                if visible {
-                                    info!("Tray: Hide clicked");
-                                    let _ = command_tx.send(TrayCommand::Hide);
-                                } else {
-                                    info!("Tray: Show clicked");
-                                    let _ = command_tx.send(TrayCommand::Show);
-                                }
-                            } else if id == quit_id {
+                            // toggle_item commented out — left click now always means "show"
+                            // if id == toggle_id {
+                            //     let visible = *window_visible_for_thread.lock().unwrap();
+                            //     if visible {
+                            //         info!("Tray: Hide clicked");
+                            //         let _ = command_tx.send(TrayCommand::Hide);
+                            //     } else {
+                            //         info!("Tray: Show clicked");
+                            //         let _ = command_tx.send(TrayCommand::Show);
+                            //     }
+                            // } else
+                            if id == quit_id {
                                 info!("Tray: Quit clicked");
                                 let _ = command_tx.send(TrayCommand::Quit);
                                 break;
+                            } else if id == start_all_id {
+                                info!("Tray: Start All clicked");
+                                let _ = command_tx.send(TrayCommand::StartAll);
+                            } else if id == stop_all_id {
+                                info!("Tray: Stop All clicked");
+                                let _ = command_tx.send(TrayCommand::StopAll);
                             }
                         }
                         Err(_) => {
@@ -277,8 +340,12 @@ impl TrayHandle {
             Ok(TrayHandle {
                 tray: Arc::new(Mutex::new(tray)),
                 command_rx,
-                toggle_item: toggle_item_for_handle,
+                // toggle_item: toggle_item_for_handle,
                 quit_item: quit_item_for_handle,
+                start_all_item: start_all_item_for_handle,
+                stop_all_item: stop_all_item_for_handle,
+                active_icon,
+                faulty_icon,
                 window_visible,
                 state,
             })
@@ -296,14 +363,15 @@ impl TrayHandle {
             let _ = self.tray.send(LinuxTrayControl::SetVisible(visible));
         }
 
-        #[cfg(not(target_os = "linux"))]
-        {
-            if visible {
-                self.toggle_item.set_text("Hide");
-            } else {
-                self.toggle_item.set_text("Show");
-            }
-        }
+        // toggle_item commented out — left click now always means "show"
+        // #[cfg(not(target_os = "linux"))]
+        // {
+        //     if visible {
+        //         self.toggle_item.set_text("Hide");
+        //     } else {
+        //         self.toggle_item.set_text("Show");
+        //     }
+        // }
 
         //trace!("Tray toggle label updated: visible={}", visible);
     }
@@ -322,7 +390,9 @@ impl TrayHandle {
         #[cfg(not(target_os = "linux"))]
         {
             // Disable menu items
-            self.toggle_item.set_enabled(false);
+            // self.toggle_item.set_enabled(false);
+            self.start_all_item.set_enabled(false);
+            self.stop_all_item.set_enabled(false);
             self.quit_item.set_enabled(false);
             // Update text to indicate shutting down
             self.quit_item.set_text("Quitting...");
@@ -338,6 +408,46 @@ impl TrayHandle {
 
         info!("Tray menu disabled for shutdown");
     }
+
+    /// Update the tray icon to red when any process is faulty, or back to
+    /// normal when all processes are healthy.
+    pub fn set_faulty(&self, faulty: bool) {
+        #[cfg(target_os = "linux")]
+        {
+            let _ = self.tray.send(LinuxTrayControl::SetFaulty(faulty));
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let icon = if faulty {
+                self.faulty_icon.clone()
+            } else {
+                self.active_icon.clone()
+            };
+            if let Ok(tray) = self.tray.lock() {
+                #[cfg(target_os = "macos")]
+                let _ = tray.set_icon_as_template(true);
+                let _ = tray.set_icon(Some(icon));
+            }
+        }
+    }
+
+    /// Show or hide Start All / Stop All menu items based on process state.
+    pub fn set_process_counts(&self, has_startable: bool, has_stoppable: bool) {
+        #[cfg(target_os = "linux")]
+        {
+            let _ = self.tray.send(LinuxTrayControl::SetProcessCounts {
+                has_startable,
+                has_stoppable,
+            });
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.start_all_item.set_enabled(has_startable);
+            self.stop_all_item.set_enabled(has_stoppable);
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -351,6 +461,11 @@ impl Drop for TrayHandle {
 enum LinuxTrayControl {
     SetVisible(bool),
     SetShuttingDown,
+    SetFaulty(bool),
+    SetProcessCounts {
+        has_startable: bool,
+        has_stoppable: bool,
+    },
     Shutdown,
 }
 
@@ -360,8 +475,12 @@ struct LinuxTray {
     command_tx: Sender<TrayCommand>,
     visible: bool,
     shutting_down: bool,
+    faulty: bool,
+    has_startable: bool,
+    has_stoppable: bool,
     active_icon: KsniIcon,
     shutdown_icon: KsniIcon,
+    faulty_icon: KsniIcon,
 }
 
 #[cfg(target_os = "linux")]
@@ -372,8 +491,12 @@ impl LinuxTray {
             command_tx,
             visible: true,
             shutting_down: false,
+            faulty: false,
+            has_startable: false,
+            has_stoppable: false,
             active_icon: build_ksni_icon(build_box_icon_rgba()),
             shutdown_icon: build_ksni_icon(build_gray_box_icon_rgba()),
+            faulty_icon: build_ksni_icon(build_red_box_icon_rgba()),
         }
     }
 
@@ -385,6 +508,15 @@ impl LinuxTray {
         self.shutting_down = true;
     }
 
+    fn set_faulty(&mut self, faulty: bool) {
+        self.faulty = faulty;
+    }
+
+    fn set_process_counts(&mut self, has_startable: bool, has_stoppable: bool) {
+        self.has_startable = has_startable;
+        self.has_stoppable = has_stoppable;
+    }
+
     fn send_command(&self, command: TrayCommand) {
         let _ = self.command_tx.send(command);
     }
@@ -392,7 +524,7 @@ impl LinuxTray {
 
 #[cfg(target_os = "linux")]
 impl Tray for LinuxTray {
-    const MENU_ON_ACTIVATE: bool = true;
+    const MENU_ON_ACTIVATE: bool = false;
 
     fn id(&self) -> String {
         "odd-box".into()
@@ -402,9 +534,15 @@ impl Tray for LinuxTray {
         self.app_name.clone()
     }
 
+    fn activate(&mut self, _x: i32, _y: i32) {
+        self.send_command(TrayCommand::Show);
+    }
+
     fn icon_pixmap(&self) -> Vec<KsniIcon> {
         if self.shutting_down {
             vec![self.shutdown_icon.clone()]
+        } else if self.faulty {
+            vec![self.faulty_icon.clone()]
         } else {
             vec![self.active_icon.clone()]
         }
@@ -437,25 +575,39 @@ impl Tray for LinuxTray {
 
         let mut items = Vec::new();
 
-        if self.visible {
+        // Hide/Show commented out per TODO — left click now always means "show"
+        // if self.visible {
+        //     items.push(
+        //         StandardItem {
+        //             label: "Hide".into(),
+        //             activate: Box::new(|tray: &mut LinuxTray| {
+        //                 tray.visible = false;
+        //                 tray.send_command(TrayCommand::Hide);
+        //             }),
+        //             ..Default::default()
+        //         }
+        //         .into(),
+        //     );
+        // } else {
+        //     items.push(
+        //         StandardItem {
+        //             label: "Show".into(),
+        //             activate: Box::new(|tray: &mut LinuxTray| {
+        //                 tray.visible = true;
+        //                 tray.send_command(TrayCommand::Show);
+        //             }),
+        //             ..Default::default()
+        //         }
+        //         .into(),
+        //     );
+        // }
+
+        if self.has_startable {
             items.push(
                 StandardItem {
-                    label: "Hide".into(),
+                    label: "Start All".into(),
                     activate: Box::new(|tray: &mut LinuxTray| {
-                        tray.visible = false;
-                        tray.send_command(TrayCommand::Hide);
-                    }),
-                    ..Default::default()
-                }
-                .into(),
-            );
-        } else {
-            items.push(
-                StandardItem {
-                    label: "Show".into(),
-                    activate: Box::new(|tray: &mut LinuxTray| {
-                        tray.visible = true;
-                        tray.send_command(TrayCommand::Show);
+                        tray.send_command(TrayCommand::StartAll);
                     }),
                     ..Default::default()
                 }
@@ -463,7 +615,23 @@ impl Tray for LinuxTray {
             );
         }
 
-        items.push(KsniMenuItem::Separator);
+        if self.has_stoppable {
+            items.push(
+                StandardItem {
+                    label: "Stop All".into(),
+                    activate: Box::new(|tray: &mut LinuxTray| {
+                        tray.send_command(TrayCommand::StopAll);
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+
+        if !items.is_empty() {
+            items.push(KsniMenuItem::Separator);
+        }
+
         items.push(
             StandardItem {
                 label: "Quit".into(),
@@ -498,6 +666,13 @@ fn build_gray_tray_icon() -> Result<Icon, String> {
     let rgba = build_gray_box_icon_rgba();
     Icon::from_rgba(rgba, ICON_SIZE, ICON_SIZE)
         .map_err(|e| format!("Failed to create gray tray icon: {:?}", e))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn build_red_tray_icon() -> Result<Icon, String> {
+    let rgba = build_red_box_icon_rgba();
+    Icon::from_rgba(rgba, ICON_SIZE, ICON_SIZE)
+        .map_err(|e| format!("Failed to create red tray icon: {:?}", e))
 }
 
 /// Build a grayed-out procedural isometric box icon as RGBA data
@@ -554,6 +729,68 @@ fn build_gray_box_icon_rgba() -> Vec<u8> {
                     (GRAY_LEFT_R, GRAY_LEFT_G, GRAY_LEFT_B, 255u8)
                 } else if is_in_right_face(px, py) {
                     (GRAY_RIGHT_R, GRAY_RIGHT_G, GRAY_RIGHT_B, 255u8)
+                } else {
+                    (0, 0, 0, 0u8)
+                };
+
+                rgba[idx] = r;
+                rgba[idx + 1] = g;
+                rgba[idx + 2] = b;
+                rgba[idx + 3] = a;
+            }
+        }
+    }
+
+    rgba
+}
+
+/// Build a red procedural isometric box icon as RGBA data (for faulty state)
+fn build_red_box_icon_rgba() -> Vec<u8> {
+    let size = ICON_SIZE;
+    let mut rgba = vec![0u8; (size * size * 4) as usize];
+
+    #[cfg(target_os = "macos")]
+    let use_template = true;
+    #[cfg(not(target_os = "macos"))]
+    let use_template = false;
+
+    // Red-tinted colors for faulty state
+    const RED_EDGE_R: u8 = 120;
+    const RED_EDGE_G: u8 = 30;
+    const RED_EDGE_B: u8 = 30;
+    const RED_TOP_R: u8 = 230;
+    const RED_TOP_G: u8 = 80;
+    const RED_TOP_B: u8 = 80;
+    const RED_LEFT_R: u8 = 190;
+    const RED_LEFT_G: u8 = 55;
+    const RED_LEFT_B: u8 = 55;
+    const RED_RIGHT_R: u8 = 160;
+    const RED_RIGHT_G: u8 = 40;
+    const RED_RIGHT_B: u8 = 40;
+
+    for y in 0..size {
+        for x in 0..size {
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+            let idx = ((y * size + x) * 4) as usize;
+
+            if use_template {
+                // macOS template style: edges with red tint via alpha
+                let alpha: u8 = if is_on_edge(px, py) { 255 } else { 0 };
+                // Use red color so macOS shows it tinted
+                rgba[idx] = 200;
+                rgba[idx + 1] = 50;
+                rgba[idx + 2] = 50;
+                rgba[idx + 3] = alpha;
+            } else {
+                let (r, g, b, a) = if is_on_edge(px, py) {
+                    (RED_EDGE_R, RED_EDGE_G, RED_EDGE_B, 255u8)
+                } else if is_in_top_face(px, py) {
+                    (RED_TOP_R, RED_TOP_G, RED_TOP_B, 255u8)
+                } else if is_in_left_face(px, py) {
+                    (RED_LEFT_R, RED_LEFT_G, RED_LEFT_B, 255u8)
+                } else if is_in_right_face(px, py) {
+                    (RED_RIGHT_R, RED_RIGHT_G, RED_RIGHT_B, 255u8)
                 } else {
                     (0, 0, 0, 0u8)
                 };
