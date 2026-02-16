@@ -2756,11 +2756,12 @@ impl OddBoxGui {
                     tray.set_faulty(has_faulty);
 
                     let has_startable = self.cached_config.processes.iter().any(|p| {
-                        matches!(
-                            p.state,
-                            crate::global_state::ProcState::Stopped
-                                | crate::global_state::ProcState::Faulty
-                        )
+                        !p.exclude_from_start_all
+                            && matches!(
+                                p.state,
+                                crate::global_state::ProcState::Stopped
+                                    | crate::global_state::ProcState::Faulty
+                            )
                     });
                     let has_stoppable = self
                         .cached_config
