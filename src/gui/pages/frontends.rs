@@ -18,12 +18,16 @@ impl OddBoxGui {
         let table_row_odd_bg = self.surface_panel_alt_bg(&table_theme);
         let table_border = self.surface_border_color(&table_theme);
 
-        let add_route_btn =
-            button(text("Add Route").size(text_size(14)))
-                .on_press(Message::OpenNewFrontend)
-                .style(move |theme, status| {
-                    super::super::themed_button_style(theme, status, KdeButtonRole::Neutral, use_kde_buttons)
-                });
+        let add_route_btn = button(text("Add Route").size(text_size(14)))
+            .on_press(Message::OpenNewFrontend)
+            .style(move |theme, status| {
+                super::super::themed_button_style(
+                    theme,
+                    status,
+                    KdeButtonRole::Neutral,
+                    use_kde_buttons,
+                )
+            });
         let actions = row![add_route_btn].spacing(scaled(8.0));
 
         let http_placeholder = self
@@ -44,12 +48,16 @@ impl OddBoxGui {
             .on_input(Message::FrontendHttpsPortChanged)
             .size(text_size(14));
 
-        let apply_ports_btn =
-            button(text("Apply Ports").size(text_size(14)))
-                .on_press(Message::FrontendPortsSave)
-                .style(move |theme, status| {
-                    super::super::themed_button_style(theme, status, KdeButtonRole::Primary, use_kde_buttons)
-                });
+        let apply_ports_btn = button(text("Apply Ports").size(text_size(14)))
+            .on_press(Message::FrontendPortsSave)
+            .style(move |theme, status| {
+                super::super::themed_button_style(
+                    theme,
+                    status,
+                    KdeButtonRole::Primary,
+                    use_kde_buttons,
+                )
+            });
 
         let ports_row = row![
             text("HTTP Port").size(text_size(14)),
@@ -85,6 +93,7 @@ impl OddBoxGui {
             TableColumn::portion("Backend", 2),
             TableColumn::fixed("HTTPS Redirect", 120.0),
             TableColumn::fixed("Subdomains", 100.0),
+            TableColumn::fixed("Cruma", 60.0),
         ];
 
         let mut table = Table::new(columns).surface_colors(
@@ -114,6 +123,9 @@ impl OddBoxGui {
         known_backends.sort();
         known_backends.dedup();
 
+        let cruma_global = self.cached_config.cruma_globally_enabled;
+        let cruma_domain = self.cached_config.cruma_assigned_domain.as_deref();
+
         for route in &self.cached_config.routes {
             let missing_backend = !known_backends.contains(&route.backend);
             let backend_cell = if missing_backend {
@@ -126,12 +138,44 @@ impl OddBoxGui {
                 text_cell(&route.backend)
             };
 
+            // Mark cruma-enabled routes with a ghost emoji when cruma
+            // is also enabled in the global configuration, and show
+            // the resolved FQDN when a cruma domain is assigned.
+            let hostname_display = if cruma_global && route.enable_cruma {
+                if let Some(domain) = cruma_domain {
+                    let host = route.hostname.trim();
+                    let resolved = if host == "@" || host.is_empty() {
+                        domain.to_string()
+                    } else if host == "*" {
+                        "*".to_string()
+                    } else if host.contains('@') {
+                        host.replace('@', domain)
+                    } else if host.contains('.') {
+                        // FQDN — resolved is same as hostname, no need to repeat
+                        host.to_string()
+                    } else {
+                        format!("{}.{}", host, domain)
+                    };
+                    // Only show the resolved domain in parens when it differs
+                    if resolved == route.hostname {
+                        format!("👻 {}", route.hostname)
+                    } else {
+                        format!("👻 {} ({})", route.hostname, resolved)
+                    }
+                } else {
+                    format!("👻 {}", route.hostname)
+                }
+            } else {
+                route.hostname.clone()
+            };
+
             table = table.push_row_with_message(
                 vec![
-                    wrap_text_cell(&route.hostname),
+                    wrap_text_cell(&hostname_display),
                     backend_cell,
                     bool_cell(route.https_redirect),
                     bool_cell(route.capture_subdomains),
+                    bool_cell(route.enable_cruma),
                 ],
                 Message::OpenEditFrontend(route.hostname.clone()),
             );

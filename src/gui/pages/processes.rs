@@ -1,11 +1,11 @@
-use iced::widget::{button, column, container, row, text, text_input, Row, Space};
-use iced::{Border, Color, Element, Font, Length, Padding, Theme};
 use super::super::readable_on;
+use iced::widget::{Row, Space, button, column, container, row, text, text_input};
+use iced::{Border, Color, Element, Font, Length, Padding, Theme};
 
 use crate::global_state::ProcState;
 use crate::gui::components::{
     Column as TableColumn, Table,
-    table::{bool_cell, colored_text_cell, text_cell},
+    table::{colored_text_cell, text_cell},
 };
 
 use super::super::{KdeButtonRole, Message, OddBoxGui, ProcessesTab, scaled, text_size};
@@ -139,29 +139,23 @@ impl OddBoxGui {
         })
         .on_press(Message::ProcessesTabChanged(ProcessesTab::GlobalVariables));
 
-        let tab_bar = container(
-            row![processes_tab_btn, global_vars_tab_btn].spacing(scaled(8.0)),
-        )
-        .style(|theme: &Theme| {
-            container::Style {
+        let tab_bar = container(row![processes_tab_btn, global_vars_tab_btn].spacing(scaled(8.0)))
+            .style(|theme: &Theme| container::Style {
                 border: Border {
                     width: 0.0,
                     color: self.surface_border_color(theme),
                     radius: 0.0.into(),
                 },
                 ..Default::default()
-            }
-        });
+            });
 
         // Separator line under tabs
         let separator = container(Space::new().width(Length::Fill).height(Length::Fixed(0.0)))
             .height(1)
             .width(Length::Fill)
-            .style(|theme: &Theme| {
-                container::Style {
-                    background: Some(self.surface_border_color(theme).into()),
-                    ..Default::default()
-                }
+            .style(|theme: &Theme| container::Style {
+                background: Some(self.surface_border_color(theme).into()),
+                ..Default::default()
             });
 
         let tab_content: Element<'_, Message> = match self.processes_tab {
@@ -176,9 +170,72 @@ impl OddBoxGui {
     }
 
     fn view_processes_tab(&self) -> Element<'_, Message> {
+        let use_kde_buttons = self.use_kde_system_styles();
+
+        let add_process_btn = button(text("Add Process").size(text_size(13)).font(Font {
+            weight: iced::font::Weight::Bold,
+            ..Default::default()
+        }))
+        .padding(Padding {
+            top: scaled(6.0),
+            right: scaled(12.0),
+            bottom: scaled(6.0),
+            left: scaled(12.0),
+        })
+        .style(move |theme: &Theme, status| {
+            super::super::themed_button_style(
+                theme,
+                status,
+                KdeButtonRole::Neutral,
+                use_kde_buttons,
+            )
+        })
+        .on_press(Message::OpenNewBackend(super::super::BackendKind::Process));
+
         if self.cached_config.processes.is_empty() {
-            return text("No managed processes configured").into();
+            return column![add_process_btn, text("No managed processes configured"),]
+                .spacing(scaled(12.0))
+                .into();
         }
+
+        // Start All / Stop All buttons
+        let start_all_btn = button(text("Start All").size(text_size(13)).font(Font {
+            weight: iced::font::Weight::Bold,
+            ..Default::default()
+        }))
+        .padding(Padding {
+            top: scaled(6.0),
+            right: scaled(12.0),
+            bottom: scaled(6.0),
+            left: scaled(12.0),
+        })
+        .style(move |theme: &Theme, status| {
+            super::super::themed_button_style(
+                theme,
+                status,
+                KdeButtonRole::Success,
+                use_kde_buttons,
+            )
+        })
+        .on_press(Message::ProcessStartAll);
+
+        let stop_all_btn = button(text("Stop All").size(text_size(13)).font(Font {
+            weight: iced::font::Weight::Bold,
+            ..Default::default()
+        }))
+        .padding(Padding {
+            top: scaled(6.0),
+            right: scaled(12.0),
+            bottom: scaled(6.0),
+            left: scaled(12.0),
+        })
+        .style(move |theme: &Theme, status| {
+            super::super::themed_button_style(theme, status, KdeButtonRole::Danger, use_kde_buttons)
+        })
+        .on_press(Message::ProcessStopAll);
+
+        let bulk_actions = row![add_process_btn, start_all_btn, stop_all_btn].spacing(scaled(8.0));
+
         let table_theme = self.theme();
         let table_header_bg = self.surface_panel_alt_bg(&table_theme);
         let table_row_even_bg = self.surface_panel_bg(&table_theme);
@@ -191,7 +248,7 @@ impl OddBoxGui {
             TableColumn::fixed("Port", 80.0),
             TableColumn::fixed("Protocol", 80.0),
             TableColumn::fixed("Status", 100.0),
-            TableColumn::fixed("Auto", 60.0),
+            TableColumn::fixed("Auto", 80.0),
         ];
 
         let mut table = Table::new(columns).surface_colors(
@@ -211,6 +268,47 @@ impl OddBoxGui {
                 _ => Color::from_rgb(0.6, 0.6, 0.6),
             };
 
+            // Clickable auto-start toggle cell
+            let auto_label = if proc.auto_start { "Yes" } else { "No" };
+            let auto_color = if proc.auto_start {
+                Color::from_rgb(0.4, 0.85, 0.4)
+            } else {
+                Color::from_rgb(0.5, 0.5, 0.5)
+            };
+            let proc_name_for_auto = proc.name.clone();
+            let auto_cell: Element<'_, Message> =
+                button(text(auto_label).size(text_size(12)).color(auto_color))
+                    .padding(Padding {
+                        top: 2.0,
+                        right: 6.0,
+                        bottom: 2.0,
+                        left: 6.0,
+                    })
+                    .style(move |theme: &Theme, status| {
+                        let palette = theme.extended_palette();
+                        let bg = match status {
+                            button::Status::Hovered => {
+                                if palette.is_dark {
+                                    Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                                } else {
+                                    palette.background.weak.color
+                                }
+                            }
+                            _ => Color::TRANSPARENT,
+                        };
+                        button::Style {
+                            background: Some(bg.into()),
+                            text_color: palette.background.base.text,
+                            border: Border {
+                                radius: 4.0.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        }
+                    })
+                    .on_press(Message::ProcessToggleAutoStart(proc_name_for_auto))
+                    .into();
+
             table = table.push_row_with_message(
                 vec![
                     text_cell(&proc.name),
@@ -218,7 +316,7 @@ impl OddBoxGui {
                     text_cell(&proc.port),
                     text_cell(&proc.protocol),
                     colored_text_cell(format!("{:?}", proc.state), status_color),
-                    bool_cell(proc.auto_start),
+                    auto_cell,
                 ],
                 Message::ProcessToggleDetails(proc.name.clone()),
             );
@@ -268,7 +366,10 @@ impl OddBoxGui {
             }
         }
 
-        table.build()
+        column![bulk_actions, table.build()]
+            .spacing(scaled(12.0))
+            .width(Length::Fill)
+            .into()
     }
 
     fn view_global_variables_tab(&self) -> Element<'_, Message> {
@@ -364,12 +465,10 @@ impl OddBoxGui {
             .font(Font::MONOSPACE)
             .width(Length::FillPortion(5));
 
-        let add_btn = button(
-            text("+ Add").size(text_size(13)).font(Font {
-                weight: iced::font::Weight::Bold,
-                ..Default::default()
-            }),
-        )
+        let add_btn = button(text("+ Add").size(text_size(13)).font(Font {
+            weight: iced::font::Weight::Bold,
+            ..Default::default()
+        }))
         .padding(Padding {
             top: scaled(6.0),
             right: scaled(12.0),
@@ -391,12 +490,10 @@ impl OddBoxGui {
             .align_y(iced::Alignment::Center);
 
         // Save button + notice
-        let save_btn = button(
-            text("Save").size(text_size(14)).font(Font {
-                weight: iced::font::Weight::Bold,
-                ..Default::default()
-            }),
-        )
+        let save_btn = button(text("Save").size(text_size(14)).font(Font {
+            weight: iced::font::Weight::Bold,
+            ..Default::default()
+        }))
         .padding(Padding {
             top: scaled(8.0),
             right: scaled(20.0),
@@ -438,7 +535,9 @@ impl OddBoxGui {
             .spacing(scaled(12.0))
             .align_y(iced::Alignment::Center);
 
-        let mut content = column![description].spacing(scaled(14.0)).width(Length::Fill);
+        let mut content = column![description]
+            .spacing(scaled(14.0))
+            .width(Length::Fill);
 
         if let Some(table_el) = var_table {
             content = content.push(table_el);
@@ -466,14 +565,10 @@ impl OddBoxGui {
         };
 
         // Start button
-        let start_btn = button(
-            text("Start")
-                .size(text_size(13))
-                .font(Font {
-                    weight: iced::font::Weight::Bold,
-                    ..Default::default()
-                }),
-        )
+        let start_btn = button(text("Start").size(text_size(13)).font(Font {
+            weight: iced::font::Weight::Bold,
+            ..Default::default()
+        }))
         .padding(btn_padding)
         .style(move |theme: &Theme, status| {
             super::super::themed_button_style(
@@ -491,22 +586,13 @@ impl OddBoxGui {
         };
 
         // Stop button
-        let stop_btn = button(
-            text("Stop")
-                .size(text_size(13))
-                .font(Font {
-                    weight: iced::font::Weight::Bold,
-                    ..Default::default()
-                }),
-        )
+        let stop_btn = button(text("Stop").size(text_size(13)).font(Font {
+            weight: iced::font::Weight::Bold,
+            ..Default::default()
+        }))
         .padding(btn_padding)
         .style(move |theme: &Theme, status| {
-            super::super::themed_button_style(
-                theme,
-                status,
-                KdeButtonRole::Danger,
-                use_kde_buttons,
-            )
+            super::super::themed_button_style(theme, status, KdeButtonRole::Danger, use_kde_buttons)
         });
 
         let stop_btn = if can_stop && !is_transitioning {
@@ -516,14 +602,10 @@ impl OddBoxGui {
         };
 
         // Edit button
-        let edit_btn = button(
-            text("Edit")
-                .size(text_size(13))
-                .font(Font {
-                    weight: iced::font::Weight::Bold,
-                    ..Default::default()
-                }),
-        )
+        let edit_btn = button(text("Edit").size(text_size(13)).font(Font {
+            weight: iced::font::Weight::Bold,
+            ..Default::default()
+        }))
         .padding(btn_padding)
         .style(move |theme: &Theme, status| {
             super::super::themed_button_style(
@@ -535,6 +617,8 @@ impl OddBoxGui {
         })
         .on_press(Message::OpenEditBackend(proc_name_edit));
 
-        row![start_btn, stop_btn, edit_btn].spacing(scaled(8.0)).into()
+        row![start_btn, stop_btn, edit_btn]
+            .spacing(scaled(8.0))
+            .into()
     }
 }

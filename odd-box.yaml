@@ -15,27 +15,6 @@ admin_api_password: null
 
 backends:
 
-  BE5:
-    type: remote
-
-    endpoints:
-
-      - addr: lobste.rs
-        port: 443
-
-    protocol: h1
-    https: true
-    keep_original_host_header: false
-
-  BE1:
-    type: static
-    dir: $cfg_dir/docs/book
-    index: index.html
-    list_dir: true
-    render_markdown: true
-    cache_max_age: null
-    spa_fallback: false
-
   BE6:
     type: process
     bin: python3
@@ -55,6 +34,15 @@ backends:
     log_level: null
     log_format: null
 
+  hello-world:
+    type: static
+    dir: /tmp/www
+    index: index.html
+    list_dir: false
+    render_markdown: false
+    cache_max_age: null
+    spa_fallback: false
+
   BE2:
     type: static
     dir: $cfg_dir/temp
@@ -64,14 +52,26 @@ backends:
     cache_max_age: 3600
     spa_fallback: false
 
-  hello-world:
+  BE14:
     type: static
-    dir: "~"
+    dir: $cfg_dir/docs/book
     index: index.html
     list_dir: true
-    render_markdown: false
+    render_markdown: true
     cache_max_age: null
     spa_fallback: false
+
+  BE5:
+    type: remote
+
+    endpoints:
+
+      - addr: lobste.rs
+        port: 443
+
+    protocol: h1
+    https: true
+    keep_original_host_header: false
 
 frontends:
 
@@ -79,9 +79,10 @@ frontends:
     port: 80
 
     routes:
-      B.localhost: BE1
       C.localhost: BE2
-      py.localtest.me: BE4
+      hello-hi: BE2
+      test.localhost: hello-world
+      C3: BE2
 
       images1.local:
         backend: BE2
@@ -89,17 +90,19 @@ frontends:
         forward_subdomains: false
         redirect_to_https: true
         lets_encrypt: false
+        enable_cruma: false
 
-      test2.localhost: BE1
-      A.localtest.me: BE1
-      B2.localhost: BE1
-      test.localhost: hello-world
-      nginx.localhost: BE4
-      lobsters.localtest.me: BE3
-      hello-hi: BE2
-      C3.localhost: BE2
-      odd-box-docs.localhost: BE2
-      A1.localtest.me: BE6
+      odd-box-docs.localhost: BE6
+
+      "@":
+        backend: hello-world
+        capture_subdomains: false
+        forward_subdomains: false
+        redirect_to_https: false
+        lets_encrypt: true
+        enable_cruma: true
+
+      B2.localhost: BE14
 
   https:
     port: 443

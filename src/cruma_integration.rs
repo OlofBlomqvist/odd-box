@@ -1,13 +1,13 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU16;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
 use bytes::Bytes;
+use cruma_proxy_lib::hyper::body::Frame;
 use cruma_proxy_lib::types::*;
 use http_body_util::StreamBody;
-use cruma_proxy_lib::hyper::body::Frame;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::configuration::{ConfigWrapper, v4};
@@ -59,7 +59,9 @@ fn sse_response(
 
     tokio::spawn(async move {
         // Send an initial comment to flush connection headers
-        let _ = tx.send(Ok(Frame::data(Bytes::from(": connected\n\n")))).await;
+        let _ = tx
+            .send(Ok(Frame::data(Bytes::from(": connected\n\n"))))
+            .await;
 
         let mut last_status = String::new();
         let mut tried_auto_start = false;
@@ -171,7 +173,9 @@ fn lookup_backend_for_host(cfg: &ConfigWrapper, request_host: &str) -> Option<St
                 for (route_host, target) in route_map {
                     let route_host_lower = route_host.to_lowercase();
                     if target.capture_subdomains() {
-                        if host == route_host_lower || host.ends_with(&format!(".{}", route_host_lower)) {
+                        if host == route_host_lower
+                            || host.ends_with(&format!(".{}", route_host_lower))
+                        {
                             return Some(target.backend_id().to_string());
                         }
                     } else {
@@ -195,9 +199,7 @@ fn lookup_backend_for_host(cfg: &ConfigWrapper, request_host: &str) -> Option<St
 /// The handler dynamically looks up the host-to-backend mapping from the current
 /// config on each request, ensuring it always has fresh data even if backends
 /// are added/removed without a full config rebuild.
-fn create_offline_handler(
-    state: Arc<GlobalState>,
-) -> HyperHandler {
+fn create_offline_handler(state: Arc<GlobalState>) -> HyperHandler {
     Arc::new(move |req| {
         let state = state.clone();
 
@@ -241,13 +243,19 @@ fn create_offline_handler(
                 ("unknown".to_string(), "Not found".to_string(), false)
             };
 
-
-
-
-            let body =  if req.headers().get("accept").and_then(|v| v.to_str().ok()).map(|v| v.contains("text/html")).unwrap_or(false) {
+            let body = if req
+                .headers()
+                .get("accept")
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v.contains("text/html"))
+                .unwrap_or(false)
+            {
                 render_offline_html(&bid_str, &status_str, &request_host)
             } else {
-                format!("Service Unavailable: backend '{}' is {}", bid_str, status_str)
+                format!(
+                    "Service Unavailable: backend '{}' is {}",
+                    bid_str, status_str
+                )
             };
 
             let mut response = hyper_response_with_content_type(
@@ -256,14 +264,20 @@ fn create_offline_handler(
                 body,
             );
 
-            response.headers_mut().insert("Retry-After", "2".parse().unwrap());
-            response.headers_mut().insert("Cache-Control", "no-store".parse().unwrap());
+            response
+                .headers_mut()
+                .insert("Retry-After", "2".parse().unwrap());
+            response
+                .headers_mut()
+                .insert("Cache-Control", "no-store".parse().unwrap());
 
             // If the process is already running, tell the browser to close this
             // TCP connection so the next request opens a fresh one that the proxy
             // can route to the now-online backend.
             if is_running {
-                response.headers_mut().insert("Connection", "close".parse().unwrap());
+                response
+                    .headers_mut()
+                    .insert("Connection", "close".parse().unwrap());
             }
 
             Ok(response)
@@ -289,8 +303,12 @@ fn create_offline_handler_simple() -> HyperHandler {
                 body,
             );
 
-            response.headers_mut().insert("Retry-After", "2".parse().unwrap());
-            response.headers_mut().insert("Cache-Control", "no-store".parse().unwrap());
+            response
+                .headers_mut()
+                .insert("Retry-After", "2".parse().unwrap());
+            response
+                .headers_mut()
+                .insert("Cache-Control", "no-store".parse().unwrap());
 
             Ok(response)
         })
@@ -327,7 +345,10 @@ fn protocol_to_upstream(protocol: &v4::Protocol) -> HttpUpstreamProto {
     }
 }
 
-fn upstream_proto_and_tls(protocol: &v4::Protocol, use_tls: bool) -> (HttpUpstreamProto, Option<OriginTls>) {
+fn upstream_proto_and_tls(
+    protocol: &v4::Protocol,
+    use_tls: bool,
+) -> (HttpUpstreamProto, Option<OriginTls>) {
     let mut upstream = protocol_to_upstream(protocol);
     if use_tls {
         if matches!(upstream, HttpUpstreamProto::H2C | HttpUpstreamProto::H2CPK) {
@@ -420,11 +441,7 @@ fn respond_route_with_html(
 }
 
 /// Creates an HTTP route that delegates to a HyperService handler.
-fn hyper_service_route(
-    name: String,
-    pat: HostPattern,
-    backend: HyperBackendId,
-) -> HttpRoute {
+fn hyper_service_route(name: String, pat: HostPattern, backend: HyperBackendId) -> HttpRoute {
     HttpRoute {
         name,
         priority: 0,
@@ -475,7 +492,7 @@ fn to_endpoint(addr: &str, port: u16) -> Option<Endpoint> {
 
 /// Build a cruma_proxy_lib Configuration from the current OddBox V4 config.
 pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, BuildNotes)> {
-    build_config_with_runtime_ports(cfg, &HashMap::new(), &HashMap::new(), None)
+    build_config_with_runtime_ports(cfg, &HashMap::new(), &HashMap::new(), None, false, None)
 }
 
 /// Build a cruma_proxy_lib Configuration with access to global state.
@@ -483,16 +500,26 @@ pub fn build_config(cfg: &ConfigWrapper) -> anyhow::Result<(Configuration, Build
 /// When `state` is provided, the offline handler will have access to:
 /// - Process registry for live process state
 /// - Host-to-backend mapping for identifying which process is being requested
+///
+/// When `cruma_tunnel_only` is true, only routes with `enable_cruma: true` are
+/// included.  If `cruma_assigned_domain` is provided, each cruma-enabled route
+/// also gets an additional host pattern matching
+/// `<hostname>.<cruma_assigned_domain>` so that requests arriving through the
+/// tunnel on that subdomain are routed correctly.
 pub fn build_config_with_runtime_ports(
     cfg: &ConfigWrapper,
     runtime_ports: &HashMap<String, u16>,
     runtime_states: &HashMap<String, ProcState>,
+    cruma_assigned_domain: Option<&str>,
+    cruma_tunnel_only: bool,
     state: Option<Arc<GlobalState>>,
 ) -> anyhow::Result<(Configuration, BuildNotes)> {
     let mut notes = BuildNotes::default();
     let mut web_backends: HashMap<WebBackendId, WebBackend> = HashMap::new();
     let mut hyper_backends: HashMap<HyperBackendId, HyperHandler> = HashMap::new();
     let mut http_routes: Vec<HttpRoute> = Vec::new();
+    let mut lets_encrypt_hosts: HashSet<String> = HashSet::new();
+    let mut lets_encrypt_host_patterns: Vec<HostPattern> = Vec::new();
 
     // Register the shared offline handler with state access
     // The handler looks up host-to-backend mappings dynamically from the config,
@@ -504,10 +531,7 @@ pub fn build_config_with_runtime_ports(
         create_offline_handler_simple()
     };
 
-    hyper_backends.insert(
-        HyperBackendId::from(OFFLINE_HANDLER_ID),
-        offline_handler,
-    );
+    hyper_backends.insert(HyperBackendId::from(OFFLINE_HANDLER_ID), offline_handler);
 
     // Get ports from frontends
     let http_port = cfg.frontends.http.as_ref().map(|f| f.port).unwrap_or(80);
@@ -520,8 +544,37 @@ pub fn build_config_with_runtime_ports(
     // Process routes from HTTP frontend
     if let Some(http_frontend) = &cfg.frontends.http {
         for (host, target) in &http_frontend.routes {
+            // When building the tunnel config, skip routes not marked for cruma.
+            if cruma_tunnel_only && !target.enable_cruma() {
+                continue;
+            }
+
             let backend_id_str = target.backend_id();
             let capture_subdomains = target.capture_subdomains();
+
+            // Track hosts that have Let's Encrypt enabled
+            if target.lets_encrypt() {
+                lets_encrypt_hosts.insert(host.clone());
+                lets_encrypt_host_patterns.push(host_pattern(host, capture_subdomains));
+            }
+
+            // Build an extended set of host patterns when a cruma domain is
+            // assigned so that `<host>.<cruma_domain>` also matches.
+            let host_patterns = {
+                let mut pats = vec![host_pattern(host, capture_subdomains)];
+                if let Some(cruma_domain) = cruma_assigned_domain {
+                    if capture_subdomains {
+                        pats.push(HostPattern::Base {
+                            value: format!("{}.{}", host, cruma_domain),
+                        });
+                    } else {
+                        pats.push(HostPattern::Exact {
+                            value: format!("{}.{}", host, cruma_domain),
+                        });
+                    }
+                }
+                pats
+            };
 
             // Look up the backend
             if let Some(backend) = cfg.backends.get(backend_id_str) {
@@ -535,11 +588,14 @@ pub fn build_config_with_runtime_ports(
                             .unwrap_or(true);
 
                         if !is_running {
-                            http_routes.push(hyper_service_route(
-                                format!("{host}-starting"),
-                                host_pattern(host, capture_subdomains),
-                                HyperBackendId::from(OFFLINE_HANDLER_ID),
-                            ));
+                            for pat in &host_patterns {
+                                // TODO: at some point we should stop using this and move toward the dynamic backend resolver pattern
+                                http_routes.push(hyper_service_route(
+                                    format!("{host}-starting"),
+                                    pat.clone(),
+                                    HyperBackendId::from(OFFLINE_HANDLER_ID),
+                                ));
+                            }
                             continue;
                         }
 
@@ -551,11 +607,13 @@ pub fn build_config_with_runtime_ports(
                                 "Process backend '{}' has no port; using starting response for route '{}'",
                                 backend_id_str, host
                             ));
-                            http_routes.push(hyper_service_route(
-                                format!("{host}-starting"),
-                                host_pattern(host, capture_subdomains),
-                                HyperBackendId::from(OFFLINE_HANDLER_ID),
-                            ));
+                            for pat in &host_patterns {
+                                http_routes.push(hyper_service_route(
+                                    format!("{host}-starting"),
+                                    pat.clone(),
+                                    HyperBackendId::from(OFFLINE_HANDLER_ID),
+                                ));
+                            }
                             continue;
                         };
 
@@ -574,12 +632,14 @@ pub fn build_config_with_runtime_ports(
                         // For process backends on loopback, preserve the original host header
                         let middlewares = vec![HttpMiddleware::RewriteHost { to: host.clone() }];
 
-                        http_routes.push(http_route_with_middlewares(
-                            host.clone(),
-                            host_pattern(host, capture_subdomains),
-                            cruma_backend_id,
-                            middlewares,
-                        ));
+                        for pat in &host_patterns {
+                            http_routes.push(http_route_with_middlewares(
+                                host.clone(),
+                                pat.clone(),
+                                cruma_backend_id.clone(),
+                                middlewares.clone(),
+                            ));
+                        }
                     }
 
                     v4::Backend::Remote(remote) => {
@@ -602,10 +662,9 @@ pub fn build_config_with_runtime_ports(
                         let backend_host = endpoints.first().map(|ep| ep.addr.clone());
                         if remote.https && !remote.keep_original_host_header {
                             if let Some(host) = backend_host.as_deref() {
-                                origin_tls =
-                                    Some(origin_tls_with_sni(Some(OriginTlsSni::Custom(
-                                        host.to_string(),
-                                    ))));
+                                origin_tls = Some(origin_tls_with_sni(Some(OriginTlsSni::Custom(
+                                    host.to_string(),
+                                ))));
                             }
                         }
                         let web_backend = WebBackend {
@@ -622,12 +681,14 @@ pub fn build_config_with_runtime_ports(
                                 middlewares.push(HttpMiddleware::RewriteHost { to: host });
                             }
                         }
-                        http_routes.push(http_route_with_middlewares(
-                            host.clone(),
-                            host_pattern(host, capture_subdomains),
-                            cruma_backend_id,
-                            middlewares,
-                        ));
+                        for pat in &host_patterns {
+                            http_routes.push(http_route_with_middlewares(
+                                host.clone(),
+                                pat.clone(),
+                                cruma_backend_id.clone(),
+                                middlewares.clone(),
+                            ));
+                        }
                     }
 
                     v4::Backend::Static(static_backend) => {
@@ -643,16 +704,18 @@ pub fn build_config_with_runtime_ports(
                             }
                         };
 
-                        http_routes.push(serve_dir_route(
-                            host.clone(),
-                            host_pattern(host, capture_subdomains),
-                            resolved.dir,
-                            resolved.index,
-                            resolved.list_dir,
-                            resolved.render_markdown,
-                            resolved.cache_max_age,
-                            resolved.spa_fallback,
-                        ));
+                        for pat in &host_patterns {
+                            http_routes.push(serve_dir_route(
+                                host.clone(),
+                                pat.clone(),
+                                resolved.dir.clone(),
+                                resolved.index.clone(),
+                                resolved.list_dir,
+                                resolved.render_markdown,
+                                resolved.cache_max_age,
+                                resolved.spa_fallback,
+                            ));
+                        }
                     }
                 }
             } else {
@@ -763,29 +826,92 @@ pub fn build_config_with_runtime_ports(
         Some(v4::CertMode::Acme) => CertMode::AcmeAlpn {
             cert_target: Default::default(),
         },
+        Some(v4::CertMode::SelfSigned) => CertMode::SelfSigned,
         _ => CertMode::SelfSigned,
     };
 
-    let listeners = vec![
-        Listener::Http(HttpListener {
-            port: non_zero_port(http_port, "http_port")?,
-            routes: http_routes.clone(),
-        }),
-        Listener::Tls(TlsListener {
+    let listeners = if cruma_tunnel_only {
+        vec![Listener::Tls(TlsListener {
             port: non_zero_port(tls_port, "tls_port")?,
             routes: NonEmptyVec(vec![TlsRoute {
                 name: "tls-default".into(),
                 rule: TlsMatch {
                     sni: None,
-                    alpn: None,
+                    // we are always using HTTP/1.1 and HTTP/2 for the proxy today
+                    alpn: Some(vec![Alpn::H2, Alpn::Http11]),
                 },
                 action: TlsAction::TerminateForHTTP {
-                    cert_mode,
+                    // for cruma ingress we always want to have a proper certificate
+                    cert_mode: CertMode::AcmeAlpn {
+                        cert_target: Default::default(),
+                    },
                     http: http_routes,
                 },
             }]),
-        }),
-    ];
+        })]
+    } else {
+        // Split http_routes into ACME (Let's Encrypt) routes and self-signed routes
+        // based on whether the route's host was marked with lets_encrypt in the config.
+        let (acme_routes, self_signed_routes): (Vec<HttpRoute>, Vec<HttpRoute>) = http_routes
+            .0
+            .into_iter()
+            .partition(|route| lets_encrypt_hosts.contains(&route.name));
+
+        let all_routes = NonEmptyVec([self_signed_routes.clone(), acme_routes.clone()].concat());
+
+        // Build TLS routes with ACME first (specific SNI match) then self-signed (catch-all).
+        // This ordering ensures ACME hosts get real certs while everything else falls through
+        // to self-signed.
+        let mut tls_routes = Vec::new();
+
+        if !acme_routes.is_empty() {
+            // Build an SNI filter from the collected Let's Encrypt host patterns so that
+            // only those hosts are matched by the ACME TLS route.
+            let sni_filter = if lets_encrypt_host_patterns.len() == 1 {
+                lets_encrypt_host_patterns.into_iter().next().unwrap()
+            } else {
+                HostPattern::OneOf(lets_encrypt_host_patterns)
+            };
+
+            tls_routes.push(TlsRoute {
+                name: "tls-acme".into(),
+                rule: TlsMatch {
+                    sni: Some(sni_filter),
+                    alpn: Some(vec![Alpn::Http11, Alpn::H2]),
+                },
+                action: TlsAction::TerminateForHTTP {
+                    cert_mode: CertMode::AcmeAlpn {
+                        cert_target: Default::default(),
+                    },
+                    http: NonEmptyVec(acme_routes),
+                },
+            });
+        }
+
+        // Self-signed catch-all (sni: None matches anything not caught above)
+        tls_routes.push(TlsRoute {
+            name: "tls-self-signed".into(),
+            rule: TlsMatch {
+                sni: None,
+                alpn: Some(vec![Alpn::Http11, Alpn::H2]),
+            },
+            action: TlsAction::TerminateForHTTP {
+                cert_mode,
+                http: NonEmptyVec(self_signed_routes),
+            },
+        });
+
+        vec![
+            Listener::Http(HttpListener {
+                port: non_zero_port(http_port, "http_port")?,
+                routes: all_routes,
+            }),
+            Listener::Tls(TlsListener {
+                port: non_zero_port(tls_port, "tls_port")?,
+                routes: NonEmptyVec(tls_routes),
+            }),
+        ]
+    };
 
     // Build ACME config from environment/defaults (cruma-proxy-lib doesn't expose email field)
     let acme = AcmeAccountConfig::from_env();
@@ -832,18 +958,56 @@ pub fn rebuild_cruma_config(state: Arc<GlobalState>) {
     let cfg = state.config.load_full();
     let runtime_ports = runtime_ports_from_registry(&state.process_registry);
     let runtime_states = runtime_states_from_registry(&state.process_registry);
-    match build_config_with_runtime_ports(&cfg, &runtime_ports, &runtime_states, Some(state.clone())) {
-        Ok((cfg, notes)) => {
+
+    // Resolve the currently assigned cruma domain (if any) for tunnel host matching.
+    let assignment = state.cruma_assignment.load_full();
+    let cruma_domain = assignment.as_ref().map(|a| a.assigned_domain.as_str());
+
+    // Rebuild the local hosting config (all routes).
+    match build_config_with_runtime_ports(
+        &cfg,
+        &runtime_ports,
+        &runtime_states,
+        None,
+        false,
+        Some(state.clone()),
+    ) {
+        Ok((new_cfg, notes)) => {
             if !notes.unsupported.is_empty() {
                 tracing::trace!(
                     "cruma config placeholders/unsupported after process update: {:?}",
                     notes.unsupported
                 );
             }
-            state.cruma_config.store(std::sync::Arc::new(cfg));
+            state.cruma_config.store(std::sync::Arc::new(new_cfg));
         }
         Err(e) => {
             tracing::error!(error=%e, "Failed to rebuild cruma config after process update");
+        }
+    }
+
+    // Rebuild the tunnel config (only enable_cruma routes, with cruma domain matching).
+    match build_config_with_runtime_ports(
+        &cfg,
+        &runtime_ports,
+        &runtime_states,
+        cruma_domain,
+        true,
+        Some(state.clone()),
+    ) {
+        Ok((tunnel_cfg, notes)) => {
+            if !notes.unsupported.is_empty() {
+                tracing::trace!(
+                    "cruma tunnel config placeholders/unsupported after process update: {:?}",
+                    notes.unsupported
+                );
+            }
+            state
+                .cruma_tunnel_config
+                .store(std::sync::Arc::new(tunnel_cfg));
+        }
+        Err(e) => {
+            tracing::error!(error=%e, "Failed to rebuild cruma tunnel config after process update");
         }
     }
 }

@@ -1,8 +1,12 @@
-use iced::widget::{Column, Row, Scrollable, button, column, container, image as iced_image, row, text, toggler};
-use iced::{Background, Color, Element, Font, Length, Padding, Theme};
 use iced::widget::text::Wrapping;
+use iced::widget::{
+    Column, Row, Scrollable, button, column, container, image as iced_image, row, text, toggler,
+};
+use iced::{Background, Color, Element, Font, Length, Padding, Theme};
 
-use super::super::{BodySide, CachedBody, CachedBodyPreview, Message, OddBoxGui, scaled, text_size};
+use super::super::{
+    BodySide, CachedBody, CachedBodyPreview, Message, OddBoxGui, scaled, text_size,
+};
 use super::body_content::{
     detect_content_kind, format_size, hex_preview, text_preview, try_decode_image,
 };
@@ -113,7 +117,12 @@ impl OddBoxGui {
                 left: scaled(12.0),
             })
             .style(move |theme: &Theme, status| {
-                super::super::themed_button_style(theme, status, super::super::KdeButtonRole::Danger, use_kde_buttons)
+                super::super::themed_button_style(
+                    theme,
+                    status,
+                    super::super::KdeButtonRole::Danger,
+                    use_kde_buttons,
+                )
             })
             .on_press(Message::TrafficInspectionClear);
 
@@ -135,7 +144,12 @@ impl OddBoxGui {
                     left: scaled(12.0),
                 })
                 .style(move |theme: &Theme, status| {
-                    super::super::themed_button_style(theme, status, super::super::KdeButtonRole::Neutral, use_kde_buttons)
+                    super::super::themed_button_style(
+                        theme,
+                        status,
+                        super::super::KdeButtonRole::Neutral,
+                        use_kde_buttons,
+                    )
                 })
                 .on_press(Message::TrafficInspectionSelect(None));
             controls_items = controls_items.push(close_btn);
@@ -298,25 +312,33 @@ impl OddBoxGui {
                 .and_then(|id| snapshot.entries.get(&id))
                 .is_some();
 
-        if has_detail {
-            // Split layout: list on top (40%), detail panel on bottom (60%)
-            let exchange_list = container(
-                Scrollable::new(exchange_rows)
-                    .width(Length::Fill)
-                    .height(Length::Fill),
-            )
-            .width(Length::Fill)
-            .height(Length::FillPortion(2))
-            .style(|theme: &Theme| iced::widget::container::Style {
-                background: Some(self.surface_panel_bg(theme).into()),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    width: 1.0,
-                    color: self.surface_border_color(theme),
-                },
+        let page_bg_style = |theme: &Theme| {
+            let palette = theme.extended_palette();
+            let bg = self.surface_page_bg(theme);
+            let alpha = if super::super::use_glass_effects() {
+                if palette.is_dark { 0.32 } else { 0.22 }
+            } else {
+                1.0
+            };
+            iced::widget::container::Style {
+                background: Some(Background::Color(super::super::platform_surface_color(
+                    bg, alpha,
+                ))),
                 ..Default::default()
-            });
+            }
+        };
 
+        let panel_style = |theme: &Theme| iced::widget::container::Style {
+            background: Some(self.surface_panel_bg(theme).into()),
+            border: iced::Border {
+                radius: 6.0.into(),
+                width: 1.0,
+                color: self.surface_border_color(theme),
+            },
+            ..Default::default()
+        };
+
+        if has_detail {
             let selected_id = self.traffic_inspection_selected.unwrap();
             let exchange = snapshot.entries.get(&selected_id).unwrap();
 
@@ -333,44 +355,80 @@ impl OddBoxGui {
                     .height(Length::Fill),
             )
             .width(Length::Fill)
-            .height(Length::FillPortion(3))
-            .style(|theme: &Theme| iced::widget::container::Style {
-                background: Some(self.surface_panel_bg(theme).into()),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    width: 1.0,
-                    color: self.surface_border_color(theme),
-                },
-                ..Default::default()
-            });
+            .height(Length::Fill)
+            .style(panel_style);
 
-            let inner = column![page_title, controls_box, header, exchange_list, detail_container]
+            // Wide layout (>1100px): list on left, detail on right (side-by-side)
+            // Narrow layout: list on top, detail on bottom (stacked)
+            let wide = self.window_width > 1100.0;
+
+            if wide {
+                let exchange_list = container(
+                    Scrollable::new(exchange_rows)
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(panel_style);
+
+                let left_panel = column![header, exchange_list]
+                    .spacing(4)
+                    .width(Length::FillPortion(3))
+                    .height(Length::Fill);
+
+                let right_panel = container(detail_container)
+                    .width(Length::FillPortion(2))
+                    .height(Length::Fill);
+
+                let split = row![left_panel, right_panel]
+                    .spacing(4)
+                    .width(Length::Fill)
+                    .height(Length::Fill);
+
+                let inner = column![page_title, controls_box, split]
+                    .spacing(4)
+                    .padding(30)
+                    .width(Length::Fill)
+                    .height(Length::Fill);
+
+                container(inner)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(page_bg_style)
+                    .into()
+            } else {
+                let exchange_list = container(
+                    Scrollable::new(exchange_rows)
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                )
+                .width(Length::Fill)
+                .height(Length::FillPortion(2))
+                .style(panel_style);
+
+                let detail_container = detail_container.height(Length::FillPortion(3));
+
+                let inner = column![
+                    page_title,
+                    controls_box,
+                    header,
+                    exchange_list,
+                    detail_container
+                ]
                 .spacing(4)
                 .padding(30)
                 .width(Length::Fill)
                 .height(Length::Fill);
 
-            container(inner)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(|theme: &Theme| {
-                    let palette = theme.extended_palette();
-                    let bg = self.surface_page_bg(theme);
-                    let alpha = if super::super::use_glass_effects() {
-                        if palette.is_dark { 0.32 } else { 0.22 }
-                    } else {
-                        1.0
-                    };
-                    iced::widget::container::Style {
-                        background: Some(Background::Color(super::super::platform_surface_color(
-                            bg, alpha,
-                        ))),
-                        ..Default::default()
-                    }
-                })
-                .into()
+                container(inner)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(page_bg_style)
+                    .into()
+            }
         } else {
-            // No detail selected: full-height list
+            // No detail selected: full-height list, no detail pane
             let exchange_list = container(
                 Scrollable::new(exchange_rows)
                     .width(Length::Fill)
@@ -378,15 +436,7 @@ impl OddBoxGui {
             )
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(|theme: &Theme| iced::widget::container::Style {
-                background: Some(self.surface_panel_bg(theme).into()),
-                border: iced::Border {
-                    radius: 6.0.into(),
-                    width: 1.0,
-                    color: self.surface_border_color(theme),
-                },
-                ..Default::default()
-            });
+            .style(panel_style);
 
             let inner = column![page_title, controls_box, header, exchange_list]
                 .spacing(4)
@@ -397,21 +447,7 @@ impl OddBoxGui {
             container(inner)
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(|theme: &Theme| {
-                    let palette = theme.extended_palette();
-                    let bg = self.surface_page_bg(theme);
-                    let alpha = if super::super::use_glass_effects() {
-                        if palette.is_dark { 0.32 } else { 0.22 }
-                    } else {
-                        1.0
-                    };
-                    iced::widget::container::Style {
-                        background: Some(Background::Color(super::super::platform_surface_color(
-                            bg, alpha,
-                        ))),
-                        ..Default::default()
-                    }
-                })
+                .style(page_bg_style)
                 .into()
         }
     }
@@ -662,21 +698,27 @@ fn build_detail_panel<'a>(
             HttpRequestKind::WebSocket => "⇅ open (WS)",
             _ => "⇣ streaming",
         };
-        let mut parts: Vec<Element<'_, Message>> = vec![text(stream_label)
-            .font(Font {
-                weight: iced::font::Weight::Bold,
-                ..Font::MONOSPACE
-            })
-            .size(ts(12))
-            .color(Color::from_rgb(0.3, 0.85, 0.4))
-            .into()];
+        let mut parts: Vec<Element<'_, Message>> = vec![
+            text(stream_label)
+                .font(Font {
+                    weight: iced::font::Weight::Bold,
+                    ..Font::MONOSPACE
+                })
+                .size(ts(12))
+                .color(Color::from_rgb(0.3, 0.85, 0.4))
+                .into(),
+        ];
         if let Some(status) = exchange.status {
             parts.push(
-                text(format!("  Status: {} {}", status, status_reason_phrase(status)))
-                    .font(Font::MONOSPACE)
-                    .size(ts(12))
-                    .color(status_color)
-                    .into(),
+                text(format!(
+                    "  Status: {} {}",
+                    status,
+                    status_reason_phrase(status)
+                ))
+                .font(Font::MONOSPACE)
+                .size(ts(12))
+                .color(status_color)
+                .into(),
             );
         }
         Row::with_children(parts)
@@ -844,10 +886,7 @@ fn build_detail_panel<'a>(
                     format_size(o2c as usize)
                 )
             };
-            detail_col = detail_col.push(section_title(
-                &summary,
-                Color::from_rgb(0.75, 0.45, 0.9),
-            ));
+            detail_col = detail_col.push(section_title(&summary, Color::from_rgb(0.75, 0.45, 0.9)));
 
             // Cap displayed messages
             let msg_skip = snap.messages.len().saturating_sub(50);
@@ -862,12 +901,8 @@ fn build_detail_panel<'a>(
 
             for msg in snap.messages.iter().skip(msg_skip) {
                 let (arrow, dir_label, arrow_color) = match msg.direction {
-                    WsDirection::ClientToOrigin => {
-                        ("↑", "send", Color::from_rgb(0.3, 0.75, 0.9))
-                    }
-                    WsDirection::OriginToClient => {
-                        ("↓", "recv", Color::from_rgb(0.75, 0.45, 0.9))
-                    }
+                    WsDirection::ClientToOrigin => ("↑", "send", Color::from_rgb(0.3, 0.75, 0.9)),
+                    WsDirection::OriginToClient => ("↓", "recv", Color::from_rgb(0.75, 0.45, 0.9)),
                 };
                 let kind_label = match msg.kind {
                     WsMessageKind::Text => "text",
@@ -1026,7 +1061,8 @@ fn build_detail_panel<'a>(
                 // Show content
                 if is_comment_only {
                     for comment in &evt.comments {
-                        detail_col = detail_col.push(body_code_block(&format!(": {}", sanitize(comment))));
+                        detail_col =
+                            detail_col.push(body_code_block(&format!(": {}", sanitize(comment))));
                     }
                 } else if !evt.data.is_empty() {
                     detail_col = detail_col.push(body_code_block(&sanitize(&evt.data)));
@@ -1103,7 +1139,10 @@ fn rich_body_section<'a>(
                     border: iced::Border {
                         radius: 4.0.into(),
                         width: 1.0,
-                        color: Color { a: 0.10, ..palette.background.strong.color },
+                        color: Color {
+                            a: 0.10,
+                            ..palette.background.strong.color
+                        },
                     },
                     ..Default::default()
                 }
@@ -1126,18 +1165,15 @@ fn rich_body_section<'a>(
                 })
                 .size(ts(11))
                 .color(accent_color),
-            container(
-                text(kind_label)
-                    .font(Font::MONOSPACE)
-                    .size(ts(10))
-                    .style(|theme: &Theme| iced::widget::text::Style {
-                        color: Some({
-                            let mut c = theme.extended_palette().background.base.text;
-                            c.a = 0.55;
-                            c
-                        }),
-                    })
-            )
+            container(text(kind_label).font(Font::MONOSPACE).size(ts(10)).style(
+                |theme: &Theme| iced::widget::text::Style {
+                    color: Some({
+                        let mut c = theme.extended_palette().background.base.text;
+                        c.a = 0.55;
+                        c
+                    }),
+                }
+            ))
             .padding(Padding {
                 top: 1.0,
                 right: 6.0,
@@ -1227,38 +1263,30 @@ fn rich_body_section<'a>(
             && (display_text.ends_with('…') || body.raw_size > display_text.len());
         if could_have_more {
             actions = actions.push(
-                button(
-                    text("⤵ Load more")
-                        .font(Font::MONOSPACE)
-                        .size(ts(11)),
-                )
-                .on_press(Message::TrafficInspectionExpandBody(side))
-                .padding(Padding {
-                    top: 3.0,
-                    right: 8.0,
-                    bottom: 3.0,
-                    left: 8.0,
-                })
-                .style(action_link_button_style),
+                button(text("⤵ Load more").font(Font::MONOSPACE).size(ts(11)))
+                    .on_press(Message::TrafficInspectionExpandBody(side))
+                    .padding(Padding {
+                        top: 3.0,
+                        right: 8.0,
+                        bottom: 3.0,
+                        left: 8.0,
+                    })
+                    .style(action_link_button_style),
             );
         }
     }
 
     // "Save to file" — always available
     actions = actions.push(
-        button(
-            text("💾 Save to file")
-                .font(Font::MONOSPACE)
-                .size(ts(11)),
-        )
-        .on_press(Message::TrafficInspectionSaveBody(side))
-        .padding(Padding {
-            top: 3.0,
-            right: 8.0,
-            bottom: 3.0,
-            left: 8.0,
-        })
-        .style(action_link_button_style),
+        button(text("💾 Save to file").font(Font::MONOSPACE).size(ts(11)))
+            .on_press(Message::TrafficInspectionSaveBody(side))
+            .padding(Padding {
+                top: 3.0,
+                right: 8.0,
+                bottom: 3.0,
+                left: 8.0,
+            })
+            .style(action_link_button_style),
     );
 
     col = col.push(actions);
@@ -1294,10 +1322,13 @@ fn section_separator<'a>() -> Element<'a, Message> {
         .style(|theme: &Theme| {
             let palette = theme.extended_palette();
             iced::widget::container::Style {
-                background: Some(Color {
-                    a: 0.25,
-                    ..palette.background.strong.color
-                }.into()),
+                background: Some(
+                    Color {
+                        a: 0.25,
+                        ..palette.background.strong.color
+                    }
+                    .into(),
+                ),
                 ..Default::default()
             }
         })
@@ -1332,7 +1363,7 @@ fn body_code_block<'a>(content: &str) -> Element<'a, Message> {
         text(owned)
             .font(Font::MONOSPACE)
             .size(super::super::text_size(11))
-            .wrapping(Wrapping::None),
+            .wrapping(Wrapping::WordOrGlyph),
     )
     .padding(Padding {
         top: 6.0,
@@ -1341,7 +1372,6 @@ fn body_code_block<'a>(content: &str) -> Element<'a, Message> {
         left: 8.0,
     })
     .width(Length::Fill)
-    .clip(true)
     .style(|theme: &Theme| {
         let palette = theme.extended_palette();
         let weak = palette.background.weak.color;
@@ -1376,15 +1406,13 @@ fn action_link_button_style(
         }
     };
     let bg = match status {
-        iced::widget::button::Status::Hovered => {
-            Some(
-                Color {
-                    a: 0.15,
-                    ..palette.primary.weak.color
-                }
-                .into(),
-            )
-        }
+        iced::widget::button::Status::Hovered => Some(
+            Color {
+                a: 0.15,
+                ..palette.primary.weak.color
+            }
+            .into(),
+        ),
         _ => None,
     };
     iced::widget::button::Style {
@@ -1504,11 +1532,15 @@ fn sanitize(s: &str) -> String {
 fn compute_body_previews(
     entry: &CapturedExchange,
     capture_store: &Arc<HttpCaptureStore>,
-) -> (Option<super::super::CachedBody>, Option<super::super::CachedBody>) {
+) -> (
+    Option<super::super::CachedBody>,
+    Option<super::super::CachedBody>,
+) {
     if let Some(captured) = capture_store.body_bytes(entry.req_id) {
-        let req_body = captured.req_body.as_ref().map(|b| {
-            build_cached_body(b, entry.req_headers.as_ref(), captured.req_body_truncated)
-        });
+        let req_body = captured
+            .req_body
+            .as_ref()
+            .map(|b| build_cached_body(b, entry.req_headers.as_ref(), captured.req_body_truncated));
         let resp_body = captured.resp_body.as_ref().map(|b| {
             build_cached_body(b, entry.resp_headers.as_ref(), captured.resp_body_truncated)
         });
@@ -1584,9 +1616,7 @@ fn try_decompress_limited(bytes: &[u8], content_encoding: Option<&str>) -> Vec<u
         "gzip" | "x-gzip" => {
             decompress_gzip_limited(bytes).unwrap_or_else(|| truncate_bytes(bytes))
         }
-        "deflate" => {
-            decompress_deflate_limited(bytes).unwrap_or_else(|| truncate_bytes(bytes))
-        }
+        "deflate" => decompress_deflate_limited(bytes).unwrap_or_else(|| truncate_bytes(bytes)),
         "identity" | "" => truncate_bytes(bytes),
         _ => truncate_bytes(bytes),
     }

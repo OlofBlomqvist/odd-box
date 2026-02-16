@@ -1,7 +1,9 @@
-use iced::widget::text::Wrapping;
-use iced::widget::{Column, Row, button, column, container, mouse_area, responsive, row, text, tooltip, Space};
-use iced::{Alignment, Border, Color, Element, Length, Padding, Size, Theme};
 use iced::theme;
+use iced::widget::text::Wrapping;
+use iced::widget::{
+    Column, Row, Space, button, column, container, mouse_area, responsive, row, text, tooltip,
+};
+use iced::{Alignment, Border, Color, Element, Length, Padding, Size, Theme};
 
 use crate::global_state::ProcState;
 
@@ -97,11 +99,7 @@ fn card_button_style_with_accent(
 }
 
 /// Selected card container style
-fn selected_card_style(
-    _theme: &Theme,
-    accent: Color,
-    surface_bg: Color,
-) -> container::Style {
+fn selected_card_style(_theme: &Theme, accent: Color, surface_bg: Color) -> container::Style {
     container::Style {
         background: Some(surface_bg.into()),
         border: Border {
@@ -144,7 +142,7 @@ fn action_btn<'a>(
             .font(iced::Font {
                 weight: iced::font::Weight::Bold,
                 ..Default::default()
-            })
+            }),
     )
     .padding(Padding {
         top: 3.0,
@@ -247,22 +245,30 @@ fn site_card<'a>(
                 left: 14.0,
             })
             .width(Length::Fixed(card_width))
-            .height(Length::Fixed(card_height()))
-            .clip(true)
+            .height(Length::Shrink)
+            .clip(false)
             .style(move |theme: &Theme| selected_card_style(theme, accent, surface_bg))
             .into();
 
         if name_is_truncated {
-            tooltip(card_widget, text(display_name.to_string()).size(super::super::text_size(12)), tooltip::Position::Top)
-                .style(|theme: &Theme| {
-                    let p = theme.extended_palette();
-                    container::Style {
-                        background: Some(p.background.strong.color.into()),
-                        border: Border { radius: 4.0.into(), width: 1.0, color: p.background.weak.color },
-                        ..Default::default()
-                    }
-                })
-                .into()
+            tooltip(
+                card_widget,
+                text(display_name.to_string()).size(super::super::text_size(12)),
+                tooltip::Position::Top,
+            )
+            .style(|theme: &Theme| {
+                let p = theme.extended_palette();
+                container::Style {
+                    background: Some(p.background.strong.color.into()),
+                    border: Border {
+                        radius: 4.0.into(),
+                        width: 1.0,
+                        color: p.background.weak.color,
+                    },
+                    ..Default::default()
+                }
+            })
+            .into()
         } else {
             card_widget
         }
@@ -315,16 +321,24 @@ fn site_card<'a>(
             } else {
                 subtitle.to_string()
             };
-            tooltip(card_widget, text(tip).size(super::super::text_size(12)), tooltip::Position::Top)
-                .style(|theme: &Theme| {
-                    let p = theme.extended_palette();
-                    container::Style {
-                        background: Some(p.background.strong.color.into()),
-                        border: Border { radius: 4.0.into(), width: 1.0, color: p.background.weak.color },
-                        ..Default::default()
-                    }
-                })
-                .into()
+            tooltip(
+                card_widget,
+                text(tip).size(super::super::text_size(12)),
+                tooltip::Position::Top,
+            )
+            .style(|theme: &Theme| {
+                let p = theme.extended_palette();
+                container::Style {
+                    background: Some(p.background.strong.color.into()),
+                    border: Border {
+                        radius: 4.0.into(),
+                        width: 1.0,
+                        color: p.background.weak.color,
+                    },
+                    ..Default::default()
+                }
+            })
+            .into()
         } else {
             card_widget
         }
@@ -333,7 +347,11 @@ fn site_card<'a>(
 
 /// Pick a color that works on both light and dark backgrounds.
 fn theme_aware_color(is_light: bool, light_variant: Color, dark_variant: Color) -> Color {
-    if is_light { dark_variant } else { light_variant }
+    if is_light {
+        dark_variant
+    } else {
+        light_variant
+    }
 }
 
 /// Build a small stat box for the summary row
@@ -352,7 +370,9 @@ fn stat_box<'a>(
                 weight: iced::font::Weight::Bold,
                 ..iced::Font::MONOSPACE
             }),
-        text(label).size(super::super::text_size(13)).style(muted_text),
+        text(label)
+            .size(super::super::text_size(13))
+            .style(muted_text),
     ]
     .spacing(2)
     .align_x(Alignment::Center);
@@ -364,16 +384,14 @@ fn stat_box<'a>(
             bottom: 10.0,
             left: 20.0,
         })
-        .style(move |_theme: &Theme| {
-            container::Style {
-                background: Some(surface_bg.into()),
-                border: Border {
-                    radius: 6.0.into(),
-                    width: 1.0,
-                    color: surface_border,
-                },
-                ..Default::default()
-            }
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(surface_bg.into()),
+            border: Border {
+                radius: 6.0.into(),
+                width: 1.0,
+                color: surface_border,
+            },
+            ..Default::default()
         })
         .into()
 }
@@ -407,131 +425,24 @@ fn count_badge<'a>(count: usize, accent: Color) -> Element<'a, Message> {
 }
 
 /// Section header with category name and count badge
-fn section_header<'a>(title: &'a str, count: usize, accent: Color, _is_light: bool) -> Element<'a, Message> {
+fn section_header<'a>(
+    title: &'a str,
+    count: usize,
+    accent: Color,
+    _is_light: bool,
+) -> Element<'a, Message> {
     row![
-        text(title).size(super::super::text_size(17)).font(iced::Font {
-            weight: iced::font::Weight::Bold,
-            ..Default::default()
-        }),
+        text(title)
+            .size(super::super::text_size(17))
+            .font(iced::Font {
+                weight: iced::font::Weight::Bold,
+                ..Default::default()
+            }),
         count_badge(count, accent),
     ]
     .spacing(8)
     .align_y(Alignment::Center)
     .into()
-}
-
-/// Cooldown duration for Start All / Stop All button feedback
-const HEADER_BTN_COOLDOWN: std::time::Duration = std::time::Duration::from_millis(1500);
-
-/// Small header-level action button (for Start All / Stop All).
-/// When `cooldown_since` is within the cooldown window the button is disabled
-/// and shows `disabled_label` instead of `label`.
-fn header_action_btn<'a>(
-    label: &'a str,
-    disabled_label: &'a str,
-    msg: Message,
-    is_light: bool,
-    use_kde_buttons: bool,
-    kind: HeaderBtnKind,
-    cooldown_since: Option<std::time::Instant>,
-) -> Element<'a, Message> {
-    let in_cooldown = cooldown_since
-        .map(|t| t.elapsed() < HEADER_BTN_COOLDOWN)
-        .unwrap_or(false);
-
-    let (bg, bg_hover, fg) = match kind {
-        HeaderBtnKind::Start => {
-            if is_light {
-                (Color::from_rgb(0.18, 0.52, 0.22), Color::from_rgb(0.14, 0.45, 0.18), Color::WHITE)
-            } else {
-                (Color::from_rgb(0.22, 0.55, 0.28), Color::from_rgb(0.30, 0.65, 0.35), Color::WHITE)
-            }
-        }
-        HeaderBtnKind::Stop => {
-            if is_light {
-                (Color::from_rgb(0.62, 0.18, 0.18), Color::from_rgb(0.55, 0.12, 0.12), Color::WHITE)
-            } else {
-                (Color::from_rgb(0.68, 0.24, 0.24), Color::from_rgb(0.78, 0.30, 0.30), Color::WHITE)
-            }
-        }
-    };
-
-    let shown_label = if in_cooldown { disabled_label } else { label };
-
-    let mut btn = button(
-        text(shown_label)
-            .size(super::super::text_size(11))
-            .font(iced::Font {
-                weight: iced::font::Weight::Bold,
-                ..Default::default()
-            }),
-    )
-    .padding(Padding {
-        top: 3.0,
-        right: 10.0,
-        bottom: 3.0,
-        left: 10.0,
-    })
-    .style(move |theme: &Theme, status| {
-        if use_kde_buttons {
-            let role = match kind {
-                HeaderBtnKind::Start => super::super::KdeButtonRole::Success,
-                HeaderBtnKind::Stop => super::super::KdeButtonRole::Danger,
-            };
-            return super::super::kde_button_style(theme, status, role);
-        }
-        let background = match status {
-            button::Status::Disabled => Color::from_rgba(bg.r, bg.g, bg.b, 0.35),
-            button::Status::Hovered | button::Status::Pressed => bg_hover,
-            _ => bg,
-        };
-        let text_color = match status {
-            button::Status::Disabled => Color::from_rgba(fg.r, fg.g, fg.b, 0.5),
-            _ => fg,
-        };
-        button::Style {
-            background: Some(background.into()),
-            text_color,
-            border: Border {
-                radius: 4.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-    });
-
-    if !in_cooldown {
-        btn = btn.on_press(msg);
-    }
-
-    btn.into()
-}
-
-#[derive(Clone, Copy)]
-enum HeaderBtnKind { Start, Stop }
-
-/// Section header with category name, count badge, and trailing action buttons
-fn section_header_with_actions<'a>(
-    title: &'a str,
-    count: usize,
-    accent: Color,
-    _is_light: bool,
-    actions: Vec<Element<'a, Message>>,
-) -> Element<'a, Message> {
-    let mut children: Vec<Element<'a, Message>> = vec![
-        text(title).size(super::super::text_size(17)).font(iced::Font {
-            weight: iced::font::Weight::Bold,
-            ..Default::default()
-        }).into(),
-        count_badge(count, accent),
-        Space::new().width(Length::Fill).into(),
-    ];
-    children.extend(actions);
-
-    Row::with_children(children)
-        .spacing(8)
-        .align_y(Alignment::Center)
-        .into()
 }
 
 fn card_layout(size: Size) -> (usize, f32) {
@@ -554,7 +465,10 @@ fn rows_from_cards<'a>(mut cards: Vec<Element<'a, Message>>, cols: usize) -> Col
         for _ in 0..remaining {
             // Use an empty container with the same fixed width to maintain grid alignment
             row_children.push(
-                Space::new().width(Length::Fill).height(Length::Shrink).into()
+                Space::new()
+                    .width(Length::Fill)
+                    .height(Length::Shrink)
+                    .into(),
             );
         }
         rows.push(
@@ -567,25 +481,10 @@ fn rows_from_cards<'a>(mut cards: Vec<Element<'a, Message>>, cols: usize) -> Col
     Column::with_children(rows).spacing(CARD_GAP)
 }
 
-/// Determine the display hostname for a bound backend based on its routes.
-fn hostname_for_backend(
-    backend_name: &str,
-    routes: &[super::CachedRoute],
-) -> String {
-    let matching: Vec<&super::CachedRoute> = routes.iter().filter(|r| r.backend == backend_name).collect();
-    match matching.len() {
-        0 => backend_name.to_string(),
-        1 => matching[0].hostname.clone(),
-        n => {
-            let first = &matching[0].hostname;
-            format!("{} +{}", first, n - 1)
-        }
-    }
-}
-
 /// Extract just the filename from a path (e.g. "/usr/bin/node" -> "node")
 fn basename(path: &str) -> &str {
-    path.rsplit('/').next()
+    path.rsplit('/')
+        .next()
         .and_then(|s| if s.is_empty() { None } else { Some(s) })
         .unwrap_or(path)
 }
@@ -595,8 +494,250 @@ fn is_bound(backend_name: &str, routes: &[super::CachedRoute]) -> bool {
     routes.iter().any(|r| r.backend == backend_name)
 }
 
-/// Build action buttons for a process-type backend
-fn process_actions<'a>(
+/// Determine the accent color for a backend by looking it up in the cached config.
+fn accent_for_backend(backend_name: &str, gui: &OddBoxGui) -> Color {
+    if gui
+        .cached_config
+        .processes
+        .iter()
+        .any(|p| p.name == backend_name)
+    {
+        COLOR_PROCESS
+    } else if gui
+        .cached_config
+        .remote_backends
+        .iter()
+        .any(|r| r.name == backend_name)
+    {
+        COLOR_REMOTE
+    } else if gui
+        .cached_config
+        .static_backends
+        .iter()
+        .any(|s| s.name == backend_name)
+    {
+        COLOR_DIR_SERVER
+    } else {
+        Color::from_rgb(0.9, 0.3, 0.3) // missing backend
+    }
+}
+
+/// Look up the state of a backend by name.
+fn state_for_backend(backend_name: &str, gui: &OddBoxGui) -> ProcState {
+    if let Some(p) = gui
+        .cached_config
+        .processes
+        .iter()
+        .find(|p| p.name == backend_name)
+    {
+        p.state.clone()
+    } else if let Some(r) = gui
+        .cached_config
+        .remote_backends
+        .iter()
+        .find(|r| r.name == backend_name)
+    {
+        r.state.clone()
+    } else if let Some(s) = gui
+        .cached_config
+        .static_backends
+        .iter()
+        .find(|s| s.name == backend_name)
+    {
+        s.state.clone()
+    } else {
+        ProcState::Faulty
+    }
+}
+
+/// Build a subtitle describing the backend for a frontend card.
+fn subtitle_for_backend(backend_name: &str, gui: &OddBoxGui) -> String {
+    if let Some(p) = gui
+        .cached_config
+        .processes
+        .iter()
+        .find(|p| p.name == backend_name)
+    {
+        format!("⚙ {} · :{}", basename(&p.bin), p.port)
+    } else if let Some(r) = gui
+        .cached_config
+        .remote_backends
+        .iter()
+        .find(|r| r.name == backend_name)
+    {
+        let proto = if r.https { "https" } else { "http" };
+        format!("⇄ {}://{}", proto, r.endpoints)
+    } else if let Some(s) = gui
+        .cached_config
+        .static_backends
+        .iter()
+        .find(|s| s.name == backend_name)
+    {
+        format!("📁 dir: {}", s.dir)
+    } else {
+        format!("⚠ missing: {}", backend_name)
+    }
+}
+
+/// Whether a backend is a process (supports start/stop).
+fn is_process_backend(backend_name: &str, gui: &OddBoxGui) -> bool {
+    gui.cached_config
+        .processes
+        .iter()
+        .any(|p| p.name == backend_name)
+}
+
+/// Build a browser URL for a given hostname using the configured ports.
+fn build_url(hostname: &str, http_port: Option<u16>, https_port: Option<u16>) -> String {
+    if let Some(port) = https_port {
+        if port == 443 {
+            format!("https://{}", hostname)
+        } else {
+            format!("https://{}:{}", hostname, port)
+        }
+    } else if let Some(port) = http_port {
+        if port == 80 {
+            format!("http://{}", hostname)
+        } else {
+            format!("http://{}:{}", hostname, port)
+        }
+    } else {
+        format!("http://{}", hostname)
+    }
+}
+
+/// Build action buttons for a frontend card.
+/// Includes Open, Edit FE, Edit BE, and optionally Start/Stop for process backends.
+fn frontend_actions<'a>(
+    hostname: &str,
+    backend_name: &str,
+    backend_state: &ProcState,
+    is_process: bool,
+    is_light: bool,
+    use_kde_buttons: bool,
+    http_port: Option<u16>,
+    https_port: Option<u16>,
+) -> Vec<Element<'a, Message>> {
+    let mut actions: Vec<Element<'a, Message>> = Vec::new();
+
+    // Open in browser
+    let open_bg = if is_light {
+        Color::from_rgb(0.15, 0.50, 0.50)
+    } else {
+        Color::from_rgb(0.20, 0.58, 0.58)
+    };
+    let open_hover = if is_light {
+        Color::from_rgb(0.12, 0.44, 0.44)
+    } else {
+        Color::from_rgb(0.28, 0.66, 0.66)
+    };
+    let url = build_url(hostname, http_port, https_port);
+    actions.push(action_btn(
+        "Open",
+        Some(Message::OpenInBrowser(url)),
+        open_bg,
+        open_hover,
+        Color::WHITE,
+        use_kde_buttons,
+        super::super::KdeButtonRole::Neutral,
+    ));
+
+    // Edit Backend
+    let edit_bg = if is_light {
+        Color::from_rgb(0.22, 0.42, 0.72)
+    } else {
+        Color::from_rgb(0.28, 0.48, 0.82)
+    };
+    let edit_hover = if is_light {
+        Color::from_rgb(0.18, 0.36, 0.65)
+    } else {
+        Color::from_rgb(0.35, 0.55, 0.90)
+    };
+    actions.push(action_btn(
+        "Edit BE",
+        Some(Message::OpenEditBackend(backend_name.to_string())),
+        edit_bg,
+        edit_hover,
+        Color::WHITE,
+        use_kde_buttons,
+        super::super::KdeButtonRole::Primary,
+    ));
+
+    // Edit Frontend
+    let fe_bg = if is_light {
+        Color::from_rgb(0.40, 0.40, 0.50)
+    } else {
+        Color::from_rgb(0.45, 0.45, 0.55)
+    };
+    let fe_hover = if is_light {
+        Color::from_rgb(0.35, 0.35, 0.45)
+    } else {
+        Color::from_rgb(0.52, 0.52, 0.62)
+    };
+    actions.push(action_btn(
+        "Edit FE",
+        Some(Message::OpenEditFrontend(hostname.to_string())),
+        fe_bg,
+        fe_hover,
+        Color::WHITE,
+        use_kde_buttons,
+        super::super::KdeButtonRole::Neutral,
+    ));
+
+    // Start / Stop for process backends
+    if is_process {
+        let can_start = matches!(backend_state, ProcState::Stopped | ProcState::Faulty);
+        let can_stop = matches!(backend_state, ProcState::Running | ProcState::Faulty);
+        let is_transitioning = matches!(backend_state, ProcState::Starting | ProcState::Stopping);
+
+        if can_stop && !is_transitioning {
+            let stop_bg = if is_light {
+                Color::from_rgb(0.72, 0.20, 0.20)
+            } else {
+                Color::from_rgb(0.80, 0.28, 0.28)
+            };
+            let stop_hover = if is_light {
+                Color::from_rgb(0.65, 0.15, 0.15)
+            } else {
+                Color::from_rgb(0.88, 0.33, 0.33)
+            };
+            actions.push(action_btn(
+                "Stop",
+                Some(Message::ProcessStop(backend_name.to_string())),
+                stop_bg,
+                stop_hover,
+                Color::WHITE,
+                use_kde_buttons,
+                super::super::KdeButtonRole::Danger,
+            ));
+        } else if can_start && !is_transitioning {
+            let start_bg = if is_light {
+                Color::from_rgb(0.18, 0.52, 0.22)
+            } else {
+                Color::from_rgb(0.25, 0.62, 0.30)
+            };
+            let start_hover = if is_light {
+                Color::from_rgb(0.14, 0.45, 0.18)
+            } else {
+                Color::from_rgb(0.32, 0.72, 0.38)
+            };
+            actions.push(action_btn(
+                "Start",
+                Some(Message::ProcessStart(backend_name.to_string())),
+                start_bg,
+                start_hover,
+                Color::WHITE,
+                use_kde_buttons,
+                super::super::KdeButtonRole::Success,
+            ));
+        }
+    }
+
+    actions
+}
+
+/// Build action buttons for an unbound process-type backend
+fn unbound_process_actions<'a>(
     backend_name: &str,
     state: &ProcState,
     is_light: bool,
@@ -604,6 +745,27 @@ fn process_actions<'a>(
 ) -> Vec<Element<'a, Message>> {
     let name = backend_name.to_string();
     let mut actions: Vec<Element<'a, Message>> = Vec::new();
+
+    // Bind button — create a new frontend for this backend
+    let bind_bg = if is_light {
+        Color::from_rgb(0.15, 0.50, 0.50)
+    } else {
+        Color::from_rgb(0.20, 0.58, 0.58)
+    };
+    let bind_hover = if is_light {
+        Color::from_rgb(0.12, 0.44, 0.44)
+    } else {
+        Color::from_rgb(0.28, 0.66, 0.66)
+    };
+    actions.push(action_btn(
+        "Bind",
+        Some(Message::OpenNewFrontendForBackend(name.clone())),
+        bind_bg,
+        bind_hover,
+        Color::WHITE,
+        use_kde_buttons,
+        super::super::KdeButtonRole::Neutral,
+    ));
 
     // Edit button
     let edit_bg = if is_light {
@@ -695,7 +857,11 @@ fn process_actions<'a>(
     } else {
         // Transitioning – show disabled
         let disabled_bg = Color::from_rgb(0.4, 0.4, 0.4);
-        let label = if matches!(state, ProcState::Starting) { "Starting…" } else { "Stopping…" };
+        let label = if matches!(state, ProcState::Starting) {
+            "Starting…"
+        } else {
+            "Stopping…"
+        };
         actions.push(action_btn(
             label,
             None,
@@ -710,13 +876,26 @@ fn process_actions<'a>(
     actions
 }
 
-/// Build action buttons for a remote or static backend (no start/stop)
-fn simple_actions<'a>(
+/// Build action buttons for an unbound remote or static backend (no start/stop)
+fn unbound_simple_actions<'a>(
     backend_name: &str,
     is_light: bool,
     use_kde_buttons: bool,
 ) -> Vec<Element<'a, Message>> {
     let name = backend_name.to_string();
+
+    // Bind button — create a new frontend for this backend
+    let bind_bg = if is_light {
+        Color::from_rgb(0.15, 0.50, 0.50)
+    } else {
+        Color::from_rgb(0.20, 0.58, 0.58)
+    };
+    let bind_hover = if is_light {
+        Color::from_rgb(0.12, 0.44, 0.44)
+    } else {
+        Color::from_rgb(0.28, 0.66, 0.66)
+    };
+
     let edit_bg = if is_light {
         Color::from_rgb(0.22, 0.42, 0.72)
     } else {
@@ -727,15 +906,26 @@ fn simple_actions<'a>(
     } else {
         Color::from_rgb(0.35, 0.55, 0.90)
     };
-    vec![action_btn(
-        "Edit",
-        Some(Message::OpenEditBackend(name)),
-        edit_bg,
-        edit_hover,
-        Color::WHITE,
-        use_kde_buttons,
-        super::super::KdeButtonRole::Primary,
-    )]
+    vec![
+        action_btn(
+            "Bind",
+            Some(Message::OpenNewFrontendForBackend(name.clone())),
+            bind_bg,
+            bind_hover,
+            Color::WHITE,
+            use_kde_buttons,
+            super::super::KdeButtonRole::Neutral,
+        ),
+        action_btn(
+            "Edit",
+            Some(Message::OpenEditBackend(name)),
+            edit_bg,
+            edit_hover,
+            Color::WHITE,
+            use_kde_buttons,
+            super::super::KdeButtonRole::Primary,
+        ),
+    ]
 }
 
 impl OddBoxGui {
@@ -959,232 +1149,98 @@ impl OddBoxGui {
 
             let mut sections: Vec<Element<'_, Message>> = Vec::new();
 
-            // Collect unbound backends across all types
-            let mut unbound_cards: Vec<Element<'_, Message>> = Vec::new();
-
-            // ─── Process backends ───
+            // ─── Frontends section ───
+            // Each card represents a frontend route, showing hostname + backend info.
             {
-                let bound: Vec<_> = self.cached_config.processes.iter()
-                    .filter(|p| is_bound(&p.name, routes))
-                    .collect();
-                let unbound: Vec<_> = self.cached_config.processes.iter()
-                    .filter(|p| !is_bound(&p.name, routes))
+                // Only include routes whose backends actually exist
+                let valid_routes: Vec<_> = routes.iter()
+                    .filter(|r| backend_exists(&r.backend))
                     .collect();
 
-                if !bound.is_empty() {
-                    let cards: Vec<Element<'_, Message>> = bound.iter().map(|proc| {
-                        let display_name = hostname_for_backend(&proc.name, routes);
-                        let subtitle = format!("{} · :{}", basename(&proc.bin), proc.port);
-                        let is_sel = selected == Some(proc.name.as_str());
+                if !valid_routes.is_empty() {
+                    let cruma_global = self.cached_config.cruma_globally_enabled;
+                    let cruma_domain = self.cached_config.cruma_assigned_domain.as_deref();
+                    let cards: Vec<Element<'_, Message>> = valid_routes.iter().map(|route| {
+                        let accent = accent_for_backend(&route.backend, self);
+                        let state = state_for_backend(&route.backend, self);
+                        let mut subtitle = subtitle_for_backend(&route.backend, self);
+
+                        // Append the resolved cruma FQDN to the subtitle when
+                        // cruma is globally enabled and this route opts in.
+                        if cruma_global && route.enable_cruma {
+                            if let Some(domain) = cruma_domain {
+                                let host = route.hostname.trim();
+                                let resolved = if host == "@" || host.is_empty() {
+                                    domain.to_string()
+                                } else if host == "*" {
+                                    "*".to_string()
+                                } else if host.contains('@') {
+                                    host.replace('@', domain)
+                                } else if host.contains('.') {
+                                    host.to_string()
+                                } else {
+                                    format!("{}.{}", host, domain)
+                                };
+                                // Only append the resolved domain when it differs
+                                // from the hostname to avoid redundant display.
+                                if resolved != host {
+                                    subtitle = format!("{} · 👻 {}", subtitle, resolved);
+                                }
+                            }
+                        }
+                        // Use the route's hostname as the selection key (unique per route)
+                        let selection_key = route.hostname.clone();
+                        let is_sel = selected == Some(selection_key.as_str());
                         let actions = if is_sel {
-                            process_actions(&proc.name, &proc.state, is_light, use_kde_buttons)
+                            let is_proc = is_process_backend(&route.backend, self);
+                            frontend_actions(
+                                &route.hostname,
+                                &route.backend,
+                                &state,
+                                is_proc,
+                                is_light,
+                                use_kde_buttons,
+                                http_port,
+                                https_port,
+                            )
                         } else {
                             vec![]
+                        };
+                        // Mark cruma-enabled routes with a ghost emoji when cruma
+                        // is also enabled in the global configuration.
+                        let display_name = if cruma_global && route.enable_cruma {
+                            format!("👻 {}", route.hostname)
+                        } else {
+                            route.hostname.clone()
                         };
                         site_card(
                             &display_name,
                             &subtitle,
-                            COLOR_PROCESS,
+                            accent,
                             dashboard_surface_bg,
                             dashboard_surface_border,
-                            &proc.state,
+                            &state,
                             card_width,
                             is_sel,
                             actions,
-                            Some(Message::DashboardToggleProcessMenu(proc.name.clone())),
+                            Some(Message::DashboardToggleProcessMenu(selection_key)),
                         )
                     }).collect();
-                    let start_cd = self.dashboard_startall_cooldown;
-                    let stop_cd = self.dashboard_stopall_cooldown;
-                    let header = section_header_with_actions(
-                        "Processes",
-                        bound.len(),
-                        COLOR_PROCESS,
+
+                    let frontend_accent = theme_aware_color(
                         is_light,
-                        vec![
-                            header_action_btn(
-                                "▶ Start All",
-                                "Starting…",
-                                Message::ProcessStartAll,
-                                is_light,
-                                use_kde_buttons,
-                                HeaderBtnKind::Start,
-                                start_cd,
-                            ),
-                            header_action_btn(
-                                "■ Stop All",
-                                "Stopping…",
-                                Message::ProcessStopAll,
-                                is_light,
-                                use_kde_buttons,
-                                HeaderBtnKind::Stop,
-                                stop_cd,
-                            ),
-                        ],
+                        Color::from_rgb(0.5, 0.7, 1.0),
+                        Color::from_rgb(0.2, 0.4, 0.7),
                     );
+
                     sections.push(
                         column![
-                            header,
+                            section_header("Frontends", valid_routes.len(), frontend_accent, is_light),
                             rows_from_cards(cards, cols),
                         ]
                         .spacing(10)
                         .into(),
                     );
-                }
-
-                // Collect unbound process cards
-                for proc in unbound {
-                    let is_sel = selected == Some(proc.name.as_str());
-                    let actions = if is_sel {
-                        process_actions(&proc.name, &proc.state, is_light, use_kde_buttons)
-                    } else {
-                        vec![]
-                    };
-                    let subtitle = format!("{} · :{}", basename(&proc.bin), proc.port);
-                    unbound_cards.push(site_card(
-                        &proc.name,
-                        &subtitle,
-                        COLOR_UNBOUND,
-                        dashboard_surface_bg,
-                        dashboard_surface_border,
-                        &proc.state,
-                        card_width,
-                        is_sel,
-                        actions,
-                        Some(Message::DashboardToggleProcessMenu(proc.name.clone())),
-                    ));
-                }
-            }
-
-            // ─── Remote backends ───
-            {
-                let bound: Vec<_> = self.cached_config.remote_backends.iter()
-                    .filter(|r| is_bound(&r.name, routes))
-                    .collect();
-                let unbound: Vec<_> = self.cached_config.remote_backends.iter()
-                    .filter(|r| !is_bound(&r.name, routes))
-                    .collect();
-
-                if !bound.is_empty() {
-                    let cards: Vec<Element<'_, Message>> = bound.iter().map(|remote| {
-                        let display_name = hostname_for_backend(&remote.name, routes);
-                        let proto = if remote.https { "https" } else { "http" };
-                        let subtitle = format!("{}://{}", proto, remote.endpoints);
-                        let is_sel = selected == Some(remote.name.as_str());
-                        let actions = if is_sel {
-                            simple_actions(&remote.name, is_light, use_kde_buttons)
-                        } else {
-                            vec![]
-                        };
-                        site_card(
-                            &display_name,
-                            &subtitle,
-                            COLOR_REMOTE,
-                            dashboard_surface_bg,
-                            dashboard_surface_border,
-                            &remote.state,
-                            card_width,
-                            is_sel,
-                            actions,
-                            Some(Message::DashboardToggleProcessMenu(remote.name.clone())),
-                        )
-                    }).collect();
-                    sections.push(
-                        column![
-                            section_header("Remote Backends", bound.len(), COLOR_REMOTE, is_light),
-                            rows_from_cards(cards, cols),
-                        ]
-                        .spacing(10)
-                        .into(),
-                    );
-                }
-
-                for remote in unbound {
-                    let is_sel = selected == Some(remote.name.as_str());
-                    let actions = if is_sel {
-                        simple_actions(&remote.name, is_light, use_kde_buttons)
-                    } else {
-                        vec![]
-                    };
-                    let proto = if remote.https { "https" } else { "http" };
-                    let subtitle = format!("{}://{}", proto, remote.endpoints);
-                    unbound_cards.push(site_card(
-                        &remote.name,
-                        &subtitle,
-                        COLOR_UNBOUND,
-                        dashboard_surface_bg,
-                        dashboard_surface_border,
-                        &remote.state,
-                        card_width,
-                        is_sel,
-                        actions,
-                        Some(Message::DashboardToggleProcessMenu(remote.name.clone())),
-                    ));
-                }
-            }
-
-            // ─── Static backends ───
-            {
-                let bound: Vec<_> = self.cached_config.static_backends.iter()
-                    .filter(|s| is_bound(&s.name, routes))
-                    .collect();
-                let unbound: Vec<_> = self.cached_config.static_backends.iter()
-                    .filter(|s| !is_bound(&s.name, routes))
-                    .collect();
-
-                if !bound.is_empty() {
-                    let cards: Vec<Element<'_, Message>> = bound.iter().map(|sb| {
-                        let display_name = hostname_for_backend(&sb.name, routes);
-                        let subtitle = format!("dir: {}", sb.dir);
-                        let is_sel = selected == Some(sb.name.as_str());
-                        let actions = if is_sel {
-                            simple_actions(&sb.name, is_light, use_kde_buttons)
-                        } else {
-                            vec![]
-                        };
-                        site_card(
-                            &display_name,
-                            &subtitle,
-                            COLOR_DIR_SERVER,
-                            dashboard_surface_bg,
-                            dashboard_surface_border,
-                            &sb.state,
-                            card_width,
-                            is_sel,
-                            actions,
-                            Some(Message::DashboardToggleProcessMenu(sb.name.clone())),
-                        )
-                    }).collect();
-                    sections.push(
-                        column![
-                            section_header("Static Backends", bound.len(), COLOR_DIR_SERVER, is_light),
-                            rows_from_cards(cards, cols),
-                        ]
-                        .spacing(10)
-                        .into(),
-                    );
-                }
-
-                for sb in unbound {
-                    let is_sel = selected == Some(sb.name.as_str());
-                    let actions = if is_sel {
-                        simple_actions(&sb.name, is_light, use_kde_buttons)
-                    } else {
-                        vec![]
-                    };
-                    let subtitle = format!("dir: {}", sb.dir);
-                    unbound_cards.push(site_card(
-                        &sb.name,
-                        &subtitle,
-                        COLOR_UNBOUND,
-                        dashboard_surface_bg,
-                        dashboard_surface_border,
-                        &sb.state,
-                        card_width,
-                        is_sel,
-                        actions,
-                        Some(Message::DashboardToggleProcessMenu(sb.name.clone())),
-                    ));
                 }
             }
 
@@ -1227,6 +1283,85 @@ impl OddBoxGui {
             }
 
             // ─── Unbound backends section ───
+            // Collect unbound backends across all types
+            let mut unbound_cards: Vec<Element<'_, Message>> = Vec::new();
+
+            // Unbound process backends
+            for proc in &self.cached_config.processes {
+                if !is_bound(&proc.name, routes) {
+                    let is_sel = selected == Some(proc.name.as_str());
+                    let actions = if is_sel {
+                        unbound_process_actions(&proc.name, &proc.state, is_light, use_kde_buttons)
+                    } else {
+                        vec![]
+                    };
+                    let subtitle = format!("{} · :{}", basename(&proc.bin), proc.port);
+                    unbound_cards.push(site_card(
+                        &proc.name,
+                        &subtitle,
+                        COLOR_UNBOUND,
+                        dashboard_surface_bg,
+                        dashboard_surface_border,
+                        &proc.state,
+                        card_width,
+                        is_sel,
+                        actions,
+                        Some(Message::DashboardToggleProcessMenu(proc.name.clone())),
+                    ));
+                }
+            }
+
+            // Unbound remote backends
+            for remote in &self.cached_config.remote_backends {
+                if !is_bound(&remote.name, routes) {
+                    let is_sel = selected == Some(remote.name.as_str());
+                    let actions = if is_sel {
+                        unbound_simple_actions(&remote.name, is_light, use_kde_buttons)
+                    } else {
+                        vec![]
+                    };
+                    let proto = if remote.https { "https" } else { "http" };
+                    let subtitle = format!("{}://{}", proto, remote.endpoints);
+                    unbound_cards.push(site_card(
+                        &remote.name,
+                        &subtitle,
+                        COLOR_UNBOUND,
+                        dashboard_surface_bg,
+                        dashboard_surface_border,
+                        &remote.state,
+                        card_width,
+                        is_sel,
+                        actions,
+                        Some(Message::DashboardToggleProcessMenu(remote.name.clone())),
+                    ));
+                }
+            }
+
+            // Unbound static backends
+            for sb in &self.cached_config.static_backends {
+                if !is_bound(&sb.name, routes) {
+                    let is_sel = selected == Some(sb.name.as_str());
+                    let actions = if is_sel {
+                        unbound_simple_actions(&sb.name, is_light, use_kde_buttons)
+                    } else {
+                        vec![]
+                    };
+                    let subtitle = format!("dir: {}", sb.dir);
+                    unbound_cards.push(site_card(
+                        &sb.name,
+                        &subtitle,
+                        COLOR_UNBOUND,
+                        dashboard_surface_bg,
+                        dashboard_surface_border,
+                        &sb.state,
+                        card_width,
+                        is_sel,
+                        actions,
+                        Some(Message::DashboardToggleProcessMenu(sb.name.clone())),
+                    ));
+                }
+            }
+
             if !unbound_cards.is_empty() {
                 let unbound_count = unbound_cards.len();
 

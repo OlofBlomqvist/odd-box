@@ -115,7 +115,7 @@ struct Snapshot {
     statics: Vec<(String, ProcState, String)>,
     docker: Vec<(String, ProcState, String, String)>,
     docker_discovered: Vec<DockerRow>,
-    routes: Vec<(String, String, bool)>,
+    routes: Vec<(String, String, bool, bool)>,
 }
 
 #[derive(Clone)]
@@ -271,17 +271,27 @@ async fn build_snapshot(global_state: &GlobalState) -> Snapshot {
         })
         .collect();
 
-    let mut routes: Vec<(String, String, bool)> = Vec::new();
+    let mut routes: Vec<(String, String, bool, bool)> = Vec::new();
     if let Some(http) = &cfg.frontends.http {
         for (host, target) in &http.routes {
-            routes.push((host.clone(), target.backend_id().to_string(), false));
+            routes.push((
+                host.clone(),
+                target.backend_id().to_string(),
+                false,
+                target.enable_cruma(),
+            ));
         }
     }
     if let Some(https) = &cfg.frontends.https {
         if let Some(crate::configuration::HttpsRoutes::Explicit(explicit)) = &https.routes {
             for (host, target) in explicit {
-                if !routes.iter().any(|(h, _, _)| h == host) {
-                    routes.push((host.clone(), target.backend_id().to_string(), true));
+                if !routes.iter().any(|(h, _, _, _)| h == host) {
+                    routes.push((
+                        host.clone(),
+                        target.backend_id().to_string(),
+                        true,
+                        target.enable_cruma(),
+                    ));
                 }
             }
         }
@@ -687,16 +697,17 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
         backend_kind.insert(name.clone(), "docker");
     }
 
-    let mut routes_by_backend: std::collections::BTreeMap<String, Vec<(String, bool)>> =
+    let mut routes_by_backend: std::collections::BTreeMap<String, Vec<(String, bool, bool)>> =
         std::collections::BTreeMap::new();
-    for (host, backend, https_only) in &data.routes {
-        routes_by_backend
-            .entry(backend.clone())
-            .or_default()
-            .push((host.clone(), *https_only));
+    for (host, backend, https_only, enable_cruma) in &data.routes {
+        routes_by_backend.entry(backend.clone()).or_default().push((
+            host.clone(),
+            *https_only,
+            *enable_cruma,
+        ));
     }
 
-    for (host, backend, https_only) in &data.routes {
+    for (host, backend, https_only, enable_cruma) in &data.routes {
         let missing = !backend_ids.contains(backend);
         let route_count = routes_by_backend.get(backend).map(|r| r.len()).unwrap_or(0);
         if !missing && route_count == 1 {
@@ -720,6 +731,9 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
         } else {
             format!("{} ({})", backend, backend_kind)
         };
+        if *enable_cruma {
+            detail.push_str(" [cruma]");
+        }
         if missing {
             detail.push_str(" (missing backend)");
         } else if !backend_ok {
@@ -759,9 +773,10 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
         } else {
             format!("{} {}", display_bin, args.join(" "))
         };
-        let (display_name, suffix) = if let Some((host, https_only)) = combined {
+        let (display_name, suffix) = if let Some((host, https_only, enable_cruma)) = combined {
             let marker = if https_only { " (https-only)" } else { "" };
-            (host, format!("{}{}", bin_and_args, marker))
+            let cruma_tag = if enable_cruma { " [cruma]" } else { "" };
+            (host, format!("{}{}{}", bin_and_args, marker, cruma_tag))
         } else {
             (name.clone(), format!("{} (no frontend)", bin_and_args))
         };
@@ -781,22 +796,24 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
     for (name, state, detail, remote_port) in &data.remotes {
         let combined = routes_by_backend.get(name).and_then(|r| r.first()).cloned();
         let is_unused = !routes_by_backend.contains_key(name);
-        let (display_name, suffix, muted, alert) = if let Some((host, https_only)) = combined {
-            let marker = if https_only { " (https-only)" } else { "" };
-            (
-                host,
-                format!("{}{} · {}", name, marker, detail),
-                false,
-                false,
-            )
-        } else {
-            (
-                name.clone(),
-                format!("{} (no frontend)", detail),
-                false,
-                false,
-            )
-        };
+        let (display_name, suffix, muted, alert) =
+            if let Some((host, https_only, enable_cruma)) = combined {
+                let marker = if https_only { " (https-only)" } else { "" };
+                let cruma_tag = if enable_cruma { " [cruma]" } else { "" };
+                (
+                    host,
+                    format!("{}{}{} · {}", name, marker, cruma_tag, detail),
+                    false,
+                    false,
+                )
+            } else {
+                (
+                    name.clone(),
+                    format!("{} (no frontend)", detail),
+                    false,
+                    false,
+                )
+            };
         rows.push(RowData {
             kind: "remote",
             name: display_name,
@@ -813,12 +830,19 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
     for (name, state, dir) in &data.statics {
         let combined = routes_by_backend.get(name).and_then(|r| r.first()).cloned();
         let is_unused = !routes_by_backend.contains_key(name);
-        let (display_name, suffix, muted, alert) = if let Some((host, https_only)) = combined {
-            let marker = if https_only { " (https-only)" } else { "" };
-            (host, format!("{}{} · {}", name, marker, dir), false, false)
-        } else {
-            (name.clone(), format!("{} (no frontend)", dir), false, false)
-        };
+        let (display_name, suffix, muted, alert) =
+            if let Some((host, https_only, enable_cruma)) = combined {
+                let marker = if https_only { " (https-only)" } else { "" };
+                let cruma_tag = if enable_cruma { " [cruma]" } else { "" };
+                (
+                    host,
+                    format!("{}{}{} · {}", name, marker, cruma_tag, dir),
+                    false,
+                    false,
+                )
+            } else {
+                (name.clone(), format!("{} (no frontend)", dir), false, false)
+            };
         rows.push(RowData {
             kind: "static",
             name: display_name,
@@ -835,9 +859,10 @@ fn build_rows(data: &Snapshot, light_theme: bool) -> Vec<RowData> {
     for (name, state, image, docker_port) in &data.docker {
         let combined = routes_by_backend.get(name).and_then(|r| r.first()).cloned();
         let is_unused = !routes_by_backend.contains_key(name);
-        let (display_name, suffix) = if let Some((host, https_only)) = combined {
+        let (display_name, suffix) = if let Some((host, https_only, enable_cruma)) = combined {
             let marker = if https_only { " (https-only)" } else { "" };
-            (host, format!("{}{} · {}", name, marker, image))
+            let cruma_tag = if enable_cruma { " [cruma]" } else { "" };
+            (host, format!("{}{}{} · {}", name, marker, cruma_tag, image))
         } else {
             (name.clone(), format!("{image} (no frontend)"))
         };

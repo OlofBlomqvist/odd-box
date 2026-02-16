@@ -217,10 +217,16 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
         cruma_integration::runtime_ports_from_registry(&global_state.process_registry);
     let runtime_states =
         cruma_integration::runtime_states_from_registry(&global_state.process_registry);
+    // Resolve the currently assigned cruma domain (if any) for tunnel host matching.
+    let assignment = global_state.cruma_assignment.load_full();
+    let cruma_domain = assignment.as_ref().map(|a| a.assigned_domain.as_str());
+
     let rebuilt_cruma_config = match cruma_integration::build_config_with_runtime_ports(
         &new_configuration,
         &runtime_ports,
         &runtime_states,
+        None,
+        false,
         Some(global_state.clone()),
     ) {
         Ok((cfg, notes)) => {
@@ -238,6 +244,29 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
         }
     };
 
+    let rebuilt_cruma_tunnel_config = match cruma_integration::build_config_with_runtime_ports(
+        &new_configuration,
+        &runtime_ports,
+        &runtime_states,
+        cruma_domain,
+        true,
+        Some(global_state.clone()),
+    ) {
+        Ok((cfg, notes)) => {
+            if !notes.unsupported.is_empty() {
+                tracing::warn!(
+                    "cruma tunnel config placeholders/unsupported after reload: {:?}",
+                    notes.unsupported
+                );
+            }
+            Some(cfg)
+        }
+        Err(e) => {
+            tracing::error!(error=%e, "Failed to rebuild cruma tunnel config during reload");
+            None
+        }
+    };
+
     let new_log_level = new_configuration.log_level.clone();
     global_state.config.store(Arc::new(new_configuration));
 
@@ -245,6 +274,11 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
         global_state
             .cruma_config
             .store(std::sync::Arc::new(new_cruma_cfg));
+    }
+    if let Some(new_tunnel_cfg) = rebuilt_cruma_tunnel_config {
+        global_state
+            .cruma_tunnel_config
+            .store(std::sync::Arc::new(new_tunnel_cfg));
     }
 
     let log_level: LevelFilter = match new_log_level {

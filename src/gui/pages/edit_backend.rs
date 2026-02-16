@@ -3,7 +3,10 @@ use iced::widget::{
 };
 use iced::{Border, Color, Element, Font, Length, Padding, Theme};
 
-use super::super::{BackendKind, EditBackendField, KdeButtonRole, Message, OddBoxGui, ProcessLogLevelChoice, scaled, text_size};
+use super::super::{
+    BackendKind, EditBackendField, KdeButtonRole, Message, OddBoxGui, ProcessLogLevelChoice,
+    scaled, text_size,
+};
 
 const PROTOCOL_OPTIONS: [crate::configuration::v4::Protocol; 4] = [
     crate::configuration::v4::Protocol::H1,
@@ -107,62 +110,68 @@ impl OddBoxGui {
         let save_btn = button(text("Save").size(text_size(14)))
             .on_press(Message::EditBackendSave)
             .style(move |theme, status| {
-                super::super::themed_button_style(theme, status, KdeButtonRole::Primary, use_kde_buttons)
+                super::super::themed_button_style(
+                    theme,
+                    status,
+                    KdeButtonRole::Primary,
+                    use_kde_buttons,
+                )
             });
         let back_btn = button(text("Back").size(text_size(14)))
             .on_press(Message::NavigateTo(super::super::Page::Backends))
             .style(move |theme, status| {
-                super::super::themed_button_style(theme, status, KdeButtonRole::Neutral, use_kde_buttons)
+                super::super::themed_button_style(
+                    theme,
+                    status,
+                    KdeButtonRole::Neutral,
+                    use_kde_buttons,
+                )
             });
 
-        let mut actions_children: Vec<Element<'_, Message>> = vec![
-            save_btn.into(),
-            back_btn.into(),
-        ];
+        let mut actions_children: Vec<Element<'_, Message>> =
+            vec![save_btn.into(), back_btn.into()];
         if !self.edit_backend_is_new {
             let delete_btn = button(text("Delete").size(text_size(14)))
                 .on_press(Message::EditBackendDelete)
                 .style(move |theme, status| {
-                    super::super::themed_button_style(theme, status, KdeButtonRole::Danger, use_kde_buttons)
+                    super::super::themed_button_style(
+                        theme,
+                        status,
+                        KdeButtonRole::Danger,
+                        use_kde_buttons,
+                    )
                 });
-            actions_children.push(
-                delete_btn.into(),
-            );
+            actions_children.push(delete_btn.into());
         }
         let actions = row::Row::with_children(actions_children).spacing(scaled(10.0));
 
         let layout = responsive(|size| {
             let use_kde_buttons = self.use_kde_system_styles();
-            let card_style = |theme: &Theme| {
-                container::Style {
-                    background: Some(self.surface_panel_bg(theme).into()),
-                    border: Border {
-                        radius: scaled(6.0).into(),
-                        width: 1.0,
-                        color: self.surface_border_color(theme),
-                    },
-                    ..Default::default()
-                }
+            let card_style = |theme: &Theme| container::Style {
+                background: Some(self.surface_panel_bg(theme).into()),
+                border: Border {
+                    radius: scaled(6.0).into(),
+                    width: 1.0,
+                    color: self.surface_border_color(theme),
+                },
+                ..Default::default()
             };
 
-            let kind_label = match self.edit_backend_form.kind {
-                BackendKind::Remote => "Remote Backend",
-                BackendKind::Static => "Static Backend",
-                BackendKind::Process => "Process Backend",
-                BackendKind::Unknown => "Unknown Backend",
-            };
+            let type_label = text("Type").size(text_size(13)).style(muted_text);
+            let type_picker = pick_list(
+                BackendKind::ALL.as_slice(),
+                Some(self.edit_backend_form.kind),
+                |v| Message::EditBackendFieldChanged(EditBackendField::Kind(v)),
+            )
+            .padding(scaled(8.0))
+            .width(Length::Fill);
 
             let id_label = text("Backend ID").size(text_size(13)).style(muted_text);
             let id_input = text_input("backend-id", &self.edit_backend_form.id)
                 .on_input(|v| Message::EditBackendFieldChanged(EditBackendField::Id(v)))
                 .padding(scaled(8.0))
                 .width(Length::Fill);
-            let header = column![
-                text(kind_label).size(text_size(14)).style(muted_text),
-                id_label,
-                id_input,
-            ]
-            .spacing(scaled(6.0));
+            let header = column![type_label, type_picker, id_label, id_input,].spacing(scaled(6.0));
 
             let (fields_card, info_card) = match self.edit_backend_form.kind {
                 BackendKind::Remote => {
@@ -263,29 +272,39 @@ impl OddBoxGui {
                         .padding(scaled(8.0))
                         .on_press(Message::EditBackendPickDir)
                         .style(move |theme, status| {
-                            super::super::themed_button_style(theme, status, KdeButtonRole::Neutral, use_kde_buttons)
+                            super::super::themed_button_style(
+                                theme,
+                                status,
+                                KdeButtonRole::Neutral,
+                                use_kde_buttons,
+                            )
                         });
                     let resolved_dir = self.edit_backend_resolved_dir.as_ref().map(|path| {
                         text(format!("Resolved: {}", path))
                             .size(text_size(12))
                             .style(muted_text)
                     });
-                    let resolve_error = self
-                        .edit_backend_resolve_error
-                        .as_ref()
-                        .map(|err| text(err).size(text_size(12)).color(Color::from_rgb(0.9, 0.3, 0.3)));
+                    let resolve_error = self.edit_backend_resolve_error.as_ref().map(|err| {
+                        text(err)
+                            .size(text_size(12))
+                            .color(Color::from_rgb(0.9, 0.3, 0.3))
+                    });
                     let has_vars = self.edit_backend_form.dir.contains("$root_dir")
                         || self.edit_backend_form.dir.contains("$cfg_dir")
                         || self.edit_backend_form.dir.contains('~');
                     let vars_help = column![
-                        text("Available variables:").size(text_size(12)).style(muted_text),
+                        text("Available variables:")
+                            .size(text_size(12))
+                            .style(muted_text),
                         text("$root_dir  Project root directory")
                             .size(text_size(12))
                             .style(muted_text),
                         text("$cfg_dir   Directory of the config file")
                             .size(text_size(12))
                             .style(muted_text),
-                        text("~          Home directory").size(text_size(12)).style(muted_text),
+                        text("~          Home directory")
+                            .size(text_size(12))
+                            .style(muted_text),
                     ]
                     .spacing(scaled(2.0));
 
@@ -307,7 +326,9 @@ impl OddBoxGui {
                             Message::EditBackendFieldChanged(EditBackendField::SpaFallback(v))
                         });
 
-                    let cache_label = text("Cache max-age (seconds)").size(text_size(13)).style(muted_text);
+                    let cache_label = text("Cache max-age (seconds)")
+                        .size(text_size(13))
+                        .style(muted_text);
                     let cache_input = text_input("3600", &self.edit_backend_form.cache_max_age)
                         .on_input(|v| {
                             Message::EditBackendFieldChanged(EditBackendField::CacheMaxAge(v))
@@ -375,7 +396,12 @@ impl OddBoxGui {
                         .padding(scaled(8.0))
                         .on_press(Message::EditBackendPickBin)
                         .style(move |theme, status| {
-                            super::super::themed_button_style(theme, status, KdeButtonRole::Neutral, use_kde_buttons)
+                            super::super::themed_button_style(
+                                theme,
+                                status,
+                                KdeButtonRole::Neutral,
+                                use_kde_buttons,
+                            )
                         });
                     let bin_help = text("Path or command to execute")
                         .size(text_size(12))
@@ -403,7 +429,9 @@ impl OddBoxGui {
                         })
                         .padding(scaled(8.0))
                         .width(Length::Fill);
-                    let args_help = text("Space-separated arguments").size(text_size(12)).style(muted_text);
+                    let args_help = text("Space-separated arguments")
+                        .size(text_size(12))
+                        .style(muted_text);
 
                     let dir_label = text("Working dir").size(text_size(13)).style(muted_text);
                     let dir_input = text_input("/path/to/app", &self.edit_backend_form.proc_dir)
@@ -431,7 +459,9 @@ impl OddBoxGui {
                             Message::EditBackendFieldChanged(EditBackendField::Https(v))
                         });
 
-                    let port_label = text("Port (optional)").size(text_size(13)).style(muted_text);
+                    let port_label = text("Port (optional)")
+                        .size(text_size(13))
+                        .style(muted_text);
                     let port_input = text_input("8080", &self.edit_backend_form.proc_port)
                         .on_input(|v| {
                             Message::EditBackendFieldChanged(EditBackendField::ProcPort(v))
@@ -439,8 +469,10 @@ impl OddBoxGui {
                         .padding(scaled(8.0))
                         .width(Length::Fill);
 
-                    let env_label = text("Environment Variables").size(text_size(13)).style(muted_text);
-                    
+                    let env_label = text("Environment Variables")
+                        .size(text_size(13))
+                        .style(muted_text);
+
                     // Build env var rows
                     let mut env_rows: Vec<Element<'_, Message>> = Vec::new();
                     for (idx, (key, value)) in self.edit_backend_form.proc_env.iter().enumerate() {
@@ -450,14 +482,14 @@ impl OddBoxGui {
                             .size(text_size(12))
                             .font(Font::MONOSPACE)
                             .width(Length::FillPortion(2));
-                        
+
                         let value_input = text_input("VALUE", value)
                             .on_input(move |v| Message::EditBackendEnvValueChanged(idx, v))
                             .padding(scaled(6.0))
                             .size(text_size(12))
                             .font(Font::MONOSPACE)
                             .width(Length::FillPortion(3));
-                        
+
                         let remove_btn = button(text("✕").size(text_size(12)))
                             .padding(Padding {
                                 top: scaled(4.0),
@@ -466,10 +498,15 @@ impl OddBoxGui {
                                 left: scaled(6.0),
                             })
                             .style(move |theme: &Theme, status| {
-                                super::super::themed_button_style(theme, status, KdeButtonRole::Danger, use_kde_buttons)
+                                super::super::themed_button_style(
+                                    theme,
+                                    status,
+                                    KdeButtonRole::Danger,
+                                    use_kde_buttons,
+                                )
                             })
                             .on_press(Message::EditBackendEnvRemove(idx));
-                        
+
                         env_rows.push(
                             row![key_input, value_input, remove_btn]
                                 .spacing(scaled(4.0))
@@ -477,7 +514,7 @@ impl OddBoxGui {
                                 .into(),
                         );
                     }
-                    
+
                     // Add new env var row
                     let new_key_input = text_input("New key...", &self.edit_backend_env_new_key)
                         .on_input(Message::EditBackendEnvNewKeyChanged)
@@ -486,15 +523,16 @@ impl OddBoxGui {
                         .size(text_size(12))
                         .font(Font::MONOSPACE)
                         .width(Length::FillPortion(2));
-                    
-                    let new_value_input = text_input("New value...", &self.edit_backend_env_new_value)
-                        .on_input(Message::EditBackendEnvNewValueChanged)
-                        .on_submit(Message::EditBackendEnvAdd)
-                        .padding(scaled(6.0))
-                        .size(text_size(12))
-                        .font(Font::MONOSPACE)
-                        .width(Length::FillPortion(3));
-                    
+
+                    let new_value_input =
+                        text_input("New value...", &self.edit_backend_env_new_value)
+                            .on_input(Message::EditBackendEnvNewValueChanged)
+                            .on_submit(Message::EditBackendEnvAdd)
+                            .padding(scaled(6.0))
+                            .size(text_size(12))
+                            .font(Font::MONOSPACE)
+                            .width(Length::FillPortion(3));
+
                     let add_btn = button(text("+").size(text_size(12)))
                         .padding(Padding {
                             top: scaled(4.0),
@@ -503,35 +541,38 @@ impl OddBoxGui {
                             left: scaled(8.0),
                         })
                         .style(move |theme: &Theme, status| {
-                            super::super::themed_button_style(theme, status, KdeButtonRole::Primary, use_kde_buttons)
+                            super::super::themed_button_style(
+                                theme,
+                                status,
+                                KdeButtonRole::Primary,
+                                use_kde_buttons,
+                            )
                         })
                         .on_press(Message::EditBackendEnvAdd);
-                    
+
                     let add_row = row![new_key_input, new_value_input, add_btn]
                         .spacing(scaled(4.0))
                         .align_y(iced::Alignment::Center);
-                    
+
                     let mut env_list = column![].spacing(scaled(4.0));
                     for env_row in env_rows {
                         env_list = env_list.push(env_row);
                     }
                     env_list = env_list.push(add_row);
-                    
+
                     let env_container = container(env_list)
                         .padding(scaled(8.0))
                         .width(Length::Fill)
-                        .style(|theme: &Theme| {
-                            container::Style {
-                                background: Some(self.surface_panel_alt_bg(theme).into()),
-                                border: Border {
-                                    radius: scaled(4.0).into(),
-                                    width: 1.0,
-                                    color: self.surface_border_color(theme),
-                                },
-                                ..Default::default()
-                            }
+                        .style(|theme: &Theme| container::Style {
+                            background: Some(self.surface_panel_alt_bg(theme).into()),
+                            border: Border {
+                                radius: scaled(4.0).into(),
+                                width: 1.0,
+                                color: self.surface_border_color(theme),
+                            },
+                            ..Default::default()
                         });
-                    
+
                     let env_help = if self.edit_backend_form.proc_env.is_empty() {
                         text("No process-specific env vars. Add with + button.")
                             .size(text_size(12))
@@ -542,7 +583,9 @@ impl OddBoxGui {
                             .style(muted_text)
                     };
 
-                    let log_level_label = text("Process log level").size(text_size(13)).style(muted_text);
+                    let log_level_label = text("Process log level")
+                        .size(text_size(13))
+                        .style(muted_text);
                     let log_level_picker = pick_list(
                         ProcessLogLevelChoice::ALL.as_slice(),
                         Some(self.edit_backend_form.proc_log_level),
@@ -600,7 +643,9 @@ impl OddBoxGui {
                     }
 
                     let info = column![
-                        text("Process Backend").size(text_size(14)).style(muted_text),
+                        text("Process Backend")
+                            .size(text_size(14))
+                            .style(muted_text),
                         text("Managed by odd-box. Changes take effect after reload.")
                             .size(text_size(12))
                             .style(muted_text),
@@ -622,7 +667,9 @@ impl OddBoxGui {
                             global_env_list.push(text(line).size(text_size(12)).style(muted_text));
                     }
                     let global_env = column![
-                        text("Global Env Vars").size(text_size(14)).style(muted_text),
+                        text("Global Env Vars")
+                            .size(text_size(14))
+                            .style(muted_text),
                         text("Applies to all process backends.")
                             .size(text_size(12))
                             .style(muted_text),
@@ -654,10 +701,14 @@ impl OddBoxGui {
                     )
                 }
                 BackendKind::Unknown => {
-                    let note = text("Backend not found.").size(text_size(12)).style(muted_text);
+                    let note = text("Backend not found.")
+                        .size(text_size(12))
+                        .style(muted_text);
                     let fields = column![header, note].spacing(scaled(6.0));
                     let info = column![
-                        text("Unknown Backend").size(text_size(14)).style(muted_text),
+                        text("Unknown Backend")
+                            .size(text_size(14))
+                            .style(muted_text),
                         text("Select a backend from the Backends list.")
                             .size(text_size(12))
                             .style(muted_text),
@@ -685,7 +736,10 @@ impl OddBoxGui {
                         .width(Length::Fill)
                         .into()
                 } else {
-                    column![fields_card].spacing(scaled(12.0)).width(Length::Fill).into()
+                    column![fields_card]
+                        .spacing(scaled(12.0))
+                        .width(Length::Fill)
+                        .into()
                 }
             } else {
                 if let Some(info_card) = info_card {
@@ -697,17 +751,22 @@ impl OddBoxGui {
                     .width(Length::Fill)
                     .into()
                 } else {
-                    column![fields_card].spacing(scaled(12.0)).width(Length::Fill).into()
+                    column![fields_card]
+                        .spacing(scaled(12.0))
+                        .width(Length::Fill)
+                        .into()
                 }
             }
         });
 
-        let mut content = column![
-            text("Backend settings").size(text_size(13)).style(muted_text),
-            layout,
-            actions,
-        ]
-        .spacing(scaled(12.0));
+        let page_title = if self.edit_backend_is_new {
+            format!("New {} Backend", self.edit_backend_form.kind)
+        } else {
+            format!("Edit {} Backend", self.edit_backend_form.kind)
+        };
+
+        let mut content =
+            column![text(page_title).size(text_size(18)), layout, actions,].spacing(scaled(12.0));
 
         for err in errors {
             content = content.push(err);

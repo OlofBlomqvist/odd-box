@@ -56,6 +56,7 @@ pub struct CachedRoute {
     pub backend: String,
     pub https_redirect: bool,
     pub capture_subdomains: bool,
+    pub enable_cruma: bool,
 }
 
 /// All cached config data
@@ -68,6 +69,10 @@ pub struct CachedConfig {
     pub http_port: Option<u16>,
     pub https_port: Option<u16>,
     pub global_env: Vec<(String, String)>,
+    /// Whether cruma tunneling is enabled in the global configuration.
+    pub cruma_globally_enabled: bool,
+    /// The currently assigned cruma domain (e.g. "abc123.cruma.io"), if any.
+    pub cruma_assigned_domain: Option<String>,
 }
 
 /// Async function to fetch configuration data
@@ -76,6 +81,12 @@ pub async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
     let snapshot = state.process_registry.snapshot();
     let http_port = config_guard.frontends.http.as_ref().map(|h| h.port);
     let https_port = config_guard.frontends.https.as_ref().map(|h| h.port);
+    let cruma_globally_enabled = config_guard.cruma.as_ref().and_then(|c| c.mode()).is_some();
+    let cruma_assigned_domain = state
+        .cruma_assignment
+        .load_full()
+        .as_ref()
+        .map(|a| a.assigned_domain.clone());
 
     // Fetch global environment variables
     let mut global_env: Vec<(String, String)> = config_guard
@@ -200,6 +211,7 @@ pub async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
                 backend: target.backend_id().to_string(),
                 https_redirect: target.redirect_to_https(),
                 capture_subdomains: target.capture_subdomains(),
+                enable_cruma: target.enable_cruma(),
             });
         }
     }
@@ -215,6 +227,7 @@ pub async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
                         backend: target.backend_id().to_string(),
                         https_redirect: false,
                         capture_subdomains: target.capture_subdomains(),
+                        enable_cruma: target.enable_cruma(),
                     });
                 }
             }
@@ -230,5 +243,7 @@ pub async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
         http_port,
         https_port,
         global_env,
+        cruma_globally_enabled,
+        cruma_assigned_domain,
     }
 }

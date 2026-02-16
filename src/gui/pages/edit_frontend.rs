@@ -1,9 +1,15 @@
+use iced::widget::text::Wrapping;
 use iced::widget::{
     button, checkbox, column, container, pick_list, responsive, row, text, text_input,
 };
 use iced::{Border, Color, Element, Length, Theme};
 
 use super::super::{BackendOption, KdeButtonRole, Message, OddBoxGui, scaled, text_size};
+
+/// Returns true if the hostname uses cruma-specific patterns (@ or bare *).
+fn uses_cruma_pattern(hostname: &str) -> bool {
+    hostname.contains('@') || hostname == "*"
+}
 
 fn muted_text(theme: &Theme) -> iced::widget::text::Style {
     iced::widget::text::Style {
@@ -15,11 +21,71 @@ fn muted_text(theme: &Theme) -> iced::widget::text::Style {
 impl OddBoxGui {
     pub(in crate::gui) fn view_edit_frontend(&self) -> Element<'_, Message> {
         let mut errors: Vec<Element<'_, Message>> = Vec::new();
-        if self.edit_frontend_form.hostname.trim().is_empty() {
+        let mut warnings: Vec<Element<'_, Message>> = Vec::new();
+        let hostname = self.edit_frontend_form.hostname.trim();
+        let cruma_global = self.cached_config.cruma_globally_enabled;
+        let cruma_on_route = self.edit_frontend_form.enable_cruma;
+
+        if hostname.is_empty() {
             errors.push(
                 text("Hostname is required.")
                     .size(text_size(12))
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
+                    .into(),
+            );
+        } else if hostname.contains("://") {
+            errors.push(
+                text("Hostname must not include a protocol (e.g. remove http:// or https://).")
+                    .size(text_size(12))
+                    .color(Color::from_rgb(0.9, 0.3, 0.3))
+                    .into(),
+            );
+        } else if hostname.contains(':') {
+            errors.push(
+                text("Hostname must not include a port. Use the Frontends page to set ports.")
+                    .size(text_size(12))
+                    .color(Color::from_rgb(0.9, 0.3, 0.3))
+                    .into(),
+            );
+        } else if hostname.contains('/') || hostname.contains('?') || hostname.contains('#') {
+            errors.push(
+                text("Hostname must not contain path, query, or fragment characters (/, ?, #).")
+                    .size(text_size(12))
+                    .color(Color::from_rgb(0.9, 0.3, 0.3))
+                    .into(),
+            );
+        } else if hostname.contains(' ') {
+            errors.push(
+                text("Hostname must not contain spaces.")
+                    .size(text_size(12))
+                    .color(Color::from_rgb(0.9, 0.3, 0.3))
+                    .into(),
+            );
+        } else if !hostname.chars().all(|c| {
+            c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' || c == '*' || c == '@'
+        }) {
+            errors.push(
+                text("Hostname contains invalid characters. Only letters, digits, hyphens, underscores, dots, * and @ are allowed.")
+                    .size(text_size(12))
+                    .color(Color::from_rgb(0.9, 0.3, 0.3))
+                    .into(),
+            );
+        } else if uses_cruma_pattern(hostname) && !cruma_global {
+            // Cruma-specific pattern used but cruma is globally disabled
+            warnings.push(
+                text("⚠ This hostname uses a cruma pattern (@ or *) but cruma is disabled in the global config. The pattern will not work until cruma is enabled.")
+                    .size(text_size(12))
+                    .color(Color::from_rgb(0.9, 0.7, 0.2))
+                    .into(),
+            );
+        }
+
+        // Warn if "Enable Cruma" is checked on this route but cruma is globally disabled
+        if cruma_on_route && !cruma_global {
+            warnings.push(
+                text("⚠ \"Enable Cruma\" is checked but cruma is disabled in the global config. Enable cruma on the Cruma Ingress page for this to take effect.")
+                    .size(text_size(12))
+                    .color(Color::from_rgb(0.9, 0.7, 0.2))
                     .into(),
             );
         }
@@ -60,27 +126,38 @@ impl OddBoxGui {
         let save_btn = button(text("Save").size(text_size(14)))
             .on_press(Message::EditFrontendSave)
             .style(move |theme, status| {
-                super::super::themed_button_style(theme, status, KdeButtonRole::Primary, use_kde_buttons)
+                super::super::themed_button_style(
+                    theme,
+                    status,
+                    KdeButtonRole::Primary,
+                    use_kde_buttons,
+                )
             });
         let back_btn = button(text("Back").size(text_size(14)))
             .on_press(Message::NavigateTo(super::super::Page::Frontends))
             .style(move |theme, status| {
-                super::super::themed_button_style(theme, status, KdeButtonRole::Neutral, use_kde_buttons)
+                super::super::themed_button_style(
+                    theme,
+                    status,
+                    KdeButtonRole::Neutral,
+                    use_kde_buttons,
+                )
             });
 
-        let mut actions_children: Vec<Element<'_, Message>> = vec![
-            save_btn.into(),
-            back_btn.into(),
-        ];
+        let mut actions_children: Vec<Element<'_, Message>> =
+            vec![save_btn.into(), back_btn.into()];
         if !self.edit_frontend_is_new {
             let delete_btn = button(text("Delete").size(text_size(14)))
                 .on_press(Message::EditFrontendDelete)
                 .style(move |theme, status| {
-                    super::super::themed_button_style(theme, status, KdeButtonRole::Danger, use_kde_buttons)
+                    super::super::themed_button_style(
+                        theme,
+                        status,
+                        KdeButtonRole::Danger,
+                        use_kde_buttons,
+                    )
                 });
-            actions_children.push(
-                delete_btn.into(),
-            );
+            actions_children.push(delete_btn.into());
         }
         let actions = row::Row::with_children(actions_children).spacing(scaled(10.0));
 
@@ -93,6 +170,58 @@ impl OddBoxGui {
                 .on_input(Message::EditFrontendHostChanged)
                 .padding(scaled(8.0))
                 .width(Length::Fill);
+
+            // Build help text for hostname patterns based on cruma state
+            let pattern_help_lines: Vec<Element<'_, Message>> =
+                if self.cached_config.cruma_globally_enabled {
+                    vec![
+                        text("Hostname patterns (cruma enabled):")
+                            .size(text_size(11))
+                            .style(muted_text)
+                            .into(),
+                        text("  @  →  matches the assigned cruma domain")
+                            .size(text_size(11))
+                            .style(muted_text)
+                            .into(),
+                        text("  myapp  →  matches myapp and myapp.<cruma-domain>")
+                            .size(text_size(11))
+                            .style(muted_text)
+                            .into(),
+                        text("  host.example.com  →  exact FQDN (dot = full domain)")
+                            .size(text_size(11))
+                            .style(muted_text)
+                            .into(),
+                        text("  *  →  matches any domain")
+                            .size(text_size(11))
+                            .style(muted_text)
+                            .into(),
+                        text("  *.@  →  any subdomain of the cruma domain")
+                            .size(text_size(11))
+                            .style(muted_text)
+                            .into(),
+                        text("  example.@  →  example.<cruma-domain>")
+                            .size(text_size(11))
+                            .style(muted_text)
+                            .into(),
+                    ]
+                } else {
+                    vec![
+                        text("Hostname patterns:")
+                            .size(text_size(11))
+                            .style(muted_text)
+                            .into(),
+                        text("  example.local  →  exact hostname match")
+                            .size(text_size(11))
+                            .style(muted_text)
+                            .into(),
+                        text("  (Enable cruma globally for @/* pattern support)")
+                            .size(text_size(11))
+                            .style(muted_text)
+                            .into(),
+                    ]
+                };
+            let pattern_help_col =
+                iced::widget::Column::with_children(pattern_help_lines).spacing(scaled(2.0));
 
             let mut backend_options: Vec<BackendOption> = Vec::new();
             backend_options.extend(
@@ -133,11 +262,11 @@ impl OddBoxGui {
             .padding(scaled(8.0))
             .width(Length::Fill);
 
-        let capture_toggle = checkbox(self.edit_frontend_form.capture_subdomains)
-            .label("Capture subdomains")
-            .on_toggle(Message::EditFrontendCaptureSubdomainsToggled);
-        let capture_help = text("Match *.example.com as well as the root host")
-            .size(text_size(12))
+            let capture_toggle = checkbox(self.edit_frontend_form.capture_subdomains)
+                .label("Capture subdomains")
+                .on_toggle(Message::EditFrontendCaptureSubdomainsToggled);
+            let capture_help = text("Match *.example.com as well as the root host")
+                .size(text_size(12))
                 .style(muted_text);
 
             let forward_toggle = checkbox(self.edit_frontend_form.forward_subdomains)
@@ -161,17 +290,71 @@ impl OddBoxGui {
                 .size(text_size(12))
                 .style(muted_text);
 
+            let enable_cruma_toggle = checkbox(self.edit_frontend_form.enable_cruma)
+                .label("Enable Cruma")
+                .on_toggle(Message::EditFrontendEnableCrumaToggled);
+            let enable_cruma_help = text("Expose this route through the cruma tunnel")
+                .size(text_size(12))
+                .style(muted_text);
+
+            // Show the resolved cruma FQDN(s) when cruma is enabled on this
+            // route and the tunnel has an assigned domain.
+            let cruma_fqdn_info: Option<Element<'_, Message>> =
+                if self.edit_frontend_form.enable_cruma {
+                    if let Some(ref domain) = self.cached_config.cruma_assigned_domain {
+                        let host = self.edit_frontend_form.hostname.trim();
+                        let resolved = if host == "@" || host.is_empty() {
+                            // @ resolves to the bare cruma domain
+                            format!("👻 {}", domain)
+                        } else if host == "*" {
+                            format!("👻 *  (any domain via cruma)")
+                        } else if host.contains('@') {
+                            // e.g. "*.@" or "example.@"
+                            let expanded = host.replace('@', domain);
+                            format!("👻 {}", expanded)
+                        } else if host.contains('.') {
+                            // FQDN — used as-is
+                            format!("👻 {} (FQDN)", host)
+                        } else {
+                            // single label — matches both bare and under cruma domain
+                            format!("👻 {} , {}.{}", host, host, domain)
+                        };
+                        Some(
+                            text(resolved)
+                                .size(text_size(12))
+                                .wrapping(Wrapping::Word)
+                                .width(Length::Fill)
+                                .color(Color::from_rgb(0.4, 0.75, 0.95))
+                                .into(),
+                        )
+                    } else if self.cached_config.cruma_globally_enabled {
+                        Some(
+                            text("👻 Waiting for cruma domain assignment…")
+                                .size(text_size(12))
+                                .wrapping(Wrapping::Word)
+                                .width(Length::Fill)
+                                .style(muted_text)
+                                .into(),
+                        )
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
             let fields = column![
                 hostname_label,
                 hostname_input,
                 hostname_help,
+                pattern_help_col,
                 backend_label,
                 backend_picker,
                 backend_help,
             ]
             .spacing(scaled(6.0));
 
-            let options = column![
+            let mut options = column![
                 text("Options").size(text_size(14)).style(muted_text),
                 capture_toggle,
                 capture_help,
@@ -181,24 +364,28 @@ impl OddBoxGui {
                 redirect_help,
                 lets_encrypt_toggle,
                 lets_encrypt_help,
+                enable_cruma_toggle,
+                enable_cruma_help,
             ]
             .spacing(scaled(6.0));
 
-            let card_style = |theme: &Theme| {
-                container::Style {
-                    background: Some(self.surface_panel_bg(theme).into()),
-                    border: Border {
-                        radius: 6.0.into(),
-                        width: 1.0,
-                        color: self.surface_border_color(theme),
-                    },
-                    ..Default::default()
-                }
+            if let Some(fqdn_el) = cruma_fqdn_info {
+                options = options.push(fqdn_el);
+            }
+
+            let card_style = |theme: &Theme| container::Style {
+                background: Some(self.surface_panel_bg(theme).into()),
+                border: Border {
+                    radius: 6.0.into(),
+                    width: 1.0,
+                    color: self.surface_border_color(theme),
+                },
+                ..Default::default()
             };
 
-        let fields_card = container(fields).padding(scaled(12.0)).style(card_style);
+            let fields_card = container(fields).padding(scaled(12.0)).style(card_style);
 
-        let options_card = container(options).padding(scaled(12.0)).style(card_style);
+            let options_card = container(options).padding(scaled(12.0)).style(card_style);
 
             if size.width < 760.0 {
                 column![
@@ -230,6 +417,10 @@ impl OddBoxGui {
 
         for err in errors {
             content = content.push(err);
+        }
+
+        for warn in warnings {
+            content = content.push(warn);
         }
 
         if let Some(n) = notice {

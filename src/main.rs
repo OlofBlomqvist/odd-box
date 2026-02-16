@@ -78,7 +78,11 @@ pub mod global_state {
         pub log_handle: crate::OddLogHandle,
         pub config: std::sync::Arc<arc_swap::ArcSwap<crate::configuration::ConfigWrapper>>,
         pub target_request_counts: dashmap::DashMap<String, AtomicU64>,
+        /// Configuration used by the local cruma hosting stack (all routes).
         pub cruma_config: std::sync::Arc<arc_swap::ArcSwap<cruma_proxy_lib::types::Configuration>>,
+        /// Configuration used by the cruma tunnel agent (only routes with `enable_cruma: true`).
+        pub cruma_tunnel_config:
+            std::sync::Arc<arc_swap::ArcSwap<cruma_proxy_lib::types::Configuration>>,
         pub docker_discovery:
             std::sync::Arc<arc_swap::ArcSwap<Vec<crate::docker::DiscoveredContainer>>>,
         pub tui_log_buffer: std::sync::Arc<crate::logging::SharedLogBuffer>,
@@ -95,6 +99,9 @@ pub mod global_state {
         pub fn new(
             config: std::sync::Arc<arc_swap::ArcSwap<crate::configuration::ConfigWrapper>>,
             cruma_config: std::sync::Arc<arc_swap::ArcSwap<cruma_proxy_lib::types::Configuration>>,
+            cruma_tunnel_config: std::sync::Arc<
+                arc_swap::ArcSwap<cruma_proxy_lib::types::Configuration>,
+            >,
             log_handle: crate::OddLogHandle,
             tui_log_buffer: std::sync::Arc<crate::logging::SharedLogBuffer>,
             tokio_handle: tokio::runtime::Handle,
@@ -123,6 +130,7 @@ pub mod global_state {
                 config,
                 target_request_counts: dashmap::DashMap::new(),
                 cruma_config,
+                cruma_tunnel_config,
                 docker_discovery: Arc::new(arc_swap::ArcSwap::from_pointee(Vec::new())),
                 tui_log_buffer,
                 tokio_handle,
@@ -320,9 +328,14 @@ fn initialize_configuration(
     Ok((config, original_version, was_upgraded))
 }
 
+pub const NAME: &str = env!("CARGO_PKG_NAME");
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[tokio::main(flavor = "multi_thread")]
 #[tracing::instrument()]
 async fn main() -> anyhow::Result<()> {
+    cruma_tunnels_lib::init(format!("{} ({})", NAME, VERSION));
+
     match rustls::crypto::ring::default_provider().install_default() {
         Ok(_) => {}
         Err(e) => {
@@ -411,12 +424,14 @@ async fn main() -> anyhow::Result<()> {
     let shutdown_signal = Arc::new(tokio::sync::Notify::new());
     let shared_config = std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(config));
 
-    let cruma_cfg_init = {
+    let (cruma_cfg_init, cruma_tunnel_cfg_init) = {
         let cfg_guard = shared_config.load_full();
         let (cfg, notes) = cruma_integration::build_config_with_runtime_ports(
             &cfg_guard,
             &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
+            None,
+            false,
             None,
         )?;
 
@@ -426,14 +441,32 @@ async fn main() -> anyhow::Result<()> {
                 notes.unsupported
             );
         }
-        cfg
+
+        let (tunnel_cfg, tunnel_notes) = cruma_integration::build_config_with_runtime_ports(
+            &cfg_guard,
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+            None,
+            true,
+            None,
+        )?;
+
+        if !tunnel_notes.unsupported.is_empty() {
+            tracing::warn!(
+                "cruma tunnel config placeholders/unsupported: {:?}",
+                tunnel_notes.unsupported
+            );
+        }
+        (cfg, tunnel_cfg)
     };
     let cruma_config_arc = std::sync::Arc::new(ArcSwap::from_pointee(cruma_cfg_init));
+    let cruma_tunnel_config_arc = std::sync::Arc::new(ArcSwap::from_pointee(cruma_tunnel_cfg_init));
     let tui_log_buffer = std::sync::Arc::new(crate::logging::SharedLogBuffer::new());
 
     let mut global_state = crate::global_state::GlobalState::new(
         shared_config.clone(),
         cruma_config_arc.clone(),
+        cruma_tunnel_config_arc.clone(),
         OddLogHandle::None,
         tui_log_buffer.clone(),
         tokio::runtime::Handle::current(),
@@ -856,7 +889,7 @@ async fn cruma_agent_supervisor(
 
     fn spawn_agent(mode: CrumaMode, state: Arc<crate::global_state::GlobalState>) -> RunningAgent {
         let notify = Arc::new(tokio::sync::Notify::new());
-        let cfg_arc = state.cruma_config.clone();
+        let cfg_arc = state.cruma_tunnel_config.clone();
         let creds = match &mode {
             CrumaMode::Anonymous => cruma_tunnels_lib::AgentCredentials::anonymous(),
             CrumaMode::Authenticated { id, key } => {
@@ -1051,10 +1084,15 @@ pub async fn docker_thread(state: Arc<GlobalState>) {
                 cruma_integration::runtime_ports_from_registry(&state.process_registry);
             let runtime_states =
                 cruma_integration::runtime_states_from_registry(&state.process_registry);
+            let assignment = state.cruma_assignment.load_full();
+            let cruma_domain = assignment.as_ref().map(|a| a.assigned_domain.as_str());
+
             if let Ok((cfg, notes)) = cruma_integration::build_config_with_runtime_ports(
                 &guard,
                 &runtime_ports,
                 &runtime_states,
+                None,
+                false,
                 Some(state.clone()),
             ) {
                 if !notes.unsupported.is_empty() {
@@ -1064,6 +1102,24 @@ pub async fn docker_thread(state: Arc<GlobalState>) {
                     );
                 }
                 state.cruma_config.store(std::sync::Arc::new(cfg));
+            }
+            if let Ok((tunnel_cfg, notes)) = cruma_integration::build_config_with_runtime_ports(
+                &guard,
+                &runtime_ports,
+                &runtime_states,
+                cruma_domain,
+                true,
+                Some(state.clone()),
+            ) {
+                if !notes.unsupported.is_empty() {
+                    tracing::warn!(
+                        "cruma tunnel config placeholders/unsupported after docker update: {:?}",
+                        notes.unsupported
+                    );
+                }
+                state
+                    .cruma_tunnel_config
+                    .store(std::sync::Arc::new(tunnel_cfg));
             }
             state.config.store(std::sync::Arc::new(guard));
         }

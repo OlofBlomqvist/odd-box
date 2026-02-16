@@ -5,13 +5,11 @@ mod pages;
 mod tray;
 
 use iced::widget::scrollable::RelativeOffset;
-use iced::widget::{
-    Column, Scrollable, button, column, container, image, row, scrollable, text,
-};
+use iced::widget::{Column, Scrollable, button, column, container, image, row, scrollable, text};
 
 use iced::{
-    Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, event, keyboard,
-    system, theme, time, window,
+    Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, event,
+    keyboard, system, theme, time, window,
 };
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
@@ -88,7 +86,9 @@ fn srgb_to_linear(value: f32) -> f32 {
 }
 
 fn relative_luminance(color: Color) -> f32 {
-    0.2126 * srgb_to_linear(color.r) + 0.7152 * srgb_to_linear(color.g) + 0.0722 * srgb_to_linear(color.b)
+    0.2126 * srgb_to_linear(color.r)
+        + 0.7152 * srgb_to_linear(color.g)
+        + 0.0722 * srgb_to_linear(color.b)
 }
 
 fn contrast_ratio(a: Color, b: Color) -> f32 {
@@ -146,8 +146,10 @@ pub(in crate::gui) fn kde_button_style(
     } else {
         theme::palette::mix(base_bg, Color::BLACK, 0.10)
     };
-    let role_hover_bg = theme::palette::mix(accent, base_bg, if palette.is_dark { 0.88 } else { 0.92 });
-    let role_pressed_bg = theme::palette::mix(accent, base_bg, if palette.is_dark { 0.80 } else { 0.86 });
+    let role_hover_bg =
+        theme::palette::mix(accent, base_bg, if palette.is_dark { 0.88 } else { 0.92 });
+    let role_pressed_bg =
+        theme::palette::mix(accent, base_bg, if palette.is_dark { 0.80 } else { 0.86 });
 
     let (background, text_color, border_color, border_width) = match status {
         button::Status::Disabled => (
@@ -282,23 +284,41 @@ pub(in crate::gui) fn themed_button_style(
             let (normal_bg, hover_bg) = match role {
                 KdeButtonRole::Primary => {
                     if is_dark {
-                        (Color::from_rgb(0.25, 0.48, 0.85), Color::from_rgb(0.35, 0.56, 0.92))
+                        (
+                            Color::from_rgb(0.25, 0.48, 0.85),
+                            Color::from_rgb(0.35, 0.56, 0.92),
+                        )
                     } else {
-                        (Color::from_rgb(0.20, 0.42, 0.75), Color::from_rgb(0.16, 0.36, 0.68))
+                        (
+                            Color::from_rgb(0.20, 0.42, 0.75),
+                            Color::from_rgb(0.16, 0.36, 0.68),
+                        )
                     }
                 }
                 KdeButtonRole::Success => {
                     if is_dark {
-                        (Color::from_rgb(0.22, 0.58, 0.28), Color::from_rgb(0.30, 0.68, 0.36))
+                        (
+                            Color::from_rgb(0.22, 0.58, 0.28),
+                            Color::from_rgb(0.30, 0.68, 0.36),
+                        )
                     } else {
-                        (Color::from_rgb(0.18, 0.52, 0.22), Color::from_rgb(0.14, 0.45, 0.18))
+                        (
+                            Color::from_rgb(0.18, 0.52, 0.22),
+                            Color::from_rgb(0.14, 0.45, 0.18),
+                        )
                     }
                 }
                 KdeButtonRole::Danger => {
                     if is_dark {
-                        (Color::from_rgb(0.72, 0.24, 0.24), Color::from_rgb(0.82, 0.32, 0.32))
+                        (
+                            Color::from_rgb(0.72, 0.24, 0.24),
+                            Color::from_rgb(0.82, 0.32, 0.32),
+                        )
                     } else {
-                        (Color::from_rgb(0.65, 0.18, 0.18), Color::from_rgb(0.58, 0.12, 0.12))
+                        (
+                            Color::from_rgb(0.65, 0.18, 0.18),
+                            Color::from_rgb(0.58, 0.12, 0.12),
+                        )
                     }
                 }
                 _ => unreachable!(),
@@ -312,7 +332,10 @@ pub(in crate::gui) fn themed_button_style(
                     let disabled_bg = Color::from_rgba(normal_bg.r, normal_bg.g, normal_bg.b, 0.35);
                     (disabled_bg, Color::from_rgba(1.0, 1.0, 1.0, 0.45))
                 }
-                _ => (normal_bg, readable_on(normal_bg, Color::WHITE, Color::BLACK)),
+                _ => (
+                    normal_bg,
+                    readable_on(normal_bg, Color::WHITE, Color::BLACK),
+                ),
             };
 
             let r = scaled(4.0);
@@ -401,7 +424,11 @@ fn read_kdeglobals_colors() -> Option<HashMap<String, Color>> {
         }
     }
 
-    if colors.is_empty() { None } else { Some(colors) }
+    if colors.is_empty() {
+        None
+    } else {
+        Some(colors)
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -500,8 +527,7 @@ fn kde_system_sidebar_colors() -> KdeSidebarColors {
         .or(window_bg)
         .or(window_alt_bg);
 
-    let view_alt_bg = kde_color(&colors, "Colors:View", "BackgroundAlternate")
-        .or(window_alt_bg);
+    let view_alt_bg = kde_color(&colors, "Colors:View", "BackgroundAlternate").or(window_alt_bg);
 
     // Prefer alternate surfaces for sidebar so it remains distinct from page content.
     let sidebar_bg = window_alt_bg.or(view_alt_bg).or(view_bg).or(window_bg);
@@ -872,14 +898,18 @@ pub enum Message {
     ProcessStartAll,
     ProcessStopAll,
     ProcessToggleDetails(String),
+    ProcessToggleAutoStart(String),
+    ProcessToggleAutoStartResult(Result<(), String>),
     // Dashboard card menu
     DashboardToggleProcessMenu(String),
     DashboardDismissMenu,
     DashboardCursorMoved(f32, f32),
     ManageProcess(String),
+    OpenInBrowser(String),
     OpenEditFrontend(String),
     OpenEditBackend(String),
     OpenNewFrontend,
+    OpenNewFrontendForBackend(String),
     OpenNewBackend(BackendKind),
     EditFrontendLoaded(EditFrontendForm),
     EditFrontendHostChanged(String),
@@ -888,6 +918,7 @@ pub enum Message {
     EditFrontendForwardSubdomainsToggled(bool),
     EditFrontendRedirectHttpsToggled(bool),
     EditFrontendLetsEncryptToggled(bool),
+    EditFrontendEnableCrumaToggled(bool),
     EditFrontendSave,
     EditFrontendSaveResult(Result<(), String>),
     EditFrontendDelete,
@@ -993,6 +1024,7 @@ pub struct EditFrontendForm {
     pub forward_subdomains: bool,
     pub redirect_to_https: bool,
     pub lets_encrypt: bool,
+    pub enable_cruma: bool,
     pub https_only: bool,
 }
 
@@ -1002,6 +1034,26 @@ pub enum BackendKind {
     Remote,
     Static,
     Unknown,
+}
+
+impl BackendKind {
+    /// The selectable backend kinds (excludes Unknown).
+    pub const ALL: [BackendKind; 3] = [
+        BackendKind::Process,
+        BackendKind::Remote,
+        BackendKind::Static,
+    ];
+}
+
+impl std::fmt::Display for BackendKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BackendKind::Process => write!(f, "Process"),
+            BackendKind::Remote => write!(f, "Remote"),
+            BackendKind::Static => write!(f, "Static"),
+            BackendKind::Unknown => write!(f, "Unknown"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1060,6 +1112,7 @@ pub struct EditBackendForm {
 #[derive(Debug, Clone)]
 pub enum EditBackendField {
     Id(String),
+    Kind(BackendKind),
     Endpoints(String),
     Protocol(v4::Protocol),
     Https(bool),
@@ -1082,6 +1135,7 @@ pub struct OddBoxGui {
     pub(in crate::gui) state: Arc<GlobalState>,
     pub(in crate::gui) log_state: SharedLogState,
     current_page: Page,
+    pub(in crate::gui) window_width: f32,
     theme_mode: ThemeMode,
     system_theme: Option<theme::Mode>,
     #[cfg(target_os = "linux")]
@@ -1143,6 +1197,7 @@ pub struct OddBoxGui {
     pub(in crate::gui) edit_frontend_pending_reload: bool,
     pub(in crate::gui) edit_frontend_original: Option<String>,
     pub(in crate::gui) edit_frontend_is_new: bool,
+    pub(in crate::gui) edit_frontend_confirm_delete: bool,
     pub(in crate::gui) edit_backend_form: EditBackendForm,
     pub(in crate::gui) edit_backend_notice: Option<String>,
     pub(in crate::gui) edit_backend_resolved_dir: Option<String>,
@@ -1255,6 +1310,7 @@ async fn load_frontend_form(state: Arc<GlobalState>, hostname: String) -> EditFr
                 form.forward_subdomains = d.forward_subdomains;
                 form.redirect_to_https = d.redirect_to_https;
                 form.lets_encrypt = d.lets_encrypt;
+                form.enable_cruma = d.enable_cruma;
             }
         }
     }
@@ -1304,6 +1360,7 @@ async fn save_frontend_form(
         || form.forward_subdomains
         || form.redirect_to_https
         || form.lets_encrypt
+        || form.enable_cruma
     {
         v4::RouteTarget::Detailed(v4::DetailedRoute {
             backend: form.backend.clone(),
@@ -1311,6 +1368,7 @@ async fn save_frontend_form(
             forward_subdomains: form.forward_subdomains,
             redirect_to_https: form.redirect_to_https,
             lets_encrypt: form.lets_encrypt,
+            enable_cruma: form.enable_cruma,
         })
     } else {
         v4::RouteTarget::Simple(form.backend.clone())
@@ -1353,6 +1411,7 @@ async fn save_frontend_form(
     guard.is_valid().map_err(|e| e.to_string())?;
     guard.write_to_disk().map_err(|e| e.to_string())?;
     state.config.store(std::sync::Arc::new(guard));
+    crate::cruma_integration::rebuild_cruma_config(state.clone());
 
     Ok(())
 }
@@ -1596,6 +1655,7 @@ async fn delete_frontend(state: Arc<GlobalState>, host: String) -> Result<(), St
     guard.is_valid().map_err(|e| e.to_string())?;
     guard.write_to_disk().map_err(|e| e.to_string())?;
     state.config.store(std::sync::Arc::new(guard));
+    crate::cruma_integration::rebuild_cruma_config(state.clone());
     Ok(())
 }
 
@@ -1844,6 +1904,7 @@ async fn save_backend_form(
     guard.is_valid().map_err(|e| e.to_string())?;
     guard.write_to_disk().map_err(|e| e.to_string())?;
     state.config.store(std::sync::Arc::new(guard));
+    crate::cruma_integration::rebuild_cruma_config(state.clone());
     Ok(())
 }
 
@@ -1855,6 +1916,7 @@ async fn delete_backend(state: Arc<GlobalState>, backend_id: String) -> Result<(
     guard.is_valid().map_err(|e| e.to_string())?;
     guard.write_to_disk().map_err(|e| e.to_string())?;
     state.config.store(std::sync::Arc::new(guard));
+    crate::cruma_integration::rebuild_cruma_config(state.clone());
     Ok(())
 }
 
@@ -1931,6 +1993,121 @@ async fn resolve_backend_dir(
         .map(|p| p.display().to_string());
 
     Ok(Some(canonical.unwrap_or(resolved_dir)))
+}
+
+/// Toggle the auto_start flag for a process backend and save to disk.
+async fn toggle_process_auto_start(
+    state: Arc<GlobalState>,
+    backend_name: String,
+) -> Result<(), String> {
+    let mut guard = (*state.config.load_full()).clone();
+
+    match guard.backends.get_mut(&backend_name) {
+        Some(v4::Backend::Process(proc)) => {
+            let current = proc.auto_start.unwrap_or(true);
+            proc.auto_start = Some(!current);
+        }
+        _ => {
+            return Err(format!(
+                "Backend '{}' is not a process backend.",
+                backend_name
+            ));
+        }
+    }
+
+    guard.write_to_disk().map_err(|e| e.to_string())?;
+    state.config.store(std::sync::Arc::new(guard));
+    Ok(())
+}
+
+/// Open a URL in the default system browser.
+fn open_url_in_browser(url: &str) {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(url).spawn();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", "start", url])
+            .spawn();
+    }
+}
+
+/// Build an `EnvFilter` for the given log level, matching the logic used
+/// during startup and in the TUI / config-reload paths.
+fn build_gui_env_filter(log_level: &LogLevel) -> tracing_subscriber::EnvFilter {
+    use tracing_subscriber::EnvFilter;
+
+    let level_str = match log_level {
+        LogLevel::Trace => "trace",
+        LogLevel::Debug => "debug",
+        LogLevel::Info => "info",
+        LogLevel::Warn => "warn",
+        LogLevel::Error => "error",
+    };
+
+    let rust_log = std::env::var("RUST_LOG").ok();
+    let has_odd_box_override = rust_log
+        .as_ref()
+        .map(|v| v.split(',').any(|d| d.trim().starts_with("odd_box")))
+        .unwrap_or(false);
+    let has_cruma_override = rust_log
+        .as_ref()
+        .map(|v| v.split(',').any(|d| d.trim().starts_with("odd_box::cruma")))
+        .unwrap_or(false);
+
+    let mut filter = EnvFilter::from_default_env();
+    if !has_odd_box_override {
+        filter = filter.add_directive(
+            format!("odd_box={}", level_str)
+                .parse()
+                .expect("This directive should always work"),
+        );
+    }
+    filter = filter.add_directive(
+        "odd_box::proc_host=trace"
+            .parse()
+            .expect("This directive should always work"),
+    );
+    if !has_odd_box_override && !has_cruma_override {
+        filter = filter.add_directive(
+            "odd_box::cruma=info"
+                .parse()
+                .expect("This directive should always work"),
+        );
+    }
+    filter
+}
+
+/// Reload the tracing subscriber filter to match the chosen log level.
+async fn apply_gui_log_level(state: &GlobalState, level: LogLevel) {
+    let filter = build_gui_env_filter(&level);
+    match &state.log_handle {
+        crate::OddLogHandle::CLI(rw_lock) => match rw_lock.write().await.reload(filter) {
+            Ok(_) => {
+                tracing::info!("Tracing log level changed to {:?} via GUI", level);
+            }
+            Err(e) => {
+                tracing::error!("Failed to change tracing log level: {e:?}");
+            }
+        },
+        crate::OddLogHandle::TUI(rw_lock) => match rw_lock.write().await.reload(filter) {
+            Ok(_) => {
+                tracing::info!("Tracing log level changed to {:?} via GUI", level);
+            }
+            Err(e) => {
+                tracing::error!("Failed to change tracing log level: {e:?}");
+            }
+        },
+        crate::OddLogHandle::None => {
+            tracing::error!("No log handle exists, cannot change tracing log level");
+        }
+    }
 }
 
 impl OddBoxGui {
@@ -2012,8 +2189,7 @@ impl OddBoxGui {
 
         let initial_cfg = state.config.load_full();
         let initial_cruma_mode = cruma_mode_from_config(&initial_cfg);
-        let (initial_cruma_auth_id, initial_cruma_auth_key) =
-            cruma_auth_from_config(&initial_cfg);
+        let (initial_cruma_auth_id, initial_cruma_auth_key) = cruma_auth_from_config(&initial_cfg);
         let install_source_info = crate::self_update::install_source_info();
         let current_version = crate::self_update::current_version().to_string();
         let include_pre = should_include_prerelease_for_checks(&current_version);
@@ -2027,6 +2203,7 @@ impl OddBoxGui {
                 state,
                 log_state,
                 current_page: Page::Dashboard,
+                window_width: WINDOW_INITIAL_WIDTH,
                 theme_mode,
                 system_theme: None,
                 #[cfg(target_os = "linux")]
@@ -2080,6 +2257,7 @@ impl OddBoxGui {
                 edit_frontend_pending_reload: false,
                 edit_frontend_original: None,
                 edit_frontend_is_new: false,
+                edit_frontend_confirm_delete: false,
                 edit_backend_form: EditBackendForm::default(),
                 edit_backend_notice: None,
                 edit_backend_resolved_dir: None,
@@ -2134,7 +2312,11 @@ impl OddBoxGui {
                 ..
             }) = &ev
             {
-                Some(if modifiers.shift() { Message::FocusPrevious } else { Message::FocusNext })
+                Some(if modifiers.shift() {
+                    Message::FocusPrevious
+                } else {
+                    Message::FocusNext
+                })
             } else {
                 None
             }
@@ -2223,6 +2405,7 @@ impl OddBoxGui {
                     size.width.max(WINDOW_MIN_WIDTH),
                     size.height.max(WINDOW_MIN_HEIGHT),
                 );
+                self.window_width = clamped_size.width;
                 if (clamped_size.width - size.width).abs() > 0.5
                     || (clamped_size.height - size.height).abs() > 0.5
                 {
@@ -2619,6 +2802,21 @@ impl OddBoxGui {
                 self.log_level_preset = preset;
                 Self::apply_log_level_preset(&mut self.log_filter, preset);
                 self.log_state.set_filter(self.log_filter.clone());
+
+                // Also update the actual tracing subscriber filter so the app
+                // starts/stops producing log messages at the selected level.
+                let target_level = match preset {
+                    LogLevelPreset::All => LogLevel::Trace,
+                    LogLevelPreset::DebugAndAbove => LogLevel::Debug,
+                    LogLevelPreset::InfoAndAbove => LogLevel::Info,
+                    LogLevelPreset::WarnAndAbove => LogLevel::Warn,
+                    LogLevelPreset::ErrorOnly => LogLevel::Error,
+                };
+                let state = self.state.clone();
+                return Task::perform(
+                    async move { apply_gui_log_level(&state, target_level).await },
+                    |_| Message::NoOp,
+                );
             }
 
             Message::LogsClear => {
@@ -2697,6 +2895,21 @@ impl OddBoxGui {
                     self.expanded_process = Some(name);
                 }
             }
+            Message::ProcessToggleAutoStart(name) => {
+                let state = self.state.clone();
+                return Task::perform(
+                    toggle_process_auto_start(state, name),
+                    Message::ProcessToggleAutoStartResult,
+                );
+            }
+            Message::ProcessToggleAutoStartResult(result) => match result {
+                Ok(_) => {
+                    return Task::perform(fetch_config(self.state.clone()), Message::ConfigUpdated);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to toggle auto-start: {e}");
+                }
+            },
             Message::ProcessesTabChanged(tab) => {
                 self.processes_tab = tab;
                 // Reset notice when switching tabs
@@ -2768,6 +2981,10 @@ impl OddBoxGui {
             Message::DashboardCursorMoved(x, y) => {
                 self.dashboard_cursor_pos = (x, y);
             }
+            Message::OpenInBrowser(url) => {
+                self.dashboard_process_menu = None;
+                open_url_in_browser(&url);
+            }
             Message::ManageProcess(name) => {
                 self.dashboard_process_menu = None;
                 self.expanded_process = Some(name);
@@ -2781,6 +2998,7 @@ impl OddBoxGui {
                 self.edit_frontend_notice = None;
                 self.edit_frontend_original = Some(name.clone());
                 self.edit_frontend_is_new = false;
+                self.edit_frontend_confirm_delete = false;
                 return Task::perform(
                     load_frontend_form(self.state.clone(), name),
                     Message::EditFrontendLoaded,
@@ -2794,6 +3012,20 @@ impl OddBoxGui {
                 self.edit_frontend_form = EditFrontendForm::default();
                 self.edit_frontend_original = None;
                 self.edit_frontend_is_new = true;
+                self.edit_frontend_confirm_delete = false;
+            }
+            Message::OpenNewFrontendForBackend(backend_name) => {
+                self.edit_target = None;
+                self.current_page = Page::EditFrontend;
+                self.dashboard_process_menu = None;
+                self.edit_frontend_notice = None;
+                self.edit_frontend_form = EditFrontendForm {
+                    backend: backend_name,
+                    ..EditFrontendForm::default()
+                };
+                self.edit_frontend_original = None;
+                self.edit_frontend_is_new = true;
+                self.edit_frontend_confirm_delete = false;
             }
             Message::OpenEditBackend(name) => {
                 self.edit_target = Some(name);
@@ -2842,6 +3074,9 @@ impl OddBoxGui {
             Message::EditFrontendLetsEncryptToggled(value) => {
                 self.edit_frontend_form.lets_encrypt = value;
             }
+            Message::EditFrontendEnableCrumaToggled(value) => {
+                self.edit_frontend_form.enable_cruma = value;
+            }
             Message::EditFrontendSave => {
                 self.edit_frontend_notice = None;
                 let form = self.edit_frontend_form.clone();
@@ -2858,6 +3093,7 @@ impl OddBoxGui {
                     self.edit_frontend_pending_reload = true;
                     self.edit_frontend_is_new = false;
                     self.edit_frontend_original = Some(self.edit_frontend_form.hostname.clone());
+                    self.edit_frontend_confirm_delete = false;
                 }
                 Err(err) => {
                     self.edit_frontend_notice = Some(err);
@@ -2865,7 +3101,14 @@ impl OddBoxGui {
             },
             Message::EditFrontendDelete => {
                 if let Some(host) = self.edit_frontend_original.clone() {
+                    if !self.edit_frontend_confirm_delete {
+                        self.edit_frontend_notice =
+                            Some("Are you sure? Click Delete again to confirm.".to_string());
+                        self.edit_frontend_confirm_delete = true;
+                        return Task::none();
+                    }
                     self.edit_frontend_notice = None;
+                    self.edit_frontend_confirm_delete = false;
                     return Task::perform(
                         delete_frontend(self.state.clone(), host),
                         Message::EditFrontendDeleteResult,
@@ -2897,6 +3140,7 @@ impl OddBoxGui {
             }
             Message::EditBackendFieldChanged(field) => match field {
                 EditBackendField::Id(v) => self.edit_backend_form.id = v,
+                EditBackendField::Kind(v) => self.edit_backend_form.kind = v,
                 EditBackendField::Endpoints(v) => self.edit_backend_form.endpoints = v,
                 EditBackendField::Protocol(v) => self.edit_backend_form.protocol = v,
                 EditBackendField::Https(v) => self.edit_backend_form.https = v,
@@ -3054,8 +3298,7 @@ impl OddBoxGui {
                 self.cruma_mode_notice = None;
                 if mode == CrumaAuthMode::Authenticated {
                     self.cruma_mode_notice = Some(
-                        "Enter tunnel ID and key, then click Save Auth Credentials."
-                            .to_string(),
+                        "Enter tunnel ID and key, then click Save Auth Credentials.".to_string(),
                     );
                     return Task::none();
                 }
@@ -3231,11 +3474,10 @@ impl OddBoxGui {
                                 })
                             });
 
-                            let final_bytes =
-                                pages::traffic_inspection::try_decompress_for_save(
-                                    &bytes,
-                                    content_encoding.as_deref(),
-                                );
+                            let final_bytes = pages::traffic_inspection::try_decompress_for_save(
+                                &bytes,
+                                content_encoding.as_deref(),
+                            );
 
                             std::fs::write(&path, &final_bytes).map_err(|e| e.to_string())?;
                             Ok(path.display().to_string())
@@ -3540,7 +3782,10 @@ impl OddBoxGui {
                     theme::palette::mix(base_bg, Color::BLACK, 0.34),
                 )
             } else {
-                (palette.background.weaker.color, palette.background.strong.color)
+                (
+                    palette.background.weaker.color,
+                    palette.background.strong.color,
+                )
             };
             container::Style {
                 background: Some(background.into()),
@@ -3634,7 +3879,13 @@ impl OddBoxGui {
             (None, None, None, None, None)
         };
         #[cfg(not(target_os = "linux"))]
-        let (kde_nav_text, kde_nav_hover_bg, kde_nav_hover_text, kde_nav_selected_bg, kde_nav_selected_text): (
+        let (
+            kde_nav_text,
+            kde_nav_hover_bg,
+            kde_nav_hover_text,
+            kde_nav_selected_bg,
+            kde_nav_selected_text,
+        ): (
             Option<Color>,
             Option<Color>,
             Option<Color>,
@@ -3644,7 +3895,9 @@ impl OddBoxGui {
 
         let icon_width = text_size(16) * 1.5;
         let label = row![
-            text(page.icon()).size(text_size(16)).width(Length::Fixed(icon_width)),
+            text(page.icon())
+                .size(text_size(16))
+                .width(Length::Fixed(icon_width)),
             text(page.title()).size(text_size(14)),
         ]
         .spacing(8)
@@ -3662,8 +3915,7 @@ impl OddBoxGui {
                 let palette = theme.extended_palette();
                 let (background, text_color, border_color, border_width) = if is_active {
                     if use_system_selection {
-                        let selected_bg =
-                            kde_nav_selected_bg.unwrap_or(palette.primary.base.color);
+                        let selected_bg = kde_nav_selected_bg.unwrap_or(palette.primary.base.color);
                         let selected_fg_preferred = kde_nav_selected_text
                             .or(kde_nav_text)
                             .unwrap_or(palette.primary.base.text);
@@ -3853,13 +4105,12 @@ impl OddBoxGui {
             ThemeMode::System => {
                 #[cfg(target_os = "linux")]
                 {
-                    return self
-                    .system_kde_theme
-                    .clone()
-                    .unwrap_or_else(|| match self.system_theme {
-                        Some(theme::Mode::Light) => Theme::Light,
-                        Some(theme::Mode::Dark) => Theme::Dark,
-                        _ => Theme::Dark,
+                    return self.system_kde_theme.clone().unwrap_or_else(|| {
+                        match self.system_theme {
+                            Some(theme::Mode::Light) => Theme::Light,
+                            Some(theme::Mode::Dark) => Theme::Dark,
+                            _ => Theme::Dark,
+                        }
                     });
                 }
                 #[cfg(not(target_os = "linux"))]

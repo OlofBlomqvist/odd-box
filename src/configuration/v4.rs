@@ -349,6 +349,20 @@ impl RouteTarget {
             RouteTarget::Detailed(d) => d.redirect_to_https,
         }
     }
+
+    pub fn enable_cruma(&self) -> bool {
+        match self {
+            RouteTarget::Simple(_) => false,
+            RouteTarget::Detailed(d) => d.enable_cruma,
+        }
+    }
+
+    pub fn lets_encrypt(&self) -> bool {
+        match self {
+            RouteTarget::Simple(_) => false,
+            RouteTarget::Detailed(d) => d.lets_encrypt,
+        }
+    }
 }
 
 /// Detailed route configuration with additional options
@@ -372,6 +386,10 @@ pub struct DetailedRoute {
     /// Use Let's Encrypt for this route
     #[serde(default)]
     pub lets_encrypt: bool,
+
+    /// Expose this route through the cruma tunnel
+    #[serde(default)]
+    pub enable_cruma: bool,
 }
 
 /// TLS certificate mode
@@ -483,6 +501,7 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                             forward_subdomains,
                             redirect_to_https,
                             lets_encrypt,
+                            enable_cruma: false,
                         }),
                     );
                 } else {
@@ -551,6 +570,7 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                             forward_subdomains,
                             redirect_to_https,
                             lets_encrypt,
+                            enable_cruma: false,
                         }),
                     );
                 } else {
@@ -590,6 +610,7 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                             forward_subdomains: false,
                             redirect_to_https,
                             lets_encrypt,
+                            enable_cruma: false,
                         }),
                     );
                 } else {
@@ -613,6 +634,8 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
             }),
             https: Some(HttpsFrontend {
                 port: https_port,
+                // todo: we dont support certmode on site-level in v4 (yet) and so we will instead now default to use self-signed for the listener
+                // and the user will need to toggle the new flag once migration is complete
                 cert: CertMode::SelfSigned,
                 routes: Some(HttpsRoutes::Inherit(InheritMarker::Inherit)),
             }),
@@ -806,6 +829,7 @@ impl OddBoxV4Config {
                 forward_subdomains: false,
                 redirect_to_https: true,
                 lets_encrypt: false,
+                enable_cruma: false,
             }),
         );
 
