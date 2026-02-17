@@ -546,6 +546,32 @@ fn serve_dir_route(
     }
 }
 
+/// Extract all [`HostPattern`]s from a set of HTTP routes so they can be
+/// used as an SNI filter on the TLS listener.  Routes that use
+/// [`HttpMatch::Any`] (e.g. the fallback 404) are intentionally skipped
+/// so that we never produce a catch-all SNI pattern.
+fn extract_sni_patterns(routes: &[HttpRoute]) -> Vec<HostPattern> {
+    routes
+        .iter()
+        .filter_map(|route| match &route.filter {
+            HttpMatch::Host { hosts } => Some(hosts.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
+/// Build an optional SNI filter from a set of host patterns.
+/// Returns `None` only when no patterns are available (which means
+/// there are no configured routes and connections should be rejected).
+fn build_sni_filter(patterns: Vec<HostPattern>) -> Option<HostPattern> {
+    match patterns.len() {
+        0 => None,
+        1 => Some(patterns.into_iter().next().unwrap()),
+        _ => Some(HostPattern::OneOf(patterns)),
+    }
+}
+
 fn to_endpoint(addr: &str, port: u16) -> Option<Endpoint> {
     NonZeroU16::new(port).map(|p| Endpoint {
         addr: addr.to_string(),
@@ -870,6 +896,14 @@ pub fn build_config_with_runtime_ports(
         },
     });
 
+    // Collect all known host patterns from the routes BEFORE wrapping them
+    // in NonEmptyVec. These patterns are used as SNI filters on the TLS
+    // listeners so that we only terminate TLS (and potentially trigger ACME
+    // certificate issuance) for hostnames we actually have routes for.
+    // This prevents abuse where an attacker sends many unknown hostnames
+    // to exhaust ACME rate limits.
+    let all_sni_patterns = extract_sni_patterns(&http_routes);
+
     let http_routes = NonEmptyVec(http_routes);
 
     // Determine TLS cert mode from config
@@ -882,12 +916,24 @@ pub fn build_config_with_runtime_ports(
     };
 
     let listeners = if cruma_tunnel_only {
+        // Build an SNI filter from all known route host patterns so that
+        // only connections for hostnames we actually serve will trigger
+        // ACME certificate generation. Without this, an attacker could
+        // send arbitrary Host headers through the cruma tunnel and cause
+        // us to request certificates for them, exhausting ACME rate limits.
+        let sni = build_sni_filter(all_sni_patterns);
+        if sni.is_none() {
+            tracing::warn!(
+                "No SNI patterns available for cruma tunnel TLS listener — \
+                 all incoming TLS connections will be rejected"
+            );
+        }
         vec![Listener::Tls(TlsListener {
             port: non_zero_port(tls_port, "tls_port")?,
             routes: NonEmptyVec(vec![TlsRoute {
                 name: "tls-default".into(),
                 rule: TlsMatch {
-                    sni: None,
+                    sni,
                     // we are always using HTTP/1.1 and HTTP/2 for the proxy today
                     alpn: Some(vec![Alpn::H2, Alpn::Http11]),
                 },
@@ -939,11 +985,15 @@ pub fn build_config_with_runtime_ports(
             });
         }
 
-        // Self-signed catch-all (sni: None matches anything not caught above)
+        // Build an SNI filter for the self-signed route from the non-LE
+        // host patterns so that we don't generate self-signed certificates
+        // (or worse, ACME certificates if cert_mode is AcmeAlpn) for
+        // completely unknown hostnames.
+        let self_signed_sni = build_sni_filter(extract_sni_patterns(&self_signed_routes));
         tls_routes.push(TlsRoute {
             name: "tls-self-signed".into(),
             rule: TlsMatch {
-                sni: None,
+                sni: self_signed_sni,
                 alpn: Some(vec![Alpn::Http11, Alpn::H2]),
             },
             action: TlsAction::TerminateForHTTP {
