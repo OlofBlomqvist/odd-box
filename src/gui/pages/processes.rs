@@ -548,7 +548,11 @@ impl OddBoxGui {
         content.into()
     }
 
-    fn build_process_actions(&self, proc_name: &str, state: ProcState) -> Element<'_, Message> {
+    pub(in crate::gui) fn build_process_actions(
+        &self,
+        proc_name: &str,
+        state: ProcState,
+    ) -> Element<'_, Message> {
         let use_kde_buttons = self.use_kde_system_styles();
         let proc_name_start = proc_name.to_string();
         let proc_name_stop = proc_name.to_string();
