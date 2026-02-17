@@ -2597,6 +2597,10 @@ impl OddBoxGui {
                                         window::minimize(id, false), // Unminimize if minimized
                                         window::set_mode(id, window::Mode::Windowed),
                                         window::gain_focus(id),
+                                        window::request_user_attention(
+                                            id,
+                                            Some(window::UserAttention::Informational),
+                                        ),
                                     ]);
                                 } else {
                                     let (id, open_task) = window::open(make_window_settings());
