@@ -56,7 +56,6 @@ pub struct CachedRoute {
     pub hostname: String,
     pub backend: String,
     pub https_redirect: bool,
-    pub capture_subdomains: bool,
     pub enable_cruma: bool,
 }
 
@@ -212,7 +211,6 @@ pub async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
                 hostname: hostname.clone(),
                 backend: target.backend_id().to_string(),
                 https_redirect: target.redirect_to_https(),
-                capture_subdomains: target.capture_subdomains(),
                 enable_cruma: target.enable_cruma(),
             });
         }
@@ -228,7 +226,6 @@ pub async fn fetch_config(state: Arc<GlobalState>) -> CachedConfig {
                         hostname: hostname.clone(),
                         backend: target.backend_id().to_string(),
                         https_redirect: false,
-                        capture_subdomains: target.capture_subdomains(),
                         enable_cruma: target.enable_cruma(),
                     });
                 }

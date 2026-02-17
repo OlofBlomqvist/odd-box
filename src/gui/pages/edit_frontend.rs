@@ -4,12 +4,9 @@ use iced::widget::{
 };
 use iced::{Border, Color, Element, Length, Theme};
 
-use super::super::{BackendOption, KdeButtonRole, Message, OddBoxGui, scaled, text_size};
+use cruma_tunnels_lib::hostname::{HostnamePatternKind, classify_hostname_pattern};
 
-/// Returns true if the hostname uses cruma-specific patterns (@ or bare *).
-fn uses_cruma_pattern(hostname: &str) -> bool {
-    hostname.contains('@') || hostname == "*"
-}
+use super::super::{BackendOption, KdeButtonRole, Message, OddBoxGui, scaled, text_size};
 
 fn muted_text(theme: &Theme) -> iced::widget::text::Style {
     iced::widget::text::Style {
@@ -25,6 +22,10 @@ impl OddBoxGui {
         let hostname = self.edit_frontend_form.hostname.trim();
         let cruma_global = self.cached_config.cruma_globally_enabled;
         let cruma_on_route = self.edit_frontend_form.enable_cruma;
+
+        // Use the SDK to classify and validate the hostname pattern.
+        let assigned_fqdn: Option<String> = self.cached_config.cruma_assigned_domain.clone();
+        let pattern_info = classify_hostname_pattern(hostname, &assigned_fqdn);
 
         if hostname.is_empty() {
             errors.push(
@@ -54,30 +55,31 @@ impl OddBoxGui {
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
             );
-        } else if hostname.contains(' ') {
+        } else if !pattern_info.is_valid {
             errors.push(
-                text("Hostname must not contain spaces.")
+                text(format!("⚠ {}", pattern_info.explanation))
                     .size(text_size(12))
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
             );
-        } else if !hostname.chars().all(|c| {
-            c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' || c == '*' || c == '@'
-        }) {
-            errors.push(
-                text("Hostname contains invalid characters. Only letters, digits, hyphens, underscores, dots, * and @ are allowed.")
-                    .size(text_size(12))
-                    .color(Color::from_rgb(0.9, 0.3, 0.3))
-                    .into(),
+        } else if !hostname.is_empty() {
+            // Check if the pattern requires cruma but cruma is globally disabled
+            let needs_cruma = matches!(
+                pattern_info.kind,
+                HostnamePatternKind::DefaultRoute
+                    | HostnamePatternKind::SubLabel
+                    | HostnamePatternKind::WildcardAll
+                    | HostnamePatternKind::WildcardSubLabel
+                    | HostnamePatternKind::Pending
             );
-        } else if uses_cruma_pattern(hostname) && !cruma_global {
-            // Cruma-specific pattern used but cruma is globally disabled
-            warnings.push(
-                text("⚠ This hostname uses a cruma pattern (@ or *) but cruma is disabled in the global config. The pattern will not work until cruma is enabled.")
-                    .size(text_size(12))
-                    .color(Color::from_rgb(0.9, 0.7, 0.2))
-                    .into(),
-            );
+            if needs_cruma && !cruma_global {
+                warnings.push(
+                    text("⚠ This hostname pattern relies on a cruma tunnel domain but cruma is disabled in the global config. Enable cruma for it to work.")
+                        .size(text_size(12))
+                        .color(Color::from_rgb(0.9, 0.7, 0.2))
+                        .into(),
+                );
+            }
         }
 
         // Warn if "Enable Cruma" is checked on this route but cruma is globally disabled
@@ -102,14 +104,6 @@ impl OddBoxGui {
         {
             errors.push(
                 text("Selected backend does not exist.")
-                    .size(text_size(12))
-                    .color(Color::from_rgb(0.9, 0.3, 0.3))
-                    .into(),
-            );
-        }
-        if self.edit_frontend_form.capture_subdomains && self.edit_frontend_form.lets_encrypt {
-            errors.push(
-                text("LetsEncrypt cannot be used with capture subdomains.")
                     .size(text_size(12))
                     .color(Color::from_rgb(0.9, 0.3, 0.3))
                     .into(),
@@ -171,55 +165,103 @@ impl OddBoxGui {
                 .padding(scaled(8.0))
                 .width(Length::Fill);
 
-            // Build help text for hostname patterns based on cruma state
-            let pattern_help_lines: Vec<Element<'_, Message>> =
-                if self.cached_config.cruma_globally_enabled {
-                    vec![
-                        text("Hostname patterns (cruma enabled):")
-                            .size(text_size(11))
-                            .style(muted_text)
-                            .into(),
-                        text("  @  →  matches the assigned cruma domain")
-                            .size(text_size(11))
-                            .style(muted_text)
-                            .into(),
-                        text("  myapp  →  matches myapp and myapp.<cruma-domain>")
-                            .size(text_size(11))
-                            .style(muted_text)
-                            .into(),
-                        text("  host.example.com  →  exact FQDN (dot = full domain)")
-                            .size(text_size(11))
-                            .style(muted_text)
-                            .into(),
-                        text("  *  →  matches any domain")
-                            .size(text_size(11))
-                            .style(muted_text)
-                            .into(),
-                        text("  *.@  →  any subdomain of the cruma domain")
-                            .size(text_size(11))
-                            .style(muted_text)
-                            .into(),
-                        text("  example.@  →  example.<cruma-domain>")
-                            .size(text_size(11))
-                            .style(muted_text)
-                            .into(),
-                    ]
-                } else {
-                    vec![
-                        text("Hostname patterns:")
-                            .size(text_size(11))
-                            .style(muted_text)
-                            .into(),
-                        text("  example.local  →  exact hostname match")
-                            .size(text_size(11))
-                            .style(muted_text)
-                            .into(),
-                        text("  (Enable cruma globally for @/* pattern support)")
-                            .size(text_size(11))
-                            .style(muted_text)
-                            .into(),
-                    ]
-                };
+            // Classify the hostname pattern using the SDK inside the closure
+            // so all values are owned and satisfy the 'static bound.
+            let hostname = self.edit_frontend_form.hostname.trim();
+            let assigned_fqdn: Option<String> = self.cached_config.cruma_assigned_domain.clone();
+            let pattern_info = classify_hostname_pattern(hostname, &assigned_fqdn);
+
+            // Build help text for hostname patterns.
+            // Show cruma-specific patterns only when cruma is enabled on
+            // this particular route; otherwise show standard patterns.
+            let mut pattern_help_lines: Vec<Element<'_, Message>> = Vec::new();
+
+            if self.edit_frontend_form.enable_cruma {
+                pattern_help_lines.push(
+                    text("Hostname patterns (cruma):")
+                        .size(text_size(11))
+                        .style(muted_text)
+                        .into(),
+                );
+                pattern_help_lines.push(
+                    text("  @ or empty  →  default route (assigned cruma domain)")
+                        .size(text_size(11))
+                        .style(muted_text)
+                        .into(),
+                );
+                pattern_help_lines.push(
+                    text("  myapp  →  myapp.<cruma-domain>")
+                        .size(text_size(11))
+                        .style(muted_text)
+                        .into(),
+                );
+                pattern_help_lines.push(
+                    text("  host.example.com  →  exact FQDN (dot = full domain)")
+                        .size(text_size(11))
+                        .style(muted_text)
+                        .into(),
+                );
+                pattern_help_lines.push(
+                    text("  *  →  matches any hostname")
+                        .size(text_size(11))
+                        .style(muted_text)
+                        .into(),
+                );
+                pattern_help_lines.push(
+                    text("  *.example.com  →  any subdomain of example.com")
+                        .size(text_size(11))
+                        .style(muted_text)
+                        .into(),
+                );
+                pattern_help_lines.push(
+                    text("  *.sub  →  any subdomain of sub.<cruma-domain>")
+                        .size(text_size(11))
+                        .style(muted_text)
+                        .into(),
+                );
+                pattern_help_lines.push(
+                    text("  app-*, *-staging  →  glob / wildcard label patterns")
+                        .size(text_size(11))
+                        .style(muted_text)
+                        .into(),
+                );
+            } else {
+                pattern_help_lines.push(
+                    text("Hostname patterns:")
+                        .size(text_size(11))
+                        .style(muted_text)
+                        .into(),
+                );
+                pattern_help_lines.push(
+                    text("  example.local  →  exact hostname match")
+                        .size(text_size(11))
+                        .style(muted_text)
+                        .into(),
+                );
+                pattern_help_lines.push(
+                    text("  *.example.com  →  wildcard subdomain match")
+                        .size(text_size(11))
+                        .style(muted_text)
+                        .into(),
+                );
+                pattern_help_lines.push(
+                    text("  app-*, *-staging  →  glob / wildcard label patterns")
+                        .size(text_size(11))
+                        .style(muted_text)
+                        .into(),
+                );
+            }
+
+            // Show the SDK classification for the current hostname when non-empty
+            if !hostname.is_empty() && pattern_info.is_valid {
+                pattern_help_lines.push(
+                    text(format!("  ▸  {}", pattern_info.explanation))
+                        .size(text_size(11))
+                        .color(Color::from_rgb(0.4, 0.75, 0.95))
+                        .into(),
+                );
+            }
+
             let pattern_help_col =
                 iced::widget::Column::with_children(pattern_help_lines).spacing(scaled(2.0));
 
@@ -262,15 +304,6 @@ impl OddBoxGui {
             .padding(scaled(8.0))
             .width(Length::Fill);
 
-            let capture_toggle = checkbox(self.edit_frontend_form.capture_subdomains)
-                .label("Capture subdomains")
-                .on_toggle(Message::EditFrontendCaptureSubdomainsToggled);
-            let capture_help = text("Match *.example.com as well as the root host")
-                .size(text_size(12))
-                .wrapping(Wrapping::Word)
-                .width(Length::Fill)
-                .style(muted_text);
-
             let forward_toggle = checkbox(self.edit_frontend_form.forward_subdomains)
                 .label("Forward subdomains")
                 .on_toggle(Message::EditFrontendForwardSubdomainsToggled);
@@ -308,46 +341,39 @@ impl OddBoxGui {
                 .style(muted_text);
 
             // Show the resolved cruma FQDN(s) when cruma is enabled on this
-            // route and the tunnel has an assigned domain.
+            // route, using the SDK classification for display.
             let cruma_fqdn_info: Option<Element<'_, Message>> =
-                if self.edit_frontend_form.enable_cruma {
-                    if let Some(ref domain) = self.cached_config.cruma_assigned_domain {
-                        let host = self.edit_frontend_form.hostname.trim();
-                        let resolved = if host == "@" || host.is_empty() {
-                            // @ resolves to the bare cruma domain
-                            format!("👻 {}", domain)
-                        } else if host == "*" {
-                            format!("👻 *  (any domain via cruma)")
-                        } else if host.contains('@') {
-                            // e.g. "*.@" or "example.@"
-                            let expanded = host.replace('@', domain);
-                            format!("👻 {}", expanded)
-                        } else if host.contains('.') {
-                            // FQDN — used as-is
-                            format!("👻 {} (FQDN)", host)
-                        } else {
-                            // single label — matches both bare and under cruma domain
-                            format!("👻 {} , {}.{}", host, host, domain)
-                        };
-                        Some(
-                            text(resolved)
+                if self.edit_frontend_form.enable_cruma && !hostname.is_empty() {
+                    match pattern_info.kind {
+                        HostnamePatternKind::Pending => Some(
+                            text(format!(
+                                "👻 {} — waiting for domain assignment…",
+                                pattern_info.display_label
+                            ))
+                            .size(text_size(12))
+                            .wrapping(Wrapping::WordOrGlyph)
+                            .width(Length::Fill)
+                            .style(muted_text)
+                            .into(),
+                        ),
+                        HostnamePatternKind::Invalid => None,
+                        _ if assigned_fqdn.is_some() => Some(
+                            text(format!("👻 {}", pattern_info.display_label))
                                 .size(text_size(12))
                                 .wrapping(Wrapping::WordOrGlyph)
                                 .width(Length::Fill)
                                 .color(Color::from_rgb(0.4, 0.75, 0.95))
                                 .into(),
-                        )
-                    } else if self.cached_config.cruma_globally_enabled {
-                        Some(
+                        ),
+                        _ if self.cached_config.cruma_globally_enabled => Some(
                             text("👻 Waiting for cruma domain assignment…")
                                 .size(text_size(12))
                                 .wrapping(Wrapping::WordOrGlyph)
                                 .width(Length::Fill)
                                 .style(muted_text)
                                 .into(),
-                        )
-                    } else {
-                        None
+                        ),
+                        _ => None,
                     }
                 } else {
                     None
@@ -366,8 +392,6 @@ impl OddBoxGui {
 
             let mut options = column![
                 text("Options").size(text_size(14)).style(muted_text),
-                capture_toggle,
-                capture_help,
                 forward_toggle,
                 forward_help,
                 redirect_toggle,

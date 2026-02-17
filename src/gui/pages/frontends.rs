@@ -2,6 +2,8 @@ use iced::Color;
 use iced::Element;
 use iced::widget::{button, column, row, text, text_input};
 
+use cruma_tunnels_lib::hostname::{HostnamePatternKind, classify_hostname_pattern};
+
 use crate::gui::components::{
     Column as TableColumn, Table,
     table::{bool_cell, text_cell, wrap_text_cell},
@@ -92,7 +94,6 @@ impl OddBoxGui {
             TableColumn::portion("Hostname", 3),
             TableColumn::portion("Backend", 2),
             TableColumn::fixed("HTTPS Redirect", 120.0),
-            TableColumn::fixed("Subdomains", 100.0),
             TableColumn::fixed("Cruma", 60.0),
         ];
 
@@ -140,30 +141,24 @@ impl OddBoxGui {
 
             // Mark cruma-enabled routes with a ghost emoji when cruma
             // is also enabled in the global configuration, and show
-            // the resolved FQDN when a cruma domain is assigned.
+            // the resolved FQDN using the SDK's classify_hostname_pattern.
             let hostname_display = if cruma_global && route.enable_cruma {
-                if let Some(domain) = cruma_domain {
-                    let host = route.hostname.trim();
-                    let resolved = if host == "@" || host.is_empty() {
-                        domain.to_string()
-                    } else if host == "*" {
-                        "*".to_string()
-                    } else if host.contains('@') {
-                        host.replace('@', domain)
-                    } else if host.contains('.') {
-                        // FQDN — resolved is same as hostname, no need to repeat
-                        host.to_string()
-                    } else {
-                        format!("{}.{}", host, domain)
-                    };
-                    // Only show the resolved domain in parens when it differs
-                    if resolved == route.hostname {
-                        format!("👻 {}", route.hostname)
-                    } else {
-                        format!("👻 {} ({})", route.hostname, resolved)
+                let assigned = cruma_domain.map(|d| d.to_string());
+                let info = classify_hostname_pattern(&route.hostname, &assigned);
+                match info.kind {
+                    HostnamePatternKind::Invalid => {
+                        format!("⚠ {} — {}", route.hostname, info.explanation)
                     }
-                } else {
-                    format!("👻 {}", route.hostname)
+                    HostnamePatternKind::Pending => {
+                        format!("👻 {}", info.display_label)
+                    }
+                    _ => {
+                        if info.display_label == route.hostname {
+                            format!("👻 {}", route.hostname)
+                        } else {
+                            format!("👻 {} ({})", route.hostname, info.display_label)
+                        }
+                    }
                 }
             } else {
                 route.hostname.clone()
@@ -174,7 +169,6 @@ impl OddBoxGui {
                     wrap_text_cell(&hostname_display),
                     backend_cell,
                     bool_cell(route.https_redirect),
-                    bool_cell(route.capture_subdomains),
                     bool_cell(route.enable_cruma),
                 ],
                 Message::OpenEditFrontend(route.hostname.clone()),

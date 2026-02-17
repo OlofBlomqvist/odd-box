@@ -15,17 +15,23 @@ admin_api_password: null
 
 backends:
 
-  BE5:
-    type: remote
+  BE2:
+    type: static
+    dir: $cfg_dir/temp
+    index: index.html
+    list_dir: true
+    render_markdown: true
+    cache_max_age: 3600
+    spa_fallback: false
 
-    endpoints:
-
-      - addr: lobste.rs
-        port: 443
-
-    protocol: h1
-    https: true
-    keep_original_host_header: false
+  BE14:
+    type: static
+    dir: $cfg_dir/docs/book
+    index: index.html
+    list_dir: true
+    render_markdown: true
+    cache_max_age: null
+    spa_fallback: false
 
   kalle-kula:
     type: process
@@ -40,6 +46,18 @@ backends:
     exclude_from_start_all: true
     log_level: null
     log_format: null
+
+  BE5:
+    type: remote
+
+    endpoints:
+
+      - addr: lobste.rs
+        port: 443
+
+    protocol: h1
+    https: true
+    keep_original_host_header: false
 
   hello-world:
     type: static
@@ -69,24 +87,6 @@ backends:
     log_level: null
     log_format: null
 
-  BE2:
-    type: static
-    dir: $cfg_dir/temp
-    index: index.html
-    list_dir: true
-    render_markdown: true
-    cache_max_age: 3600
-    spa_fallback: false
-
-  BE14:
-    type: static
-    dir: $cfg_dir/docs/book
-    index: index.html
-    list_dir: true
-    render_markdown: true
-    cache_max_age: null
-    spa_fallback: false
-
 frontends:
 
   http:
@@ -94,28 +94,26 @@ frontends:
 
     routes:
 
-      "@":
+      "*.twnet.se":
         backend: hello-world
-        capture_subdomains: false
         forward_subdomains: false
         redirect_to_https: true
         lets_encrypt: true
         enable_cruma: true
 
-      hello-hi: BE2
       C.localhost: BE2
-      C3: BE2
 
       images1.local:
         backend: BE2
-        capture_subdomains: false
         forward_subdomains: false
         redirect_to_https: true
         lets_encrypt: false
         enable_cruma: false
 
-      test.localhost: hello-world
       B2.localhost: BE14
+      C3: BE2
+      test.localhost: hello-world
+      hello-hi: BE2
       odd-box-docs.localhost: BE6
 
   https:

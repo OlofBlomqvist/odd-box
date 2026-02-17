@@ -371,8 +371,9 @@ pub struct DetailedRoute {
     /// Backend to route to
     pub backend: String,
 
-    /// Capture subdomains (*.example.com)
-    #[serde(default)]
+    /// **Deprecated** – use hostname patterns (`*.example.com`) instead.
+    /// Kept only for backward-compatible deserialization of old config files.
+    #[serde(default, skip_serializing)]
     pub capture_subdomains: bool,
 
     /// Forward subdomain to backend (test.example.com -> test.backend)
@@ -492,12 +493,12 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                 let redirect_to_https = proc.redirect_to_https.unwrap_or(false);
                 let lets_encrypt = proc.enable_lets_encrypt.unwrap_or(false);
 
-                if capture_subdomains || forward_subdomains || redirect_to_https || lets_encrypt {
+                if forward_subdomains || redirect_to_https || lets_encrypt {
                     routes.insert(
-                        proc.host_name,
+                        proc.host_name.clone(),
                         RouteTarget::Detailed(DetailedRoute {
-                            backend: backend_id,
-                            capture_subdomains,
+                            backend: backend_id.clone(),
+                            capture_subdomains: false,
                             forward_subdomains,
                             redirect_to_https,
                             lets_encrypt,
@@ -505,7 +506,32 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                         }),
                     );
                 } else {
-                    routes.insert(proc.host_name, RouteTarget::Simple(backend_id));
+                    routes.insert(
+                        proc.host_name.clone(),
+                        RouteTarget::Simple(backend_id.clone()),
+                    );
+                }
+
+                // Migrate capture_subdomains: add a *.hostname companion
+                // route so subdomain matching is handled by hostname
+                // pattern syntax instead of the deprecated flag.
+                if capture_subdomains {
+                    let wildcard_host = format!("*.{}", proc.host_name);
+                    if forward_subdomains || redirect_to_https || lets_encrypt {
+                        routes.insert(
+                            wildcard_host,
+                            RouteTarget::Detailed(DetailedRoute {
+                                backend: backend_id,
+                                capture_subdomains: false,
+                                forward_subdomains,
+                                redirect_to_https,
+                                lets_encrypt: false, // wildcard certs not supported
+                                enable_cruma: false,
+                            }),
+                        );
+                    } else {
+                        routes.insert(wildcard_host, RouteTarget::Simple(backend_id));
+                    }
                 }
             }
         }
@@ -561,12 +587,12 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                 let redirect_to_https = remote.redirect_to_https.unwrap_or(false);
                 let lets_encrypt = remote.enable_lets_encrypt.unwrap_or(false);
 
-                if capture_subdomains || forward_subdomains || redirect_to_https || lets_encrypt {
+                if forward_subdomains || redirect_to_https || lets_encrypt {
                     routes.insert(
-                        remote.host_name,
+                        remote.host_name.clone(),
                         RouteTarget::Detailed(DetailedRoute {
-                            backend: backend_id,
-                            capture_subdomains,
+                            backend: backend_id.clone(),
+                            capture_subdomains: false,
                             forward_subdomains,
                             redirect_to_https,
                             lets_encrypt,
@@ -574,7 +600,30 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                         }),
                     );
                 } else {
-                    routes.insert(remote.host_name, RouteTarget::Simple(backend_id));
+                    routes.insert(
+                        remote.host_name.clone(),
+                        RouteTarget::Simple(backend_id.clone()),
+                    );
+                }
+
+                // Migrate capture_subdomains: add a *.hostname companion route
+                if capture_subdomains {
+                    let wildcard_host = format!("*.{}", remote.host_name);
+                    if forward_subdomains || redirect_to_https || lets_encrypt {
+                        routes.insert(
+                            wildcard_host,
+                            RouteTarget::Detailed(DetailedRoute {
+                                backend: backend_id,
+                                capture_subdomains: false,
+                                forward_subdomains,
+                                redirect_to_https,
+                                lets_encrypt: false,
+                                enable_cruma: false,
+                            }),
+                        );
+                    } else {
+                        routes.insert(wildcard_host, RouteTarget::Simple(backend_id));
+                    }
                 }
             }
         }
@@ -601,12 +650,12 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                 let redirect_to_https = dir.redirect_to_https.unwrap_or(false);
                 let lets_encrypt = dir.enable_lets_encrypt.unwrap_or(false);
 
-                if capture_subdomains || redirect_to_https || lets_encrypt {
+                if redirect_to_https || lets_encrypt {
                     routes.insert(
-                        dir.host_name,
+                        dir.host_name.clone(),
                         RouteTarget::Detailed(DetailedRoute {
-                            backend: backend_id,
-                            capture_subdomains,
+                            backend: backend_id.clone(),
+                            capture_subdomains: false,
                             forward_subdomains: false,
                             redirect_to_https,
                             lets_encrypt,
@@ -614,7 +663,30 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                         }),
                     );
                 } else {
-                    routes.insert(dir.host_name, RouteTarget::Simple(backend_id));
+                    routes.insert(
+                        dir.host_name.clone(),
+                        RouteTarget::Simple(backend_id.clone()),
+                    );
+                }
+
+                // Migrate capture_subdomains: add a *.hostname companion route
+                if capture_subdomains {
+                    let wildcard_host = format!("*.{}", dir.host_name);
+                    if redirect_to_https || lets_encrypt {
+                        routes.insert(
+                            wildcard_host,
+                            RouteTarget::Detailed(DetailedRoute {
+                                backend: backend_id,
+                                capture_subdomains: false,
+                                forward_subdomains: false,
+                                redirect_to_https,
+                                lets_encrypt: false,
+                                enable_cruma: false,
+                            }),
+                        );
+                    } else {
+                        routes.insert(wildcard_host, RouteTarget::Simple(backend_id));
+                    }
                 }
             }
         }
@@ -825,7 +897,18 @@ impl OddBoxV4Config {
             "docs.local".to_string(),
             RouteTarget::Detailed(DetailedRoute {
                 backend: "docs".to_string(),
-                capture_subdomains: true,
+                capture_subdomains: false,
+                forward_subdomains: false,
+                redirect_to_https: true,
+                lets_encrypt: false,
+                enable_cruma: false,
+            }),
+        );
+        routes.insert(
+            "*.docs.local".to_string(),
+            RouteTarget::Detailed(DetailedRoute {
+                backend: "docs".to_string(),
+                capture_subdomains: false,
                 forward_subdomains: false,
                 redirect_to_https: true,
                 lets_encrypt: false,

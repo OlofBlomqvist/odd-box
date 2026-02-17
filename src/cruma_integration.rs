@@ -7,6 +7,7 @@ use anyhow::{Context, bail};
 use bytes::Bytes;
 use cruma_proxy_lib::hyper::body::Frame;
 use cruma_proxy_lib::types::*;
+use cruma_tunnels_lib::hostname::HostName;
 use http_body_util::StreamBody;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -140,6 +141,10 @@ fn render_offline_html(backend_id: &str, status: &str, host: &str) -> String {
 
 /// Look up the backend_id for a given request host from the config.
 /// This is called dynamically on each request to ensure fresh data.
+///
+/// Uses [`HostName::to_host_pattern`] so that hostname pattern syntax
+/// (`*.example.com`, `app-*`, `*`, etc.) is honoured consistently with
+/// the proxy routing layer.
 fn lookup_backend_for_host(cfg: &ConfigWrapper, request_host: &str) -> Option<String> {
     // Strip port if present
     let host = request_host
@@ -151,17 +156,8 @@ fn lookup_backend_for_host(cfg: &ConfigWrapper, request_host: &str) -> Option<St
     // Check HTTP frontend routes
     if let Some(http_frontend) = &cfg.frontends.http {
         for (route_host, target) in &http_frontend.routes {
-            let route_host_lower = route_host.to_lowercase();
-            if target.capture_subdomains() {
-                // Base domain matching
-                if host == route_host_lower || host.ends_with(&format!(".{}", route_host_lower)) {
-                    return Some(target.backend_id().to_string());
-                }
-            } else {
-                // Exact match
-                if host == route_host_lower {
-                    return Some(target.backend_id().to_string());
-                }
+            if host_pattern_matches(route_host, target.capture_subdomains(), &host) {
+                return Some(target.backend_id().to_string());
             }
         }
     }
@@ -171,17 +167,8 @@ fn lookup_backend_for_host(cfg: &ConfigWrapper, request_host: &str) -> Option<St
         if let Some(routes) = &https_frontend.routes {
             if let v4::HttpsRoutes::Explicit(route_map) = routes {
                 for (route_host, target) in route_map {
-                    let route_host_lower = route_host.to_lowercase();
-                    if target.capture_subdomains() {
-                        if host == route_host_lower
-                            || host.ends_with(&format!(".{}", route_host_lower))
-                        {
-                            return Some(target.backend_id().to_string());
-                        }
-                    } else {
-                        if host == route_host_lower {
-                            return Some(target.backend_id().to_string());
-                        }
+                    if host_pattern_matches(route_host, target.capture_subdomains(), &host) {
+                        return Some(target.backend_id().to_string());
                     }
                 }
             }
@@ -324,16 +311,92 @@ fn non_zero_port(port: u16, label: &str) -> anyhow::Result<NonZeroU16> {
     NonZeroU16::new(port).with_context(|| format!("{label} must be non-zero"))
 }
 
-fn host_pattern(host: &str, capture_subdomains: bool) -> HostPattern {
-    if capture_subdomains {
-        HostPattern::Base {
-            value: host.to_string(),
-        }
-    } else {
-        HostPattern::Exact {
-            value: host.to_string(),
+/// Build the set of [`HostPattern`]s for a route.
+///
+/// Uses [`HostName::to_host_pattern`] from the cruma SDK so that the full
+/// hostname-pattern syntax (`*.example.com`, `app-*`, `*`, etc.) is
+/// honoured for **all** routes — not just cruma tunnel routes.
+///
+/// When the legacy `capture_subdomains` flag is set and the hostname does
+/// not already contain a wildcard, an additional `*.host` deep-glob
+/// pattern is emitted to preserve backward-compatible behaviour.
+fn host_patterns_for_route(
+    host: &str,
+    capture_subdomains: bool,
+    cruma_assigned_domain: Option<&str>,
+) -> Vec<HostPattern> {
+    let hn = HostName::new(host);
+    // For local routing we pass &None – single-label expansion via an
+    // assigned FQDN only happens for the cruma-domain companion patterns.
+    let mut pats = vec![hn.to_host_pattern(&None)];
+
+    // Legacy backward-compat: capture_subdomains adds a wildcard pattern
+    // so that `example.com` + capture_subdomains matches both `example.com`
+    // and `*.example.com` (equivalent to the old `Base` variant).
+    if capture_subdomains && !host.contains('*') {
+        pats.push(HostName::new(format!("*.{}", host)).to_host_pattern(&None));
+    }
+
+    // When a cruma domain is assigned, also match
+    // `<host>.<cruma_domain>` so that requests arriving through the
+    // tunnel are routed correctly.
+    if let Some(cruma_domain) = cruma_assigned_domain {
+        let cruma_host = format!("{}.{}", host, cruma_domain);
+        pats.push(HostName::new(&cruma_host).to_host_pattern(&None));
+
+        if capture_subdomains && !host.contains('*') {
+            pats.push(HostName::new(format!("*.{}.{}", host, cruma_domain)).to_host_pattern(&None));
         }
     }
+
+    pats
+}
+
+/// Check whether `request_host` matches the pattern described by the route's
+/// hostname key, taking the legacy `capture_subdomains` flag into account.
+///
+/// This mirrors the logic used by [`host_patterns_for_route`] so that the
+/// dynamic backend-lookup path stays consistent with the proxy routing layer.
+fn host_pattern_matches(route_host: &str, capture_subdomains: bool, request_host: &str) -> bool {
+    let patterns = host_patterns_for_route(route_host, capture_subdomains, None);
+    for pat in &patterns {
+        match pat {
+            HostPattern::Exact { value } => {
+                if request_host.eq_ignore_ascii_case(value) {
+                    return true;
+                }
+            }
+            HostPattern::Base { value } => {
+                let value_lower = value.to_lowercase();
+                if request_host == value_lower
+                    || request_host.ends_with(&format!(".{}", value_lower))
+                {
+                    return true;
+                }
+            }
+            HostPattern::DeepGlob { value } => {
+                let suffix = format!(".{}", value.to_lowercase());
+                if request_host.ends_with(&suffix) {
+                    return true;
+                }
+            }
+            HostPattern::Glob { value } => {
+                // Simple glob: split on '*' and check prefix/suffix.
+                // Handles patterns like "app-*" and "*-staging".
+                let value_lower = value.to_lowercase();
+                if let Some((prefix, suffix)) = value_lower.split_once('*') {
+                    if request_host.starts_with(prefix) && request_host.ends_with(suffix) {
+                        return true;
+                    }
+                }
+            }
+            HostPattern::Any => {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn protocol_to_upstream(protocol: &v4::Protocol) -> HttpUpstreamProto {
@@ -552,29 +615,17 @@ pub fn build_config_with_runtime_ports(
             let backend_id_str = target.backend_id();
             let capture_subdomains = target.capture_subdomains();
 
+            // Build the full set of host patterns using the SDK's
+            // pattern syntax (supports *.example.com, app-*, *, etc.)
+            // plus optional cruma-domain expansion.
+            let host_patterns =
+                host_patterns_for_route(host, capture_subdomains, cruma_assigned_domain);
+
             // Track hosts that have Let's Encrypt enabled
             if target.lets_encrypt() {
                 lets_encrypt_hosts.insert(host.clone());
-                lets_encrypt_host_patterns.push(host_pattern(host, capture_subdomains));
+                lets_encrypt_host_patterns.push(HostName::new(host).to_host_pattern(&None));
             }
-
-            // Build an extended set of host patterns when a cruma domain is
-            // assigned so that `<host>.<cruma_domain>` also matches.
-            let host_patterns = {
-                let mut pats = vec![host_pattern(host, capture_subdomains)];
-                if let Some(cruma_domain) = cruma_assigned_domain {
-                    if capture_subdomains {
-                        pats.push(HostPattern::Base {
-                            value: format!("{}.{}", host, cruma_domain),
-                        });
-                    } else {
-                        pats.push(HostPattern::Exact {
-                            value: format!("{}.{}", host, cruma_domain),
-                        });
-                    }
-                }
-                pats
-            };
 
             // Look up the backend
             if let Some(backend) = cfg.backends.get(backend_id_str) {
@@ -783,7 +834,7 @@ pub fn build_config_with_runtime_ports(
         web_backends.insert(backend_id.clone(), backend);
         http_routes.push(http_route(
             host.clone(),
-            host_pattern(&host, cont.capture_subdomains.unwrap_or(false)),
+            HostName::new(&host).to_host_pattern(&None),
             backend_id,
         ));
     }
@@ -800,7 +851,7 @@ pub fn build_config_with_runtime_ports(
         // TODO: route admin API/UI through cruma backends rather than hardcoded 501.
         http_routes.push(respond_route(
             admin_host.clone(),
-            host_pattern(&admin_host, false),
+            HostName::new(&admin_host).to_host_pattern(&None),
             501,
             "admin API not yet wired through cruma proxy",
         ));

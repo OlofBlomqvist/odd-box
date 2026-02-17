@@ -914,7 +914,7 @@ pub enum Message {
     EditFrontendLoaded(EditFrontendForm),
     EditFrontendHostChanged(String),
     EditFrontendBackendChanged(BackendOption),
-    EditFrontendCaptureSubdomainsToggled(bool),
+
     EditFrontendForwardSubdomainsToggled(bool),
     EditFrontendRedirectHttpsToggled(bool),
     EditFrontendLetsEncryptToggled(bool),
@@ -1020,7 +1020,7 @@ pub enum CrumaAuthMode {
 pub struct EditFrontendForm {
     pub hostname: String,
     pub backend: String,
-    pub capture_subdomains: bool,
+
     pub forward_subdomains: bool,
     pub redirect_to_https: bool,
     pub lets_encrypt: bool,
@@ -1306,7 +1306,7 @@ async fn load_frontend_form(state: Arc<GlobalState>, hostname: String) -> EditFr
             }
             v4::RouteTarget::Detailed(d) => {
                 form.backend = d.backend.clone();
-                form.capture_subdomains = d.capture_subdomains;
+
                 form.forward_subdomains = d.forward_subdomains;
                 form.redirect_to_https = d.redirect_to_https;
                 form.lets_encrypt = d.lets_encrypt;
@@ -1331,11 +1331,6 @@ async fn save_frontend_form(
     if form.backend.trim().is_empty() {
         return Err("Backend is required.".to_string());
     }
-    if form.capture_subdomains && form.lets_encrypt {
-        return Err(
-            "LetsEncrypt cannot be enabled when capture subdomains is enabled.".to_string(),
-        );
-    }
 
     let mut guard = (*state.config.load_full()).clone();
     if original_host.is_none() {
@@ -1356,15 +1351,14 @@ async fn save_frontend_form(
         return Err(format!("Backend '{}' does not exist.", form.backend));
     }
 
-    let target = if form.capture_subdomains
-        || form.forward_subdomains
+    let target = if form.forward_subdomains
         || form.redirect_to_https
         || form.lets_encrypt
         || form.enable_cruma
     {
         v4::RouteTarget::Detailed(v4::DetailedRoute {
             backend: form.backend.clone(),
-            capture_subdomains: form.capture_subdomains,
+            capture_subdomains: false,
             forward_subdomains: form.forward_subdomains,
             redirect_to_https: form.redirect_to_https,
             lets_encrypt: form.lets_encrypt,
@@ -3116,9 +3110,7 @@ impl OddBoxGui {
             Message::EditFrontendBackendChanged(value) => {
                 self.edit_frontend_form.backend = value.id;
             }
-            Message::EditFrontendCaptureSubdomainsToggled(value) => {
-                self.edit_frontend_form.capture_subdomains = value;
-            }
+
             Message::EditFrontendForwardSubdomainsToggled(value) => {
                 self.edit_frontend_form.forward_subdomains = value;
             }

@@ -1425,6 +1425,7 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "idna 1.1.0",
+ "image",
  "imbl",
  "instant-acme",
  "mime_guess",

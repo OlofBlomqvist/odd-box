@@ -5,6 +5,8 @@ use iced::widget::{
 };
 use iced::{Alignment, Border, Color, Element, Length, Padding, Size, Theme};
 
+use cruma_tunnels_lib::hostname::{HostnamePatternKind, classify_hostname_pattern};
+
 use crate::global_state::ProcState;
 
 use super::super::{Message, OddBoxGui};
@@ -1204,25 +1206,21 @@ impl OddBoxGui {
                         let mut subtitle = subtitle_for_backend(&route.backend, self);
 
                         // Append the resolved cruma FQDN to the subtitle when
-                        // cruma is globally enabled and this route opts in.
+                        // cruma is globally enabled and this route opts in,
+                        // using the SDK's classify_hostname_pattern.
                         if cruma_global && route.enable_cruma {
-                            if let Some(domain) = cruma_domain {
-                                let host = route.hostname.trim();
-                                let resolved = if host == "@" || host.is_empty() {
-                                    domain.to_string()
-                                } else if host == "*" {
-                                    "*".to_string()
-                                } else if host.contains('@') {
-                                    host.replace('@', domain)
-                                } else if host.contains('.') {
-                                    host.to_string()
-                                } else {
-                                    format!("{}.{}", host, domain)
-                                };
-                                // Only append the resolved domain when it differs
-                                // from the hostname to avoid redundant display.
-                                if resolved != host {
-                                    subtitle = format!("{} · 👻 {}", subtitle, resolved);
+                            let assigned = cruma_domain.map(|d| d.to_string());
+                            let info = classify_hostname_pattern(&route.hostname, &assigned);
+                            match info.kind {
+                                HostnamePatternKind::Invalid => {}
+                                HostnamePatternKind::Pending => {
+                                    subtitle = format!("{} · 👻 {}", subtitle, info.display_label);
+                                }
+                                _ => {
+                                    let host = route.hostname.trim();
+                                    if info.display_label != host {
+                                        subtitle = format!("{} · 👻 {}", subtitle, info.display_label);
+                                    }
                                 }
                             }
                         }

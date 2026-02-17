@@ -422,16 +422,6 @@ impl ConfigWrapper {
                     .entry(host.clone())
                     .and_modify(|count| *count += 1)
                     .or_insert(1);
-
-                // Check Let's Encrypt + capture_subdomains conflicts
-                if let v4::RouteTarget::Detailed(d) = target {
-                    if d.lets_encrypt && d.capture_subdomains {
-                        anyhow::bail!(
-                            "Invalid configuration for route '{}'. LetsEncrypt cannot be enabled when capture_subdomains is enabled as odd-box does not yet support wildcard certificates",
-                            host
-                        );
-                    }
-                }
             }
         }
 
