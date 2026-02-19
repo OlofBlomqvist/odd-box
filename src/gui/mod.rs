@@ -1550,8 +1550,6 @@ async fn run_self_update(
 /// This is used after env var changes to ensure the process picks up new values.
 /// Note: This function bridges from iced's smol runtime to tokio.
 fn restart_process_backend_sync(state: &Arc<GlobalState>, backend_id: &str) {
-    use tokio_util::sync::CancellationToken;
-
     let handle = state.tokio_handle.clone();
     let config = state.config.load_full();
 
@@ -1571,25 +1569,16 @@ fn restart_process_backend_sync(state: &Arc<GlobalState>, backend_id: &str) {
     }
     state.process_registry.cleanup_finished();
 
-    // Resolve and spawn with fresh config
+    // Resolve and spawn with fresh config via cruma-proc-host
     match config.resolve_process_backend(backend_id, &proc) {
         Ok(resolved) => {
-            let token = CancellationToken::new();
-            let enabled = was_enabled && resolved.auto_start.unwrap_or(config.auto_start);
-            state.process_registry.register_host(
-                backend_id.to_string(),
-                token.clone(),
-                crate::global_state::ProcState::Stopped,
-                enabled,
-                resolved.port,
+            let mut spec = crate::process_hosting::spec_from_resolved(
+                &resolved,
+                config.auto_start,
             );
-            // Spawn on tokio runtime
-            handle.spawn(crate::proc_host::host(
-                resolved,
-                state.process_registry.clone(),
-                state.clone(),
-                token,
-            ));
+            // Preserve the enabled state from before restart
+            spec.enabled = was_enabled && resolved.auto_start.unwrap_or(config.auto_start);
+            state.process_registry.start_hosted_process(spec);
         }
         Err(e) => {
             tracing::error!("Failed to restart process {}: {:?}", backend_id, e);

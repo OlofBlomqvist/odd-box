@@ -15,6 +15,41 @@ admin_api_password: null
 
 backends:
 
+  hello-world:
+    type: static
+    dir: /tmp/www
+    index: index.html
+    list_dir: false
+    render_markdown: false
+    cache_max_age: null
+    spa_fallback: false
+
+  BE5:
+    type: remote
+
+    endpoints:
+
+      - addr: lobste.rs
+        port: 443
+
+    protocol: h1
+    https: true
+    keep_original_host_header: false
+
+  kalle-kula:
+    type: process
+    bin: test
+    args: []
+    dir: null
+    env: {}
+    protocol: h1
+    https: false
+    port: null
+    auto_start: false
+    exclude_from_start_all: true
+    log_level: Trace
+    log_format: null
+
   BE2:
     type: static
     dir: $cfg_dir/temp
@@ -30,41 +65,6 @@ backends:
     index: index.html
     list_dir: true
     render_markdown: true
-    cache_max_age: null
-    spa_fallback: false
-
-  kalle-kula:
-    type: process
-    bin: test
-    args: []
-    dir: null
-    env: {}
-    protocol: h1
-    https: false
-    port: null
-    auto_start: false
-    exclude_from_start_all: true
-    log_level: null
-    log_format: null
-
-  BE5:
-    type: remote
-
-    endpoints:
-
-      - addr: lobste.rs
-        port: 443
-
-    protocol: h1
-    https: true
-    keep_original_host_header: false
-
-  hello-world:
-    type: static
-    dir: /tmp/www
-    index: index.html
-    list_dir: false
-    render_markdown: false
     cache_max_age: null
     spa_fallback: false
 
@@ -93,6 +93,7 @@ frontends:
     port: 80
 
     routes:
+      C.localhost: BE2
 
       "*.twnet.se":
         backend: hello-world
@@ -101,7 +102,11 @@ frontends:
         lets_encrypt: true
         enable_cruma: true
 
-      C.localhost: BE2
+      hello-hi: BE2
+      B2.localhost: BE14
+      odd-box-docs.localhost: BE6
+      C3: BE2
+      test.localhost: hello-world
 
       images1.local:
         backend: BE2
@@ -109,12 +114,6 @@ frontends:
         redirect_to_https: true
         lets_encrypt: false
         enable_cruma: false
-
-      B2.localhost: BE14
-      C3: BE2
-      test.localhost: hello-world
-      hello-hi: BE2
-      odd-box-docs.localhost: BE6
 
   https:
     port: 443

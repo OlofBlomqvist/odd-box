@@ -3663,7 +3663,7 @@ fn build_tui_env_filter(log_level: LogLevel) -> EnvFilter {
         );
     }
     what = what.add_directive(
-        "odd_box::proc_host=trace"
+        "cruma_proc_host=trace"
             .parse()
             .expect("This directive should always work"),
     );

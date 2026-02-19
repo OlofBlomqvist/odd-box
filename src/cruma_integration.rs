@@ -15,7 +15,7 @@ use crate::configuration::{ConfigWrapper, v4};
 use crate::docker::ContainerProxyTarget;
 use crate::global_state::GlobalState;
 use crate::global_state::ProcState;
-use crate::process_registry::ProcessRegistry;
+use crate::process_hosting::ProcessRegistry;
 
 const DEFAULT_404_HTML: &[u8] = include_bytes!("assets/404.html");
 const DEFAULT_STARTING_HTML: &str = include_str!("assets/starting.html");
@@ -702,6 +702,7 @@ pub fn build_config_with_runtime_ports(
                                 protocol,
                                 endpoints: NonEmptyVec(vec![ep]),
                                 origin_tls,
+                                timeout_seconds: None,
                             };
                             web_backends.insert(cruma_backend_id.clone(), web_backend);
                         }
@@ -749,6 +750,7 @@ pub fn build_config_with_runtime_ports(
                             protocol,
                             endpoints: NonEmptyVec(endpoints),
                             origin_tls,
+                                timeout_seconds: None,
                         };
                         web_backends.insert(cruma_backend_id.clone(), web_backend);
 
@@ -856,6 +858,7 @@ pub fn build_config_with_runtime_ports(
             protocol,
             endpoints: NonEmptyVec(vec![ep]),
             origin_tls: cont.tls.then_some(default_origin_tls()),
+            timeout_seconds: None,
         };
         web_backends.insert(backend_id.clone(), backend);
         http_routes.push(http_route(

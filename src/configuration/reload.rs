@@ -4,14 +4,13 @@ use anyhow::{Result, bail};
 use std::{io::Read, sync::Arc, time::Duration};
 use tracing::{info, level_filters::LevelFilter, trace, warn};
 use tracing_subscriber::EnvFilter;
-
 use tokio_util::sync::CancellationToken;
+
 
 use crate::{
     configuration::{LogLevel, v4},
     cruma_integration,
     global_state::GlobalState,
-    proc_host,
 };
 
 use super::{AnyOddBoxConfig, ConfigWrapper};
@@ -179,26 +178,15 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
         );
     }
 
-    // Spawn new/updated process backends
+    // Spawn new/updated process backends via cruma-proc-host
     for (backend_id, proc) in cloned_modified_procs {
         match new_configuration.resolve_process_backend(&backend_id, &proc) {
             Ok(resolved) => {
-                // Create token externally and register before spawning
-                let token = CancellationToken::new();
-                let enabled = resolved.auto_start.unwrap_or(new_configuration.auto_start);
-                global_state.process_registry.register_host(
-                    backend_id.clone(),
-                    token.clone(),
-                    crate::global_state::ProcState::Stopped,
-                    enabled,
-                    resolved.port,
+                let spec = crate::process_hosting::spec_from_resolved(
+                    &resolved,
+                    new_configuration.auto_start,
                 );
-                tokio::task::spawn(proc_host::host(
-                    resolved,
-                    global_state.process_registry.clone(),
-                    global_state.clone(),
-                    token,
-                ));
+                global_state.process_registry.start_hosted_process(spec);
             }
             Err(e) => bail!(
                 "Failed to resolve process configuration for:\n=====================================================\n{:?}.\n=====================================================\n\nThe error was: {:?}",
@@ -308,7 +296,7 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
         );
     }
     what = what.add_directive(
-        "odd_box::proc_host=trace"
+        "cruma_proc_host=trace"
             .parse()
             .expect("This directive should always work"),
     );

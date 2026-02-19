@@ -1,7 +1,7 @@
 [package]
 name = "odd-box"
 description = "a dead simple reverse proxy server and web server"
-version = "0.1.13-RC2"
+version = "2.0.0-Preview"
 edition = "2024"
 authors = ["Olof Blomqvist <olof@twnet.se>"]
 repository = "https://github.com/OlofBlomqvist/odd-box"
@@ -17,6 +17,7 @@ chrono = { version = "0.4", features= ["serde"] }
 clap = { version="4.4", features=["derive"]}
 cruma-tunnels-lib = { path = "/Users/olof/repos/uy/cruma-sdk/cruma-tunnels-lib"}
 cruma-proxy-lib = { path = "/Users/olof/repos/uy/cruma-sdk/cruma-proxy-lib"}
+cruma-proc-host = { path = "/Users/olof/repos/uy/cruma-sdk/cruma-proc-host" }
 dashmap = "6.0"
 http-body-util = "0.1"
 lazy_static = "1.4"
@@ -28,7 +29,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 serde_pretty_yaml = "0.9.37"
-sysinfo = "0.33"
 self_update = { version = "0.42", default-features = false, features = ["rustls"] }
 time = {version="0.3",features=["macros","formatting","parsing"]}
 tokio = { version = "1.42", features = ["full"] }
@@ -41,7 +41,6 @@ uuid = { version = "1.10", features = ["v4"] }
 dirs = "5.0"
 rustls = { version = "0.23", features = ["ring","std","tls12"], default-features = false}
 ctrlc = "3.4"
-which = "6.0"
 image = "0.25"
 iced = { version = "0.14", features = ["smol", "image", "lazy"] }
 parking_lot = "0.12"

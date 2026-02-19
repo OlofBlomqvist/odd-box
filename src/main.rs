@@ -4,7 +4,7 @@ pub mod cruma_integration;
 mod gui;
 mod http_events;
 mod logging;
-pub mod process_registry;
+pub mod process_hosting;
 mod tui;
 mod types;
 use anyhow::Context;
@@ -30,7 +30,6 @@ use tracing_subscriber::Layer;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use types::args::Args;
-mod proc_host;
 use tracing_subscriber::util::SubscriberInitExt;
 mod self_update;
 use lazy_static::lazy_static;
@@ -70,7 +69,7 @@ pub mod global_state {
     pub struct GlobalState {
         pub enable_global_traffic_inspection: AtomicBool,
         pub exit: AtomicBool,
-        pub process_registry: Arc<crate::process_registry::ProcessRegistry>,
+        pub process_registry: Arc<crate::process_hosting::ProcessRegistry>,
         pub cruma_assignment: Arc<arc_swap::ArcSwapOption<CrumaAssignedDomain>>,
         pub cruma_transports: Arc<arc_swap::ArcSwap<Vec<cruma_tunnels_lib::TransportDescriptor>>>,
 
@@ -120,7 +119,7 @@ pub mod global_state {
 
             Self {
                 enable_global_traffic_inspection: AtomicBool::new(false),
-                process_registry: Arc::new(crate::process_registry::ProcessRegistry::new()),
+                process_registry: Arc::new(crate::process_hosting::ProcessRegistry::new()),
                 exit: AtomicBool::new(false),
                 cruma_assignment: Arc::new(arc_swap::ArcSwapOption::from(None)),
                 cruma_transports: Arc::new(arc_swap::ArcSwap::from_pointee(Vec::new())),
@@ -498,7 +497,7 @@ async fn main() -> anyhow::Result<()> {
     }
     cli_filter = cli_filter
         .add_directive(
-            "odd_box::proc_host=trace"
+            "cruma_proc_host=trace"
                 .parse()
                 .expect("This directive should always work"),
         )
@@ -542,7 +541,7 @@ async fn main() -> anyhow::Result<()> {
             );
         }
         tui_filter = tui_filter.add_directive(
-            "odd_box::proc_host=trace"
+            "cruma_proc_host=trace"
                 .parse()
                 .expect("This directive should always work"),
         );
@@ -722,25 +721,14 @@ async fn main() -> anyhow::Result<()> {
     for (backend_id, backend) in &cloned_backends {
         match backend {
             configuration::v4::Backend::Process(proc) => {
-                // Resolve and spawn process host
+                // Resolve and spawn process host via cruma-proc-host
                 match config_guard.resolve_process_backend(backend_id, proc) {
                     Ok(resolved) => {
-                        // Create token externally and register before spawning
-                        let token = CancellationToken::new();
-                        let enabled = resolved.auto_start.unwrap_or(config_guard.auto_start);
-                        global_state.process_registry.register_host(
-                            backend_id.clone(),
-                            token.clone(),
-                            crate::global_state::ProcState::Stopped,
-                            enabled,
-                            resolved.port,
+                        let spec = crate::process_hosting::spec_from_resolved(
+                            &resolved,
+                            config_guard.auto_start,
                         );
-                        tokio::task::spawn(proc_host::host(
-                            resolved,
-                            global_state.process_registry.clone(),
-                            global_state.clone(),
-                            token,
-                        ));
+                        global_state.process_registry.start_hosted_process(spec);
                     }
                     Err(e) => bail!(
                         "Failed to resolve process configuration for backend '{}':\n{:?}",
@@ -765,6 +753,12 @@ async fn main() -> anyhow::Result<()> {
 
     drop(config_guard);
     crate::cruma_integration::rebuild_cruma_config(global_state.clone());
+
+    // Spawn background task that monitors process state changes and
+    // rebuilds the cruma proxy config when needed.
+    tokio::task::spawn(crate::process_hosting::state_change_monitor(
+        global_state.clone(),
+    ));
 
     tokio::task::spawn(docker_thread(global_state.clone()));
 
@@ -1131,7 +1125,7 @@ static CTRL_C_TRIPPED: StdAtomicBool = StdAtomicBool::new(false);
 /// Global reference to the process registry, used by the atexit handler to clean up
 /// managed child processes when the process exits abruptly (e.g. macOS native Quit menu
 /// triggers `exit()` from within the Cocoa event loop, bypassing our normal shutdown path).
-static PROCESS_REGISTRY_FOR_CLEANUP: OnceLock<Arc<crate::process_registry::ProcessRegistry>> =
+static PROCESS_REGISTRY_FOR_CLEANUP: OnceLock<Arc<crate::process_hosting::ProcessRegistry>> =
     OnceLock::new();
 
 /// Safety-net cleanup that runs via `atexit` when the process calls `exit()`.
