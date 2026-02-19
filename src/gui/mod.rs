@@ -5,17 +5,15 @@ mod pages;
 mod tray;
 
 use iced::widget::scrollable::RelativeOffset;
-use iced::widget::{Column, Scrollable, button, column, container, image, row, scrollable, text};
+use iced::widget::{Column, Scrollable, button, column, container, row, scrollable, text};
 
 use iced::{
     Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, event,
     keyboard, system, theme, time, window,
 };
 use std::collections::HashMap;
-#[cfg(target_os = "linux")]
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::configuration::{LogLevel, v4};
@@ -24,24 +22,15 @@ use crate::types::proc_info::ProcId;
 use logs::{LogFilter, SharedLogState};
 use pages::{CachedConfig, fetch_config};
 
-static SIDEBAR_LOGO_LIGHT: LazyLock<iced::widget::image::Handle> = LazyLock::new(|| {
-    iced::widget::image::Handle::from_bytes(
-        &include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/ob3.png"))[..],
-    )
-});
-
-static SIDEBAR_LOGO_DARK: LazyLock<iced::widget::image::Handle> = LazyLock::new(|| {
-    iced::widget::image::Handle::from_bytes(
-        &include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/ob3_black.png"))[..],
-    )
-});
-
 static GUI_TEXT_SCALE_BITS: AtomicU32 = AtomicU32::new(1.0f32.to_bits());
 const WINDOW_INITIAL_WIDTH: f32 = 1200.0;
 const WINDOW_INITIAL_HEIGHT: f32 = 800.0;
 const WINDOW_MIN_WIDTH: f32 = 920.0;
 const WINDOW_MIN_HEIGHT: f32 = 560.0;
 const SIDEBAR_WIDTH: f32 = 220.0;
+const DASHBOARD_SPLIT_RATIO_DEFAULT: f32 = 0.40;
+const GUI_STATE_CACHE_DIR_NAME: &str = "odd-box";
+const GUI_STATE_CACHE_FILE_NAME: &str = "gui-state-v1.txt";
 
 fn compute_text_scale(size: iced::Size) -> f32 {
     let width_scale = (size.width / WINDOW_INITIAL_WIDTH).clamp(0.85, 1.35);
@@ -51,6 +40,52 @@ fn compute_text_scale(size: iced::Size) -> f32 {
 
 fn set_gui_text_scale(size: iced::Size) {
     GUI_TEXT_SCALE_BITS.store(compute_text_scale(size).to_bits(), Ordering::Relaxed);
+}
+
+fn gui_state_cache_file_path() -> Option<PathBuf> {
+    let base = dirs::cache_dir()?;
+    Some(
+        base.join(GUI_STATE_CACHE_DIR_NAME)
+            .join(GUI_STATE_CACHE_FILE_NAME),
+    )
+}
+
+fn load_dashboard_split_ratio_from_cache() -> Option<f32> {
+    let path = gui_state_cache_file_path()?;
+    let raw = std::fs::read_to_string(path).ok()?;
+    let ratio = raw.trim().parse::<f32>().ok()?;
+    if ratio.is_finite() && (0.05..=0.95).contains(&ratio) {
+        Some(ratio)
+    } else {
+        None
+    }
+}
+
+fn save_dashboard_split_ratio_to_cache(ratio: f32) {
+    let Some(path) = gui_state_cache_file_path() else {
+        return;
+    };
+
+    let Some(parent) = path.parent() else {
+        return;
+    };
+
+    if let Err(err) = std::fs::create_dir_all(parent) {
+        tracing::debug!(
+            "Failed creating GUI cache directory '{}': {}",
+            parent.display(),
+            err
+        );
+        return;
+    }
+
+    if let Err(err) = std::fs::write(path.as_path(), format!("{ratio:.4}\n")) {
+        tracing::debug!(
+            "Failed saving dashboard split ratio to '{}': {}",
+            path.display(),
+            err
+        );
+    }
 }
 
 fn use_glass_effects() -> bool {
@@ -900,10 +935,13 @@ pub enum Message {
     ProcessToggleDetails(String),
     ProcessToggleAutoStart(String),
     ProcessToggleAutoStartResult(Result<(), String>),
-    // Dashboard card menu
+    // Dashboard list interactions
     DashboardToggleProcessMenu(String),
     DashboardDismissMenu,
+    DashboardSetHoveredRow(Option<String>),
     DashboardCursorMoved(f32, f32),
+    DashboardStartSplitResize,
+    DashboardEndSplitResize,
     ManageProcess(String),
     OpenInBrowser(String),
     OpenEditFrontend(String),
@@ -1184,10 +1222,13 @@ pub struct OddBoxGui {
     // Cached config data
     pub(in crate::gui) cached_config: CachedConfig,
     pub(in crate::gui) backend_names: Vec<String>,
-    // Dashboard: which process card has its action menu open
+    // Dashboard: which list row has its action menu open
     pub(in crate::gui) dashboard_process_menu: Option<String>,
+    pub(in crate::gui) dashboard_hovered_row: Option<String>,
     pub(in crate::gui) dashboard_cursor_pos: (f32, f32),
     pub(in crate::gui) dashboard_menu_pos: (f32, f32),
+    pub(in crate::gui) dashboard_split_ratio: f32,
+    pub(in crate::gui) dashboard_is_resizing_split: bool,
     // Dashboard: cooldown timestamps for Start All / Stop All feedback
     pub(in crate::gui) dashboard_startall_cooldown: Option<std::time::Instant>,
     pub(in crate::gui) dashboard_stopall_cooldown: Option<std::time::Instant>,
@@ -1572,10 +1613,7 @@ fn restart_process_backend_sync(state: &Arc<GlobalState>, backend_id: &str) {
     // Resolve and spawn with fresh config via cruma-proc-host
     match config.resolve_process_backend(backend_id, &proc) {
         Ok(resolved) => {
-            let mut spec = crate::process_hosting::spec_from_resolved(
-                &resolved,
-                config.auto_start,
-            );
+            let mut spec = crate::process_hosting::spec_from_resolved(&resolved, config.auto_start);
             // Preserve the enabled state from before restart
             spec.enabled = was_enabled && resolved.auto_start.unwrap_or(config.auto_start);
             state.process_registry.start_hosted_process(spec);
@@ -2174,6 +2212,8 @@ impl OddBoxGui {
         let initial_cfg = state.config.load_full();
         let initial_cruma_mode = cruma_mode_from_config(&initial_cfg);
         let (initial_cruma_auth_id, initial_cruma_auth_key) = cruma_auth_from_config(&initial_cfg);
+        let initial_dashboard_split_ratio =
+            load_dashboard_split_ratio_from_cache().unwrap_or(DASHBOARD_SPLIT_RATIO_DEFAULT);
         let install_source_info = crate::self_update::install_source_info();
         let current_version = crate::self_update::current_version().to_string();
         let include_pre = should_include_prerelease_for_checks(&current_version);
@@ -2231,8 +2271,11 @@ impl OddBoxGui {
                 cached_config: CachedConfig::default(),
                 backend_names: Vec::new(),
                 dashboard_process_menu: None,
+                dashboard_hovered_row: None,
                 dashboard_cursor_pos: (0.0, 0.0),
                 dashboard_menu_pos: (0.0, 0.0),
+                dashboard_split_ratio: initial_dashboard_split_ratio,
+                dashboard_is_resizing_split: false,
                 dashboard_startall_cooldown: None,
                 dashboard_stopall_cooldown: None,
                 edit_target: None,
@@ -2367,6 +2410,8 @@ impl OddBoxGui {
             Message::NavigateTo(page) => {
                 self.current_page = page;
                 self.dashboard_process_menu = None;
+                self.dashboard_hovered_row = None;
+                self.dashboard_is_resizing_split = false;
                 if page == Page::Monitoring {
                     if self.log_auto_tail {
                         self.log_is_at_bottom = true;
@@ -2909,10 +2954,26 @@ impl OddBoxGui {
             },
             Message::ProcessStart(name) => {
                 self.dashboard_process_menu = None;
+                if let Some(proc) = self
+                    .cached_config
+                    .processes
+                    .iter_mut()
+                    .find(|proc| proc.name == name)
+                {
+                    proc.state = crate::global_state::ProcState::Starting;
+                }
                 self.state.process_registry.set_enabled(&name, true);
             }
             Message::ProcessStop(name) => {
                 self.dashboard_process_menu = None;
+                if let Some(proc) = self
+                    .cached_config
+                    .processes
+                    .iter_mut()
+                    .find(|proc| proc.name == name)
+                {
+                    proc.state = crate::global_state::ProcState::Stopping;
+                }
                 self.state.process_registry.set_enabled(&name, false);
             }
             Message::ProcessStartAll => {
@@ -3019,8 +3080,28 @@ impl OddBoxGui {
             Message::DashboardDismissMenu => {
                 self.dashboard_process_menu = None;
             }
+            Message::DashboardSetHoveredRow(row) => {
+                if self.dashboard_hovered_row != row {
+                    self.dashboard_hovered_row = row;
+                }
+            }
+            Message::DashboardStartSplitResize => {
+                self.dashboard_is_resizing_split = true;
+                self.dashboard_process_menu = None;
+            }
+            Message::DashboardEndSplitResize => {
+                if self.dashboard_is_resizing_split {
+                    save_dashboard_split_ratio_to_cache(self.dashboard_split_ratio);
+                }
+                self.dashboard_is_resizing_split = false;
+            }
             Message::DashboardCursorMoved(x, y) => {
                 self.dashboard_cursor_pos = (x, y);
+                if self.dashboard_is_resizing_split {
+                    let content_width = (self.window_width - SIDEBAR_WIDTH).max(1.0);
+                    let usable_width = (content_width - 10.0).max(1.0);
+                    self.dashboard_split_ratio = (x / usable_width).clamp(0.05, 0.95);
+                }
             }
             Message::OpenInBrowser(url) => {
                 self.dashboard_process_menu = None;
@@ -3655,40 +3736,6 @@ impl OddBoxGui {
     }
 
     fn view_sidebar(&self) -> Element<'_, Message> {
-        let is_light = match self.theme_mode {
-            ThemeMode::Light => true,
-            ThemeMode::Dark => false,
-            ThemeMode::System => matches!(self.system_theme, Some(theme::Mode::Light)),
-        };
-        let logo_handle = if is_light {
-            SIDEBAR_LOGO_DARK.clone()
-        } else {
-            SIDEBAR_LOGO_LIGHT.clone()
-        };
-        let logo = image(logo_handle).expand(true);
-
-        let header = container(
-            row![
-                logo,
-                // column![
-                //     text("ODD-BOX")
-                //         .font(Font::MONOSPACE)
-                //         .style(|theme: &Theme| iced::widget::text::Style {
-                //             color: Some(theme.extended_palette().primary.base.color),
-                //             ..Default::default()
-                //         }),
-                //     text("Reverse Proxy").style(|theme: &Theme| iced::widget::text::Style {
-                //         color: Some(theme.extended_palette().background.weak.text),
-                //         ..Default::default()
-                //     }),
-                // ]
-                // .spacing(4)
-            ]
-            .spacing(10)
-            .align_y(iced::Alignment::Center),
-        )
-        .padding(Padding::new(20.0));
-
         let nav_items = [
             Page::Dashboard,
             Page::CrumaIngress,
@@ -3708,7 +3755,7 @@ impl OddBoxGui {
         let nav = Column::with_children(nav_buttons)
             .spacing(4)
             .padding(Padding {
-                top: 10.0,
+                top: 20.0,
                 right: 10.0,
                 bottom: 10.0,
                 left: 10.0,
@@ -3837,7 +3884,7 @@ impl OddBoxGui {
             }
         });
 
-        let sidebar_content = column![header, nav_scroll, sidebar_footer]
+        let sidebar_content = column![nav_scroll, sidebar_footer]
             .width(Length::Fixed(SIDEBAR_WIDTH))
             .height(Length::Fill);
 
@@ -3966,10 +4013,19 @@ impl OddBoxGui {
                             0.0,
                         )
                     } else if palette.is_dark {
+                        let selected_bg = theme::palette::mix(
+                            palette.primary.base.color,
+                            palette.background.base.color,
+                            0.62,
+                        );
                         (
-                            theme::palette::mix(palette.background.base.color, Color::BLACK, 0.28),
-                            palette.background.base.text,
-                            theme::palette::mix(palette.background.base.color, Color::BLACK, 0.45),
+                            selected_bg,
+                            readable_on(
+                                selected_bg,
+                                palette.primary.base.text,
+                                palette.background.base.text,
+                            ),
+                            palette.primary.strong.color,
                             1.0,
                         )
                     } else {
@@ -4077,7 +4133,7 @@ impl OddBoxGui {
         // Traffic inspection handles its own top-level layout and background.
         if self.current_page == Page::TrafficInspection {
             page_content
-        } else if self.current_page == Page::Monitoring {
+        } else if matches!(self.current_page, Page::Monitoring | Page::Dashboard) {
             container(page_content)
                 .width(Length::Fill)
                 .height(Length::Fill)

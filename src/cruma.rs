@@ -17,15 +17,6 @@ pub async fn cruma_thread(
     use cruma_tunnels_lib::*;
     let config = AgentRuntimeConfig::default(credentials)?;
 
-    // Get TLS port from frontends config
-    let port = state
-        .config
-        .load_full()
-        .frontends
-        .https
-        .as_ref()
-        .map(|h| h.port)
-        .unwrap_or(4343);
     let reconnect = Arc::new(tokio::sync::Notify::new());
     let runtime = agent_runtime::start_agent_runtime(reconnect, config, ct.clone()).await?;
     let mut transport_rx = runtime.transport_snapshot_rx();
@@ -45,10 +36,16 @@ pub async fn cruma_thread(
         cruma_proxy_lib::termination::LocalDiskPersistence::new(&".odd-box-cruma-cache".into())
             .unwrap(),
     );
+    // Keep one proxy service for the lifetime of the cruma runtime so outbound
+    // HTTP client pools/cache are reused across incoming streams.
+    let terminator = cruma_proxy_lib::termination::Terminator::new(p.clone(), cruma_conf.clone());
+    let mut proxy_service = ProxyService::new(cruma_conf.clone(), terminator);
+    proxy_service.set_capture_store(state.http_capture_store.clone());
+    let proxy_service = Arc::new(proxy_service);
 
     loop {
         let state = state.clone();
-        let persistence = p.clone();
+        let proxy_service = proxy_service.clone();
 
         tokio::select! {
         () = notify.notified() => {
@@ -69,6 +66,9 @@ pub async fn cruma_thread(
                                         welcome_message,
                                     },
                                 )));
+                                // Rebuild proxy configs immediately so tunnel host patterns include
+                                // the newly assigned cruma domain (e.g. <host>.<assigned-domain>).
+                                crate::cruma_integration::rebuild_cruma_config(state.clone());
                             },
                             evt => {
                                 tracing::trace!("Received event from server: {:#?}", evt);
@@ -86,7 +86,7 @@ pub async fn cruma_thread(
                 Some(cruma_stream) => {
                     let conf = cruma_conf.clone();
                     tokio::spawn(async move {
-                        match handle_stream(state, persistence, cruma_stream, port, conf).await {
+                        match handle_stream(state, cruma_stream, conf, proxy_service).await {
                             Ok(()) => {}
                             Err(e) => {
                                 tracing::error!(error=%e, "Cruma stream handler failed");
@@ -116,11 +116,10 @@ pub async fn cruma_thread(
 const STREAM_HANDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 pub async fn handle_stream(
-    _state: Arc<GlobalState>,
-    p: Arc<LocalDiskPersistence>,
+    state: Arc<GlobalState>,
     cruma_stream: IncomingCrumaTlsStream,
-    port: u16, // we dont care about this atm
     cruma_conf: Arc<ArcSwap<cruma_proxy_lib::types::Configuration>>,
+    proxy_service: Arc<ProxyService<LocalDiskPersistence>>,
 ) -> anyhow::Result<()> {
     let preface = match &cruma_stream {
         IncomingCrumaTlsStream::Quic { preface, .. }
@@ -141,7 +140,7 @@ pub async fn handle_stream(
     // an unexpected stream) do not kill the task silently.
     let result = tokio::time::timeout(
         STREAM_HANDLE_TIMEOUT,
-        proxy_stream(_state, p, cruma_stream, port, cruma_conf, is_tls),
+        proxy_stream(state, cruma_stream, cruma_conf, proxy_service, is_tls),
     )
     .await;
 
@@ -150,8 +149,12 @@ pub async fn handle_stream(
             tracing::info!("Successfully proxied connection for {}", src);
         }
         Ok(Err(e)) => {
+            tracing::error!("{:#?}", e);
+            for x in e.chain() {
+                tracing::error!("Caused by: {}", x);
+            }
             tracing::error!(
-                error = %e,
+                error = ?e,
                 src = %src,
                 is_tls = is_tls,
                 "Failed to proxy cruma connection"
@@ -174,25 +177,30 @@ pub async fn handle_stream(
 /// Separated from `handle_stream` so we can wrap it in timeout cleanly.
 async fn proxy_stream(
     state: Arc<GlobalState>,
-    p: Arc<LocalDiskPersistence>,
     cruma_stream: IncomingCrumaTlsStream,
-    port: u16,
     cruma_conf: Arc<ArcSwap<cruma_proxy_lib::types::Configuration>>,
+    proxy_service: Arc<ProxyService<LocalDiskPersistence>>,
     is_tls: bool,
 ) -> anyhow::Result<()> {
     use anyhow::Context;
-
-    let terminator = cruma_proxy_lib::termination::Terminator::new(p.clone(), cruma_conf.clone());
-    let mut proxy_service = ProxyService::new(cruma_conf, terminator);
-
-    // Wire the shared HTTP capture store into the proxy so that every proxied
-    // exchange is recorded when traffic inspection is enabled.
-    proxy_service.set_capture_store(state.http_capture_store.clone());
 
     let preface = match &cruma_stream {
         IncomingCrumaTlsStream::Quic { preface, .. }
         | IncomingCrumaTlsStream::Http2 { preface, .. } => preface.clone(),
     };
+
+    // For cruma ingress we always route against the HTTPS listener port.
+    // This applies to both TLS and already-terminated non-TLS streams.
+    let incoming_port = cruma_conf
+        .load_full()
+        .listeners
+        .iter()
+        .find_map(|listener| match listener {
+            cruma_proxy_lib::types::Listener::Tls(tls) => Some(tls.port.get()),
+            _ => None,
+        })
+        .or_else(|| state.config.load().frontends.https.as_ref().map(|h| h.port))
+        .unwrap_or(443);
 
     if is_tls {
         // If we are receiving tls streams in here, we need to terminate it ourselves prior to proxying.
@@ -204,19 +212,17 @@ async fn proxy_stream(
         })?;
 
         proxy_service
-            .terminate_and_proxy(cruma_stream, port, src_addr)
+            .terminate_and_proxy(cruma_stream, incoming_port, src_addr)
             .await
             .with_context(|| {
                 format!(
                     "TLS termination + proxy failed for stream from '{}' on port {}",
-                    preface.src, port
+                    preface.src, incoming_port
                 )
             })?;
     } else {
-        // Although our connection with cruma is TLS encrypted, we can still get non-TLS streams forwarded to us.
-        // This means they were terminated on the cruma.io servers, so we need to proxy them as non-TLS here.
-        let cfg = state.config.load_full();
-        let eport = cfg.frontends.http.as_ref().map(|h| h.port).unwrap_or(8080);
+        // Cruma can forward already-terminated streams to us.
+        // Route those through the HTTPS listener port as well.
 
         let src_addr = preface.src.parse().with_context(|| {
             format!(
@@ -226,12 +232,18 @@ async fn proxy_stream(
         })?;
 
         proxy_service
-            .proxy_non_tls(cruma_stream, eport, src_addr)
+            .proxy_edge_terminated(
+                cruma_stream,
+                incoming_port,
+                src_addr,
+                preface.sni.clone(),
+                None,
+            )
             .await
             .with_context(|| {
                 format!(
                     "Non-TLS proxy failed for stream from '{}' on port {}",
-                    preface.src, eport
+                    preface.src, incoming_port
                 )
             })?;
     }

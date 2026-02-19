@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::num::NonZeroU16;
 use std::sync::Arc;
 use std::time::Duration;
@@ -304,7 +304,12 @@ fn create_offline_handler_simple() -> HyperHandler {
 
 #[derive(Debug, Default, Clone)]
 pub struct BuildNotes {
-    pub unsupported: Vec<String>,
+    /// Backends or routes that could not be fully wired up during this config
+    /// build — e.g. a process backend that hasn't started yet and has no port,
+    /// a remote backend with no valid endpoints, or a route referencing an
+    /// unknown backend. These are typically transient conditions that resolve
+    /// once the relevant process starts or the config is corrected.
+    pub warnings: Vec<String>,
 }
 
 fn non_zero_port(port: u16, label: &str) -> anyhow::Result<NonZeroU16> {
@@ -629,180 +634,194 @@ pub fn build_config_with_runtime_ports(
     // Determine loopback address for process backends
     let loopback_addr = "127.0.0.1"; // V4 doesn't have use_loopback_ip_for_procs, always use 127.0.0.1
 
-    // Build backends and routes from V4 config
-    // Process routes from HTTP frontend
+    // Build backends and routes from V4 config.
+    // Merge HTTP routes with explicit HTTPS routes. If the same hostname is
+    // present in both maps, the explicit HTTPS route wins.
+    let mut merged_routes: BTreeMap<String, v4::RouteTarget> = BTreeMap::new();
     if let Some(http_frontend) = &cfg.frontends.http {
         for (host, target) in &http_frontend.routes {
-            // When building the tunnel config, skip routes not marked for cruma.
-            if cruma_tunnel_only && !target.enable_cruma() {
-                continue;
+            merged_routes.insert(host.clone(), target.clone());
+        }
+    }
+    if let Some(https_frontend) = &cfg.frontends.https {
+        if let Some(v4::HttpsRoutes::Explicit(explicit_https_routes)) = &https_frontend.routes {
+            for (host, target) in explicit_https_routes {
+                merged_routes.insert(host.clone(), target.clone());
             }
+        }
+    }
 
-            let backend_id_str = target.backend_id();
-            let capture_subdomains = target.capture_subdomains();
+    for (host, target) in &merged_routes {
+        // When building the tunnel config, skip routes not marked for cruma.
+        if cruma_tunnel_only && !target.enable_cruma() {
+            notes.warnings.push(format!(
+                "Skipping route '{}' in cruma tunnel config because enable_cruma is false",
+                host
+            ));
+            continue;
+        }
 
-            // Build the full set of host patterns using the SDK's
-            // pattern syntax (supports *.example.com, app-*, *, etc.)
-            // plus optional cruma-domain expansion.
-            let host_patterns =
-                host_patterns_for_route(host, capture_subdomains, cruma_assigned_domain);
+        let backend_id_str = target.backend_id();
+        let capture_subdomains = target.capture_subdomains();
 
-            // Track hosts that have Let's Encrypt enabled
-            if target.lets_encrypt() {
-                lets_encrypt_hosts.insert(host.clone());
-                lets_encrypt_host_patterns.push(HostName::new(host).to_host_pattern(&None));
-            }
+        // Build the full set of host patterns using the SDK's
+        // pattern syntax (supports *.example.com, app-*, *, etc.)
+        // plus optional cruma-domain expansion.
+        let host_patterns = host_patterns_for_route(host, capture_subdomains, cruma_assigned_domain);
 
-            // Look up the backend
-            if let Some(backend) = cfg.backends.get(backend_id_str) {
-                let cruma_backend_id = WebBackendId(format!("backend::{}", backend_id_str));
+        // Track hosts that have Let's Encrypt enabled
+        if target.lets_encrypt() {
+            lets_encrypt_hosts.insert(host.clone());
+            lets_encrypt_host_patterns.push(HostName::new(host).to_host_pattern(&None));
+        }
 
-                match backend {
-                    v4::Backend::Process(proc) => {
-                        let is_running = runtime_states
-                            .get(backend_id_str)
-                            .map(|state| matches!(state, ProcState::Running))
-                            .unwrap_or(true);
+        // Look up the backend
+        if let Some(backend) = cfg.backends.get(backend_id_str) {
+            let cruma_backend_id = WebBackendId(format!("backend::{}", backend_id_str));
 
-                        if !is_running {
-                            for pat in &host_patterns {
-                                // TODO: at some point we should stop using this and move toward the dynamic backend resolver pattern
-                                http_routes.push(hyper_service_route(
-                                    format!("{host}-starting"),
-                                    pat.clone(),
-                                    HyperBackendId::from(OFFLINE_HANDLER_ID),
-                                ));
-                            }
-                            continue;
-                        }
+            match backend {
+                v4::Backend::Process(proc) => {
+                    let is_running = runtime_states
+                        .get(backend_id_str)
+                        .map(|state| matches!(state, ProcState::Running))
+                        .unwrap_or(true);
 
-                        let port = proc
-                            .port
-                            .or_else(|| runtime_ports.get(backend_id_str).copied());
-                        let Some(port) = port else {
-                            notes.unsupported.push(format!(
-                                "Process backend '{}' has no port; using starting response for route '{}'",
-                                backend_id_str, host
-                            ));
-                            for pat in &host_patterns {
-                                http_routes.push(hyper_service_route(
-                                    format!("{host}-starting"),
-                                    pat.clone(),
-                                    HyperBackendId::from(OFFLINE_HANDLER_ID),
-                                ));
-                            }
-                            continue;
-                        };
-
-                        if let Some(ep) = to_endpoint(loopback_addr, port) {
-                            let (protocol, origin_tls) =
-                                upstream_proto_and_tls(&proc.protocol, proc.https);
-                            let web_backend = WebBackend {
-                                id: cruma_backend_id.clone(),
-                                protocol,
-                                endpoints: NonEmptyVec(vec![ep]),
-                                origin_tls,
-                                timeout_seconds: None,
-                            };
-                            web_backends.insert(cruma_backend_id.clone(), web_backend);
-                        }
-
-                        // For process backends on loopback, preserve the original host header
-                        let middlewares = vec![HttpMiddleware::RewriteHost { to: host.clone() }];
-
+                    if !is_running {
                         for pat in &host_patterns {
-                            http_routes.push(http_route_with_middlewares(
-                                host.clone(),
+                            // TODO: at some point we should stop using this and move toward the dynamic backend resolver pattern
+                            http_routes.push(hyper_service_route(
+                                format!("{host}-starting"),
                                 pat.clone(),
-                                cruma_backend_id.clone(),
-                                middlewares.clone(),
+                                HyperBackendId::from(OFFLINE_HANDLER_ID),
                             ));
                         }
+                        continue;
                     }
 
-                    v4::Backend::Remote(remote) => {
-                        let endpoints: Vec<Endpoint> = remote
-                            .endpoints
-                            .iter()
-                            .filter_map(|ep| to_endpoint(&ep.addr, ep.port))
-                            .collect();
+                    let port = proc
+                        .port
+                        .or_else(|| runtime_ports.get(backend_id_str).copied());
+                    let Some(port) = port else {
+                        notes.warnings.push(format!(
+                            "Process backend '{}' has no port; using starting response for route '{}'",
+                            backend_id_str, host
+                        ));
+                        for pat in &host_patterns {
+                            http_routes.push(hyper_service_route(
+                                format!("{host}-starting"),
+                                pat.clone(),
+                                HyperBackendId::from(OFFLINE_HANDLER_ID),
+                            ));
+                        }
+                        continue;
+                    };
 
-                        if endpoints.is_empty() {
-                            notes.unsupported.push(format!(
-                                "Remote backend '{}' has no valid endpoints",
+                    if let Some(ep) = to_endpoint(loopback_addr, port) {
+                        let (protocol, origin_tls) = upstream_proto_and_tls(&proc.protocol, proc.https);
+                        let web_backend = WebBackend {
+                            id: cruma_backend_id.clone(),
+                            protocol,
+                            endpoints: NonEmptyVec(vec![ep]),
+                            origin_tls,
+                            timeout_seconds: None,
+                        };
+                        web_backends.insert(cruma_backend_id.clone(), web_backend);
+                    }
+
+                    // For process backends on loopback, preserve the original host header
+                    let middlewares = vec![HttpMiddleware::RewriteHost { to: host.clone() }];
+
+                    for pat in &host_patterns {
+                        http_routes.push(http_route_with_middlewares(
+                            host.clone(),
+                            pat.clone(),
+                            cruma_backend_id.clone(),
+                            middlewares.clone(),
+                        ));
+                    }
+                }
+
+                v4::Backend::Remote(remote) => {
+                    let endpoints: Vec<Endpoint> = remote
+                        .endpoints
+                        .iter()
+                        .filter_map(|ep| to_endpoint(&ep.addr, ep.port))
+                        .collect();
+
+                    if endpoints.is_empty() {
+                        notes.warnings.push(format!(
+                            "Remote backend '{}' has no valid endpoints",
+                            backend_id_str
+                        ));
+                        continue;
+                    }
+
+                    let (protocol, mut origin_tls) =
+                        upstream_proto_and_tls(&remote.protocol, remote.https);
+                    let backend_host = endpoints.first().map(|ep| ep.addr.clone());
+                    if remote.https && !remote.keep_original_host_header {
+                        if let Some(host) = backend_host.as_deref() {
+                            origin_tls =
+                                Some(origin_tls_with_sni(Some(OriginTlsSni::Custom(host.to_string()))));
+                        }
+                    }
+                    let web_backend = WebBackend {
+                        id: cruma_backend_id.clone(),
+                        protocol,
+                        endpoints: NonEmptyVec(endpoints),
+                        origin_tls,
+                        timeout_seconds: None,
+                    };
+                    web_backends.insert(cruma_backend_id.clone(), web_backend);
+
+                    let mut middlewares = Vec::new();
+                    if !remote.keep_original_host_header {
+                        if let Some(host) = backend_host {
+                            middlewares.push(HttpMiddleware::RewriteHost { to: host });
+                        }
+                    }
+                    for pat in &host_patterns {
+                        http_routes.push(http_route_with_middlewares(
+                            host.clone(),
+                            pat.clone(),
+                            cruma_backend_id.clone(),
+                            middlewares.clone(),
+                        ));
+                    }
+                }
+
+                v4::Backend::Static(static_backend) => {
+                    // Resolve the directory path
+                    let resolved = match cfg.resolve_static_backend(static_backend) {
+                        Ok(r) => r,
+                        Err(err) => {
+                            notes.warnings.push(format!(
+                                "Static backend '{}' could not resolve directory: {err}",
                                 backend_id_str
                             ));
                             continue;
                         }
+                    };
 
-                        let (protocol, mut origin_tls) =
-                            upstream_proto_and_tls(&remote.protocol, remote.https);
-                        let backend_host = endpoints.first().map(|ep| ep.addr.clone());
-                        if remote.https && !remote.keep_original_host_header {
-                            if let Some(host) = backend_host.as_deref() {
-                                origin_tls = Some(origin_tls_with_sni(Some(OriginTlsSni::Custom(
-                                    host.to_string(),
-                                ))));
-                            }
-                        }
-                        let web_backend = WebBackend {
-                            id: cruma_backend_id.clone(),
-                            protocol,
-                            endpoints: NonEmptyVec(endpoints),
-                            origin_tls,
-                                timeout_seconds: None,
-                        };
-                        web_backends.insert(cruma_backend_id.clone(), web_backend);
-
-                        let mut middlewares = Vec::new();
-                        if !remote.keep_original_host_header {
-                            if let Some(host) = backend_host {
-                                middlewares.push(HttpMiddleware::RewriteHost { to: host });
-                            }
-                        }
-                        for pat in &host_patterns {
-                            http_routes.push(http_route_with_middlewares(
-                                host.clone(),
-                                pat.clone(),
-                                cruma_backend_id.clone(),
-                                middlewares.clone(),
-                            ));
-                        }
-                    }
-
-                    v4::Backend::Static(static_backend) => {
-                        // Resolve the directory path
-                        let resolved = match cfg.resolve_static_backend(static_backend) {
-                            Ok(r) => r,
-                            Err(err) => {
-                                notes.unsupported.push(format!(
-                                    "Static backend '{}' could not resolve directory: {err}",
-                                    backend_id_str
-                                ));
-                                continue;
-                            }
-                        };
-
-                        for pat in &host_patterns {
-                            http_routes.push(serve_dir_route(
-                                host.clone(),
-                                pat.clone(),
-                                resolved.dir.clone(),
-                                resolved.index.clone(),
-                                resolved.list_dir,
-                                resolved.render_markdown,
-                                resolved.cache_max_age,
-                                resolved.spa_fallback,
-                            ));
-                        }
+                    for pat in &host_patterns {
+                        http_routes.push(serve_dir_route(
+                            host.clone(),
+                            pat.clone(),
+                            resolved.dir.clone(),
+                            resolved.index.clone(),
+                            resolved.list_dir,
+                            resolved.render_markdown,
+                            resolved.cache_max_age,
+                            resolved.spa_fallback,
+                        ));
                     }
                 }
-            } else {
-                notes.unsupported.push(format!(
-                    "Route '{}' references unknown backend '{}'",
-                    host, backend_id_str
-                ));
             }
+        } else {
+            notes.warnings.push(format!(
+                "Route '{}' references unknown backend '{}'",
+                host, backend_id_str
+            ));
         }
     }
 
@@ -814,7 +833,7 @@ pub fn build_config_with_runtime_ports(
 
         if cont.port == 0 {
             notes
-                .unsupported
+                .warnings
                 .push(format!("Docker target '{}' has no port", host));
             continue;
         }
@@ -822,7 +841,7 @@ pub fn build_config_with_runtime_ports(
         let ep = match to_endpoint(&cont.target_addr, cont.port) {
             Some(ep) => ep,
             None => {
-                notes.unsupported.push(format!(
+                notes.warnings.push(format!(
                     "Docker target '{}' has invalid port {}",
                     host, cont.port
                 ));
@@ -997,7 +1016,7 @@ pub fn build_config_with_runtime_ports(
             name: "tls-self-signed".into(),
             rule: TlsMatch {
                 sni: self_signed_sni,
-                alpn: Some(vec![Alpn::Http11, Alpn::H2]),
+                alpn: None,
             },
             action: TlsAction::TerminateForHTTP {
                 cert_mode,
@@ -1077,10 +1096,10 @@ pub fn rebuild_cruma_config(state: Arc<GlobalState>) {
         Some(state.clone()),
     ) {
         Ok((new_cfg, notes)) => {
-            if !notes.unsupported.is_empty() {
+            if !notes.warnings.is_empty() {
                 tracing::trace!(
-                    "cruma config placeholders/unsupported after process update: {:?}",
-                    notes.unsupported
+                    "some backends not yet routable after process state change: {:?}",
+                    notes.warnings
                 );
             }
             state.cruma_config.store(std::sync::Arc::new(new_cfg));
@@ -1100,10 +1119,10 @@ pub fn rebuild_cruma_config(state: Arc<GlobalState>) {
         Some(state.clone()),
     ) {
         Ok((tunnel_cfg, notes)) => {
-            if !notes.unsupported.is_empty() {
+            if !notes.warnings.is_empty() {
                 tracing::trace!(
-                    "cruma tunnel config placeholders/unsupported after process update: {:?}",
-                    notes.unsupported
+                    "some tunnel backends not yet routable after process state change: {:?}",
+                    notes.warnings
                 );
             }
             state

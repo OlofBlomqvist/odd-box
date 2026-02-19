@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
+use bollard::Docker;
 use bollard::errors::Error;
 use bollard::secret::ContainerSummary;
-use bollard::Docker;
 use serde::Serialize;
 use tokio;
 
@@ -49,7 +49,7 @@ impl ContainerProxyTarget {
     }
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct ContainerProxyTarget {
     pub runtime: String,
     pub container_name: String,
@@ -119,7 +119,11 @@ pub async fn discover_containers(docker: &Docker) -> anyhow::Result<Vec<Discover
         let container_name = if let Some(name) = container
             .names
             .clone()
-            .and_then(|names| names.first().map(|name| Some(name.trim_start_matches('/').to_string())))
+            .and_then(|names| {
+                names
+                    .first()
+                    .map(|name| Some(name.trim_start_matches('/').to_string()))
+            })
             .unwrap_or_else(|| container.id.clone())
         {
             name
@@ -163,7 +167,9 @@ pub async fn discover_containers(docker: &Docker) -> anyhow::Result<Vec<Discover
 }
 
 #[allow(dead_code)]
-pub async fn get_container_proxy_targets(docker: &Docker) -> anyhow::Result<Vec<ContainerProxyTarget>> {
+pub async fn get_container_proxy_targets(
+    docker: &Docker,
+) -> anyhow::Result<Vec<ContainerProxyTarget>> {
     let containers = list_containers(docker).await?;
 
     let mut proxy_targets = Vec::new();
@@ -171,7 +177,11 @@ pub async fn get_container_proxy_targets(docker: &Docker) -> anyhow::Result<Vec<
         let container_name = if let Some(name) = container
             .names
             .clone()
-            .and_then(|names| names.first().map(|name| Some(name.trim_start_matches('/').to_string())))
+            .and_then(|names| {
+                names
+                    .first()
+                    .map(|name| Some(name.trim_start_matches('/').to_string()))
+            })
             .unwrap_or_else(|| container.id.clone())
         {
             name
@@ -205,7 +215,9 @@ pub async fn get_container_proxy_targets(docker: &Docker) -> anyhow::Result<Vec<
             match port_str.parse::<u16>() {
                 Ok(p) => p,
                 Err(_) => {
-                    tracing::warn!("Invalid port label for container {container_name} : {port_str}");
+                    tracing::warn!(
+                        "Invalid port label for container {container_name} : {port_str}"
+                    );
                     continue;
                 }
             }

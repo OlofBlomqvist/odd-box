@@ -29,8 +29,8 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
-use types::args::Args;
 use tracing_subscriber::util::SubscriberInitExt;
+use types::args::Args;
 mod self_update;
 use lazy_static::lazy_static;
 use std::sync::OnceLock;
@@ -434,10 +434,10 @@ async fn main() -> anyhow::Result<()> {
             None,
         )?;
 
-        if !notes.unsupported.is_empty() {
-            tracing::warn!(
-                "cruma config placeholders/unsupported: {:?}",
-                notes.unsupported
+        if !notes.warnings.is_empty() {
+            tracing::trace!(
+                "some backends not fully wired during initial config build: {:?}",
+                notes.warnings
             );
         }
 
@@ -450,10 +450,10 @@ async fn main() -> anyhow::Result<()> {
             None,
         )?;
 
-        if !tunnel_notes.unsupported.is_empty() {
-            tracing::warn!(
-                "cruma tunnel config placeholders/unsupported: {:?}",
-                tunnel_notes.unsupported
+        if !tunnel_notes.warnings.is_empty() {
+            tracing::trace!(
+                "some backends not fully wired during initial tunnel config build: {:?}",
+                tunnel_notes.warnings
             );
         }
         (cfg, tunnel_cfg)
@@ -999,6 +999,11 @@ fn connect_container_runtimes() -> Vec<(String, bollard::Docker)> {
 }
 
 pub async fn docker_thread(state: Arc<GlobalState>) {
+    let mut previous_targets: std::collections::BTreeMap<
+        String,
+        crate::docker::ContainerProxyTarget,
+    > = std::collections::BTreeMap::new();
+
     loop {
         let runtime_clients = connect_container_runtimes();
         if !runtime_clients.is_empty() {
@@ -1044,6 +1049,9 @@ pub async fn docker_thread(state: Arc<GlobalState>) {
                 .docker_discovery
                 .store(std::sync::Arc::new(discovered_containers));
 
+            let containers_changed = running_container_targets_by_host != previous_targets;
+            previous_targets = running_container_targets_by_host.clone();
+
             let running_container_targets_dash_map = dashmap::DashMap::new();
             for (host, target) in running_container_targets_by_host {
                 running_container_targets_dash_map.insert(host, target);
@@ -1073,48 +1081,51 @@ pub async fn docker_thread(state: Arc<GlobalState>) {
             let mut guard = (*state.config.load_full()).clone();
             guard.docker_containers = running_container_targets_dash_map;
 
-            // Keep cruma config in sync with docker-discovered targets.
-            let runtime_ports =
-                cruma_integration::runtime_ports_from_registry(&state.process_registry);
-            let runtime_states =
-                cruma_integration::runtime_states_from_registry(&state.process_registry);
-            let assignment = state.cruma_assignment.load_full();
-            let cruma_domain = assignment.as_ref().map(|a| a.assigned_domain.as_str());
+            // Only rebuild the proxy config when the set of containers actually changed.
+            if containers_changed {
+                let runtime_ports =
+                    cruma_integration::runtime_ports_from_registry(&state.process_registry);
+                let runtime_states =
+                    cruma_integration::runtime_states_from_registry(&state.process_registry);
+                let assignment = state.cruma_assignment.load_full();
+                let cruma_domain = assignment.as_ref().map(|a| a.assigned_domain.as_str());
 
-            if let Ok((cfg, notes)) = cruma_integration::build_config_with_runtime_ports(
-                &guard,
-                &runtime_ports,
-                &runtime_states,
-                None,
-                false,
-                Some(state.clone()),
-            ) {
-                if !notes.unsupported.is_empty() {
-                    tracing::warn!(
-                        "cruma config placeholders/unsupported after docker update: {:?}",
-                        notes.unsupported
-                    );
+                if let Ok((cfg, notes)) = cruma_integration::build_config_with_runtime_ports(
+                    &guard,
+                    &runtime_ports,
+                    &runtime_states,
+                    None,
+                    false,
+                    Some(state.clone()),
+                ) {
+                    if !notes.warnings.is_empty() {
+                        tracing::trace!(
+                            "some backends not fully wired during config rebuild (triggered by docker update): {:?}",
+                            notes.warnings
+                        );
+                    }
+                    state.cruma_config.store(std::sync::Arc::new(cfg));
                 }
-                state.cruma_config.store(std::sync::Arc::new(cfg));
-            }
-            if let Ok((tunnel_cfg, notes)) = cruma_integration::build_config_with_runtime_ports(
-                &guard,
-                &runtime_ports,
-                &runtime_states,
-                cruma_domain,
-                true,
-                Some(state.clone()),
-            ) {
-                if !notes.unsupported.is_empty() {
-                    tracing::warn!(
-                        "cruma tunnel config placeholders/unsupported after docker update: {:?}",
-                        notes.unsupported
-                    );
+                if let Ok((tunnel_cfg, notes)) = cruma_integration::build_config_with_runtime_ports(
+                    &guard,
+                    &runtime_ports,
+                    &runtime_states,
+                    cruma_domain,
+                    true,
+                    Some(state.clone()),
+                ) {
+                    if !notes.warnings.is_empty() {
+                        tracing::trace!(
+                            "some backends not fully wired during tunnel config rebuild (triggered by docker update): {:?}",
+                            notes.warnings
+                        );
+                    }
+                    state
+                        .cruma_tunnel_config
+                        .store(std::sync::Arc::new(tunnel_cfg));
                 }
-                state
-                    .cruma_tunnel_config
-                    .store(std::sync::Arc::new(tunnel_cfg));
             }
+
             state.config.store(std::sync::Arc::new(guard));
         }
         tokio::time::sleep(Duration::from_secs(10)).await;

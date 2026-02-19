@@ -1,6 +1,7 @@
 use std::hash::Hash;
 use std::time::Instant;
 
+use iced::theme;
 use iced::widget::{
     Scrollable, Space, button, checkbox, column, container, keyed_column, lazy, pick_list,
     row, scrollable, text, text_input,
@@ -50,15 +51,21 @@ impl OddBoxGui {
         .align_y(iced::Alignment::Center);
 
         // Filter controls
-        let filter_bar = self.view_log_filter_bar();
+        let filter_bar = self.view_log_filter_bar(true);
 
         // Log entries
         let log_entries = container(self.view_log_entries())
             .width(Length::Fill)
             .height(Length::Fill)
             .style(|theme: &Theme| {
+                let base_bg = theme.extended_palette().background.base.color;
+                let logs_bg = if theme.extended_palette().is_dark {
+                    theme::palette::mix(base_bg, Color::BLACK, 0.33)
+                } else {
+                    base_bg
+                };
                 container::Style {
-                    background: Some(self.surface_panel_bg(theme).into()),
+                    background: Some(logs_bg.into()),
                     border: Border {
                         radius: 6.0.into(),
                         width: 1.0,
@@ -87,7 +94,7 @@ impl OddBoxGui {
         result
     }
 
-    fn view_log_filter_bar(&self) -> Element<'_, Message> {
+    pub(in crate::gui) fn view_log_filter_bar(&self, show_log_count: bool) -> Element<'_, Message> {
         let search_input = text_input("Search logs...", &self.log_filter.text)
             .on_input(Message::LogFilterTextChanged)
             .padding(8)
@@ -106,8 +113,6 @@ impl OddBoxGui {
         })
         .width(Length::Fixed(120.0));
 
-        let filtered = self.log_state.filtered_snapshot();
-
         let wrap_toggle = checkbox(self.log_wrap_enabled)
             .label("Wrap")
             .on_toggle(Message::LogToggleWrap);
@@ -121,31 +126,37 @@ impl OddBoxGui {
             .label(tail_label)
             .on_toggle(Message::LogToggleAutoTail);
 
-        let log_count = if self.has_active_filter() {
-            format!("{} / {} logs", filtered.filtered_count, filtered.total_count)
-        } else {
-            format!("{} logs", filtered.total_count)
-        };
-
-        row![
+        let mut bar = row![
             search_input,
             Space::new().width(Length::Fixed(15.0)),
             level_picker,
             Space::new().width(Length::Fill),
             wrap_toggle,
             tail_toggle,
-            Space::new().width(Length::Fixed(20.0)),
-            text(log_count).style(|theme: &Theme| iced::widget::text::Style {
-                color: Some(theme.extended_palette().background.weak.text),
-                ..Default::default()
-            }),
         ]
         .spacing(15)
-        .align_y(iced::Alignment::Center)
-        .into()
+        .align_y(iced::Alignment::Center);
+
+        if show_log_count {
+            let filtered = self.log_state.filtered_snapshot();
+            let log_count = if self.has_active_filter() {
+                format!("{} / {} logs", filtered.filtered_count, filtered.total_count)
+            } else {
+                format!("{} logs", filtered.total_count)
+            };
+
+            bar = bar
+                .push(Space::new().width(Length::Fixed(20.0)))
+                .push(text(log_count).style(|theme: &Theme| iced::widget::text::Style {
+                    color: Some(theme.extended_palette().background.weak.text),
+                    ..Default::default()
+                }));
+        }
+
+        bar.into()
     }
 
-    fn view_log_entries(&self) -> Element<'_, Message> {
+    pub(in crate::gui) fn view_log_entries(&self) -> Element<'_, Message> {
         let start = Instant::now();
         
         // Get pre-filtered snapshot from background task - this is CHEAP (just Arc load)
@@ -202,7 +213,8 @@ impl OddBoxGui {
                         let entry_id = entry.id;
                         
                         // Build the row element
-                        let (level_str, level_color) = level_display(entry.level);
+                        let level_str = level_label(entry.level);
+                        let entry_level = entry.level;
                         
                         let source: String = entry
                             .thread
@@ -224,7 +236,10 @@ impl OddBoxGui {
                         let metadata_row = row![
                             text(level_str)
                                 .font(Font::MONOSPACE)
-                                .color(level_color),
+                                .style(move |theme: &Theme| iced::widget::text::Style {
+                                    color: Some(level_color(theme, entry_level)),
+                                    ..Default::default()
+                                }),
                             text(source.clone())
                                 .font(Font::MONOSPACE)
                                 .style(|theme: &Theme| iced::widget::text::Style {
@@ -380,12 +395,32 @@ impl OddBoxGui {
 }
 
 /// Convert a tracing Level to a display string and color
-pub(in crate::gui) fn level_display(level: Level) -> (&'static str, Color) {
+pub(in crate::gui) fn level_label(level: Level) -> &'static str {
     match level {
-        Level::TRACE => ("TRC", Color::from_rgb(0.5, 0.5, 0.55)),
-        Level::DEBUG => ("DBG", Color::from_rgb(0.4, 0.7, 1.0)),
-        Level::INFO => ("INF", Color::from_rgb(0.4, 0.85, 0.4)),
-        Level::WARN => ("WRN", Color::from_rgb(1.0, 0.8, 0.3)),
-        Level::ERROR => ("ERR", Color::from_rgb(1.0, 0.4, 0.4)),
+        Level::TRACE => "TRC",
+        Level::DEBUG => "DBG",
+        Level::INFO => "INF",
+        Level::WARN => "WRN",
+        Level::ERROR => "ERR",
+    }
+}
+
+pub(in crate::gui) fn level_color(theme: &Theme, level: Level) -> Color {
+    if theme.extended_palette().is_dark {
+        match level {
+            Level::TRACE => Color::from_rgb(0.55, 0.55, 0.62),
+            Level::DEBUG => Color::from_rgb(0.45, 0.73, 1.0),
+            Level::INFO => Color::from_rgb(0.43, 0.86, 0.43),
+            Level::WARN => Color::from_rgb(1.0, 0.8, 0.35),
+            Level::ERROR => Color::from_rgb(1.0, 0.45, 0.45),
+        }
+    } else {
+        match level {
+            Level::TRACE => Color::from_rgb(0.33, 0.33, 0.38),
+            Level::DEBUG => Color::from_rgb(0.13, 0.36, 0.70),
+            Level::INFO => Color::from_rgb(0.10, 0.50, 0.20),
+            Level::WARN => Color::from_rgb(0.68, 0.42, 0.02),
+            Level::ERROR => Color::from_rgb(0.70, 0.13, 0.13),
+        }
     }
 }

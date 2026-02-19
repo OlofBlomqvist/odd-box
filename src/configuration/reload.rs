@@ -2,10 +2,9 @@
 
 use anyhow::{Result, bail};
 use std::{io::Read, sync::Arc, time::Duration};
+use tokio_util::sync::CancellationToken;
 use tracing::{info, level_filters::LevelFilter, trace, warn};
 use tracing_subscriber::EnvFilter;
-use tokio_util::sync::CancellationToken;
-
 
 use crate::{
     configuration::{LogLevel, v4},
@@ -218,10 +217,10 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
         Some(global_state.clone()),
     ) {
         Ok((cfg, notes)) => {
-            if !notes.unsupported.is_empty() {
-                tracing::warn!(
-                    "cruma config placeholders/unsupported after reload: {:?}",
-                    notes.unsupported
+            if !notes.warnings.is_empty() {
+                tracing::trace!(
+                    "some backends not fully wired during config rebuild (reload): {:?}",
+                    notes.warnings
                 );
             }
             Some(cfg)
@@ -241,10 +240,10 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
         Some(global_state.clone()),
     ) {
         Ok((cfg, notes)) => {
-            if !notes.unsupported.is_empty() {
-                tracing::warn!(
-                    "cruma tunnel config placeholders/unsupported after reload: {:?}",
-                    notes.unsupported
+            if !notes.warnings.is_empty() {
+                tracing::trace!(
+                    "some backends not fully wired during tunnel config rebuild (reload): {:?}",
+                    notes.warnings
                 );
             }
             Some(cfg)

@@ -1,53 +1,27 @@
 use iced::theme;
 use iced::widget::text::Wrapping;
 use iced::widget::{
-    Column, Row, Space, button, column, container, mouse_area, responsive, row, text, tooltip,
+    Column, Row, Scrollable, Space, button, column, container, mouse_area, responsive, row, text,
 };
-use iced::{Alignment, Border, Color, Element, Length, Padding, Size, Theme};
+use iced::{Alignment, Border, Color, Element, Length, Padding, Theme, mouse};
 
-use cruma_tunnels_lib::hostname::{HostnamePatternKind, classify_hostname_pattern};
+use cruma_tunnels_lib::hostname::{
+    HostnamePatternKind, classify_hostname_pattern, resolve_display_url,
+};
 
 use crate::global_state::ProcState;
 
-use super::super::{Message, OddBoxGui};
-
-/// Minimum card width for responsive layout
-const CARD_MIN_WIDTH: f32 = 220.0;
-const CARD_GAP: f32 = 12.0;
-/// Base card height – scaled by the global text scale factor so cards
-/// grow proportionally with font size when the window is resized.
-const CARD_BASE_HEIGHT: f32 = 72.0;
-
-fn card_height() -> f32 {
-    CARD_BASE_HEIGHT * super::super::gui_scale()
-}
-
-/// Estimate how many characters fit in the given pixel width for a
-/// monospace-ish font at the specified base size, then truncate with "…"
-/// if the string is too long.  Returns the (possibly truncated) string.
-fn truncate_to_fit(s: &str, available_px: f32, font_base_size: u16) -> String {
-    // Approximate character width: ~0.62 × font pixel size for monospace bold
-    let char_w = super::super::text_size(font_base_size) * 0.62;
-    if char_w <= 0.0 {
-        return s.to_string();
-    }
-    let max_chars = (available_px / char_w).floor() as usize;
-    if max_chars == 0 {
-        return String::new();
-    }
-    if s.chars().count() <= max_chars {
-        s.to_string()
-    } else {
-        let truncated: String = s.chars().take(max_chars.saturating_sub(1)).collect();
-        format!("{}…", truncated)
-    }
-}
+use super::super::{KdeButtonRole, Message, OddBoxGui};
 
 /// Category accent colors
 const COLOR_PROCESS: Color = Color::from_rgb(0.4, 0.6, 1.0);
 const COLOR_REMOTE: Color = Color::from_rgb(0.7, 0.5, 1.0);
 const COLOR_DIR_SERVER: Color = Color::from_rgb(0.3, 0.8, 0.7);
 const COLOR_UNBOUND: Color = Color::from_rgb(0.75, 0.55, 0.25);
+const DASHBOARD_SPLITTER_HIT_WIDTH: f32 = 10.0;
+const DASHBOARD_MIN_LIST_WIDTH: f32 = 240.0;
+const DASHBOARD_MIN_LOGS_WIDTH: f32 = 620.0;
+const DASHBOARD_TWO_COLUMN_MIN_WIDTH: f32 = 930.0;
 
 fn is_light_theme(theme: &Theme) -> bool {
     let bg = theme.extended_palette().background.base.color;
@@ -75,33 +49,26 @@ fn status_color(state: &ProcState) -> Color {
     }
 }
 
-/// Shared card button style (adds hover border)
-fn card_button_style_with_accent(
-    theme: &Theme,
-    status: button::Status,
-    accent: Color,
-    surface_bg: Color,
-    surface_border: Color,
-) -> button::Style {
-    let palette = theme.extended_palette();
-    let (border_color, border_width) = match status {
-        button::Status::Hovered | button::Status::Pressed => (accent, 2.0),
-        _ => (surface_border, 1.0),
-    };
-    button::Style {
-        background: Some(surface_bg.into()),
-        text_color: palette.background.base.text,
-        border: Border {
-            radius: 8.0.into(),
-            width: border_width,
-            color: border_color,
-        },
-        ..Default::default()
+fn truncate_to_fit(text: &str, available_px: f32, font_size_px: f32) -> String {
+    let char_w = (font_size_px * 0.58).max(1.0);
+    let max_chars = (available_px / char_w).floor() as usize;
+    if max_chars == 0 || text.chars().count() <= max_chars {
+        return text.to_string();
     }
+    if max_chars <= 1 {
+        return "…".to_string();
+    }
+
+    let mut truncated = String::with_capacity(max_chars);
+    for ch in text.chars().take(max_chars - 1) {
+        truncated.push(ch);
+    }
+    truncated.push('…');
+    truncated
 }
 
-/// Selected card container style
-fn selected_card_style(_theme: &Theme, accent: Color, surface_bg: Color) -> container::Style {
+/// Selected list row container style
+fn selected_list_item_style(_theme: &Theme, accent: Color, surface_bg: Color) -> container::Style {
     container::Style {
         background: Some(surface_bg.into()),
         border: Border {
@@ -128,7 +95,7 @@ fn muted_text(theme: &Theme) -> iced::widget::text::Style {
     }
 }
 
-/// Build a compact action button for the card context menu
+/// Build a compact action button for row actions.
 /// Estimate the pixel width of an action button from its label.
 fn estimate_btn_width(label: &str) -> f32 {
     let scale = super::super::gui_scale();
@@ -144,7 +111,7 @@ fn action_btn<'a>(
     bg_hover: Color,
     fg: Color,
     use_kde_buttons: bool,
-    kde_role: super::super::KdeButtonRole,
+    kde_role: KdeButtonRole,
 ) -> (f32, Element<'a, Message>) {
     let estimated_width = estimate_btn_width(label);
 
@@ -195,37 +162,38 @@ fn action_btn<'a>(
     (estimated_width, btn.into())
 }
 
-/// Build a site card – shows hostname (or backend name for unbound), with status dot.
-/// When selected, shows action buttons instead of subtitle.
-fn site_card<'a>(
+/// Build one list row for a site/backend entry.
+fn site_list_row<'a>(
     display_name: &str,
     subtitle: &str,
     accent_color: Color,
     surface_bg: Color,
     surface_border: Color,
     state: &ProcState,
-    card_width: f32,
+    action_wrap_width: f32,
     is_selected: bool,
     actions: Vec<(f32, Element<'a, Message>)>,
     on_press: Option<Message>,
+    hover_key: Option<String>,
+    is_hovered: bool,
+    quick_action: Option<(f32, Element<'a, Message>)>,
+    quick_action_slot_width: Option<f32>,
 ) -> Element<'a, Message> {
     let dot_color = status_color(state);
-
-    // Available text width: card_width minus horizontal padding (14×2),
-    // dot width (~text_size(14)), and spacing (6).
-    let text_avail = card_width - 28.0 - super::super::text_size(14) - 6.0;
-
-    let name_truncated = truncate_to_fit(display_name, text_avail, 14);
-    let name_is_truncated = name_truncated.len() != display_name.len();
-
-    let subtitle_truncated = truncate_to_fit(subtitle, text_avail, 11);
-    let subtitle_is_truncated = subtitle_truncated.len() != subtitle.len();
+    let name_font_size = super::super::text_size(14).min(16.0);
+    let subtitle_font_size = super::super::text_size(11).min(13.0);
+    let quick_action_reserved = quick_action_slot_width
+        .or_else(|| quick_action.as_ref().map(|(width, _)| *width))
+        .map(|width| width + 12.0)
+        .unwrap_or(0.0);
+    let name_text_width = (action_wrap_width - 60.0 - quick_action_reserved).max(90.0);
+    let display_name = truncate_to_fit(display_name, name_text_width, name_font_size);
 
     let name_row = row![
-        text("●").color(dot_color).size(super::super::text_size(14)),
+        text("●").color(dot_color).size(name_font_size),
         container(
-            text(name_truncated)
-                .size(super::super::text_size(14))
+            text(display_name)
+                .size(name_font_size)
                 .wrapping(Wrapping::None)
                 .font(iced::Font {
                     weight: iced::font::Weight::Bold,
@@ -238,9 +206,13 @@ fn site_card<'a>(
     .align_y(Alignment::Center)
     .width(Length::Fill);
 
+    let subtitle_widget = text(subtitle.to_string())
+        .size(subtitle_font_size)
+        .wrapping(Wrapping::WordOrGlyph)
+        .style(muted_text);
+
     if is_selected {
-        // Selected state: show action buttons in a wrapping layout
-        let content_width = card_width - 28.0; // 14px padding on each side
+        let content_width = (action_wrap_width - 32.0).max(120.0);
         let btn_spacing = 4.0_f32;
 
         let mut rows_vec: Vec<Vec<Element<'a, Message>>> = vec![vec![]];
@@ -254,12 +226,14 @@ fn site_card<'a>(
             };
 
             if current_row_width + needed > content_width && current_row_width > 0.0 {
-                // Start a new row
                 rows_vec.push(vec![action]);
                 current_row_width = est_btn_w;
             } else {
                 current_row_width += needed;
-                rows_vec.last_mut().unwrap().push(action);
+                rows_vec
+                    .last_mut()
+                    .expect("rows_vec is never empty")
+                    .push(action);
             }
         }
 
@@ -272,116 +246,74 @@ fn site_card<'a>(
             );
         }
 
-        let card_content = column![name_row, actions_col]
+        let row_content = column![name_row, subtitle_widget, actions_col]
             .spacing(8)
             .width(Length::Fill);
 
-        let accent = accent_color;
-        let card_widget: Element<'a, Message> = container(card_content)
+        container(row_content)
             .padding(Padding {
-                top: 12.0,
+                top: 10.0,
                 right: 14.0,
-                bottom: 12.0,
+                bottom: 10.0,
                 left: 14.0,
             })
-            .width(Length::Fixed(card_width))
-            .height(Length::Shrink)
-            .clip(false)
-            .style(move |theme: &Theme| selected_card_style(theme, accent, surface_bg))
-            .into();
-
-        if name_is_truncated {
-            tooltip(
-                card_widget,
-                text(display_name.to_string()).size(super::super::text_size(12)),
-                tooltip::Position::Top,
-            )
-            .style(|theme: &Theme| {
-                let p = theme.extended_palette();
-                container::Style {
-                    background: Some(p.background.strong.color.into()),
-                    border: Border {
-                        radius: 4.0.into(),
-                        width: 1.0,
-                        color: p.background.weak.color,
-                    },
-                    ..Default::default()
-                }
-            })
+            .width(Length::Fill)
+            .style(move |theme: &Theme| selected_list_item_style(theme, accent_color, surface_bg))
             .into()
-        } else {
-            card_widget
-        }
     } else {
-        // Normal state: clickable card with subtitle
-        let subtitle_row = container(
-            text(subtitle_truncated)
-                .size(super::super::text_size(11))
-                .wrapping(Wrapping::None)
-                .style(muted_text),
-        )
-        .width(Length::Fill);
+        let mut heading_row = Row::new()
+            .push(name_row)
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .width(Length::Fill);
+        if let Some((_, action)) = quick_action {
+            heading_row = heading_row.push(action);
+        } else if let Some(slot_width) = quick_action_slot_width {
+            heading_row = heading_row.push(
+                Space::new()
+                    .width(Length::Fixed(slot_width))
+                    .height(Length::Fixed(super::super::scaled(22.0))),
+            );
+        }
 
-        let card_content = column![name_row, subtitle_row]
-            .spacing(6)
+        let row_content = column![heading_row, subtitle_widget]
+            .spacing(5)
             .width(Length::Fill);
 
-        let mut card = button(card_content)
+        let border_color = if is_hovered {
+            accent_color
+        } else {
+            surface_border
+        };
+        let border_width = if is_hovered { 2.0 } else { 1.0 };
+
+        let row_surface = container(row_content)
             .padding(Padding {
-                top: 12.0,
+                top: 10.0,
                 right: 14.0,
-                bottom: 12.0,
+                bottom: 10.0,
                 left: 14.0,
             })
-            .width(Length::Fixed(card_width))
-            .height(Length::Fixed(card_height()))
-            .clip(true)
-            .style(move |theme, status| {
-                card_button_style_with_accent(
-                    theme,
-                    status,
-                    accent_color,
-                    surface_bg,
-                    surface_border,
-                )
+            .width(Length::Fill)
+            .style(move |_theme| container::Style {
+                background: Some(surface_bg.into()),
+                border: Border {
+                    radius: 8.0.into(),
+                    width: border_width,
+                    color: border_color,
+                },
+                ..Default::default()
             });
 
+        let mut row_btn = mouse_area(row_surface).on_exit(Message::DashboardSetHoveredRow(None));
+        if let Some(row_key) = hover_key {
+            row_btn = row_btn.on_move(move |_p| Message::DashboardSetHoveredRow(Some(row_key.clone())));
+        }
         if let Some(msg) = on_press {
-            card = card.on_press(msg);
+            row_btn = row_btn.on_press(msg);
         }
 
-        let card_widget: Element<'a, Message> = card.into();
-
-        // Show a tooltip with full name + subtitle when either was truncated
-        if name_is_truncated || subtitle_is_truncated {
-            let tip = if name_is_truncated && subtitle_is_truncated {
-                format!("{}\n{}", display_name, subtitle)
-            } else if name_is_truncated {
-                display_name.to_string()
-            } else {
-                subtitle.to_string()
-            };
-            tooltip(
-                card_widget,
-                text(tip).size(super::super::text_size(12)),
-                tooltip::Position::Top,
-            )
-            .style(|theme: &Theme| {
-                let p = theme.extended_palette();
-                container::Style {
-                    background: Some(p.background.strong.color.into()),
-                    border: Border {
-                        radius: 4.0.into(),
-                        width: 1.0,
-                        color: p.background.weak.color,
-                    },
-                    ..Default::default()
-                }
-            })
-            .into()
-        } else {
-            card_widget
-        }
+        row_btn.into()
     }
 }
 
@@ -392,48 +324,6 @@ fn theme_aware_color(is_light: bool, light_variant: Color, dark_variant: Color) 
     } else {
         light_variant
     }
-}
-
-/// Build a small stat box for the summary row
-fn stat_box<'a>(
-    label: &'a str,
-    value: usize,
-    color: Color,
-    surface_bg: Color,
-    surface_border: Color,
-) -> Element<'a, Message> {
-    let content = column![
-        text(value.to_string())
-            .size(super::super::text_size(22))
-            .color(color)
-            .font(iced::Font {
-                weight: iced::font::Weight::Bold,
-                ..iced::Font::MONOSPACE
-            }),
-        text(label)
-            .size(super::super::text_size(13))
-            .style(muted_text),
-    ]
-    .spacing(2)
-    .align_x(Alignment::Center);
-
-    container(content)
-        .padding(Padding {
-            top: 10.0,
-            right: 20.0,
-            bottom: 10.0,
-            left: 20.0,
-        })
-        .style(move |_theme: &Theme| container::Style {
-            background: Some(surface_bg.into()),
-            border: Border {
-                radius: 6.0.into(),
-                width: 1.0,
-                color: surface_border,
-            },
-            ..Default::default()
-        })
-        .into()
 }
 
 /// Count badge element
@@ -465,12 +355,7 @@ fn count_badge<'a>(count: usize, accent: Color) -> Element<'a, Message> {
 }
 
 /// Section header with category name and count badge
-fn section_header<'a>(
-    title: &'a str,
-    count: usize,
-    accent: Color,
-    _is_light: bool,
-) -> Element<'a, Message> {
+fn section_header<'a>(title: &'a str, count: usize, accent: Color) -> Element<'a, Message> {
     row![
         text(title)
             .size(super::super::text_size(17))
@@ -483,42 +368,6 @@ fn section_header<'a>(
     .spacing(8)
     .align_y(Alignment::Center)
     .into()
-}
-
-fn card_layout(size: Size) -> (usize, f32) {
-    let available_width = size.width.max(1.0);
-    let cols = ((available_width + CARD_GAP) / (CARD_MIN_WIDTH + CARD_GAP))
-        .floor()
-        .max(1.0) as usize;
-    let card_width = (available_width - CARD_GAP * (cols.saturating_sub(1)) as f32) / cols as f32;
-    (cols, card_width)
-}
-
-fn rows_from_cards<'a>(mut cards: Vec<Element<'a, Message>>, cols: usize) -> Column<'a, Message> {
-    let mut rows: Vec<Element<'a, Message>> = Vec::new();
-    while !cards.is_empty() {
-        let take = cols.min(cards.len());
-        let row_cards: Vec<Element<'a, Message>> = cards.drain(..take).collect();
-        // Pad the last row with invisible spacers so cards stay left-aligned and same width
-        let remaining = cols - row_cards.len();
-        let mut row_children: Vec<Element<'a, Message>> = row_cards;
-        for _ in 0..remaining {
-            // Use an empty container with the same fixed width to maintain grid alignment
-            row_children.push(
-                Space::new()
-                    .width(Length::Fill)
-                    .height(Length::Shrink)
-                    .into(),
-            );
-        }
-        rows.push(
-            Row::with_children(row_children)
-                .spacing(CARD_GAP)
-                .width(Length::Fill)
-                .into(),
-        );
-    }
-    Column::with_children(rows).spacing(CARD_GAP)
 }
 
 /// Extract just the filename from a path (e.g. "/usr/bin/node" -> "node")
@@ -590,7 +439,7 @@ fn state_for_backend(backend_name: &str, gui: &OddBoxGui) -> ProcState {
     }
 }
 
-/// Build a subtitle describing the backend for a frontend card.
+/// Build a subtitle describing the backend for a frontend row.
 fn subtitle_for_backend(backend_name: &str, gui: &OddBoxGui) -> String {
     if let Some(p) = gui
         .cached_config
@@ -598,7 +447,7 @@ fn subtitle_for_backend(backend_name: &str, gui: &OddBoxGui) -> String {
         .iter()
         .find(|p| p.name == backend_name)
     {
-        format!("⚙ {} · :{}", basename(&p.bin), p.port)
+        format!("proc {} · :{}", basename(&p.bin), p.port)
     } else if let Some(r) = gui
         .cached_config
         .remote_backends
@@ -606,16 +455,16 @@ fn subtitle_for_backend(backend_name: &str, gui: &OddBoxGui) -> String {
         .find(|r| r.name == backend_name)
     {
         let proto = if r.https { "https" } else { "http" };
-        format!("⇄ {}://{}", proto, r.endpoints)
+        format!("remote {}://{}", proto, r.endpoints)
     } else if let Some(s) = gui
         .cached_config
         .static_backends
         .iter()
         .find(|s| s.name == backend_name)
     {
-        format!("📁 dir: {}", s.dir)
+        format!("dir: {}", s.dir)
     } else {
-        format!("⚠ missing: {}", backend_name)
+        format!("missing: {}", backend_name)
     }
 }
 
@@ -646,7 +495,102 @@ fn build_url(hostname: &str, http_port: Option<u16>, https_port: Option<u16>) ->
     }
 }
 
-/// Build action buttons for a frontend card.
+/// Build the frontend "Open" URL.
+///
+/// When a route is materialized through cruma, prefer the SDK-resolved URL so
+/// shorthand hostnames (for example a single label) open at the assigned
+/// tunnel domain.
+fn build_frontend_open_url(
+    hostname: &str,
+    http_port: Option<u16>,
+    https_port: Option<u16>,
+    route_uses_cruma: bool,
+    cruma_assigned_domain: Option<&str>,
+) -> String {
+    if route_uses_cruma {
+        let assigned = cruma_assigned_domain.map(|d| d.to_string());
+        if let Some(url) = resolve_display_url(hostname, &assigned) {
+            return url;
+        }
+    }
+
+    build_url(hostname, http_port, https_port)
+}
+
+fn frontend_process_control_action<'a>(
+    backend_name: &str,
+    backend_state: &ProcState,
+    is_light: bool,
+    use_kde_buttons: bool,
+) -> Option<(f32, Element<'a, Message>)> {
+    let can_start = matches!(backend_state, ProcState::Stopped | ProcState::Faulty);
+    let can_stop = matches!(backend_state, ProcState::Running | ProcState::Faulty);
+    let is_transitioning = matches!(backend_state, ProcState::Starting | ProcState::Stopping);
+
+    if is_transitioning {
+        let disabled_bg = Color::from_rgb(0.4, 0.4, 0.4);
+        let label = if matches!(backend_state, ProcState::Starting) {
+            "Starting..."
+        } else {
+            "Stopping..."
+        };
+        return Some(action_btn(
+            label,
+            None,
+            disabled_bg,
+            disabled_bg,
+            Color::WHITE,
+            use_kde_buttons,
+            KdeButtonRole::Neutral,
+        ));
+    }
+
+    if can_stop {
+        let stop_bg = if is_light {
+            Color::from_rgb(0.72, 0.20, 0.20)
+        } else {
+            Color::from_rgb(0.80, 0.28, 0.28)
+        };
+        let stop_hover = if is_light {
+            Color::from_rgb(0.65, 0.15, 0.15)
+        } else {
+            Color::from_rgb(0.88, 0.33, 0.33)
+        };
+        Some(action_btn(
+            "Stop",
+            Some(Message::ProcessStop(backend_name.to_string())),
+            stop_bg,
+            stop_hover,
+            Color::WHITE,
+            use_kde_buttons,
+            KdeButtonRole::Danger,
+        ))
+    } else if can_start {
+        let start_bg = if is_light {
+            Color::from_rgb(0.18, 0.52, 0.22)
+        } else {
+            Color::from_rgb(0.25, 0.62, 0.30)
+        };
+        let start_hover = if is_light {
+            Color::from_rgb(0.14, 0.45, 0.18)
+        } else {
+            Color::from_rgb(0.32, 0.72, 0.38)
+        };
+        Some(action_btn(
+            "Start",
+            Some(Message::ProcessStart(backend_name.to_string())),
+            start_bg,
+            start_hover,
+            Color::WHITE,
+            use_kde_buttons,
+            KdeButtonRole::Success,
+        ))
+    } else {
+        None
+    }
+}
+
+/// Build action buttons for a frontend row.
 /// Includes Open, Edit FE, Edit BE, and optionally Start/Stop for process backends.
 fn frontend_actions<'a>(
     hostname: &str,
@@ -657,6 +601,8 @@ fn frontend_actions<'a>(
     use_kde_buttons: bool,
     http_port: Option<u16>,
     https_port: Option<u16>,
+    route_uses_cruma: bool,
+    cruma_assigned_domain: Option<&str>,
 ) -> Vec<(f32, Element<'a, Message>)> {
     let mut actions: Vec<(f32, Element<'a, Message>)> = Vec::new();
 
@@ -671,7 +617,13 @@ fn frontend_actions<'a>(
     } else {
         Color::from_rgb(0.28, 0.66, 0.66)
     };
-    let url = build_url(hostname, http_port, https_port);
+    let url = build_frontend_open_url(
+        hostname,
+        http_port,
+        https_port,
+        route_uses_cruma,
+        cruma_assigned_domain,
+    );
     actions.push(action_btn(
         "Open",
         Some(Message::OpenInBrowser(url)),
@@ -679,7 +631,7 @@ fn frontend_actions<'a>(
         open_hover,
         Color::WHITE,
         use_kde_buttons,
-        super::super::KdeButtonRole::Neutral,
+        KdeButtonRole::Neutral,
     ));
 
     // Edit Backend
@@ -700,7 +652,7 @@ fn frontend_actions<'a>(
         edit_hover,
         Color::WHITE,
         use_kde_buttons,
-        super::super::KdeButtonRole::Primary,
+        KdeButtonRole::Primary,
     ));
 
     // Edit Frontend
@@ -721,56 +673,15 @@ fn frontend_actions<'a>(
         fe_hover,
         Color::WHITE,
         use_kde_buttons,
-        super::super::KdeButtonRole::Neutral,
+        KdeButtonRole::Neutral,
     ));
 
     // Start / Stop for process backends
-    if is_process {
-        let can_start = matches!(backend_state, ProcState::Stopped | ProcState::Faulty);
-        let can_stop = matches!(backend_state, ProcState::Running | ProcState::Faulty);
-        let is_transitioning = matches!(backend_state, ProcState::Starting | ProcState::Stopping);
-
-        if can_stop && !is_transitioning {
-            let stop_bg = if is_light {
-                Color::from_rgb(0.72, 0.20, 0.20)
-            } else {
-                Color::from_rgb(0.80, 0.28, 0.28)
-            };
-            let stop_hover = if is_light {
-                Color::from_rgb(0.65, 0.15, 0.15)
-            } else {
-                Color::from_rgb(0.88, 0.33, 0.33)
-            };
-            actions.push(action_btn(
-                "Stop",
-                Some(Message::ProcessStop(backend_name.to_string())),
-                stop_bg,
-                stop_hover,
-                Color::WHITE,
-                use_kde_buttons,
-                super::super::KdeButtonRole::Danger,
-            ));
-        } else if can_start && !is_transitioning {
-            let start_bg = if is_light {
-                Color::from_rgb(0.18, 0.52, 0.22)
-            } else {
-                Color::from_rgb(0.25, 0.62, 0.30)
-            };
-            let start_hover = if is_light {
-                Color::from_rgb(0.14, 0.45, 0.18)
-            } else {
-                Color::from_rgb(0.32, 0.72, 0.38)
-            };
-            actions.push(action_btn(
-                "Start",
-                Some(Message::ProcessStart(backend_name.to_string())),
-                start_bg,
-                start_hover,
-                Color::WHITE,
-                use_kde_buttons,
-                super::super::KdeButtonRole::Success,
-            ));
-        }
+    if is_process
+        && let Some(start_stop_btn) =
+            frontend_process_control_action(backend_name, backend_state, is_light, use_kde_buttons)
+    {
+        actions.push(start_stop_btn);
     }
 
     actions
@@ -804,7 +715,7 @@ fn unbound_process_actions<'a>(
         bind_hover,
         Color::WHITE,
         use_kde_buttons,
-        super::super::KdeButtonRole::Neutral,
+        KdeButtonRole::Neutral,
     ));
 
     // Edit button
@@ -825,7 +736,7 @@ fn unbound_process_actions<'a>(
         edit_hover,
         Color::WHITE,
         use_kde_buttons,
-        super::super::KdeButtonRole::Primary,
+        KdeButtonRole::Primary,
     ));
 
     // Manage button (navigate to processes page)
@@ -846,7 +757,7 @@ fn unbound_process_actions<'a>(
         manage_hover,
         Color::WHITE,
         use_kde_buttons,
-        super::super::KdeButtonRole::Neutral,
+        KdeButtonRole::Neutral,
     ));
 
     // Start / Stop
@@ -872,7 +783,7 @@ fn unbound_process_actions<'a>(
             stop_hover,
             Color::WHITE,
             use_kde_buttons,
-            super::super::KdeButtonRole::Danger,
+            KdeButtonRole::Danger,
         ));
     } else if can_start && !is_transitioning {
         let start_bg = if is_light {
@@ -892,7 +803,7 @@ fn unbound_process_actions<'a>(
             start_hover,
             Color::WHITE,
             use_kde_buttons,
-            super::super::KdeButtonRole::Success,
+            KdeButtonRole::Success,
         ));
     } else {
         // Transitioning – show disabled
@@ -909,7 +820,7 @@ fn unbound_process_actions<'a>(
             disabled_bg,
             Color::WHITE,
             use_kde_buttons,
-            super::super::KdeButtonRole::Neutral,
+            KdeButtonRole::Neutral,
         ));
     }
 
@@ -954,7 +865,7 @@ fn unbound_simple_actions<'a>(
             bind_hover,
             Color::WHITE,
             use_kde_buttons,
-            super::super::KdeButtonRole::Neutral,
+            KdeButtonRole::Neutral,
         ),
         action_btn(
             "Edit",
@@ -963,305 +874,164 @@ fn unbound_simple_actions<'a>(
             edit_hover,
             Color::WHITE,
             use_kde_buttons,
-            super::super::KdeButtonRole::Primary,
+            KdeButtonRole::Primary,
         ),
     ]
 }
 
 impl OddBoxGui {
     pub(in crate::gui) fn view_dashboard(&self) -> Element<'_, Message> {
-        let uptime = self
-            .state
-            .uptime()
-            .map(|d| {
-                let total_secs = d.as_secs();
-                let days = total_secs / 86400;
-                let hours = (total_secs % 86400) / 3600;
-                let mins = (total_secs % 3600) / 60;
-                let secs = total_secs % 60;
-                if days > 0 {
-                    format!("{}d {}h {}m {}s", days, hours, mins, secs)
-                } else if hours > 0 {
-                    format!("{}h {}m {}s", hours, mins, secs)
-                } else if mins > 0 {
-                    format!("{}m {}s", mins, secs)
-                } else {
-                    format!("{}s", secs)
-                }
-            })
-            .unwrap_or_else(|_| "Unknown".to_string());
         let theme_snapshot = self.theme();
-        let dashboard_surface_bg = self.surface_panel_bg(&theme_snapshot);
-        let dashboard_surface_border = self.surface_border_color(&theme_snapshot);
+        let list_panel_bg = self.surface_panel_bg(&theme_snapshot);
+        let list_item_bg = self.surface_panel_alt_bg(&theme_snapshot);
+        let logs_panel_bg = self.surface_panel_bg(&theme_snapshot);
+        let logs_entries_bg = {
+            let base_bg = theme_snapshot.extended_palette().background.base.color;
+            if theme_snapshot.extended_palette().is_dark {
+                theme::palette::mix(base_bg, Color::BLACK, 0.33)
+            } else {
+                base_bg
+            }
+        };
+        let panel_border = self.surface_border_color(&theme_snapshot);
 
         let dashboard_content: Element<'_, Message> = responsive(move |size| {
-            let (cols, card_width) = card_layout(size);
             let use_kde_buttons = self.use_kde_system_styles();
+            let total_width = size.width.max(1.0);
+            let show_observations = total_width >= DASHBOARD_TWO_COLUMN_MIN_WIDTH;
+            let (list_width, logs_width) = if show_observations {
+                let available_width = (total_width - DASHBOARD_SPLITTER_HIT_WIDTH).max(1.0);
+                let min_list_width = DASHBOARD_MIN_LIST_WIDTH.min(available_width * 0.7);
+                let min_logs_width = DASHBOARD_MIN_LOGS_WIDTH.min(available_width * 0.7);
+                let max_list_width = (available_width - min_logs_width).max(available_width * 0.3);
+                let min_list_width = min_list_width.min(max_list_width);
+                let list_width = (available_width * self.dashboard_split_ratio)
+                    .clamp(min_list_width, max_list_width);
+                let logs_width = (available_width - list_width).max(1.0);
+                (list_width, logs_width)
+            } else {
+                (total_width, 0.0)
+            };
+            let list_action_wrap_width = (list_width - 32.0).max(220.0);
 
             // Detect light theme for theme-aware colors
             let is_light = match self.theme_mode {
                 super::super::ThemeMode::Light => true,
                 super::super::ThemeMode::Dark => false,
-                super::super::ThemeMode::System => matches!(self.system_theme, Some(theme::Mode::Light)),
-            };
-
-            let status_green = theme_aware_color(
-                is_light,
-                Color::from_rgb(0.4, 0.8, 0.4),
-                Color::from_rgb(0.15, 0.55, 0.15),
-            );
-
-            // --- Uptime bar ---
-            let http_port = self.cached_config.http_port;
-            let https_port = self.cached_config.https_port;
-
-            let mut uptime_row = Row::new()
-                .spacing(6)
-                .align_y(Alignment::Center)
-                .push(text("●").color(status_green).size(super::super::text_size(14)))
-                .push(
-                    text("Status: Running")
-                        .size(super::super::text_size(15))
-                        .color(status_green),
-                )
-                .push(
-                    text(format!("  Uptime: {}", &uptime))
-                        .size(super::super::text_size(15))
-                        .style(muted_text),
-                )
-                .push(Space::new().width(Length::Fill));
-
-            if let Some(port) = http_port {
-                uptime_row = uptime_row.push(
-                    text(format!("HTTP :{}", port))
-                        .size(super::super::text_size(13))
-                        .style(muted_text),
-                );
-            }
-            if http_port.is_some() && https_port.is_some() {
-                uptime_row = uptime_row.push(
-                    text("·")
-                        .size(super::super::text_size(13))
-                        .style(muted_text),
-                );
-            }
-            if let Some(port) = https_port {
-                uptime_row = uptime_row.push(
-                    text(format!("HTTPS :{}", port))
-                        .size(super::super::text_size(13))
-                        .style(muted_text),
-                );
-            }
-
-            let uptime_bar = container(uptime_row)
-            .padding(14)
-            .width(Length::Fill)
-            .style(move |_theme: &Theme| {
-                container::Style {
-                    background: Some(dashboard_surface_bg.into()),
-                    border: Border {
-                        radius: 6.0.into(),
-                        width: 1.0,
-                        color: dashboard_surface_border,
-                    },
-                    ..Default::default()
+                super::super::ThemeMode::System => {
+                    matches!(self.system_theme, Some(theme::Mode::Light))
                 }
-            });
+            };
 
             // Route helpers
             let backend_exists = |name: &str| -> bool {
                 self.cached_config.processes.iter().any(|p| p.name == name)
-                    || self
-                        .cached_config
-                        .remote_backends
-                        .iter()
-                        .any(|r| r.name == name)
-                    || self
-                        .cached_config
-                        .static_backends
-                        .iter()
-                        .any(|s| s.name == name)
+                    || self.cached_config.remote_backends.iter().any(|r| r.name == name)
+                    || self.cached_config.static_backends.iter().any(|s| s.name == name)
             };
-
-            // Summary counts
-            let mut total = 0usize;
-            let mut running = 0usize;
-            let mut stopped = 0usize;
-            let mut faulty = 0usize;
-
-            for proc in &self.cached_config.processes {
-                total += 1;
-                match proc.state {
-                    ProcState::Running
-                    | ProcState::Remote
-                    | ProcState::DirServer
-                    | ProcState::Docker => running += 1,
-                    ProcState::Stopped | ProcState::Starting | ProcState::Stopping => stopped += 1,
-                    ProcState::Faulty => faulty += 1,
-                }
-            }
-            for remote in &self.cached_config.remote_backends {
-                total += 1;
-                match remote.state {
-                    ProcState::Running
-                    | ProcState::Remote
-                    | ProcState::DirServer
-                    | ProcState::Docker => running += 1,
-                    ProcState::Stopped | ProcState::Starting | ProcState::Stopping => stopped += 1,
-                    ProcState::Faulty => faulty += 1,
-                }
-            }
-            for sb in &self.cached_config.static_backends {
-                total += 1;
-                match sb.state {
-                    ProcState::Running
-                    | ProcState::Remote
-                    | ProcState::DirServer
-                    | ProcState::Docker => running += 1,
-                    ProcState::Stopped | ProcState::Starting | ProcState::Stopping => stopped += 1,
-                    ProcState::Faulty => faulty += 1,
-                }
-            }
-            let orphan_count = self
-                .cached_config
-                .routes
-                .iter()
-                .filter(|r| !backend_exists(&r.backend))
-                .count();
-            total += orphan_count;
-            faulty += orphan_count;
-
-            let sites_color = theme_aware_color(
-                is_light,
-                Color::WHITE,
-                Color::from_rgb(0.15, 0.15, 0.25),
-            );
-            let running_color = theme_aware_color(
-                is_light,
-                Color::from_rgb(0.4, 0.8, 0.4),
-                Color::from_rgb(0.15, 0.55, 0.15),
-            );
-            let stopped_color = theme_aware_color(
-                is_light,
-                Color::from_rgb(0.6, 0.6, 0.6),
-                Color::from_rgb(0.35, 0.35, 0.35),
-            );
-            let faulty_color = theme_aware_color(
-                is_light,
-                Color::from_rgb(0.9, 0.3, 0.3),
-                Color::from_rgb(0.75, 0.15, 0.15),
-            );
-
-            let summary_row = Row::with_children(vec![
-                stat_box(
-                    "Sites",
-                    total,
-                    sites_color,
-                    dashboard_surface_bg,
-                    dashboard_surface_border,
-                ),
-                stat_box(
-                    "Running",
-                    running,
-                    running_color,
-                    dashboard_surface_bg,
-                    dashboard_surface_border,
-                ),
-                stat_box(
-                    "Stopped",
-                    stopped,
-                    stopped_color,
-                    dashboard_surface_bg,
-                    dashboard_surface_border,
-                ),
-                stat_box(
-                    "Faulty",
-                    faulty,
-                    faulty_color,
-                    dashboard_surface_bg,
-                    dashboard_surface_border,
-                ),
-            ])
-            .spacing(12);
 
             let selected = self.dashboard_process_menu.as_deref();
             let routes = &self.cached_config.routes;
 
-            let mut sections: Vec<Element<'_, Message>> = Vec::new();
+            let mut list_sections: Vec<Element<'_, Message>> = Vec::new();
 
-            // ─── Frontends section ───
-            // Each card represents a frontend route, showing hostname + backend info.
+            // Frontends section
             {
-                // Only include routes whose backends actually exist
-                let valid_routes: Vec<_> = routes.iter()
-                    .filter(|r| backend_exists(&r.backend))
-                    .collect();
+                let valid_routes: Vec<_> = routes.iter().filter(|r| backend_exists(&r.backend)).collect();
 
                 if !valid_routes.is_empty() {
                     let cruma_global = self.cached_config.cruma_globally_enabled;
                     let cruma_domain = self.cached_config.cruma_assigned_domain.as_deref();
-                    let cards: Vec<Element<'_, Message>> = valid_routes.iter().map(|route| {
-                        let accent = accent_for_backend(&route.backend, self);
-                        let state = state_for_backend(&route.backend, self);
-                        let mut subtitle = subtitle_for_backend(&route.backend, self);
+                    let list_rows: Vec<Element<'_, Message>> = valid_routes
+                        .iter()
+                        .map(|route| {
+                            let accent = accent_for_backend(&route.backend, self);
+                            let state = state_for_backend(&route.backend, self);
+                            let mut subtitle = subtitle_for_backend(&route.backend, self);
 
-                        // Append the resolved cruma FQDN to the subtitle when
-                        // cruma is globally enabled and this route opts in,
-                        // using the SDK's classify_hostname_pattern.
-                        if cruma_global && route.enable_cruma {
-                            let assigned = cruma_domain.map(|d| d.to_string());
-                            let info = classify_hostname_pattern(&route.hostname, &assigned);
-                            match info.kind {
-                                HostnamePatternKind::Invalid => {}
-                                HostnamePatternKind::Pending => {
-                                    subtitle = format!("{} · 👻 {}", subtitle, info.display_label);
-                                }
-                                _ => {
-                                    let host = route.hostname.trim();
-                                    if info.display_label != host {
-                                        subtitle = format!("{} · 👻 {}", subtitle, info.display_label);
+                            // Append resolved cruma FQDN to subtitle when applicable.
+                            if cruma_global && route.enable_cruma {
+                                let assigned = cruma_domain.map(|d| d.to_string());
+                                let info = classify_hostname_pattern(&route.hostname, &assigned);
+                                match info.kind {
+                                    HostnamePatternKind::Invalid => {}
+                                    HostnamePatternKind::Pending => {
+                                        subtitle = format!("{} · cruma {}", subtitle, info.display_label);
+                                    }
+                                    _ => {
+                                        let host = route.hostname.trim();
+                                        if info.display_label != host {
+                                            subtitle =
+                                                format!("{} · cruma {}", subtitle, info.display_label);
+                                        }
                                     }
                                 }
                             }
-                        }
-                        // Use the route's hostname as the selection key (unique per route)
-                        let selection_key = route.hostname.clone();
-                        let is_sel = selected == Some(selection_key.as_str());
-                        let actions = if is_sel {
+
+                            let selection_key = format!("route:{}", route.hostname);
+                            let is_sel = selected == Some(selection_key.as_str());
                             let is_proc = is_process_backend(&route.backend, self);
-                            frontend_actions(
-                                &route.hostname,
-                                &route.backend,
+                            let is_hovered =
+                                self.dashboard_hovered_row.as_deref() == Some(selection_key.as_str());
+                            let actions = if is_sel {
+                                let route_uses_cruma = cruma_global && route.enable_cruma;
+                                frontend_actions(
+                                    &route.hostname,
+                                    &route.backend,
+                                    &state,
+                                    is_proc,
+                                    is_light,
+                                    use_kde_buttons,
+                                    self.cached_config.http_port,
+                                    self.cached_config.https_port,
+                                    route_uses_cruma,
+                                    cruma_domain,
+                                )
+                            } else {
+                                vec![]
+                            };
+                            let mut quick_action_candidate = if !is_sel && is_proc {
+                                frontend_process_control_action(
+                                    &route.backend,
+                                    &state,
+                                    is_light,
+                                    use_kde_buttons,
+                                )
+                            } else {
+                                None
+                            };
+                            let quick_action_slot_width =
+                                quick_action_candidate.as_ref().map(|(width, _)| *width);
+                            let quick_action = if is_hovered {
+                                quick_action_candidate.take()
+                            } else {
+                                None
+                            };
+
+                            let display_name = if cruma_global && route.enable_cruma {
+                                format!("[cruma] {}", route.hostname)
+                            } else {
+                                route.hostname.clone()
+                            };
+
+                            site_list_row(
+                                &display_name,
+                                &subtitle,
+                                accent,
+                                list_item_bg,
+                                panel_border,
                                 &state,
-                                is_proc,
-                                is_light,
-                                use_kde_buttons,
-                                http_port,
-                                https_port,
+                                list_action_wrap_width,
+                                is_sel,
+                                actions,
+                                Some(Message::DashboardToggleProcessMenu(selection_key.clone())),
+                                Some(selection_key),
+                                is_hovered,
+                                quick_action,
+                                quick_action_slot_width,
                             )
-                        } else {
-                            vec![]
-                        };
-                        // Mark cruma-enabled routes with a ghost emoji when cruma
-                        // is also enabled in the global configuration.
-                        let display_name = if cruma_global && route.enable_cruma {
-                            format!("👻 {}", route.hostname)
-                        } else {
-                            route.hostname.clone()
-                        };
-                        site_card(
-                            &display_name,
-                            &subtitle,
-                            accent,
-                            dashboard_surface_bg,
-                            dashboard_surface_border,
-                            &state,
-                            card_width,
-                            is_sel,
-                            actions,
-                            Some(Message::DashboardToggleProcessMenu(selection_key)),
-                        )
-                    }).collect();
+                        })
+                        .collect();
 
                     let frontend_accent = theme_aware_color(
                         is_light,
@@ -1269,80 +1039,85 @@ impl OddBoxGui {
                         Color::from_rgb(0.2, 0.4, 0.7),
                     );
 
-                    sections.push(
+                    list_sections.push(
                         column![
-                            section_header("Frontends", valid_routes.len(), frontend_accent, is_light),
-                            rows_from_cards(cards, cols),
+                            section_header("Frontends", valid_routes.len(), frontend_accent),
+                            Column::with_children(list_rows).spacing(6),
                         ]
-                        .spacing(10)
+                        .spacing(8)
+                        .width(Length::Fill)
                         .into(),
                     );
                 }
             }
 
-            // ─── Orphan routes (pointing to missing backends) ───
-            let orphan_cards: Vec<Element<'_, Message>> = self
+            // Faulty routes (pointing to missing backends)
+            let faulty_rows: Vec<Element<'_, Message>> = self
                 .cached_config
                 .routes
                 .iter()
                 .filter(|r| !backend_exists(&r.backend))
                 .map(|route| {
-                    site_card(
+                    site_list_row(
                         &route.hostname,
                         &format!("Missing backend: {}", route.backend),
                         Color::from_rgb(0.9, 0.3, 0.3),
-                        dashboard_surface_bg,
-                        dashboard_surface_border,
+                        list_item_bg,
+                        panel_border,
                         &ProcState::Faulty,
-                        card_width,
+                        list_action_wrap_width,
                         false,
                         vec![],
                         Some(Message::OpenEditFrontend(route.hostname.clone())),
+                        None,
+                        false,
+                        None,
+                        None,
                     )
                 })
                 .collect();
-            if !orphan_cards.is_empty() {
-                let count = orphan_cards.len();
-                sections.push(
+            if !faulty_rows.is_empty() {
+                let count = faulty_rows.len();
+                list_sections.push(
                     column![
-                        section_header(
-                            "Faulty Routes",
-                            count,
-                            Color::from_rgb(0.9, 0.3, 0.3),
-                            is_light,
-                        ),
-                        rows_from_cards(orphan_cards, cols),
+                        section_header("Faulty Routes", count, Color::from_rgb(0.9, 0.3, 0.3)),
+                        Column::with_children(faulty_rows).spacing(6),
                     ]
-                    .spacing(10)
+                    .spacing(8)
+                    .width(Length::Fill)
                     .into(),
                 );
             }
 
-            // ─── Unbound backends section ───
-            // Collect unbound backends across all types
-            let mut unbound_cards: Vec<Element<'_, Message>> = Vec::new();
+            // Unbound backends section
+            let mut unbound_rows: Vec<Element<'_, Message>> = Vec::new();
 
             // Unbound process backends
             for proc in &self.cached_config.processes {
                 if !is_bound(&proc.name, routes) {
-                    let is_sel = selected == Some(proc.name.as_str());
+                    let selection_key = format!("unbound:proc:{}", proc.name);
+                    let is_sel = selected == Some(selection_key.as_str());
                     let actions = if is_sel {
                         unbound_process_actions(&proc.name, &proc.state, is_light, use_kde_buttons)
                     } else {
                         vec![]
                     };
                     let subtitle = format!("{} · :{}", basename(&proc.bin), proc.port);
-                    unbound_cards.push(site_card(
+                    unbound_rows.push(site_list_row(
                         &proc.name,
                         &subtitle,
                         COLOR_UNBOUND,
-                        dashboard_surface_bg,
-                        dashboard_surface_border,
+                        list_item_bg,
+                        panel_border,
                         &proc.state,
-                        card_width,
+                        list_action_wrap_width,
                         is_sel,
                         actions,
-                        Some(Message::DashboardToggleProcessMenu(proc.name.clone())),
+                        Some(Message::DashboardToggleProcessMenu(selection_key)),
+                        None,
+                        false,
+                        None,
+                        None,
                     ));
                 }
             }
@@ -1350,7 +1125,8 @@ impl OddBoxGui {
             // Unbound remote backends
             for remote in &self.cached_config.remote_backends {
                 if !is_bound(&remote.name, routes) {
-                    let is_sel = selected == Some(remote.name.as_str());
+                    let selection_key = format!("unbound:remote:{}", remote.name);
+                    let is_sel = selected == Some(selection_key.as_str());
                     let actions = if is_sel {
                         unbound_simple_actions(&remote.name, is_light, use_kde_buttons)
                     } else {
@@ -1358,17 +1134,21 @@ impl OddBoxGui {
                     };
                     let proto = if remote.https { "https" } else { "http" };
                     let subtitle = format!("{}://{}", proto, remote.endpoints);
-                    unbound_cards.push(site_card(
+                    unbound_rows.push(site_list_row(
                         &remote.name,
                         &subtitle,
                         COLOR_UNBOUND,
-                        dashboard_surface_bg,
-                        dashboard_surface_border,
+                        list_item_bg,
+                        panel_border,
                         &remote.state,
-                        card_width,
+                        list_action_wrap_width,
                         is_sel,
                         actions,
-                        Some(Message::DashboardToggleProcessMenu(remote.name.clone())),
+                        Some(Message::DashboardToggleProcessMenu(selection_key)),
+                        None,
+                        false,
+                        None,
+                        None,
                     ));
                 }
             }
@@ -1376,75 +1156,197 @@ impl OddBoxGui {
             // Unbound static backends
             for sb in &self.cached_config.static_backends {
                 if !is_bound(&sb.name, routes) {
-                    let is_sel = selected == Some(sb.name.as_str());
+                    let selection_key = format!("unbound:static:{}", sb.name);
+                    let is_sel = selected == Some(selection_key.as_str());
                     let actions = if is_sel {
                         unbound_simple_actions(&sb.name, is_light, use_kde_buttons)
                     } else {
                         vec![]
                     };
                     let subtitle = format!("dir: {}", sb.dir);
-                    unbound_cards.push(site_card(
+                    unbound_rows.push(site_list_row(
                         &sb.name,
                         &subtitle,
                         COLOR_UNBOUND,
-                        dashboard_surface_bg,
-                        dashboard_surface_border,
+                        list_item_bg,
+                        panel_border,
                         &sb.state,
-                        card_width,
+                        list_action_wrap_width,
                         is_sel,
                         actions,
-                        Some(Message::DashboardToggleProcessMenu(sb.name.clone())),
+                        Some(Message::DashboardToggleProcessMenu(selection_key)),
+                        None,
+                        false,
+                        None,
+                        None,
                     ));
                 }
             }
 
-            if !unbound_cards.is_empty() {
-                let unbound_count = unbound_cards.len();
-
-                // Info text explaining what unbound means
-                let info_text = container(
-                    text("These backends have no frontend route mapped to them. They may need a hostname binding, or can be removed if unused.")
-                        .size(super::super::text_size(12))
-                        .wrapping(Wrapping::Word)
-                        .style(muted_text),
+            if !unbound_rows.is_empty() {
+                let unbound_count = unbound_rows.len();
+                let info_text = text(
+                    "These backends have no frontend route mapped to them. They may need a hostname binding, or can be removed if unused.",
                 )
-                .width(Length::Fill)
-                .padding(Padding {
-                    top: 0.0,
-                    right: 0.0,
-                    bottom: 4.0,
-                    left: 0.0,
-                });
+                .size(super::super::text_size(12))
+                .wrapping(Wrapping::Word)
+                .style(muted_text);
 
-                sections.push(
+                list_sections.push(
                     column![
-                        section_header(
-                            "Unbound Backends",
-                            unbound_count,
-                            COLOR_UNBOUND,
-                            is_light,
-                        ),
+                        section_header("Unbound Backends", unbound_count, COLOR_UNBOUND),
                         info_text,
-                        rows_from_cards(unbound_cards, cols),
+                        Column::with_children(unbound_rows).spacing(6),
                     ]
-                    .spacing(10)
+                    .spacing(8)
+                    .width(Length::Fill)
                     .into(),
                 );
             }
 
-            // Assemble the dashboard content
-            let mut content_children: Vec<Element<'_, Message>> =
-                vec![uptime_bar.into(), summary_row.into()];
-            content_children.extend(sections);
+            let list_content: Element<'_, Message> = if list_sections.is_empty() {
+                column![
+                    text("No frontends or backends configured yet.")
+                        .size(super::super::text_size(13))
+                        .style(muted_text)
+                ]
+                .width(Length::Fill)
+                .into()
+            } else {
+                Column::with_children(list_sections)
+                    .spacing(14)
+                    .width(Length::Fill)
+                    .into()
+            };
 
-            let dashboard_column = Column::with_children(content_children).spacing(20);
+            let list_scroller = Scrollable::new(
+                container(list_content)
+                    .padding(Padding {
+                        top: 14.0,
+                        right: 20.0,
+                        bottom: 14.0,
+                        left: 14.0,
+                    })
+                    .width(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill);
 
-            let area = mouse_area(dashboard_column)
-                .on_move(|p| Message::DashboardCursorMoved(p.x, p.y));
+            let list_pane = container(list_scroller)
+                .width(if show_observations {
+                    Length::Fixed(list_width)
+                } else {
+                    Length::Fill
+                })
+                .height(Length::Fill)
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(list_panel_bg.into()),
+                    border: Border {
+                        radius: 8.0.into(),
+                        width: 1.0,
+                        color: panel_border,
+                    },
+                    ..Default::default()
+                });
 
-            // When a card menu is open, clicking outside any card dismisses it.
-            // mouse_area only fires on_press when no child widget captured the event,
-            // so clicking a button inside a card won't trigger this.
+            let dashboard_page: Element<'_, Message> = if show_observations {
+                let logs_title = row![
+                    text("Observations").size(super::super::text_size(20)),
+                    Space::new().width(Length::Fill),
+                    button(text("Clear Logs"))
+                        .padding(Padding {
+                            top: super::super::scaled(6.0),
+                            right: super::super::scaled(12.0),
+                            bottom: super::super::scaled(6.0),
+                            left: super::super::scaled(12.0),
+                        })
+                        .style(move |theme: &Theme, status| {
+                            super::super::themed_button_style(
+                                theme,
+                                status,
+                                KdeButtonRole::Danger,
+                                use_kde_buttons,
+                            )
+                        })
+                        .on_press(Message::LogsClear),
+                ]
+                .align_y(Alignment::Center);
+
+                let logs_entries = container(self.view_log_entries())
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(move |_theme: &Theme| container::Style {
+                        background: Some(logs_entries_bg.into()),
+                        border: Border {
+                            radius: 6.0.into(),
+                            width: 1.0,
+                            color: panel_border,
+                        },
+                        ..Default::default()
+                    });
+
+                let logs_pane = container(
+                    column![logs_title, self.view_log_filter_bar(false), logs_entries]
+                        .spacing(12)
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                )
+                .padding(Padding {
+                    top: 14.0,
+                    right: 14.0,
+                    bottom: 14.0,
+                    left: 14.0,
+                })
+                .width(Length::Fixed(logs_width))
+                .height(Length::Fill)
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(logs_panel_bg.into()),
+                    border: Border {
+                        radius: 8.0.into(),
+                        width: 1.0,
+                        color: panel_border,
+                    },
+                    ..Default::default()
+                });
+
+                let splitter_active = self.dashboard_is_resizing_split;
+                let splitter_bg = if splitter_active {
+                    let strong = self.theme().extended_palette().primary.base.color;
+                    Color::from_rgba(strong.r, strong.g, strong.b, 0.40)
+                } else {
+                    Color::from_rgba(panel_border.r, panel_border.g, panel_border.b, 0.25)
+                };
+
+                let splitter = mouse_area(
+                    container(Space::new().width(Length::Fill).height(Length::Fill))
+                        .width(Length::Fixed(DASHBOARD_SPLITTER_HIT_WIDTH))
+                        .height(Length::Fill)
+                        .style(move |_theme: &Theme| container::Style {
+                            background: Some(splitter_bg.into()),
+                            border: Border {
+                                radius: 4.0.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        }),
+                )
+                .interaction(mouse::Interaction::ResizingHorizontally)
+                .on_press(Message::DashboardStartSplitResize)
+                .on_release(Message::DashboardEndSplitResize);
+
+                row![list_pane, splitter, logs_pane]
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            } else {
+                list_pane.into()
+            };
+
+            let area = mouse_area(dashboard_page)
+                .on_move(|p| Message::DashboardCursorMoved(p.x, p.y))
+                .on_release(Message::DashboardEndSplitResize)
+                .on_exit(Message::DashboardEndSplitResize);
+
             if self.dashboard_process_menu.is_some() {
                 area.on_press(Message::DashboardDismissMenu).into()
             } else {
@@ -1452,6 +1354,7 @@ impl OddBoxGui {
             }
         })
         .into();
+
         dashboard_content
     }
 }

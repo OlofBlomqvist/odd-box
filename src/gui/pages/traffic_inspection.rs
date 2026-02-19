@@ -23,6 +23,39 @@ const PREVIEW_SHORT: usize = 512;
 /// Expanded preview character limit (shown after "Load more").
 const PREVIEW_EXPANDED: usize = 4096;
 
+fn themed_text_color(theme: &Theme, light_alpha: f32, dark_alpha: f32) -> Color {
+    let palette = theme.extended_palette();
+    let base = palette.background.base.text;
+    let alpha = if palette.is_dark {
+        dark_alpha
+    } else {
+        light_alpha
+    };
+    Color::from_rgba(base.r, base.g, base.b, alpha)
+}
+
+fn meta_text_style(theme: &Theme) -> iced::widget::text::Style {
+    iced::widget::text::Style {
+        color: Some(themed_text_color(theme, 0.86, 0.72)),
+        ..Default::default()
+    }
+}
+
+fn dim_text_style(theme: &Theme) -> iced::widget::text::Style {
+    iced::widget::text::Style {
+        color: Some(themed_text_color(theme, 0.78, 0.62)),
+        ..Default::default()
+    }
+}
+
+fn themed_overlay_alpha(theme: &Theme, light_alpha: f32, dark_alpha: f32) -> f32 {
+    if theme.extended_palette().is_dark {
+        dark_alpha
+    } else {
+        light_alpha
+    }
+}
+
 // ─── Public helpers called from mod.rs update() ──────────────────────────────
 
 /// Compute both body previews and wrap them in a [`CachedBodyPreview`].
@@ -581,13 +614,7 @@ fn build_exchange_row<'a>(exchange: &CapturedExchange, _is_selected: bool) -> El
                     .font(Font::MONOSPACE)
                     .size(super::super::text_size(11))
                     .wrapping(Wrapping::None)
-                    .style(|theme: &Theme| iced::widget::text::Style {
-                        color: Some({
-                            let mut c = theme.extended_palette().background.base.text;
-                            c.a = 0.75;
-                            c
-                        }),
-                    })
+                    .style(dim_text_style)
             )
             .width(Length::FillPortion(5)),
         ]
@@ -652,7 +679,7 @@ fn build_detail_panel<'a>(
             text(format!(" {} ", ver))
                 .font(Font::MONOSPACE)
                 .size(ts(11))
-                .color(Color::from_rgb(0.5, 0.5, 0.5))
+                .style(meta_text_style)
                 .into(),
         );
     }
@@ -738,7 +765,7 @@ fn build_detail_panel<'a>(
             text(format!("  Duration: {}", duration_str))
                 .font(Font::MONOSPACE)
                 .size(ts(12))
-                .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                .style(meta_text_style),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center)
@@ -750,7 +777,7 @@ fn build_detail_panel<'a>(
             text(format!("Client: {}", addr))
                 .font(Font::MONOSPACE)
                 .size(ts(11))
-                .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                .style(meta_text_style),
         );
     }
 
@@ -779,7 +806,7 @@ fn build_detail_panel<'a>(
                     text(format!("  … {} more headers", headers.len() - 30))
                         .font(Font::MONOSPACE)
                         .size(ts(11))
-                        .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                        .style(meta_text_style),
                 );
             }
             detail_col = detail_col.push(section_separator());
@@ -825,7 +852,7 @@ fn build_detail_panel<'a>(
                     text(format!("  … {} more headers", headers.len() - 30))
                         .font(Font::MONOSPACE)
                         .size(ts(11))
-                        .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                        .style(meta_text_style),
                 );
             }
             detail_col = detail_col.push(section_separator());
@@ -857,7 +884,7 @@ fn build_detail_panel<'a>(
             text("No response body")
                 .font(Font::MONOSPACE)
                 .size(ts(11))
-                .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                .style(meta_text_style),
         );
     }
 
@@ -895,7 +922,7 @@ fn build_detail_panel<'a>(
                     text(format!("  … {msg_skip} older messages not shown"))
                         .font(Font::MONOSPACE)
                         .size(super::super::text_size(11))
-                        .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                        .style(meta_text_style),
                 );
             }
 
@@ -933,11 +960,11 @@ fn build_detail_panel<'a>(
                         text(format!("[{}] ", kind_label))
                             .font(Font::MONOSPACE)
                             .size(super::super::text_size(11))
-                            .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                            .style(meta_text_style),
                         text(size_info)
                             .font(Font::MONOSPACE)
                             .size(super::super::text_size(11))
-                            .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                            .style(meta_text_style),
                     ]
                     .spacing(0)
                     .align_y(iced::Alignment::Center),
@@ -992,7 +1019,7 @@ fn build_detail_panel<'a>(
                     text(format!("  … {evt_skip} older events not shown"))
                         .font(Font::MONOSPACE)
                         .size(super::super::text_size(11))
-                        .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                        .style(meta_text_style),
                 );
             }
 
@@ -1028,7 +1055,7 @@ fn build_detail_panel<'a>(
                     text(format!("[{}] ", label))
                         .font(Font::MONOSPACE)
                         .size(super::super::text_size(11))
-                        .color(Color::from_rgb(0.5, 0.5, 0.5))
+                        .style(meta_text_style)
                         .into(),
                 ];
 
@@ -1037,7 +1064,7 @@ fn build_detail_panel<'a>(
                         text(format!("id={} ", sanitize(id)))
                             .font(Font::MONOSPACE)
                             .size(super::super::text_size(11))
-                            .color(Color::from_rgb(0.5, 0.5, 0.5))
+                            .style(meta_text_style)
                             .into(),
                     );
                 }
@@ -1047,7 +1074,7 @@ fn build_detail_panel<'a>(
                         text(format!("({}) ", size_info))
                             .font(Font::MONOSPACE)
                             .size(super::super::text_size(11))
-                            .color(Color::from_rgb(0.5, 0.5, 0.5))
+                            .style(meta_text_style)
                             .into(),
                     );
                 }
@@ -1111,7 +1138,7 @@ fn rich_body_section<'a>(
                 text(format!("  ({})", size_str))
                     .font(Font::MONOSPACE)
                     .size(ts(11))
-                    .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                    .style(meta_text_style),
             ]
             .spacing(4)
             .align_y(iced::Alignment::Center),
@@ -1122,7 +1149,7 @@ fn rich_body_section<'a>(
                 text("⏳ Loading body preview…")
                     .font(Font::MONOSPACE)
                     .size(ts(11))
-                    .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                    .style(meta_text_style),
             )
             .padding(Padding {
                 top: 6.0,
@@ -1135,12 +1162,18 @@ fn rich_body_section<'a>(
                 let palette = theme.extended_palette();
                 let weak = palette.background.weak.color;
                 iced::widget::container::Style {
-                    background: Some(Color { a: 0.20, ..weak }.into()),
+                    background: Some(
+                        Color {
+                            a: themed_overlay_alpha(theme, 0.55, 0.20),
+                            ..weak
+                        }
+                        .into(),
+                    ),
                     border: iced::Border {
                         radius: 4.0.into(),
                         width: 1.0,
                         color: Color {
-                            a: 0.10,
+                            a: themed_overlay_alpha(theme, 0.26, 0.10),
                             ..palette.background.strong.color
                         },
                     },
@@ -1166,13 +1199,7 @@ fn rich_body_section<'a>(
                 .size(ts(11))
                 .color(accent_color),
             container(text(kind_label).font(Font::MONOSPACE).size(ts(10)).style(
-                |theme: &Theme| iced::widget::text::Style {
-                    color: Some({
-                        let mut c = theme.extended_palette().background.base.text;
-                        c.a = 0.55;
-                        c
-                    }),
-                }
+                dim_text_style
             ))
             .padding(Padding {
                 top: 1.0,
@@ -1183,7 +1210,13 @@ fn rich_body_section<'a>(
             .style(|theme: &Theme| {
                 let weak = theme.extended_palette().background.weak.color;
                 iced::widget::container::Style {
-                    background: Some(Color { a: 0.30, ..weak }.into()),
+                    background: Some(
+                        Color {
+                            a: themed_overlay_alpha(theme, 0.60, 0.30),
+                            ..weak
+                        }
+                        .into(),
+                    ),
                     border: iced::Border {
                         radius: 3.0.into(),
                         width: 0.0,
@@ -1195,7 +1228,7 @@ fn rich_body_section<'a>(
             text(format!("  {}", size_str))
                 .font(Font::MONOSPACE)
                 .size(ts(11))
-                .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                .style(meta_text_style),
         ]
         .spacing(6)
         .align_y(iced::Alignment::Center),
@@ -1214,12 +1247,18 @@ fn rich_body_section<'a>(
                 .style(|theme: &Theme| {
                     let weak = theme.extended_palette().background.weak.color;
                     iced::widget::container::Style {
-                        background: Some(Color { a: 0.20, ..weak }.into()),
+                        background: Some(
+                            Color {
+                                a: themed_overlay_alpha(theme, 0.52, 0.20),
+                                ..weak
+                            }
+                            .into(),
+                        ),
                         border: iced::Border {
                             radius: 4.0.into(),
                             width: 1.0,
                             color: Color {
-                                a: 0.15,
+                                a: themed_overlay_alpha(theme, 0.30, 0.15),
                                 ..theme.extended_palette().background.strong.color
                             },
                         },
@@ -1235,7 +1274,7 @@ fn rich_body_section<'a>(
             ))
             .font(Font::MONOSPACE)
             .size(ts(10))
-            .color(Color::from_rgb(0.5, 0.5, 0.5)),
+            .style(meta_text_style),
         );
     } else {
         // ── Text / hex code block ────────────────────────────────
@@ -1376,12 +1415,18 @@ fn body_code_block<'a>(content: &str) -> Element<'a, Message> {
         let palette = theme.extended_palette();
         let weak = palette.background.weak.color;
         iced::widget::container::Style {
-            background: Some(Color { a: 0.35, ..weak }.into()),
+            background: Some(
+                Color {
+                    a: themed_overlay_alpha(theme, 0.70, 0.35),
+                    ..weak
+                }
+                .into(),
+            ),
             border: iced::Border {
                 radius: 4.0.into(),
                 width: 1.0,
                 color: Color {
-                    a: 0.15,
+                    a: themed_overlay_alpha(theme, 0.34, 0.15),
                     ..palette.background.strong.color
                 },
             },
@@ -1399,11 +1444,7 @@ fn action_link_button_style(
     let palette = theme.extended_palette();
     let text_color = match status {
         iced::widget::button::Status::Hovered => palette.primary.base.color,
-        _ => {
-            let mut c = palette.background.base.text;
-            c.a = 0.50;
-            c
-        }
+        _ => themed_text_color(theme, 0.86, 0.66),
     };
     let bg = match status {
         iced::widget::button::Status::Hovered => Some(
