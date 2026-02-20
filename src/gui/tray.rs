@@ -575,7 +575,6 @@ impl Tray for LinuxTray {
 
         let mut items = Vec::new();
 
-        // Hide/Show commented out per TODO — left click now always means "show"
         // if self.visible {
         //     items.push(
         //         StandardItem {

@@ -160,7 +160,14 @@ impl OddBoxGui {
                     };
 
                 // Clickable auto-start toggle cell
-                let auto_label = if proc.auto_start { "Yes" } else { "No" };
+                let mut auto_label = if proc.auto_start {
+                    "Yes".to_string()
+                } else {
+                    "No".to_string()
+                };
+                if self.proc_auto_start_in_flight.contains(&proc.name) {
+                    auto_label.push_str("...");
+                }
                 let auto_color = if proc.auto_start {
                     Color::from_rgb(0.4, 0.85, 0.4)
                 } else {

@@ -20,7 +20,6 @@ pub mod yaml_air;
 use anyhow::bail;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, trace};
 
@@ -683,14 +682,15 @@ impl ConfigWrapper {
             "Resolved process backend paths and args"
         );
 
-        // Merge global env with process env (process overrides global)
-        let mut merged_env: HashMap<String, String> = self.env.clone();
-        merged_env.extend(proc.env.clone());
-
-        // Convert env HashMap to Vec<EnvVar> for compatibility
-        let env_vars: Vec<EnvVar> = merged_env
-            .into_iter()
-            .map(|(k, v)| EnvVar { key: k, value: v })
+        // Per-process env only — global env merging is now handled by the
+        // ProcessOrchestrator (via set_global_env / register_spec).
+        let env_vars: Vec<EnvVar> = proc
+            .env
+            .iter()
+            .map(|(k, v)| EnvVar {
+                key: k.clone(),
+                value: v.clone(),
+            })
             .collect();
 
         Ok(ResolvedProcessBackend {

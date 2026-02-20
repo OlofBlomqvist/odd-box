@@ -363,6 +363,27 @@ impl RouteTarget {
             RouteTarget::Detailed(d) => d.lets_encrypt,
         }
     }
+
+    pub fn form_auth_users(&self) -> &[FormAuthUser] {
+        match self {
+            RouteTarget::Simple(_) => &[],
+            RouteTarget::Detailed(d) => &d.form_auth_users,
+        }
+    }
+
+    pub fn form_auth_secret(&self) -> &str {
+        match self {
+            RouteTarget::Simple(_) => "",
+            RouteTarget::Detailed(d) => &d.form_auth_secret,
+        }
+    }
+}
+
+/// A form-auth user credential stored in the route configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
+pub struct FormAuthUser {
+    pub username: String,
+    pub password: String,
 }
 
 /// Detailed route configuration with additional options
@@ -391,6 +412,17 @@ pub struct DetailedRoute {
     /// Expose this route through the cruma tunnel
     #[serde(default)]
     pub enable_cruma: bool,
+
+    /// Form-auth users for this route (HTML form login).  When non-empty a
+    /// cookie-based login page protects all requests to this route.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub form_auth_users: Vec<FormAuthUser>,
+
+    /// HMAC secret used to sign session cookies.  Auto-generated on first save
+    /// when form_auth_users is non-empty; stored here so sessions survive
+    /// restarts.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub form_auth_secret: String,
 }
 
 /// TLS certificate mode
@@ -503,6 +535,8 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                             redirect_to_https,
                             lets_encrypt,
                             enable_cruma: false,
+                            form_auth_users: Vec::new(),
+                            form_auth_secret: String::new(),
                         }),
                     );
                 } else {
@@ -527,6 +561,8 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                                 redirect_to_https,
                                 lets_encrypt: false, // wildcard certs not supported
                                 enable_cruma: false,
+                                form_auth_users: Vec::new(),
+                                form_auth_secret: String::new(),
                             }),
                         );
                     } else {
@@ -597,6 +633,8 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                             redirect_to_https,
                             lets_encrypt,
                             enable_cruma: false,
+                            form_auth_users: Vec::new(),
+                            form_auth_secret: String::new(),
                         }),
                     );
                 } else {
@@ -619,6 +657,8 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                                 redirect_to_https,
                                 lets_encrypt: false,
                                 enable_cruma: false,
+                                form_auth_users: Vec::new(),
+                                form_auth_secret: String::new(),
                             }),
                         );
                     } else {
@@ -660,6 +700,8 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                             redirect_to_https,
                             lets_encrypt,
                             enable_cruma: false,
+                            form_auth_users: Vec::new(),
+                            form_auth_secret: String::new(),
                         }),
                     );
                 } else {
@@ -682,6 +724,8 @@ impl TryFrom<super::v3::OddBoxV3Config> for OddBoxV4Config {
                                 redirect_to_https,
                                 lets_encrypt: false,
                                 enable_cruma: false,
+                                form_auth_users: Vec::new(),
+                                form_auth_secret: String::new(),
                             }),
                         );
                     } else {
@@ -902,6 +946,8 @@ impl OddBoxV4Config {
                 redirect_to_https: true,
                 lets_encrypt: false,
                 enable_cruma: false,
+                form_auth_users: Vec::new(),
+                form_auth_secret: String::new(),
             }),
         );
         routes.insert(
@@ -913,6 +959,8 @@ impl OddBoxV4Config {
                 redirect_to_https: true,
                 lets_encrypt: false,
                 enable_cruma: false,
+                form_auth_users: Vec::new(),
+                form_auth_secret: String::new(),
             }),
         );
 

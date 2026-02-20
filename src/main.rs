@@ -502,6 +502,14 @@ async fn main() -> anyhow::Result<()> {
                 .expect("This directive should always work"),
         )
         .add_directive(
+            // Show ACME issuance progress (cert requests, DNS-01 propagation,
+            // order status etc.) from the cruma-proxy-lib termination layer.
+            // Set RUST_LOG=cruma_proxy_lib=trace for full per-step detail.
+            "cruma_proxy_lib=info"
+                .parse()
+                .expect("This directive should always work"),
+        )
+        .add_directive(
             "odd_box::observer=warn"
                 .parse()
                 .expect("This directive should always work"),
@@ -540,11 +548,17 @@ async fn main() -> anyhow::Result<()> {
                     .expect("This directive should always work"),
             );
         }
-        tui_filter = tui_filter.add_directive(
-            "cruma_proc_host=trace"
-                .parse()
-                .expect("This directive should always work"),
-        );
+        tui_filter = tui_filter
+            .add_directive(
+                "cruma_proc_host=trace"
+                    .parse()
+                    .expect("This directive should always work"),
+            )
+            .add_directive(
+                "cruma_proxy_lib=info"
+                    .parse()
+                    .expect("This directive should always work"),
+            );
         if !has_odd_box_override && !has_cruma_override {
             tui_filter = tui_filter.add_directive(
                 "odd_box::cruma=info"
@@ -592,6 +606,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let global_state = Arc::new(global_state);
+    let process_log_bridge = crate::process_hosting::spawn_process_log_bridge(global_state.clone());
 
     // Enable richer capture in the event-based path too (headers + body bytes).
     // The HttpCaptureStore has its own CaptureConfig that governs the store;
@@ -716,6 +731,13 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     let config_guard = global_state.config.load_full();
+
+    // Set global environment variables on the orchestrator so they are
+    // merged into every process spec at registration time.
+    global_state
+        .process_registry
+        .orchestrator()
+        .set_global_env(config_guard.env.clone());
 
     // Add backends to the process registry based on their type
     for (backend_id, backend) in &cloned_backends {
@@ -844,6 +866,8 @@ async fn main() -> anyhow::Result<()> {
     _ = cruma_agent_supervisor.abort();
     _ = cruma_agent_supervisor.await;
     _ = cfg_monitor.abort();
+    _ = process_log_bridge.abort();
+    _ = process_log_bridge.await;
 
     if tui_flag || gui_flag {
         println!("odd-box exited successfully");

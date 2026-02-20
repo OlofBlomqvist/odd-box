@@ -164,6 +164,7 @@ fn action_btn<'a>(
 
 /// Build one list row for a site/backend entry.
 fn site_list_row<'a>(
+    type_icon: &'a str,
     display_name: &str,
     subtitle: &str,
     accent_color: Color,
@@ -176,21 +177,15 @@ fn site_list_row<'a>(
     on_press: Option<Message>,
     hover_key: Option<String>,
     is_hovered: bool,
-    quick_action: Option<(f32, Element<'a, Message>)>,
-    quick_action_slot_width: Option<f32>,
 ) -> Element<'a, Message> {
-    let dot_color = status_color(state);
     let name_font_size = super::super::text_size(14).min(16.0);
     let subtitle_font_size = super::super::text_size(11).min(13.0);
-    let quick_action_reserved = quick_action_slot_width
-        .or_else(|| quick_action.as_ref().map(|(width, _)| *width))
-        .map(|width| width + 12.0)
-        .unwrap_or(0.0);
-    let name_text_width = (action_wrap_width - 60.0 - quick_action_reserved).max(90.0);
+    let icon_color = status_color(state);
+    let name_text_width = (action_wrap_width - 56.0).max(90.0);
     let display_name = truncate_to_fit(display_name, name_text_width, name_font_size);
 
     let name_row = row![
-        text("●").color(dot_color).size(name_font_size),
+        text(type_icon).color(icon_color).size(name_font_size),
         container(
             text(display_name)
                 .size(name_font_size)
@@ -261,45 +256,38 @@ fn site_list_row<'a>(
             .style(move |theme: &Theme| selected_list_item_style(theme, accent_color, surface_bg))
             .into()
     } else {
-        let mut heading_row = Row::new()
+        let heading_row = Row::new()
             .push(name_row)
             .spacing(8)
             .align_y(Alignment::Center)
             .width(Length::Fill);
-        if let Some((_, action)) = quick_action {
-            heading_row = heading_row.push(action);
-        } else if let Some(slot_width) = quick_action_slot_width {
-            heading_row = heading_row.push(
-                Space::new()
-                    .width(Length::Fixed(slot_width))
-                    .height(Length::Fixed(super::super::scaled(22.0))),
-            );
-        }
 
-        let row_content = column![heading_row, subtitle_widget]
-            .spacing(5)
-            .width(Length::Fill);
+        let row_content = column![heading_row].width(Length::Fill);
 
         let border_color = if is_hovered {
             accent_color
         } else {
             surface_border
         };
-        let border_width = if is_hovered { 2.0 } else { 1.0 };
+        let row_bg = if is_hovered {
+            theme::palette::mix(surface_bg, accent_color, 0.10)
+        } else {
+            surface_bg
+        };
 
         let row_surface = container(row_content)
             .padding(Padding {
-                top: 10.0,
+                top: 7.0,
                 right: 14.0,
-                bottom: 10.0,
+                bottom: 7.0,
                 left: 14.0,
             })
             .width(Length::Fill)
             .style(move |_theme| container::Style {
-                background: Some(surface_bg.into()),
+                background: Some(row_bg.into()),
                 border: Border {
                     radius: 8.0.into(),
-                    width: border_width,
+                    width: 1.0,
                     color: border_color,
                 },
                 ..Default::default()
@@ -307,7 +295,8 @@ fn site_list_row<'a>(
 
         let mut row_btn = mouse_area(row_surface).on_exit(Message::DashboardSetHoveredRow(None));
         if let Some(row_key) = hover_key {
-            row_btn = row_btn.on_move(move |_p| Message::DashboardSetHoveredRow(Some(row_key.clone())));
+            row_btn =
+                row_btn.on_move(move |_p| Message::DashboardSetHoveredRow(Some(row_key.clone())));
         }
         if let Some(msg) = on_press {
             row_btn = row_btn.on_press(msg);
@@ -383,31 +372,57 @@ fn is_bound(backend_name: &str, routes: &[super::CachedRoute]) -> bool {
     routes.iter().any(|r| r.backend == backend_name)
 }
 
-/// Determine the accent color for a backend by looking it up in the cached config.
-fn accent_for_backend(backend_name: &str, gui: &OddBoxGui) -> Color {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BackendKind {
+    Process,
+    Remote,
+    Static,
+    Missing,
+}
+
+fn backend_kind_for_name(backend_name: &str, gui: &OddBoxGui) -> BackendKind {
     if gui
         .cached_config
         .processes
         .iter()
         .any(|p| p.name == backend_name)
     {
-        COLOR_PROCESS
+        BackendKind::Process
     } else if gui
         .cached_config
         .remote_backends
         .iter()
         .any(|r| r.name == backend_name)
     {
-        COLOR_REMOTE
+        BackendKind::Remote
     } else if gui
         .cached_config
         .static_backends
         .iter()
         .any(|s| s.name == backend_name)
     {
-        COLOR_DIR_SERVER
+        BackendKind::Static
     } else {
-        Color::from_rgb(0.9, 0.3, 0.3) // missing backend
+        BackendKind::Missing
+    }
+}
+
+fn icon_for_backend_kind(kind: BackendKind) -> &'static str {
+    match kind {
+        BackendKind::Process => "⚙",
+        BackendKind::Remote => "⇄",
+        BackendKind::Static => "📁",
+        BackendKind::Missing => "⚠",
+    }
+}
+
+/// Determine the accent color for a backend by looking it up in the cached config.
+fn accent_for_backend(backend_name: &str, gui: &OddBoxGui) -> Color {
+    match backend_kind_for_name(backend_name, gui) {
+        BackendKind::Process => COLOR_PROCESS,
+        BackendKind::Remote => COLOR_REMOTE,
+        BackendKind::Static => COLOR_DIR_SERVER,
+        BackendKind::Missing => Color::from_rgb(0.9, 0.3, 0.3),
     }
 }
 
@@ -606,7 +621,7 @@ fn frontend_actions<'a>(
 ) -> Vec<(f32, Element<'a, Message>)> {
     let mut actions: Vec<(f32, Element<'a, Message>)> = Vec::new();
 
-    // Open in browser
+    // Browse in browser
     let open_bg = if is_light {
         Color::from_rgb(0.15, 0.50, 0.50)
     } else {
@@ -625,7 +640,7 @@ fn frontend_actions<'a>(
         cruma_assigned_domain,
     );
     actions.push(action_btn(
-        "Open",
+        "Browse",
         Some(Message::OpenInBrowser(url)),
         open_bg,
         open_hover,
@@ -888,7 +903,7 @@ impl OddBoxGui {
         let logs_entries_bg = {
             let base_bg = theme_snapshot.extended_palette().background.base.color;
             if theme_snapshot.extended_palette().is_dark {
-                theme::palette::mix(base_bg, Color::BLACK, 0.33)
+                theme::palette::mix(base_bg, Color::BLACK, 0.50)
             } else {
                 base_bg
             }
@@ -971,6 +986,7 @@ impl OddBoxGui {
                             let selection_key = format!("route:{}", route.hostname);
                             let is_sel = selected == Some(selection_key.as_str());
                             let is_proc = is_process_backend(&route.backend, self);
+                            let backend_kind = backend_kind_for_name(&route.backend, self);
                             let is_hovered =
                                 self.dashboard_hovered_row.as_deref() == Some(selection_key.as_str());
                             let actions = if is_sel {
@@ -990,23 +1006,6 @@ impl OddBoxGui {
                             } else {
                                 vec![]
                             };
-                            let mut quick_action_candidate = if !is_sel && is_proc {
-                                frontend_process_control_action(
-                                    &route.backend,
-                                    &state,
-                                    is_light,
-                                    use_kde_buttons,
-                                )
-                            } else {
-                                None
-                            };
-                            let quick_action_slot_width =
-                                quick_action_candidate.as_ref().map(|(width, _)| *width);
-                            let quick_action = if is_hovered {
-                                quick_action_candidate.take()
-                            } else {
-                                None
-                            };
 
                             let display_name = if cruma_global && route.enable_cruma {
                                 format!("[cruma] {}", route.hostname)
@@ -1015,6 +1014,7 @@ impl OddBoxGui {
                             };
 
                             site_list_row(
+                                icon_for_backend_kind(backend_kind),
                                 &display_name,
                                 &subtitle,
                                 accent,
@@ -1027,8 +1027,6 @@ impl OddBoxGui {
                                 Some(Message::DashboardToggleProcessMenu(selection_key.clone())),
                                 Some(selection_key),
                                 is_hovered,
-                                quick_action,
-                                quick_action_slot_width,
                             )
                         })
                         .collect();
@@ -1059,6 +1057,7 @@ impl OddBoxGui {
                 .filter(|r| !backend_exists(&r.backend))
                 .map(|route| {
                     site_list_row(
+                        icon_for_backend_kind(BackendKind::Missing),
                         &route.hostname,
                         &format!("Missing backend: {}", route.backend),
                         Color::from_rgb(0.9, 0.3, 0.3),
@@ -1071,8 +1070,6 @@ impl OddBoxGui {
                         Some(Message::OpenEditFrontend(route.hostname.clone())),
                         None,
                         false,
-                        None,
-                        None,
                     )
                 })
                 .collect();
@@ -1104,9 +1101,10 @@ impl OddBoxGui {
                     };
                     let subtitle = format!("{} · :{}", basename(&proc.bin), proc.port);
                     unbound_rows.push(site_list_row(
+                        icon_for_backend_kind(BackendKind::Process),
                         &proc.name,
                         &subtitle,
-                        COLOR_UNBOUND,
+                        COLOR_PROCESS,
                         list_item_bg,
                         panel_border,
                         &proc.state,
@@ -1116,8 +1114,6 @@ impl OddBoxGui {
                         Some(Message::DashboardToggleProcessMenu(selection_key)),
                         None,
                         false,
-                        None,
-                        None,
                     ));
                 }
             }
@@ -1135,9 +1131,10 @@ impl OddBoxGui {
                     let proto = if remote.https { "https" } else { "http" };
                     let subtitle = format!("{}://{}", proto, remote.endpoints);
                     unbound_rows.push(site_list_row(
+                        icon_for_backend_kind(BackendKind::Remote),
                         &remote.name,
                         &subtitle,
-                        COLOR_UNBOUND,
+                        COLOR_REMOTE,
                         list_item_bg,
                         panel_border,
                         &remote.state,
@@ -1147,8 +1144,6 @@ impl OddBoxGui {
                         Some(Message::DashboardToggleProcessMenu(selection_key)),
                         None,
                         false,
-                        None,
-                        None,
                     ));
                 }
             }
@@ -1165,9 +1160,10 @@ impl OddBoxGui {
                     };
                     let subtitle = format!("dir: {}", sb.dir);
                     unbound_rows.push(site_list_row(
+                        icon_for_backend_kind(BackendKind::Static),
                         &sb.name,
                         &subtitle,
-                        COLOR_UNBOUND,
+                        COLOR_DIR_SERVER,
                         list_item_bg,
                         panel_border,
                         &sb.state,
@@ -1177,8 +1173,6 @@ impl OddBoxGui {
                         Some(Message::DashboardToggleProcessMenu(selection_key)),
                         None,
                         false,
-                        None,
-                        None,
                     ));
                 }
             }
@@ -1250,46 +1244,14 @@ impl OddBoxGui {
                 });
 
             let dashboard_page: Element<'_, Message> = if show_observations {
-                let logs_title = row![
-                    text("Observations").size(super::super::text_size(20)),
-                    Space::new().width(Length::Fill),
-                    button(text("Clear Logs"))
-                        .padding(Padding {
-                            top: super::super::scaled(6.0),
-                            right: super::super::scaled(12.0),
-                            bottom: super::super::scaled(6.0),
-                            left: super::super::scaled(12.0),
-                        })
-                        .style(move |theme: &Theme, status| {
-                            super::super::themed_button_style(
-                                theme,
-                                status,
-                                KdeButtonRole::Danger,
-                                use_kde_buttons,
-                            )
-                        })
-                        .on_press(Message::LogsClear),
-                ]
-                .align_y(Alignment::Center);
-
-                let logs_entries = container(self.view_log_entries())
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .style(move |_theme: &Theme| container::Style {
-                        background: Some(logs_entries_bg.into()),
-                        border: Border {
-                            radius: 6.0.into(),
-                            width: 1.0,
-                            color: panel_border,
-                        },
-                        ..Default::default()
-                    });
-
                 let logs_pane = container(
-                    column![logs_title, self.view_log_filter_bar(false), logs_entries]
-                        .spacing(12)
-                        .width(Length::Fill)
-                        .height(Length::Fill),
+                    self.view_log_panel(
+                        "Observations",
+                        false,
+                        logs_entries_bg,
+                        panel_border,
+                        12.0,
+                    ),
                 )
                 .padding(Padding {
                     top: 14.0,

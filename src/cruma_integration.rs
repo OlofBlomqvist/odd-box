@@ -49,6 +49,119 @@ fn try_auto_start(state: &GlobalState, backend_id: &str) {
     }
 }
 
+/// Extract request host robustly across protocol/proxy variants.
+/// Some ingress/proxy paths may not populate the plain `Host` header (for
+/// example when authority is carried elsewhere), so we fall back through
+/// forwarded headers and URI authority to avoid spurious `unknown` backend
+/// lookups on the pending-start page.
+fn extract_request_host<B>(req: &cruma_proxy_lib::hyper::Request<B>) -> String {
+    fn header_host<B>(req: &cruma_proxy_lib::hyper::Request<B>, name: &str) -> Option<String> {
+        let raw = req.headers().get(name)?.to_str().ok()?.trim();
+        if raw.is_empty() {
+            return None;
+        }
+        // Forwarded headers may contain a list; use the original host.
+        let first = raw.split(',').next().unwrap_or(raw).trim();
+        if first.is_empty() {
+            None
+        } else {
+            Some(first.to_string())
+        }
+    }
+
+    header_host(req, "host")
+        .or_else(|| header_host(req, "x-forwarded-host"))
+        .or_else(|| header_host(req, "x-original-host"))
+        .or_else(|| req.uri().authority().map(|a| a.as_str().to_string()))
+        .or_else(|| req.uri().host().map(|h| h.to_string()))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+#[derive(Debug, Clone)]
+struct OfflineBackendStatus {
+    backend_id: String,
+    status: String,
+    ready_for_requests: bool,
+}
+
+/// Probe the backend's active port directly before asking the browser to retry.
+/// We only gate process backends with this probe; non-process backends are
+/// considered ready based on their static state (Remote/DirServer/Docker).
+async fn tcp_port_ready(port: u16) -> bool {
+    let connect = tokio::net::TcpStream::connect(("127.0.0.1", port));
+    matches!(
+        tokio::time::timeout(Duration::from_millis(250), connect).await,
+        Ok(Ok(_))
+    )
+}
+
+/// Resolve backend status for the offline page/SSE flow.
+/// For process backends, this combines registry state with an active-port TCP
+/// probe so we only trigger reload when the process is actually accepting
+/// connections.
+async fn resolve_offline_backend_status(
+    state: &GlobalState,
+    backend_id: Option<&str>,
+) -> OfflineBackendStatus {
+    let Some(id) = backend_id else {
+        return OfflineBackendStatus {
+            backend_id: "unknown".to_string(),
+            status: "Not found".to_string(),
+            ready_for_requests: false,
+        };
+    };
+
+    let snapshot = state.process_registry.snapshot();
+    let Some(handle) = snapshot.get(id) else {
+        return OfflineBackendStatus {
+            backend_id: id.to_string(),
+            status: "Unknown".to_string(),
+            ready_for_requests: false,
+        };
+    };
+
+    let proc_state = handle.proc_state();
+    let process_state = handle.state();
+
+    // Non-process backends do not have a local process port to probe.
+    if matches!(
+        proc_state,
+        ProcState::Remote | ProcState::Docker | ProcState::DirServer
+    ) {
+        return OfflineBackendStatus {
+            backend_id: id.to_string(),
+            status: format!("{:?}", proc_state),
+            ready_for_requests: true,
+        };
+    }
+
+    // For local processes, confirm the active port accepts a TCP handshake.
+    // This avoids reloading too early while the process is still warming up.
+    if matches!(proc_state, ProcState::Running | ProcState::Starting) {
+        if let Some(port) = process_state.active_port {
+            let port_ready = tcp_port_ready(port).await;
+            let status_suffix = if port_ready { "ready" } else { "warming up" };
+            return OfflineBackendStatus {
+                backend_id: id.to_string(),
+                status: format!("{:?} (port {} {})", proc_state, port, status_suffix),
+                ready_for_requests: port_ready,
+            };
+        }
+
+        return OfflineBackendStatus {
+            backend_id: id.to_string(),
+            status: format!("{:?} (waiting for active port)", proc_state),
+            ready_for_requests: false,
+        };
+    }
+
+    OfflineBackendStatus {
+        backend_id: id.to_string(),
+        status: format!("{:?}", proc_state),
+        ready_for_requests: false,
+    }
+}
+
 /// Build an SSE streaming response that monitors backend state and tells the
 /// browser to reload once the backend comes online (or periodically sends
 /// status updates so the page can show live info).
@@ -80,24 +193,9 @@ fn sse_response(
                 }
             }
 
-            let (bid_str, status_str, is_online) = if let Some(id) = &backend_id {
-                let snapshot = state.process_registry.snapshot();
-                if let Some(handle) = snapshot.get(id) {
-                    let ps = handle.state();
-                    let status = format!("{:?}", ps.proc_state);
-                    let online = ps.proc_state == ProcState::Running
-                        || ps.proc_state == ProcState::Remote
-                        || ps.proc_state == ProcState::Docker
-                        || ps.proc_state == ProcState::DirServer;
-                    (id.clone(), status, online)
-                } else {
-                    (id.clone(), "Unknown".to_string(), false)
-                }
-            } else {
-                ("unknown".to_string(), "Not found".to_string(), false)
-            };
+            let status = resolve_offline_backend_status(&state, backend_id.as_deref()).await;
 
-            if is_online {
+            if status.ready_for_requests {
                 // Backend is up – tell the browser to reload
                 let msg = format!("event: reload\ndata: {{}}\n\n");
                 let _ = tx.send(Ok(Frame::data(Bytes::from(msg)))).await;
@@ -105,10 +203,11 @@ fn sse_response(
             }
 
             // Only send a status event when the status text actually changed
-            if status_str != last_status {
-                last_status = status_str.clone();
+            if status.status != last_status {
+                last_status = status.status.clone();
                 let data = format!(
-                    "event: status\ndata: {{\"backend_id\":\"{bid_str}\",\"status\":\"{status_str}\"}}\n\n"
+                    "event: status\ndata: {{\"backend_id\":\"{}\",\"status\":\"{}\"}}\n\n",
+                    status.backend_id, status.status
                 );
                 if tx.send(Ok(Frame::data(Bytes::from(data)))).await.is_err() {
                     break; // client disconnected
@@ -192,12 +291,7 @@ fn create_offline_handler(state: Arc<GlobalState>) -> HyperHandler {
 
         Box::pin(async move {
             // Extract the host from the request
-            let request_host = req
-                .headers()
-                .get("host")
-                .and_then(|h| h.to_str().ok())
-                .unwrap_or("unknown")
-                .to_string();
+            let request_host = extract_request_host(&req);
 
             // SSE endpoint – stream status updates to the browser
             if req.uri().path() == "/__odd-box-sse" {
@@ -213,22 +307,7 @@ fn create_offline_handler(state: Arc<GlobalState>) -> HyperHandler {
                 try_auto_start(&state, id);
             }
 
-            // Get process state if we found the backend
-            let (bid_str, status_str, is_running) = if let Some(id) = &backend_id {
-                let snapshot = state.process_registry.snapshot();
-                if let Some(handle) = snapshot.get(id) {
-                    let ps = handle.state();
-                    let running = ps.proc_state == ProcState::Running
-                        || ps.proc_state == ProcState::Remote
-                        || ps.proc_state == ProcState::Docker
-                        || ps.proc_state == ProcState::DirServer;
-                    (id.clone(), format!("{:?}", ps.proc_state), running)
-                } else {
-                    (id.clone(), "Unknown".to_string(), false)
-                }
-            } else {
-                ("unknown".to_string(), "Not found".to_string(), false)
-            };
+            let status = resolve_offline_backend_status(&state, backend_id.as_deref()).await;
 
             let body = if req
                 .headers()
@@ -237,11 +316,11 @@ fn create_offline_handler(state: Arc<GlobalState>) -> HyperHandler {
                 .map(|v| v.contains("text/html"))
                 .unwrap_or(false)
             {
-                render_offline_html(&bid_str, &status_str, &request_host)
+                render_offline_html(&status.backend_id, &status.status, &request_host)
             } else {
                 format!(
                     "Service Unavailable: backend '{}' is {}",
-                    bid_str, status_str
+                    status.backend_id, status.status
                 )
             };
 
@@ -258,10 +337,16 @@ fn create_offline_handler(state: Arc<GlobalState>) -> HyperHandler {
                 .headers_mut()
                 .insert("Cache-Control", "no-store".parse().unwrap());
 
-            // If the process is already running, tell the browser to close this
-            // TCP connection so the next request opens a fresh one that the proxy
-            // can route to the now-online backend.
-            if is_running {
+            // Close this connection only once the backend is actually accepting
+            // TCP connections. The browser then retries on a fresh connection.
+            if status.ready_for_requests {
+                // Internal signal consumed by cruma-proxy-lib to trigger a
+                // per-connection graceful shutdown that also works for HTTP/2.
+                response
+                    .headers_mut()
+                    .insert("x-cruma-force-close", "1".parse().unwrap());
+
+                // Keep the standard HTTP/1.x hint as well.
                 response
                     .headers_mut()
                     .insert("Connection", "close".parse().unwrap());
@@ -276,13 +361,9 @@ fn create_offline_handler(state: Arc<GlobalState>) -> HyperHandler {
 fn create_offline_handler_simple() -> HyperHandler {
     Arc::new(|req| {
         Box::pin(async move {
-            let request_host = req
-                .headers()
-                .get("host")
-                .and_then(|h| h.to_str().ok())
-                .unwrap_or("unknown");
+            let request_host = extract_request_host(&req);
 
-            let body = render_offline_html("unknown", "Starting", request_host);
+            let body = render_offline_html("unknown", "Starting", &request_host);
 
             let mut response = hyper_response_with_content_type(
                 cruma_proxy_lib::hyper::StatusCode::SERVICE_UNAVAILABLE,
@@ -664,10 +745,34 @@ pub fn build_config_with_runtime_ports(
         let backend_id_str = target.backend_id();
         let capture_subdomains = target.capture_subdomains();
 
+        // Build an optional FormAuth middleware for this route.
+        let form_auth_middleware: Option<HttpMiddleware> = {
+            let users = target.form_auth_users();
+            if users.is_empty() {
+                None
+            } else {
+                Some(HttpMiddleware::FormAuth {
+                    users: users
+                        .iter()
+                        .map(|u| (u.username.clone(), u.password.clone()))
+                        .collect(),
+                    secret: target.form_auth_secret().to_string(),
+                    login_path: "/auth/login".to_string(),
+                    logout_path: "/auth/logout".to_string(),
+                    cookie_name: "odd_box_session".to_string(),
+                    cookie_secure: false,
+                    cookie_same_site: cruma_proxy_lib::types::CookieSameSite::Lax,
+                    cookie_domain: None,
+                    session_ttl_secs: 86400,
+                })
+            }
+        };
+
         // Build the full set of host patterns using the SDK's
         // pattern syntax (supports *.example.com, app-*, *, etc.)
         // plus optional cruma-domain expansion.
-        let host_patterns = host_patterns_for_route(host, capture_subdomains, cruma_assigned_domain);
+        let host_patterns =
+            host_patterns_for_route(host, capture_subdomains, cruma_assigned_domain);
 
         // Track hosts that have Let's Encrypt enabled
         if target.lets_encrypt() {
@@ -688,7 +793,6 @@ pub fn build_config_with_runtime_ports(
 
                     if !is_running {
                         for pat in &host_patterns {
-                            // TODO: at some point we should stop using this and move toward the dynamic backend resolver pattern
                             http_routes.push(hyper_service_route(
                                 format!("{host}-starting"),
                                 pat.clone(),
@@ -717,7 +821,8 @@ pub fn build_config_with_runtime_ports(
                     };
 
                     if let Some(ep) = to_endpoint(loopback_addr, port) {
-                        let (protocol, origin_tls) = upstream_proto_and_tls(&proc.protocol, proc.https);
+                        let (protocol, origin_tls) =
+                            upstream_proto_and_tls(&proc.protocol, proc.https);
                         let web_backend = WebBackend {
                             id: cruma_backend_id.clone(),
                             protocol,
@@ -729,7 +834,10 @@ pub fn build_config_with_runtime_ports(
                     }
 
                     // For process backends on loopback, preserve the original host header
-                    let middlewares = vec![HttpMiddleware::RewriteHost { to: host.clone() }];
+                    let mut middlewares = vec![HttpMiddleware::RewriteHost { to: host.clone() }];
+                    if let Some(fa) = form_auth_middleware.clone() {
+                        middlewares.push(fa);
+                    }
 
                     for pat in &host_patterns {
                         http_routes.push(http_route_with_middlewares(
@@ -761,8 +869,9 @@ pub fn build_config_with_runtime_ports(
                     let backend_host = endpoints.first().map(|ep| ep.addr.clone());
                     if remote.https && !remote.keep_original_host_header {
                         if let Some(host) = backend_host.as_deref() {
-                            origin_tls =
-                                Some(origin_tls_with_sni(Some(OriginTlsSni::Custom(host.to_string()))));
+                            origin_tls = Some(origin_tls_with_sni(Some(OriginTlsSni::Custom(
+                                host.to_string(),
+                            ))));
                         }
                     }
                     let web_backend = WebBackend {
@@ -779,6 +888,9 @@ pub fn build_config_with_runtime_ports(
                         if let Some(host) = backend_host {
                             middlewares.push(HttpMiddleware::RewriteHost { to: host });
                         }
+                    }
+                    if let Some(fa) = form_auth_middleware.clone() {
+                        middlewares.push(fa);
                     }
                     for pat in &host_patterns {
                         http_routes.push(http_route_with_middlewares(
@@ -804,7 +916,7 @@ pub fn build_config_with_runtime_ports(
                     };
 
                     for pat in &host_patterns {
-                        http_routes.push(serve_dir_route(
+                        let mut route = serve_dir_route(
                             host.clone(),
                             pat.clone(),
                             resolved.dir.clone(),
@@ -813,7 +925,11 @@ pub fn build_config_with_runtime_ports(
                             resolved.render_markdown,
                             resolved.cache_max_age,
                             resolved.spa_fallback,
-                        ));
+                        );
+                        if let Some(fa) = form_auth_middleware.clone() {
+                            route.middlewares.push(fa);
+                        }
+                        http_routes.push(route);
                     }
                 }
             }
@@ -896,7 +1012,6 @@ pub fn build_config_with_runtime_ports(
     .into_iter()
     .flatten()
     {
-        // TODO: route admin API/UI through cruma backends rather than hardcoded 501.
         http_routes.push(respond_route(
             admin_host.clone(),
             HostName::new(&admin_host).to_host_pattern(&None),
@@ -938,35 +1053,69 @@ pub fn build_config_with_runtime_ports(
     };
 
     let listeners = if cruma_tunnel_only {
-        // Build an SNI filter from all known route host patterns so that
-        // only connections for hostnames we actually serve will trigger
-        // ACME certificate generation. Without this, an attacker could
-        // send arbitrary Host headers through the cruma tunnel and cause
-        // us to request certificates for them, exhausting ACME rate limits.
-        let sni = build_sni_filter(all_sni_patterns);
-        if sni.is_none() {
-            tracing::warn!(
-                "No SNI patterns available for cruma tunnel TLS listener — \
-                 all incoming TLS connections will be rejected"
+        let mut tls_routes: Vec<TlsRoute> = Vec::new();
+
+        // Route 1 (highest priority): DNS-01 via tunnel control channel for subdomains of the
+        // cruma-assigned domain (e.g. *.demo-tunnel-one.tun.cruma.io).
+        //
+        // TLS-ALPN-01 cannot work for these: Let's Encrypt would try to connect back to the
+        // domain on port 443, which hits the cruma server — not us.  The cruma server instead
+        // sets the required TXT record when we send it a Dns01Request control message.
+        if let Some(assigned_domain) = cruma_assigned_domain {
+            let cruma_wildcard = format!("*.{}", assigned_domain);
+            let cruma_sni = Some(HostName::new(&cruma_wildcard).to_host_pattern(&None));
+            tracing::debug!(
+                cruma_wildcard,
+                "Tunnel TLS: DNS-01 route registered for cruma-assigned subdomains"
             );
-        }
-        vec![Listener::Tls(TlsListener {
-            port: non_zero_port(tls_port, "tls_port")?,
-            routes: NonEmptyVec(vec![TlsRoute {
-                name: "tls-default".into(),
+            tls_routes.push(TlsRoute {
+                name: "tls-tunnel-dns01".into(),
                 rule: TlsMatch {
-                    sni,
-                    // we are always using HTTP/1.1 and HTTP/2 for the proxy today
+                    sni: cruma_sni,
                     alpn: Some(vec![Alpn::H2, Alpn::Http11]),
                 },
                 action: TlsAction::TerminateForHTTP {
-                    // for cruma ingress we always want to have a proper certificate
-                    cert_mode: CertMode::AcmeAlpn {
-                        cert_target: Default::default(),
+                    cert_mode: CertMode::AcmeDns01 {
+                        provider: AcmeDns01Provider::External {
+                            id: cruma_tunnels_lib::dns::provider_id().to_string(),
+                        },
+                        cert_target: CertTarget::Wildcard,
                     },
-                    http: http_routes,
+                    http: http_routes.clone(),
                 },
-            }]),
+            });
+        }
+
+        // Route 2 (catch-all): TLS-ALPN-01 for custom CNAMEd domains that point at the tunnel.
+        // For these, Let's Encrypt can reach us directly on port 443 through the tunnel forward,
+        // so the standard ALPN challenge works fine.
+        //
+        // The SNI filter is restricted to host patterns we actually have routes for, preventing
+        // an attacker from exhausting ACME rate limits by sending arbitrary hostnames.
+        let sni = build_sni_filter(all_sni_patterns);
+        if sni.is_none() && cruma_assigned_domain.is_none() {
+            tracing::warn!(
+                "No SNI patterns and no cruma assigned domain — \
+                 all tunnel TLS connections will be rejected"
+            );
+        }
+        tls_routes.push(TlsRoute {
+            name: "tls-tunnel-alpn".into(),
+            rule: TlsMatch {
+                sni,
+                alpn: Some(vec![Alpn::H2, Alpn::Http11]),
+            },
+            action: TlsAction::TerminateForHTTP {
+                cert_mode: CertMode::AcmeAlpn {
+                    cert_target: Default::default(),
+                },
+                http: http_routes,
+            },
+        });
+
+        vec![Listener::Tls(TlsListener {
+            port: non_zero_port(tls_port, "tls_port")?,
+            routes: NonEmptyVec(tls_routes),
         })]
     } else {
         // Split http_routes into ACME (Let's Encrypt) routes and self-signed routes

@@ -269,7 +269,11 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
                             let bg = match status {
                                 button::Status::Hovered | button::Status::Pressed => {
                                     if palette.is_dark {
-                                        theme::palette::mix(palette.primary.weak.color, base_bg, 0.70)
+                                        theme::palette::mix(
+                                            palette.primary.weak.color,
+                                            base_bg,
+                                            0.70,
+                                        )
                                     } else {
                                         palette.primary.weak.color
                                     }
@@ -339,16 +343,14 @@ impl<'a, M: Clone + 'a> Table<'a, M> {
         // Wrap in outer container with subtle border
         container(table_content)
             .width(Length::Fill)
-            .style(move |theme: &Theme| {
-                container::Style {
-                    background: None,
-                    border: Border {
-                        radius: 6.0.into(),
-                        width: 1.0,
-                        color: border_color_override.unwrap_or_else(|| table_border_color(theme)),
-                    },
-                    ..Default::default()
-                }
+            .style(move |theme: &Theme| container::Style {
+                background: None,
+                border: Border {
+                    radius: 6.0.into(),
+                    width: 1.0,
+                    color: border_color_override.unwrap_or_else(|| table_border_color(theme)),
+                },
+                ..Default::default()
             })
             .into()
     }

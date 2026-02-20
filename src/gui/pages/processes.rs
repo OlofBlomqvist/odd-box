@@ -268,8 +268,64 @@ impl OddBoxGui {
                 _ => Color::from_rgb(0.6, 0.6, 0.6),
             };
 
+            // Clickable status cell for start/stop toggling (same behavior as Backends page)
+            let status_label = format!("{:?}", proc.state);
+            let proc_name_for_status = proc.name.clone();
+            let is_transitioning = matches!(proc.state, ProcState::Starting | ProcState::Stopping);
+            let can_start = matches!(proc.state, ProcState::Stopped | ProcState::Faulty);
+            let can_stop = matches!(proc.state, ProcState::Running | ProcState::Faulty);
+            let status_cell: Element<'_, Message> = if !is_transitioning && (can_start || can_stop)
+            {
+                let msg = if can_start {
+                    Message::ProcessStart(proc_name_for_status)
+                } else {
+                    Message::ProcessStop(proc_name_for_status)
+                };
+                let sc = status_color;
+                button(text(status_label).size(text_size(12)).color(sc))
+                    .padding(Padding {
+                        top: 2.0,
+                        right: 6.0,
+                        bottom: 2.0,
+                        left: 6.0,
+                    })
+                    .style(move |theme: &Theme, status| {
+                        let palette = theme.extended_palette();
+                        let bg = match status {
+                            button::Status::Hovered => {
+                                if palette.is_dark {
+                                    Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                                } else {
+                                    palette.background.weak.color
+                                }
+                            }
+                            _ => Color::TRANSPARENT,
+                        };
+                        button::Style {
+                            background: Some(bg.into()),
+                            text_color: palette.background.base.text,
+                            border: Border {
+                                radius: 4.0.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        }
+                    })
+                    .on_press(msg)
+                    .into()
+            } else {
+                colored_text_cell(status_label, status_color)
+            };
+
             // Clickable auto-start toggle cell
-            let auto_label = if proc.auto_start { "Yes" } else { "No" };
+            let mut auto_label = if proc.auto_start {
+                "Yes".to_string()
+            } else {
+                "No".to_string()
+            };
+            if self.proc_auto_start_in_flight.contains(&proc.name) {
+                auto_label.push_str("...");
+            }
             let auto_color = if proc.auto_start {
                 Color::from_rgb(0.4, 0.85, 0.4)
             } else {
@@ -315,7 +371,7 @@ impl OddBoxGui {
                     text_cell(&proc.bin),
                     text_cell(&proc.port),
                     text_cell(&proc.protocol),
-                    colored_text_cell(format!("{:?}", proc.state), status_color),
+                    status_cell,
                     auto_cell,
                 ],
                 Message::ProcessToggleDetails(proc.name.clone()),

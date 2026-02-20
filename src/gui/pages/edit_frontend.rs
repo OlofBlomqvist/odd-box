@@ -2,17 +2,100 @@ use iced::widget::text::Wrapping;
 use iced::widget::{
     button, checkbox, column, container, pick_list, responsive, row, text, text_input,
 };
-use iced::{Border, Color, Element, Length, Theme};
+use iced::{Alignment, Border, Color, Element, Length, Padding, Theme};
 
 use cruma_tunnels_lib::hostname::{HostnamePatternKind, classify_hostname_pattern};
 
-use super::super::{BackendOption, KdeButtonRole, Message, OddBoxGui, scaled, text_size};
+use super::super::{
+    BackendOption, FormAuthUserDraft, KdeButtonRole, Message, OddBoxGui, scaled, text_size,
+};
 
 fn muted_text(theme: &Theme) -> iced::widget::text::Style {
     iced::widget::text::Style {
         color: Some(theme.extended_palette().background.weak.text),
         ..Default::default()
     }
+}
+
+fn view_form_auth_user_row(user: &FormAuthUserDraft) -> Element<'_, Message> {
+    let user_id = user.id;
+    row![
+        text_input("Username", &user.username)
+            .on_input(move |v| Message::EditFrontendFormAuthUserNameChanged(user_id, v))
+            .padding(Padding::from(6.0))
+            .width(Length::FillPortion(1)),
+        text_input("Password", &user.password)
+            .on_input(move |v| Message::EditFrontendFormAuthUserPasswordChanged(user_id, v))
+            .padding(Padding::from(6.0))
+            .secure(true)
+            .width(Length::FillPortion(1)),
+        button(text("✖").size(text_size(12)))
+            .on_press(Message::EditFrontendRemoveFormAuthUser(user_id))
+            .padding(Padding::from(6.0))
+            .style(|theme: &Theme, status| {
+                let p = theme.extended_palette();
+                let base = match status {
+                    iced::widget::button::Status::Hovered
+                    | iced::widget::button::Status::Pressed => p.danger.strong.color,
+                    _ => p.danger.base.color,
+                };
+                iced::widget::button::Style {
+                    background: Some(base.into()),
+                    text_color: p.danger.strong.text,
+                    border: Border {
+                        radius: 4.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            }),
+    ]
+    .spacing(scaled(6.0))
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn view_form_auth_section<'a>(
+    users: &'a [FormAuthUserDraft],
+    use_kde_buttons: bool,
+) -> Element<'a, Message> {
+    let header = text("Form Auth Users")
+        .size(text_size(13))
+        .style(muted_text);
+    let help = text(
+        "Requests to this route will require login via an HTML form. \
+         Leave empty to disable form auth.",
+    )
+    .size(text_size(12))
+    .wrapping(Wrapping::Word)
+    .width(Length::Fill)
+    .style(muted_text);
+
+    let mut col = column![header, help].spacing(scaled(6.0));
+
+    for user in users {
+        col = col.push(view_form_auth_user_row(user));
+    }
+
+    let add_btn = button(text("+ Add user").size(text_size(12)))
+        .on_press(Message::EditFrontendAddFormAuthUser)
+        .padding(Padding {
+            top: scaled(5.0),
+            right: scaled(10.0),
+            bottom: scaled(5.0),
+            left: scaled(10.0),
+        })
+        .style(move |theme, status| {
+            super::super::themed_button_style(
+                theme,
+                status,
+                KdeButtonRole::Neutral,
+                use_kde_buttons,
+            )
+        });
+
+    col = col.push(add_btn);
+    col.into()
 }
 
 impl OddBoxGui {
@@ -155,11 +238,8 @@ impl OddBoxGui {
         }
         let actions = row::Row::with_children(actions_children).spacing(scaled(10.0));
 
-        let layout = responsive(|size| {
+        let layout = responsive(move |size| {
             let hostname_label = text("Hostname").size(text_size(13)).style(muted_text);
-            let hostname_help = text("The public host this route matches (e.g. example.local)")
-                .size(text_size(12))
-                .style(muted_text);
             let hostname_input = text_input("example.local", &self.edit_frontend_form.hostname)
                 .on_input(Message::EditFrontendHostChanged)
                 .padding(scaled(8.0))
@@ -171,99 +251,77 @@ impl OddBoxGui {
             let assigned_fqdn: Option<String> = self.cached_config.cruma_assigned_domain.clone();
             let pattern_info = classify_hostname_pattern(hostname, &assigned_fqdn);
 
-            // Build help text for hostname patterns.
-            // Show cruma-specific patterns only when cruma is enabled on
-            // this particular route; otherwise show standard patterns.
-            let mut pattern_help_lines: Vec<Element<'_, Message>> = Vec::new();
+            // Show the SDK classification for the current hostname when non-empty.
+            let pattern_explainer: Option<Element<'_, Message>> =
+                if !hostname.is_empty() && pattern_info.is_valid {
+                    Some(
+                        text(format!("Pattern: {}", pattern_info.explanation))
+                            .size(text_size(11))
+                            .color(Color::from_rgb(0.4, 0.75, 0.95))
+                            .into(),
+                    )
+                } else {
+                    None
+                };
 
-            if self.edit_frontend_form.enable_cruma {
-                pattern_help_lines.push(
-                    text("Hostname patterns (cruma):")
-                        .size(text_size(11))
-                        .style(muted_text)
-                        .into(),
-                );
-                pattern_help_lines.push(
-                    text("  @ or empty  →  default route (assigned cruma domain)")
-                        .size(text_size(11))
-                        .style(muted_text)
-                        .into(),
-                );
-                pattern_help_lines.push(
-                    text("  myapp  →  myapp.<cruma-domain>")
-                        .size(text_size(11))
-                        .style(muted_text)
-                        .into(),
-                );
-                pattern_help_lines.push(
-                    text("  host.example.com  →  exact FQDN (dot = full domain)")
-                        .size(text_size(11))
-                        .style(muted_text)
-                        .into(),
-                );
-                pattern_help_lines.push(
-                    text("  *  →  matches any hostname")
-                        .size(text_size(11))
-                        .style(muted_text)
-                        .into(),
-                );
-                pattern_help_lines.push(
-                    text("  *.example.com  →  any subdomain of example.com")
-                        .size(text_size(11))
-                        .style(muted_text)
-                        .into(),
-                );
-                pattern_help_lines.push(
-                    text("  *.sub  →  any subdomain of sub.<cruma-domain>")
-                        .size(text_size(11))
-                        .style(muted_text)
-                        .into(),
-                );
-                pattern_help_lines.push(
-                    text("  app-*, *-staging  →  glob / wildcard label patterns")
-                        .size(text_size(11))
-                        .style(muted_text)
-                        .into(),
-                );
+            // Show the resolved cruma FQDN directly under hostname so we do not
+            // duplicate the same information again in the "Options" card.
+            let cruma_fqdn_info: Option<Element<'_, Message>> =
+                if self.edit_frontend_form.enable_cruma && !hostname.is_empty() {
+                    match pattern_info.kind {
+                        HostnamePatternKind::Pending => Some(
+                            text(format!(
+                                "👻 {} - waiting for domain assignment...",
+                                pattern_info.display_label
+                            ))
+                            .size(text_size(12))
+                            .wrapping(Wrapping::WordOrGlyph)
+                            .width(Length::Fill)
+                            .style(muted_text)
+                            .into(),
+                        ),
+                        HostnamePatternKind::Invalid => None,
+                        _ if assigned_fqdn.is_some() => Some(
+                            text(format!("👻 {}", pattern_info.display_label))
+                                .size(text_size(12))
+                                .wrapping(Wrapping::WordOrGlyph)
+                                .width(Length::Fill)
+                                .color(Color::from_rgb(0.4, 0.75, 0.95))
+                                .into(),
+                        ),
+                        _ if self.cached_config.cruma_globally_enabled => Some(
+                            text("👻 Waiting for cruma domain assignment...")
+                                .size(text_size(12))
+                                .wrapping(Wrapping::WordOrGlyph)
+                                .width(Length::Fill)
+                                .style(muted_text)
+                                .into(),
+                        ),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+
+            // Collapsible hostname tips, matching the tunnel-agent editor style.
+            let tips_toggle_label = if self.edit_frontend_hostname_tips_expanded {
+                "i Hostname pattern tips v"
             } else {
-                pattern_help_lines.push(
-                    text("Hostname patterns:")
-                        .size(text_size(11))
-                        .style(muted_text)
-                        .into(),
-                );
-                pattern_help_lines.push(
-                    text("  example.local  →  exact hostname match")
-                        .size(text_size(11))
-                        .style(muted_text)
-                        .into(),
-                );
-                pattern_help_lines.push(
-                    text("  *.example.com  →  wildcard subdomain match")
-                        .size(text_size(11))
-                        .style(muted_text)
-                        .into(),
-                );
-                pattern_help_lines.push(
-                    text("  app-*, *-staging  →  glob / wildcard label patterns")
-                        .size(text_size(11))
-                        .style(muted_text)
-                        .into(),
-                );
-            }
-
-            // Show the SDK classification for the current hostname when non-empty
-            if !hostname.is_empty() && pattern_info.is_valid {
-                pattern_help_lines.push(
-                    text(format!("  ▸  {}", pattern_info.explanation))
-                        .size(text_size(11))
-                        .color(Color::from_rgb(0.4, 0.75, 0.95))
-                        .into(),
-                );
-            }
-
-            let pattern_help_col =
-                iced::widget::Column::with_children(pattern_help_lines).spacing(scaled(2.0));
+                "i Hostname pattern tips >"
+            };
+            let tips_toggle_btn = button(
+                text(tips_toggle_label)
+                    .size(text_size(11))
+                    .style(muted_text),
+            )
+            .on_press(Message::EditFrontendToggleHostnameTips)
+            .padding([4.0, 0.0])
+            .style(|theme: &Theme, _status| iced::widget::button::Style {
+                background: None,
+                border: Border::default(),
+                text_color: theme.extended_palette().background.weak.text,
+                ..Default::default()
+            });
 
             let mut backend_options: Vec<BackendOption> = Vec::new();
             backend_options.extend(
@@ -340,57 +398,116 @@ impl OddBoxGui {
                 .width(Length::Fill)
                 .style(muted_text);
 
-            // Show the resolved cruma FQDN(s) when cruma is enabled on this
-            // route, using the SDK classification for display.
-            let cruma_fqdn_info: Option<Element<'_, Message>> =
-                if self.edit_frontend_form.enable_cruma && !hostname.is_empty() {
-                    match pattern_info.kind {
-                        HostnamePatternKind::Pending => Some(
-                            text(format!(
-                                "👻 {} — waiting for domain assignment…",
-                                pattern_info.display_label
-                            ))
-                            .size(text_size(12))
-                            .wrapping(Wrapping::WordOrGlyph)
-                            .width(Length::Fill)
-                            .style(muted_text)
-                            .into(),
-                        ),
-                        HostnamePatternKind::Invalid => None,
-                        _ if assigned_fqdn.is_some() => Some(
-                            text(format!("👻 {}", pattern_info.display_label))
-                                .size(text_size(12))
-                                .wrapping(Wrapping::WordOrGlyph)
-                                .width(Length::Fill)
-                                .color(Color::from_rgb(0.4, 0.75, 0.95))
-                                .into(),
-                        ),
-                        _ if self.cached_config.cruma_globally_enabled => Some(
-                            text("👻 Waiting for cruma domain assignment…")
-                                .size(text_size(12))
-                                .wrapping(Wrapping::WordOrGlyph)
-                                .width(Length::Fill)
-                                .style(muted_text)
-                                .into(),
-                        ),
-                        _ => None,
-                    }
+            let mut hostname_details_children: Vec<Element<'_, Message>> = vec![
+                text("The public host this route matches (e.g. example.local)")
+                    .size(text_size(12))
+                    .style(muted_text)
+                    .into(),
+            ];
+            if let Some(pattern) = pattern_explainer {
+                hostname_details_children.push(pattern);
+            }
+            if let Some(fqdn) = cruma_fqdn_info {
+                hostname_details_children.push(fqdn);
+            }
+            hostname_details_children.push(tips_toggle_btn.into());
+
+            let mut hostname_details =
+                iced::widget::Column::with_children(hostname_details_children).spacing(scaled(4.0));
+
+            if self.edit_frontend_hostname_tips_expanded {
+                let mut pattern_tips = column![].spacing(scaled(2.0));
+                if self.edit_frontend_form.enable_cruma {
+                    pattern_tips = pattern_tips
+                        .push(
+                            text("  @ or empty - default route using assigned cruma domain")
+                                .size(text_size(11))
+                                .style(muted_text),
+                        )
+                        .push(
+                            text("  * - match any hostname (catch-all)")
+                                .size(text_size(11))
+                                .style(muted_text),
+                        )
+                        .push(
+                            text("  app - single label, becomes app.<cruma-domain>")
+                                .size(text_size(11))
+                                .style(muted_text),
+                        )
+                        .push(
+                            text("  *.app - wildcard sub-label under assigned domain")
+                                .size(text_size(11))
+                                .style(muted_text),
+                        )
+                        .push(
+                            text("  example.com - exact FQDN match")
+                                .size(text_size(11))
+                                .style(muted_text),
+                        )
+                        .push(
+                            text("  *.example.com - wildcard subdomain match")
+                                .size(text_size(11))
+                                .style(muted_text),
+                        );
                 } else {
-                    None
-                };
+                    pattern_tips = pattern_tips
+                        .push(
+                            text("  example.local - exact hostname match")
+                                .size(text_size(11))
+                                .style(muted_text),
+                        )
+                        .push(
+                            text("  *.example.com - wildcard subdomain match")
+                                .size(text_size(11))
+                                .style(muted_text),
+                        )
+                        .push(
+                            text("  app-*, *-staging - glob / wildcard label patterns")
+                                .size(text_size(11))
+                                .style(muted_text),
+                        );
+                }
+                pattern_tips = pattern_tips.push(
+                    text("Do not include http:// or https:// - only the hostname.")
+                        .size(text_size(11))
+                        .style(muted_text),
+                );
+
+                let tips_panel =
+                    container(pattern_tips)
+                        .padding([8.0, 12.0])
+                        .style(|theme: &Theme| {
+                            let weak = theme.extended_palette().background.weak.color;
+                            container::Style {
+                                background: Some(
+                                    Color::from_rgba(weak.r, weak.g, weak.b, 0.4).into(),
+                                ),
+                                border: Border {
+                                    radius: 4.0.into(),
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            }
+                        });
+                hostname_details = hostname_details.push(tips_panel);
+            }
 
             let fields = column![
                 hostname_label,
                 hostname_input,
-                hostname_help,
-                pattern_help_col,
+                hostname_details,
                 backend_label,
                 backend_picker,
                 backend_help,
             ]
             .spacing(scaled(6.0));
 
-            let mut options = column![
+            let form_auth_section = view_form_auth_section(
+                &self.edit_frontend_form.form_auth_users,
+                use_kde_buttons,
+            );
+
+            let options = column![
                 text("Options").size(text_size(14)).style(muted_text),
                 forward_toggle,
                 forward_help,
@@ -400,12 +517,9 @@ impl OddBoxGui {
                 lets_encrypt_help,
                 enable_cruma_toggle,
                 enable_cruma_help,
+                form_auth_section,
             ]
             .spacing(scaled(6.0));
-
-            if let Some(fqdn_el) = cruma_fqdn_info {
-                options = options.push(fqdn_el);
-            }
 
             let card_style = |theme: &Theme| container::Style {
                 background: Some(self.surface_panel_bg(theme).into()),

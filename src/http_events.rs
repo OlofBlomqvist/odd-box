@@ -26,9 +26,7 @@ impl HttpEventSink for OddBoxHttpEventSink {
                 http_version,
                 ..
             } => {
-                if let Some(proc_host) =
-                    parse_stop_command(&method, host.as_deref(), &url, &path)
-                {
+                if let Some(proc_host) = parse_stop_command(&method, host.as_deref(), &url, &path) {
                     handle_stop_command(&self.state, &proc_host, host.as_deref(), &path);
                 }
 
@@ -77,7 +75,7 @@ impl HttpEventSink for OddBoxHttpEventSink {
                 );
 
                 if proc_backend.exclude_from_start_all {
-                    tracing::warn!(
+                    tracing::info!(
                         backend_id = %backend_id,
                         host = %host,
                         "process is marked exclude_from_start_all; auto-start on request is still enabled"
@@ -86,7 +84,7 @@ impl HttpEventSink for OddBoxHttpEventSink {
 
                 let was_disabled = !registry.is_enabled(backend_id);
                 if was_disabled {
-                    tracing::warn!(
+                    tracing::info!(
                         backend_id = %backend_id,
                         host = %host,
                         "process is disabled; overriding and auto-starting on request"
@@ -109,7 +107,7 @@ impl HttpEventSink for OddBoxHttpEventSink {
                         None,
                         None,
                     );
-                    tracing::info!(
+                    tracing::debug!(
                         backend_id = %backend_id,
                         host = %host,
                         "auto-starting process due to incoming request"
@@ -117,14 +115,14 @@ impl HttpEventSink for OddBoxHttpEventSink {
                 }
             }
             HttpEvent::UpgradeDetected { kind, .. } => {
-                tracing::debug!(kind = ?kind, "cruma http upgrade detected");
+                tracing::trace!(kind = ?kind, "cruma http upgrade detected");
             }
             HttpEvent::RequestFinished {
                 status,
                 duration_ms,
                 ..
             } => {
-                tracing::debug!(
+                tracing::trace!(
                     status = ?status,
                     duration_ms = %duration_ms,
                     "cruma http request finished"
@@ -134,12 +132,7 @@ impl HttpEventSink for OddBoxHttpEventSink {
     }
 }
 
-fn parse_stop_command(
-    method: &str,
-    host: Option<&str>,
-    url: &str,
-    path: &str,
-) -> Option<String> {
+fn parse_stop_command(method: &str, host: Option<&str>, url: &str, path: &str) -> Option<String> {
     if method != "GET" {
         return None;
     }
@@ -277,11 +270,7 @@ fn parse_host_from_url(url: &str) -> Option<String> {
     if let Some(at_idx) = rest.rfind('@') {
         rest = &rest[at_idx + 1..];
     }
-    let host_port = rest
-        .split('/')
-        .next()
-        .unwrap_or_default()
-        .trim();
+    let host_port = rest.split('/').next().unwrap_or_default().trim();
     if host_port.is_empty() {
         return None;
     }

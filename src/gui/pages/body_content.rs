@@ -232,10 +232,7 @@ fn detect_from_magic(bytes: &[u8]) -> Option<BodyContentKind> {
         return Some(BodyContentKind::Image(ImageFormat::Png));
     }
     // GIF: GIF87a or GIF89a
-    if bytes.starts_with(b"GIF8")
-        && bytes.len() >= 6
-        && (bytes[4] == b'7' || bytes[4] == b'9')
-    {
+    if bytes.starts_with(b"GIF8") && bytes.len() >= 6 && (bytes[4] == b'7' || bytes[4] == b'9') {
         return Some(BodyContentKind::Image(ImageFormat::Gif));
     }
     // WebP: RIFF....WEBP

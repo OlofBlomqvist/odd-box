@@ -2670,6 +2670,58 @@ fn count_log_lines(
     count
 }
 
+fn log_max_start_for_content(
+    content_area: Rect,
+    entries: &VecDeque<LogLine>,
+    show_timestamp: bool,
+    log_level_filter: LogLevelFilter,
+    light_theme: bool,
+) -> usize {
+    let visible = content_area.height.saturating_sub(2) as usize;
+    let width = content_area.width.saturating_sub(3) as usize;
+    let total = count_log_lines(
+        entries,
+        width,
+        show_timestamp,
+        log_level_filter,
+        light_theme,
+    );
+    total.saturating_sub(visible)
+}
+
+fn sync_log_tail_from_scroll(
+    content_area: Rect,
+    entries: &VecDeque<LogLine>,
+    show_timestamp: bool,
+    log_level_filter: LogLevelFilter,
+    light_theme: bool,
+    log_tail: &mut bool,
+) -> bool {
+    let max_start = log_max_start_for_content(
+        content_area,
+        entries,
+        show_timestamp,
+        log_level_filter,
+        light_theme,
+    );
+    let cur = TUI_LOG_SCROLL.load(std::sync::atomic::Ordering::Relaxed);
+    let clamped = cur.min(max_start);
+    let mut changed = false;
+
+    if clamped != cur {
+        TUI_LOG_SCROLL.store(clamped, std::sync::atomic::Ordering::Relaxed);
+        changed = true;
+    }
+
+    let at_bottom = clamped >= max_start;
+    if *log_tail != at_bottom {
+        *log_tail = at_bottom;
+        changed = true;
+    }
+
+    changed
+}
+
 fn wrap_text(input: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![input.to_string()];
@@ -2768,31 +2820,6 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
             data = build_snapshot(&global_state).await;
             let new_logs = global_state.tui_log_buffer.drain();
             if !new_logs.is_empty() {
-                let was_at_bottom = {
-                    let cur = TUI_LOG_SCROLL.load(std::sync::atomic::Ordering::Relaxed);
-                    let visible = terminal
-                        .size()
-                        .map(|s| {
-                            s.height
-                                .saturating_sub(TUI_HEADER_HEIGHT + TUI_FOOTER_HEIGHT)
-                                .saturating_sub(2) as usize
-                        })
-                        .unwrap_or(0);
-                    let width = terminal
-                        .size()
-                        .map(|s| s.width.saturating_sub(3) as usize)
-                        .unwrap_or(0);
-                    let total_lines = count_log_lines(
-                        &log_entries,
-                        width,
-                        log_show_timestamp,
-                        log_level_filter,
-                        light_theme,
-                    );
-                    let max_start = total_lines.saturating_sub(visible);
-                    cur >= max_start.saturating_sub(1)
-                };
-
                 for msg in new_logs {
                     let source = if let Some(thread) = msg.thread.as_ref() {
                         if !thread.is_empty() {
@@ -2815,7 +2842,10 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                     log_entries.pop_front();
                 }
 
-                if page == TuiPage::Logs && was_at_bottom && log_tail {
+                // When tail mode is on, always pin to the newest line. Manual
+                // scrolling already disables tail mode, so we do not need a
+                // separate "was at bottom" heuristic here.
+                if page == TuiPage::Logs && log_tail {
                     let visible = terminal
                         .size()
                         .map(|s| s.height.saturating_sub(3 + 3 + 2).saturating_sub(2) as usize)
@@ -2834,7 +2864,6 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                     let max_start = total_lines.saturating_sub(visible);
                     TUI_LOG_SCROLL.store(max_start, std::sync::atomic::Ordering::Relaxed);
                 }
-                dirty = true;
             }
             last_refresh = Instant::now();
             dirty = true;
@@ -2960,21 +2989,13 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                         }
                                     }
                                     TuiPage::Logs => {
-                                        if log_tail {
-                                            log_tail = false;
-                                            dirty = true;
-                                        }
-                                        let visible =
-                                            content_area.height.saturating_sub(2) as usize;
-                                        let width = content_area.width.saturating_sub(3) as usize;
-                                        let total = count_log_lines(
+                                        let max_start = log_max_start_for_content(
+                                            content_area,
                                             &log_entries,
-                                            width,
                                             log_show_timestamp,
                                             log_level_filter,
                                             light_theme,
                                         );
-                                        let max_start = total.saturating_sub(visible);
                                         let cur = TUI_LOG_SCROLL
                                             .load(std::sync::atomic::Ordering::Relaxed)
                                             as isize;
@@ -2983,6 +3004,16 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                         if next != cur as usize {
                                             TUI_LOG_SCROLL
                                                 .store(next, std::sync::atomic::Ordering::Relaxed);
+                                            dirty = true;
+                                        }
+                                        if sync_log_tail_from_scroll(
+                                            content_area,
+                                            &log_entries,
+                                            log_show_timestamp,
+                                            log_level_filter,
+                                            light_theme,
+                                            &mut log_tail,
+                                        ) {
                                             dirty = true;
                                         }
                                     }
@@ -3071,21 +3102,13 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                                 }
                                             }
                                             TuiPage::Logs => {
-                                                if log_tail {
-                                                    log_tail = false;
-                                                }
-                                                let visible =
-                                                    content_area.height.saturating_sub(2) as usize;
-                                                let width =
-                                                    content_area.width.saturating_sub(3) as usize;
-                                                let total = count_log_lines(
+                                                let max_start = log_max_start_for_content(
+                                                    content_area,
                                                     &log_entries,
-                                                    width,
                                                     log_show_timestamp,
                                                     log_level_filter,
                                                     light_theme,
                                                 );
-                                                let max_start = total.saturating_sub(visible);
                                                 let next = scroll_pos_from_mouse(
                                                     scroll_area,
                                                     mouse.row,
@@ -3098,6 +3121,16 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                                         next,
                                                         std::sync::atomic::Ordering::Relaxed,
                                                     );
+                                                    dirty = true;
+                                                }
+                                                if sync_log_tail_from_scroll(
+                                                    content_area,
+                                                    &log_entries,
+                                                    log_show_timestamp,
+                                                    log_level_filter,
+                                                    light_theme,
+                                                    &mut log_tail,
+                                                ) {
                                                     dirty = true;
                                                 }
                                             }
@@ -3284,20 +3317,13 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                         }
                                     }
                                     TuiPage::Logs => {
-                                        if log_tail {
-                                            log_tail = false;
-                                        }
-                                        let visible =
-                                            content_area.height.saturating_sub(2) as usize;
-                                        let width = content_area.width.saturating_sub(3) as usize;
-                                        let total = count_log_lines(
+                                        let max_start = log_max_start_for_content(
+                                            content_area,
                                             &log_entries,
-                                            width,
                                             log_show_timestamp,
                                             log_level_filter,
                                             light_theme,
                                         );
-                                        let max_start = total.saturating_sub(visible);
                                         let scroll_area = scroll_area_for_content(content_area);
                                         let next = scroll_pos_from_mouse(
                                             scroll_area,
@@ -3311,6 +3337,16 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                                 .store(next, std::sync::atomic::Ordering::Relaxed);
                                             dirty = true;
                                         }
+                                        if sync_log_tail_from_scroll(
+                                            content_area,
+                                            &log_entries,
+                                            log_show_timestamp,
+                                            log_level_filter,
+                                            light_theme,
+                                            &mut log_tail,
+                                        ) {
+                                            dirty = true;
+                                        }
                                     }
                                 }
                             }
@@ -3321,6 +3357,18 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                         }
                     }
                     Event::Key(key) => {
+                        let key_content_area = {
+                            let size = terminal.size().unwrap_or_default();
+                            let root = Layout::default()
+                                .direction(Direction::Vertical)
+                                .constraints([
+                                    Constraint::Length(TUI_HEADER_HEIGHT),
+                                    Constraint::Min(0),
+                                    Constraint::Length(TUI_FOOTER_HEIGHT),
+                                ])
+                                .split(Rect::new(0, 0, size.width, size.height));
+                            root[1]
+                        };
                         if confirm_quit {
                             match key.code {
                                 KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -3565,15 +3613,14 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                 TuiPage::Logs => &TUI_LOG_SCROLL,
                                 TuiPage::Traffic => &TUI_TRAFFIC_SCROLL,
                             };
+                            let mut logs_scroll_input = false;
                             if key.code == KeyCode::Up {
                                 let cur = target_scroll.load(std::sync::atomic::Ordering::Relaxed);
                                 target_scroll.store(
                                     cur.saturating_sub(1),
                                     std::sync::atomic::Ordering::Relaxed,
                                 );
-                                if page == TuiPage::Logs {
-                                    log_tail = false;
-                                }
+                                logs_scroll_input = page == TuiPage::Logs;
                                 dirty = true;
                             } else if key.code == KeyCode::Down {
                                 let cur = target_scroll.load(std::sync::atomic::Ordering::Relaxed);
@@ -3581,9 +3628,7 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                     cur.saturating_add(1),
                                     std::sync::atomic::Ordering::Relaxed,
                                 );
-                                if page == TuiPage::Logs {
-                                    log_tail = false;
-                                }
+                                logs_scroll_input = page == TuiPage::Logs;
                                 dirty = true;
                             } else if key.code == KeyCode::PageUp {
                                 let cur = target_scroll.load(std::sync::atomic::Ordering::Relaxed);
@@ -3599,9 +3644,7 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                     cur.saturating_sub(jump),
                                     std::sync::atomic::Ordering::Relaxed,
                                 );
-                                if page == TuiPage::Logs {
-                                    log_tail = false;
-                                }
+                                logs_scroll_input = page == TuiPage::Logs;
                                 dirty = true;
                             } else if key.code == KeyCode::PageDown {
                                 let cur = target_scroll.load(std::sync::atomic::Ordering::Relaxed);
@@ -3617,9 +3660,19 @@ pub async fn run(global_state: Arc<GlobalState>, theme_arg: Option<String>) {
                                     cur.saturating_add(jump),
                                     std::sync::atomic::Ordering::Relaxed,
                                 );
-                                if page == TuiPage::Logs {
-                                    log_tail = false;
-                                }
+                                logs_scroll_input = page == TuiPage::Logs;
+                                dirty = true;
+                            }
+                            if logs_scroll_input
+                                && sync_log_tail_from_scroll(
+                                    key_content_area,
+                                    &log_entries,
+                                    log_show_timestamp,
+                                    log_level_filter,
+                                    light_theme,
+                                    &mut log_tail,
+                                )
+                            {
                                 dirty = true;
                             }
                         }

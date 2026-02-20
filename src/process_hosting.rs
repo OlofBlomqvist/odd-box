@@ -519,6 +519,68 @@ impl Default for ProcessRegistry {
     }
 }
 
+fn process_log_source_label(source: ProcessLogSource) -> &'static str {
+    match source {
+        ProcessLogSource::Stdout => "stdout",
+        ProcessLogSource::Stderr => "stderr",
+        ProcessLogSource::System => "system",
+    }
+}
+
+fn forward_process_log_to_tracing(entry: &ProcessLogEntry) {
+    let process_id = entry.process_id.as_deref().unwrap_or("proc-host");
+    let source = process_log_source_label(entry.source);
+    let source_tag = format!("{process_id}.{source}");
+    let msg = format!("[{source_tag}] {}", entry.message);
+
+    match entry.level {
+        ProcessLogLevel::Trace => tracing::trace!(target: "cruma_proc_host", "{msg}"),
+        ProcessLogLevel::Debug => tracing::debug!(target: "cruma_proc_host", "{msg}"),
+        ProcessLogLevel::Info => tracing::info!(target: "cruma_proc_host", "{msg}"),
+        ProcessLogLevel::Warn => tracing::warn!(target: "cruma_proc_host", "{msg}"),
+        ProcessLogLevel::Error => tracing::error!(target: "cruma_proc_host", "{msg}"),
+    }
+}
+
+/// Bridge aggregate process-host logs into the app's tracing pipeline so
+/// existing GUI/TUI log viewers keep receiving hosted-process output.
+pub fn spawn_process_log_bridge(
+    state: Arc<crate::global_state::GlobalState>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let orchestrator = state.process_registry.orchestrator().clone();
+        let aggregate_store = orchestrator.log_store();
+        let mut receiver = orchestrator.subscribe();
+        let mut last_sequence: Option<u64> = None;
+
+        loop {
+            if state.exit.load(Ordering::Relaxed) {
+                break;
+            }
+
+            match tokio::time::timeout(std::time::Duration::from_millis(250), receiver.recv()).await
+            {
+                Ok(Ok(entry)) => {
+                    last_sequence = Some(entry.sequence);
+                    forward_process_log_to_tracing(&entry);
+                }
+                Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {
+                    let catch_up_entries = match last_sequence {
+                        Some(seq) => aggregate_store.since(seq),
+                        None => aggregate_store.snapshot(),
+                    };
+                    for entry in catch_up_entries {
+                        last_sequence = Some(entry.sequence);
+                        forward_process_log_to_tracing(&entry);
+                    }
+                }
+                Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => break,
+                Err(_) => {}
+            }
+        }
+    })
+}
+
 // ── State change monitor ───────────────────────────────────────────────
 
 /// Background task that polls for process state changes and calls
@@ -561,8 +623,11 @@ pub async fn state_change_monitor(state: Arc<crate::global_state::GlobalState>) 
         }
 
         // Detect removed entries
-        let current_ids: std::collections::HashSet<&str> =
-            snapshot.entries.iter().map(|e| e.backend_id.as_str()).collect();
+        let current_ids: std::collections::HashSet<&str> = snapshot
+            .entries
+            .iter()
+            .map(|e| e.backend_id.as_str())
+            .collect();
         let removed: Vec<String> = previous_states
             .keys()
             .filter(|k| !current_ids.contains(k.as_str()))

@@ -9,16 +9,41 @@ env:
 root_dir: "~"
 default_log_format: standard
 auto_start: true
-cruma: anon
+
+cruma:
+  id: 3e77aa0b-9767-4979-bb09-e2e8fe199480
+  key: aca26f80ef234e13b81ee69ef13878e2
+
 admin_api_host: null
 admin_api_password: null
-backends: {}
+
+backends:
+
+  omni:
+    type: remote
+
+    endpoints:
+
+      - addr: omni.se
+        port: 443
+
+    protocol: h1
+    https: true
+    keep_original_host_header: false
 
 frontends:
 
   http:
     port: 80
-    routes: {}
+
+    routes:
+
+      omni:
+        backend: omni
+        forward_subdomains: false
+        redirect_to_https: false
+        lets_encrypt: false
+        enable_cruma: true
 
   https:
     port: 443

@@ -11,10 +11,11 @@ use iced::{
     Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, event,
     keyboard, system, theme, time, window,
 };
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use crate::configuration::{LogLevel, v4};
 use crate::global_state::GlobalState;
@@ -29,8 +30,20 @@ const WINDOW_MIN_WIDTH: f32 = 920.0;
 const WINDOW_MIN_HEIGHT: f32 = 560.0;
 const SIDEBAR_WIDTH: f32 = 220.0;
 const DASHBOARD_SPLIT_RATIO_DEFAULT: f32 = 0.40;
+const LOG_COMPACT_DEFAULT: bool = true;
 const GUI_STATE_CACHE_DIR_NAME: &str = "odd-box";
 const GUI_STATE_CACHE_FILE_NAME: &str = "gui-state-v1.txt";
+static PROCESS_AUTOSTART_WRITE_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+struct GuiStateCache {
+    #[serde(default)]
+    dashboard_split_ratio: Option<f32>,
+    #[serde(default)]
+    log_wrap_enabled: Option<bool>,
+    #[serde(default)]
+    log_compact_enabled: Option<bool>,
+}
 
 fn compute_text_scale(size: iced::Size) -> f32 {
     let width_scale = (size.width / WINDOW_INITIAL_WIDTH).clamp(0.85, 1.35);
@@ -50,10 +63,7 @@ fn gui_state_cache_file_path() -> Option<PathBuf> {
     )
 }
 
-fn load_dashboard_split_ratio_from_cache() -> Option<f32> {
-    let path = gui_state_cache_file_path()?;
-    let raw = std::fs::read_to_string(path).ok()?;
-    let ratio = raw.trim().parse::<f32>().ok()?;
+fn sanitize_split_ratio(ratio: f32) -> Option<f32> {
     if ratio.is_finite() && (0.05..=0.95).contains(&ratio) {
         Some(ratio)
     } else {
@@ -61,7 +71,28 @@ fn load_dashboard_split_ratio_from_cache() -> Option<f32> {
     }
 }
 
-fn save_dashboard_split_ratio_to_cache(ratio: f32) {
+fn load_gui_state_from_cache() -> Option<GuiStateCache> {
+    let path = gui_state_cache_file_path()?;
+    let raw = std::fs::read_to_string(path).ok()?;
+    // New format: JSON with multiple persisted GUI preferences.
+    if let Ok(mut state) = serde_json::from_str::<GuiStateCache>(&raw) {
+        state.dashboard_split_ratio = state.dashboard_split_ratio.and_then(sanitize_split_ratio);
+        return Some(state);
+    }
+
+    // Legacy format: plain float containing only dashboard split ratio.
+    let ratio = raw
+        .trim()
+        .parse::<f32>()
+        .ok()
+        .and_then(sanitize_split_ratio);
+    Some(GuiStateCache {
+        dashboard_split_ratio: ratio,
+        ..GuiStateCache::default()
+    })
+}
+
+fn save_gui_state_to_cache(state: GuiStateCache) {
     let Some(path) = gui_state_cache_file_path() else {
         return;
     };
@@ -79,13 +110,29 @@ fn save_dashboard_split_ratio_to_cache(ratio: f32) {
         return;
     }
 
-    if let Err(err) = std::fs::write(path.as_path(), format!("{ratio:.4}\n")) {
+    let serialized = match serde_json::to_string(&state) {
+        Ok(serialized) => serialized,
+        Err(err) => {
+            tracing::debug!(
+                "Failed serializing GUI state cache for '{}': {}",
+                path.display(),
+                err
+            );
+            return;
+        }
+    };
+
+    if let Err(err) = std::fs::write(path.as_path(), format!("{serialized}\n")) {
         tracing::debug!(
-            "Failed saving dashboard split ratio to '{}': {}",
+            "Failed saving GUI state cache to '{}': {}",
             path.display(),
             err
         );
     }
+}
+
+fn process_autostart_write_lock() -> &'static tokio::sync::Mutex<()> {
+    PROCESS_AUTOSTART_WRITE_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
 fn use_glass_effects() -> bool {
@@ -895,8 +942,11 @@ pub enum Message {
     // Log filter messages
     LogFilterTextChanged(String),
     LogLevelPresetChanged(LogLevelPreset),
+    LogShowAppChanged(bool),
+    LogShowProcessesChanged(bool),
     LogsClear,
     LogToggleWrap(bool),
+    LogToggleCompact(bool),
     LogToggleAutoTail(bool),
     // Tick for refreshing log view
     Tick,
@@ -934,7 +984,7 @@ pub enum Message {
     ProcessStopAll,
     ProcessToggleDetails(String),
     ProcessToggleAutoStart(String),
-    ProcessToggleAutoStartResult(Result<(), String>),
+    ProcessToggleAutoStartResult(String, bool, Result<(), String>),
     // Dashboard list interactions
     DashboardToggleProcessMenu(String),
     DashboardDismissMenu,
@@ -957,6 +1007,11 @@ pub enum Message {
     EditFrontendRedirectHttpsToggled(bool),
     EditFrontendLetsEncryptToggled(bool),
     EditFrontendEnableCrumaToggled(bool),
+    EditFrontendToggleHostnameTips,
+    EditFrontendAddFormAuthUser,
+    EditFrontendRemoveFormAuthUser(u64),
+    EditFrontendFormAuthUserNameChanged(u64, String),
+    EditFrontendFormAuthUserPasswordChanged(u64, String),
     EditFrontendSave,
     EditFrontendSaveResult(Result<(), String>),
     EditFrontendDelete,
@@ -1055,6 +1110,13 @@ pub enum CrumaAuthMode {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct FormAuthUserDraft {
+    pub id: u64,
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct EditFrontendForm {
     pub hostname: String,
     pub backend: String,
@@ -1064,6 +1126,8 @@ pub struct EditFrontendForm {
     pub lets_encrypt: bool,
     pub enable_cruma: bool,
     pub https_only: bool,
+
+    pub form_auth_users: Vec<FormAuthUserDraft>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1218,10 +1282,16 @@ pub struct OddBoxGui {
     last_log_viewport_y: Option<f32>,
     // Log display options
     pub(in crate::gui) log_wrap_enabled: bool,
+    pub(in crate::gui) log_compact_enabled: bool,
     pub(in crate::gui) log_auto_tail: bool,
     // Cached config data
     pub(in crate::gui) cached_config: CachedConfig,
     pub(in crate::gui) backend_names: Vec<String>,
+    /// Optimistic desired auto-start values keyed by process name.
+    /// While a save is in flight, background config refreshes keep these values visible.
+    pub(in crate::gui) proc_auto_start_target: HashMap<String, bool>,
+    /// Processes currently being persisted to disk for auto-start changes.
+    pub(in crate::gui) proc_auto_start_in_flight: HashSet<String>,
     // Dashboard: which list row has its action menu open
     pub(in crate::gui) dashboard_process_menu: Option<String>,
     pub(in crate::gui) dashboard_hovered_row: Option<String>,
@@ -1239,6 +1309,8 @@ pub struct OddBoxGui {
     pub(in crate::gui) edit_frontend_original: Option<String>,
     pub(in crate::gui) edit_frontend_is_new: bool,
     pub(in crate::gui) edit_frontend_confirm_delete: bool,
+    pub(in crate::gui) edit_frontend_hostname_tips_expanded: bool,
+    pub(in crate::gui) edit_frontend_next_user_id: u64,
     pub(in crate::gui) edit_backend_form: EditBackendForm,
     pub(in crate::gui) edit_backend_notice: Option<String>,
     pub(in crate::gui) edit_backend_resolved_dir: Option<String>,
@@ -1253,6 +1325,9 @@ pub struct OddBoxGui {
     pub(in crate::gui) cruma_auth_id: String,
     pub(in crate::gui) cruma_auth_key: String,
     pub(in crate::gui) cruma_mode_notice: Option<String>,
+    /// True while the user has unsaved local changes to the cruma auth fields.
+    /// Prevents ConfigUpdated from reverting the UI mid-edit.
+    pub(in crate::gui) cruma_auth_dirty: bool,
     pub(in crate::gui) processes_tab: ProcessesTab,
     pub(in crate::gui) global_env_vars: Vec<(String, String)>,
     pub(in crate::gui) global_env_new_key: String,
@@ -1352,6 +1427,16 @@ async fn load_frontend_form(state: Arc<GlobalState>, hostname: String) -> EditFr
                 form.redirect_to_https = d.redirect_to_https;
                 form.lets_encrypt = d.lets_encrypt;
                 form.enable_cruma = d.enable_cruma;
+                form.form_auth_users = d
+                    .form_auth_users
+                    .iter()
+                    .enumerate()
+                    .map(|(i, u)| FormAuthUserDraft {
+                        id: i as u64,
+                        username: u.username.clone(),
+                        password: u.password.clone(),
+                    })
+                    .collect();
             }
         }
     }
@@ -1392,10 +1477,56 @@ async fn save_frontend_form(
         return Err(format!("Backend '{}' does not exist.", form.backend));
     }
 
+    let validated_form_auth_users: Vec<v4::FormAuthUser> = form
+        .form_auth_users
+        .iter()
+        .filter(|u| !u.username.trim().is_empty())
+        .map(|u| v4::FormAuthUser {
+            username: u.username.trim().to_string(),
+            password: u.password.clone(),
+        })
+        .collect();
+
+    // Preserve the existing form_auth_secret if the route already exists, so
+    // that sessions survive an edit-and-save cycle.  Generate a fresh UUID
+    // only when users are first added and no secret has been stored yet.
+    let existing_secret = original_host
+        .as_deref()
+        .and_then(|old| {
+            guard
+                .frontends
+                .http
+                .as_ref()
+                .and_then(|f| f.routes.get(old))
+                .or_else(|| {
+                    guard
+                        .frontends
+                        .https
+                        .as_ref()
+                        .and_then(|f| match &f.routes {
+                            Some(v4::HttpsRoutes::Explicit(r)) => r.get(old),
+                            _ => None,
+                        })
+                })
+        })
+        .map(|t| t.form_auth_secret().to_string())
+        .unwrap_or_default();
+
+    let form_auth_secret = if !validated_form_auth_users.is_empty() {
+        if existing_secret.is_empty() {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            existing_secret
+        }
+    } else {
+        String::new()
+    };
+
     let target = if form.forward_subdomains
         || form.redirect_to_https
         || form.lets_encrypt
         || form.enable_cruma
+        || !validated_form_auth_users.is_empty()
     {
         v4::RouteTarget::Detailed(v4::DetailedRoute {
             backend: form.backend.clone(),
@@ -1404,6 +1535,8 @@ async fn save_frontend_form(
             redirect_to_https: form.redirect_to_https,
             lets_encrypt: form.lets_encrypt,
             enable_cruma: form.enable_cruma,
+            form_auth_users: validated_form_auth_users,
+            form_auth_secret,
         })
     } else {
         v4::RouteTarget::Simple(form.backend.clone())
@@ -1532,6 +1665,14 @@ async fn save_global_env(
         .collect();
 
     state.config.store(std::sync::Arc::new(guard));
+
+    // Update orchestrator global env so newly registered specs merge it
+    // automatically.  Read from the freshly stored config since the
+    // local `env` binding was moved into `guard`.
+    state
+        .process_registry
+        .orchestrator()
+        .set_global_env(state.config.load_full().env.clone());
 
     // Restart all process backends to pick up new global env vars
     for backend_id in process_ids {
@@ -2017,17 +2158,20 @@ async fn resolve_backend_dir(
     Ok(Some(canonical.unwrap_or(resolved_dir)))
 }
 
-/// Toggle the auto_start flag for a process backend and save to disk.
+/// Set the auto_start flag for a process backend and save to disk.
 async fn toggle_process_auto_start(
     state: Arc<GlobalState>,
     backend_name: String,
+    enabled: bool,
 ) -> Result<(), String> {
+    // Serialize config writes to avoid lost updates when users toggle many rows
+    // in quick succession from the GUI.
+    let _write_guard = process_autostart_write_lock().lock().await;
     let mut guard = (*state.config.load_full()).clone();
 
     match guard.backends.get_mut(&backend_name) {
         Some(v4::Backend::Process(proc)) => {
-            let current = proc.auto_start.unwrap_or(true);
-            proc.auto_start = Some(!current);
+            proc.auto_start = Some(enabled);
         }
         _ => {
             return Err(format!(
@@ -2092,7 +2236,7 @@ fn build_gui_env_filter(log_level: &LogLevel) -> tracing_subscriber::EnvFilter {
         );
     }
     filter = filter.add_directive(
-        "odd_box::proc_host=trace"
+        "cruma_proc_host=trace"
             .parse()
             .expect("This directive should always work"),
     );
@@ -2212,8 +2356,14 @@ impl OddBoxGui {
         let initial_cfg = state.config.load_full();
         let initial_cruma_mode = cruma_mode_from_config(&initial_cfg);
         let (initial_cruma_auth_id, initial_cruma_auth_key) = cruma_auth_from_config(&initial_cfg);
-        let initial_dashboard_split_ratio =
-            load_dashboard_split_ratio_from_cache().unwrap_or(DASHBOARD_SPLIT_RATIO_DEFAULT);
+        let cached_gui_state = load_gui_state_from_cache().unwrap_or_default();
+        let initial_dashboard_split_ratio = cached_gui_state
+            .dashboard_split_ratio
+            .unwrap_or(DASHBOARD_SPLIT_RATIO_DEFAULT);
+        let initial_log_wrap_enabled = cached_gui_state.log_wrap_enabled.unwrap_or(false);
+        let initial_log_compact_enabled = cached_gui_state
+            .log_compact_enabled
+            .unwrap_or(LOG_COMPACT_DEFAULT);
         let install_source_info = crate::self_update::install_source_info();
         let current_version = crate::self_update::current_version().to_string();
         let include_pre = should_include_prerelease_for_checks(&current_version);
@@ -2266,10 +2416,13 @@ impl OddBoxGui {
                 last_seen_filtered_id: None,
                 last_log_max_scroll_y: None,
                 last_log_viewport_y: None,
-                log_wrap_enabled: false,
+                log_wrap_enabled: initial_log_wrap_enabled,
+                log_compact_enabled: initial_log_compact_enabled,
                 log_auto_tail: true, // Auto-tail enabled by default
                 cached_config: CachedConfig::default(),
                 backend_names: Vec::new(),
+                proc_auto_start_target: HashMap::new(),
+                proc_auto_start_in_flight: HashSet::new(),
                 dashboard_process_menu: None,
                 dashboard_hovered_row: None,
                 dashboard_cursor_pos: (0.0, 0.0),
@@ -2285,6 +2438,8 @@ impl OddBoxGui {
                 edit_frontend_original: None,
                 edit_frontend_is_new: false,
                 edit_frontend_confirm_delete: false,
+                edit_frontend_hostname_tips_expanded: false,
+                edit_frontend_next_user_id: 0,
                 edit_backend_form: EditBackendForm::default(),
                 edit_backend_notice: None,
                 edit_backend_resolved_dir: None,
@@ -2299,6 +2454,7 @@ impl OddBoxGui {
                 cruma_auth_id: initial_cruma_auth_id,
                 cruma_auth_key: initial_cruma_auth_key,
                 cruma_mode_notice: None,
+                cruma_auth_dirty: false,
                 processes_tab: ProcessesTab::default(),
                 global_env_vars: Vec::new(),
                 global_env_new_key: String::new(),
@@ -2412,7 +2568,7 @@ impl OddBoxGui {
                 self.dashboard_process_menu = None;
                 self.dashboard_hovered_row = None;
                 self.dashboard_is_resizing_split = false;
-                if page == Page::Monitoring {
+                if matches!(page, Page::Monitoring | Page::Dashboard) {
                     if self.log_auto_tail {
                         self.log_is_at_bottom = true;
                         return snap_log_to_bottom();
@@ -2478,14 +2634,17 @@ impl OddBoxGui {
 
                 // Allow a small tolerance for rounding/layout differences.
                 let at_bottom_now = max_scroll_y - current_y <= 4.0;
-                let content_grew = self
-                    .last_log_max_scroll_y
-                    .map(|prev| max_scroll_y > prev + 0.5)
-                    .unwrap_or(false);
-                let user_scrolled = self
-                    .last_log_viewport_y
-                    .map(|prev| (current_y - prev).abs() > 0.5)
-                    .unwrap_or(false);
+                let prev_max_scroll_y = self.last_log_max_scroll_y.unwrap_or(0.0);
+                let prev_viewport_y = self.last_log_viewport_y.unwrap_or(0.0);
+                let content_grew = max_scroll_y > prev_max_scroll_y + 0.5;
+                let became_scrollable = prev_max_scroll_y <= 0.5 && max_scroll_y > 0.5;
+                let user_scrolled = if content_grew {
+                    // When new logs first create overflow, layout/viewport can shift slightly
+                    // without user input; only treat upward movement as manual scroll.
+                    !became_scrollable && current_y + 0.5 < prev_viewport_y
+                } else {
+                    (current_y - prev_viewport_y).abs() > 0.5
+                };
 
                 // If auto-tail is on, and we were at bottom, and the only change is that
                 // content grew (new logs), keep tailing instead of entering paused state.
@@ -2503,7 +2662,7 @@ impl OddBoxGui {
                 self.last_log_viewport_y = Some(current_y);
             }
             Message::Tick => {
-                if self.current_page == Page::Monitoring {
+                if matches!(self.current_page, Page::Monitoring | Page::Dashboard) {
                     let filtered = self.log_state.filtered_snapshot();
                     let last_id = filtered.last_filtered_id;
                     if last_id != self.last_seen_filtered_id {
@@ -2735,6 +2894,11 @@ impl OddBoxGui {
                     self.global_env_vars = config.global_env.clone();
                 }
                 self.cached_config = config;
+                for proc in &mut self.cached_config.processes {
+                    if let Some(target) = self.proc_auto_start_target.get(&proc.name).copied() {
+                        proc.auto_start = target;
+                    }
+                }
                 let mut names: Vec<String> = Vec::new();
                 names.extend(self.cached_config.processes.iter().map(|p| p.name.clone()));
                 names.extend(
@@ -2773,10 +2937,12 @@ impl OddBoxGui {
                     self.edit_backend_pending_reload = false;
                 }
                 let cfg = self.state.config.load_full();
-                self.cruma_auth_mode = cruma_mode_from_config(&cfg);
-                let (id, key) = cruma_auth_from_config(&cfg);
-                self.cruma_auth_id = id;
-                self.cruma_auth_key = key;
+                if !self.cruma_auth_dirty {
+                    self.cruma_auth_mode = cruma_mode_from_config(&cfg);
+                    let (id, key) = cruma_auth_from_config(&cfg);
+                    self.cruma_auth_id = id;
+                    self.cruma_auth_key = key;
+                }
 
                 // Update tray icon and menu based on process state
                 if let Some(ref tray) = self.tray_handle {
@@ -2902,6 +3068,14 @@ impl OddBoxGui {
                     |_| Message::NoOp,
                 );
             }
+            Message::LogShowAppChanged(enabled) => {
+                self.log_filter.show_app = enabled;
+                self.log_state.set_filter(self.log_filter.clone());
+            }
+            Message::LogShowProcessesChanged(enabled) => {
+                self.log_filter.show_processes = enabled;
+                self.log_state.set_filter(self.log_filter.clone());
+            }
 
             Message::LogsClear => {
                 self.log_state.clear();
@@ -2913,6 +3087,19 @@ impl OddBoxGui {
 
             Message::LogToggleWrap(enabled) => {
                 self.log_wrap_enabled = enabled;
+                save_gui_state_to_cache(GuiStateCache {
+                    dashboard_split_ratio: Some(self.dashboard_split_ratio),
+                    log_wrap_enabled: Some(self.log_wrap_enabled),
+                    log_compact_enabled: Some(self.log_compact_enabled),
+                });
+            }
+            Message::LogToggleCompact(enabled) => {
+                self.log_compact_enabled = enabled;
+                save_gui_state_to_cache(GuiStateCache {
+                    dashboard_split_ratio: Some(self.dashboard_split_ratio),
+                    log_wrap_enabled: Some(self.log_wrap_enabled),
+                    log_compact_enabled: Some(self.log_compact_enabled),
+                });
             }
             Message::LogToggleAutoTail(enabled) => {
                 self.log_auto_tail = enabled;
@@ -2998,20 +3185,75 @@ impl OddBoxGui {
                 }
             }
             Message::ProcessToggleAutoStart(name) => {
+                let Some(proc) = self
+                    .cached_config
+                    .processes
+                    .iter_mut()
+                    .find(|proc| proc.name == name)
+                else {
+                    tracing::warn!(
+                        backend = %name,
+                        "Ignoring auto-start toggle for unknown process row"
+                    );
+                    return Task::none();
+                };
+
+                // Apply immediately in the UI so users get instant feedback.
+                let desired = !proc.auto_start;
+                proc.auto_start = desired;
+                self.proc_auto_start_target.insert(name.clone(), desired);
+
+                // Collapse rapid repeat clicks for the same row into one queued
+                // "latest desired value" while a save is already in flight.
+                if self.proc_auto_start_in_flight.contains(&name) {
+                    return Task::none();
+                }
+
+                self.proc_auto_start_in_flight.insert(name.clone());
                 let state = self.state.clone();
                 return Task::perform(
-                    toggle_process_auto_start(state, name),
-                    Message::ProcessToggleAutoStartResult,
+                    toggle_process_auto_start(state, name.clone(), desired),
+                    move |result| Message::ProcessToggleAutoStartResult(name, desired, result),
                 );
             }
-            Message::ProcessToggleAutoStartResult(result) => match result {
-                Ok(_) => {
-                    return Task::perform(fetch_config(self.state.clone()), Message::ConfigUpdated);
+            Message::ProcessToggleAutoStartResult(name, persisted, result) => {
+                self.proc_auto_start_in_flight.remove(&name);
+                match result {
+                    Ok(_) => {
+                        let target = self.proc_auto_start_target.get(&name).copied();
+                        if let Some(next_desired) = target {
+                            if next_desired != persisted {
+                                // User clicked again while save was in-flight; persist the
+                                // latest desired value now.
+                                self.proc_auto_start_in_flight.insert(name.clone());
+                                let state = self.state.clone();
+                                return Task::perform(
+                                    toggle_process_auto_start(state, name.clone(), next_desired),
+                                    move |result| {
+                                        Message::ProcessToggleAutoStartResult(
+                                            name,
+                                            next_desired,
+                                            result,
+                                        )
+                                    },
+                                );
+                            }
+                            self.proc_auto_start_target.remove(&name);
+                        }
+                    }
+                    Err(e) => {
+                        self.proc_auto_start_target.remove(&name);
+                        tracing::error!(
+                            backend = %name,
+                            "Failed to set auto-start: {e}"
+                        );
+                        return Task::perform(
+                            fetch_config(self.state.clone()),
+                            Message::ConfigUpdated,
+                        );
+                    }
                 }
-                Err(e) => {
-                    tracing::error!("Failed to toggle auto-start: {e}");
-                }
-            },
+            }
             Message::ProcessesTabChanged(tab) => {
                 self.processes_tab = tab;
                 // Reset notice when switching tabs
@@ -3091,7 +3333,11 @@ impl OddBoxGui {
             }
             Message::DashboardEndSplitResize => {
                 if self.dashboard_is_resizing_split {
-                    save_dashboard_split_ratio_to_cache(self.dashboard_split_ratio);
+                    save_gui_state_to_cache(GuiStateCache {
+                        dashboard_split_ratio: Some(self.dashboard_split_ratio),
+                        log_wrap_enabled: Some(self.log_wrap_enabled),
+                        log_compact_enabled: Some(self.log_compact_enabled),
+                    });
                 }
                 self.dashboard_is_resizing_split = false;
             }
@@ -3121,6 +3367,7 @@ impl OddBoxGui {
                 self.edit_frontend_original = Some(name.clone());
                 self.edit_frontend_is_new = false;
                 self.edit_frontend_confirm_delete = false;
+                self.edit_frontend_hostname_tips_expanded = false;
                 return Task::perform(
                     load_frontend_form(self.state.clone(), name),
                     Message::EditFrontendLoaded,
@@ -3135,6 +3382,8 @@ impl OddBoxGui {
                 self.edit_frontend_original = None;
                 self.edit_frontend_is_new = true;
                 self.edit_frontend_confirm_delete = false;
+                self.edit_frontend_hostname_tips_expanded = false;
+                self.edit_frontend_next_user_id = 0;
             }
             Message::OpenNewFrontendForBackend(backend_name) => {
                 self.edit_target = None;
@@ -3148,6 +3397,8 @@ impl OddBoxGui {
                 self.edit_frontend_original = None;
                 self.edit_frontend_is_new = true;
                 self.edit_frontend_confirm_delete = false;
+                self.edit_frontend_hostname_tips_expanded = false;
+                self.edit_frontend_next_user_id = 0;
             }
             Message::OpenEditBackend(name) => {
                 self.edit_target = Some(name);
@@ -3176,6 +3427,7 @@ impl OddBoxGui {
                 self.edit_backend_confirm_delete = false;
             }
             Message::EditFrontendLoaded(form) => {
+                self.edit_frontend_next_user_id = form.form_auth_users.len() as u64;
                 self.edit_frontend_form = form;
             }
             Message::EditFrontendHostChanged(value) => {
@@ -3196,6 +3448,46 @@ impl OddBoxGui {
             }
             Message::EditFrontendEnableCrumaToggled(value) => {
                 self.edit_frontend_form.enable_cruma = value;
+            }
+            Message::EditFrontendToggleHostnameTips => {
+                self.edit_frontend_hostname_tips_expanded =
+                    !self.edit_frontend_hostname_tips_expanded;
+            }
+            Message::EditFrontendAddFormAuthUser => {
+                let id = self.edit_frontend_next_user_id;
+                self.edit_frontend_next_user_id += 1;
+                self.edit_frontend_form
+                    .form_auth_users
+                    .push(FormAuthUserDraft {
+                        id,
+                        username: String::new(),
+                        password: String::new(),
+                    });
+            }
+            Message::EditFrontendRemoveFormAuthUser(id) => {
+                self.edit_frontend_form
+                    .form_auth_users
+                    .retain(|u| u.id != id);
+            }
+            Message::EditFrontendFormAuthUserNameChanged(id, value) => {
+                if let Some(user) = self
+                    .edit_frontend_form
+                    .form_auth_users
+                    .iter_mut()
+                    .find(|u| u.id == id)
+                {
+                    user.username = value;
+                }
+            }
+            Message::EditFrontendFormAuthUserPasswordChanged(id, value) => {
+                if let Some(user) = self
+                    .edit_frontend_form
+                    .form_auth_users
+                    .iter_mut()
+                    .find(|u| u.id == id)
+                {
+                    user.password = value;
+                }
             }
             Message::EditFrontendSave => {
                 self.edit_frontend_notice = None;
@@ -3417,11 +3709,14 @@ impl OddBoxGui {
                 self.cruma_auth_mode = mode;
                 self.cruma_mode_notice = None;
                 if mode == CrumaAuthMode::Authenticated {
+                    self.cruma_auth_dirty = true;
                     self.cruma_mode_notice = Some(
                         "Enter tunnel ID and key, then click Save Auth Credentials.".to_string(),
                     );
                     return Task::none();
                 }
+                // Disabled / Anonymous save immediately — no pending edit.
+                self.cruma_auth_dirty = false;
                 return Task::perform(
                     save_cruma_mode(
                         self.state.clone(),
@@ -3434,10 +3729,12 @@ impl OddBoxGui {
             }
             Message::CrumaAuthIdChanged(value) => {
                 self.cruma_auth_id = value;
+                self.cruma_auth_dirty = true;
                 self.cruma_mode_notice = None;
             }
             Message::CrumaAuthKeyChanged(value) => {
                 self.cruma_auth_key = value;
+                self.cruma_auth_dirty = true;
                 self.cruma_mode_notice = None;
             }
             Message::CrumaAuthSave => {
@@ -3454,6 +3751,7 @@ impl OddBoxGui {
             }
             Message::CrumaAuthModeSaveResult(result) => match result {
                 Ok(()) => {
+                    self.cruma_auth_dirty = false;
                     self.cruma_mode_notice = Some("Cruma mode updated.".to_string());
                     return Task::perform(fetch_config(self.state.clone()), Message::ConfigUpdated);
                 }

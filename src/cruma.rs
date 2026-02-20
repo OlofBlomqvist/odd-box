@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use cruma_proxy_lib::{proxying::ProxyService, termination::*};
-use cruma_tunnels_lib::{AgentCredentials, IncomingCrumaTlsStream};
+use cruma_tunnels_lib::{AgentCredentials, IncomingCrumaTlsStream, TunnelPersistence};
 
 use crate::global_state::GlobalState;
 
@@ -19,6 +19,13 @@ pub async fn cruma_thread(
 
     let reconnect = Arc::new(tokio::sync::Notify::new());
     let runtime = agent_runtime::start_agent_runtime(reconnect, config, ct.clone()).await?;
+
+    // Register the tunnel DNS-01 provider so that ACME certificate issuance
+    // for cruma-assigned domains can use the control channel to ask the cruma
+    // server to set the required DNS TXT record instead of attempting
+    // TLS-ALPN-01 (which cannot work through the tunnel).
+    cruma_tunnels_lib::dns::register_tunnel_dns_provider(runtime.dns_broker());
+
     let mut transport_rx = runtime.transport_snapshot_rx();
     let transport_state = state.clone();
     tokio::spawn(async move {
@@ -32,10 +39,21 @@ pub async fn cruma_thread(
     });
 
     let mut events = runtime.subscribe();
-    let p = Arc::new(
+
+    // Use TunnelPersistence so that successfully-issued ACME certs are also
+    // stored in the tower via SaveFileRequest (encrypted with the agent's own
+    // key), and are restored from the tower on a local-cache miss via
+    // GetFileRequest.  This means certs survive agent restarts and migrations
+    // without exhausting Let's Encrypt rate limits.
+    let local_disk =
         cruma_proxy_lib::termination::LocalDiskPersistence::new(&".odd-box-cruma-cache".into())
-            .unwrap(),
-    );
+            .unwrap();
+    let p = Arc::new(TunnelPersistence::new(
+        local_disk,
+        runtime.identity(),
+        runtime.file_broker(),
+    ));
+
     // Keep one proxy service for the lifetime of the cruma runtime so outbound
     // HTTP client pools/cache are reused across incoming streams.
     let terminator = cruma_proxy_lib::termination::Terminator::new(p.clone(), cruma_conf.clone());
@@ -119,7 +137,7 @@ pub async fn handle_stream(
     state: Arc<GlobalState>,
     cruma_stream: IncomingCrumaTlsStream,
     cruma_conf: Arc<ArcSwap<cruma_proxy_lib::types::Configuration>>,
-    proxy_service: Arc<ProxyService<LocalDiskPersistence>>,
+    proxy_service: Arc<ProxyService<TunnelPersistence>>,
 ) -> anyhow::Result<()> {
     let preface = match &cruma_stream {
         IncomingCrumaTlsStream::Quic { preface, .. }
@@ -129,8 +147,9 @@ pub async fn handle_stream(
     let is_tls = cruma_stream.is_tls();
     let src = preface.src.clone();
 
-    tracing::debug!(
+    tracing::info!(
         src = %src,
+        sni = %preface.sni,
         is_tls = is_tls,
         "Handling incoming cruma stream"
     );
@@ -179,7 +198,7 @@ async fn proxy_stream(
     state: Arc<GlobalState>,
     cruma_stream: IncomingCrumaTlsStream,
     cruma_conf: Arc<ArcSwap<cruma_proxy_lib::types::Configuration>>,
-    proxy_service: Arc<ProxyService<LocalDiskPersistence>>,
+    proxy_service: Arc<ProxyService<TunnelPersistence>>,
     is_tls: bool,
 ) -> anyhow::Result<()> {
     use anyhow::Context;

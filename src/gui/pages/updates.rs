@@ -35,7 +35,9 @@ impl OddBoxGui {
                     self.theme().extended_palette().success.strong.color,
                 ),
                 Some(std::cmp::Ordering::Less) => (
-                    format!("Current build {current_tag} is newer than latest reported release {latest}."),
+                    format!(
+                        "Current build {current_tag} is newer than latest reported release {latest}."
+                    ),
                     self.theme().extended_palette().background.weak.text,
                 ),
                 None => (
@@ -50,15 +52,10 @@ impl OddBoxGui {
             )
         };
 
-        let status_box = container(
-            text(status_text)
-                .size(text_size(14))
-                .color(status_color),
-        )
-        .padding(scaled(12.0))
-        .width(Length::Fill)
-        .style(|theme: &Theme| {
-            container::Style {
+        let status_box = container(text(status_text).size(text_size(14)).color(status_color))
+            .padding(scaled(12.0))
+            .width(Length::Fill)
+            .style(|theme: &Theme| container::Style {
                 background: Some(self.surface_panel_bg(theme).into()),
                 border: Border {
                     radius: scaled(6.0).into(),
@@ -66,8 +63,7 @@ impl OddBoxGui {
                     color: self.surface_border_color(theme),
                 },
                 ..Default::default()
-            }
-        });
+            });
 
         let mut check_button = button(text(if self.update_check_in_progress {
             "Checking..."
@@ -81,7 +77,12 @@ impl OddBoxGui {
             left: scaled(14.0),
         })
         .style(move |theme, status| {
-            super::super::themed_button_style(theme, status, KdeButtonRole::Neutral, use_kde_buttons)
+            super::super::themed_button_style(
+                theme,
+                status,
+                KdeButtonRole::Neutral,
+                use_kde_buttons,
+            )
         });
 
         if !self.update_check_in_progress && !self.update_action_in_progress {
@@ -103,7 +104,12 @@ impl OddBoxGui {
             left: scaled(14.0),
         })
         .style(move |theme, status| {
-            super::super::themed_button_style(theme, status, KdeButtonRole::Primary, use_kde_buttons)
+            super::super::themed_button_style(
+                theme,
+                status,
+                KdeButtonRole::Primary,
+                use_kde_buttons,
+            )
         });
         if self_update_allowed {
             self_update_button = self_update_button.on_press(Message::UpdatesRunSelfUpdate);
@@ -179,21 +185,18 @@ impl OddBoxGui {
             );
         }
 
-        let details_box =
-            container(details)
-                .padding(scaled(16.0))
-                .width(Length::Fill)
-                .style(|theme: &Theme| {
-                    container::Style {
-                        background: Some(self.surface_panel_bg(theme).into()),
-                        border: Border {
-                            radius: scaled(6.0).into(),
-                            width: 1.0,
-                            color: self.surface_border_color(theme),
-                        },
-                        ..Default::default()
-                    }
-                });
+        let details_box = container(details)
+            .padding(scaled(16.0))
+            .width(Length::Fill)
+            .style(|theme: &Theme| container::Style {
+                background: Some(self.surface_panel_bg(theme).into()),
+                border: Border {
+                    radius: scaled(6.0).into(),
+                    width: 1.0,
+                    color: self.surface_border_color(theme),
+                },
+                ..Default::default()
+            });
 
         let mut content = column![status_box, actions, details_box]
             .spacing(scaled(16.0))

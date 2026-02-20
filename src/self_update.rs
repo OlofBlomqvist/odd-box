@@ -186,7 +186,9 @@ pub async fn update() -> anyhow::Result<UpdateAction> {
     let latest_is_newer = self_update::version::bump_is_greater(&current_version, latest)
         .map_err(|err| anyhow!("Failed to compare versions: {err}"))?;
     if !latest_is_newer {
-        println!("already running latest/newer version (current: v{current_version}, latest reported: {latest_tag})");
+        println!(
+            "already running latest/newer version (current: v{current_version}, latest reported: {latest_tag})"
+        );
         return Ok(UpdateAction::NoUpdateNeeded);
     }
 
@@ -258,17 +260,15 @@ mod tests {
 
     #[test]
     fn classifies_homebrew_cellar_path() {
-        let source = classify_install_source(Path::new(
-            "/opt/homebrew/Cellar/odd-box/0.1.13/bin/odd-box",
-        ));
+        let source =
+            classify_install_source(Path::new("/opt/homebrew/Cellar/odd-box/0.1.13/bin/odd-box"));
         assert_eq!(source, InstallSource::Homebrew);
     }
 
     #[test]
     fn classifies_nix_store_path() {
-        let source = classify_install_source(Path::new(
-            "/nix/store/abc123-odd-box-0.1.13/bin/odd-box",
-        ));
+        let source =
+            classify_install_source(Path::new("/nix/store/abc123-odd-box-0.1.13/bin/odd-box"));
         assert_eq!(source, InstallSource::Nix);
     }
 

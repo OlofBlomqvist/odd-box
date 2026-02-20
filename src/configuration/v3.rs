@@ -31,7 +31,6 @@ pub struct DirServer {
 
     /// If you want to use a cache for the files served by this directory server, you can set this to the max age in seconds.
     pub cache_control_max_age_in_seconds: Option<u64>,
-    // TODO etags and last-modified headers
 }
 
 // note: there is no implementation using these yet..
@@ -291,12 +290,6 @@ fn filter_backend(backend: &Backend, filter: &BackendFilter) -> bool {
 }
 
 impl InProcessSiteConfig {
-    // TODO - MAJOR:
-
-    // we removed the "tunneled" arg from the other next_backend...
-    // now we dont properly add statistics for the tunnelled connections when we are in remote tunnel mode...
-    // need to add back.
-
     pub async fn next_backend(
         &self,
         state: &GlobalState,

@@ -40,12 +40,24 @@ impl LogVisitor {
         }
     }
 
-    fn result(self) -> String {
-        self.fields
-            .iter()
-            .map(|(_key, value)| format!("{}", value))
-            .collect::<Vec<_>>()
-            .join(", ")
+    fn result(mut self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+
+        // Keep the human-readable message first, then append structured fields
+        // with explicit names so values like `None` are still understandable.
+        if let Some(message) = self.fields.remove("message") {
+            parts.push(message);
+        }
+
+        let mut fields: Vec<(String, String)> = self.fields.into_iter().collect();
+        fields.sort_by(|a, b| a.0.cmp(&b.0));
+        parts.extend(
+            fields
+                .into_iter()
+                .map(|(key, value)| format!("{key}={value}")),
+        );
+
+        parts.join(", ")
     }
 }
 
@@ -58,6 +70,15 @@ fn is_source_tag(tag: &str) -> bool {
         return false;
     }
     true
+}
+
+fn looks_like_process_log_tag(tag: &str) -> bool {
+    let trimmed = tag.trim().to_ascii_lowercase();
+    trimmed.ends_with(".stdout")
+        || trimmed.ends_with(".stderr")
+        || trimmed.ends_with(".system")
+        || trimmed.starts_with("proc/")
+        || trimmed.starts_with("process/")
 }
 
 /// A single log entry with all metadata.
@@ -363,6 +384,10 @@ pub struct LogFilter {
     pub show_warn: bool,
     /// Show error level.
     pub show_error: bool,
+    /// Show application/framework logs.
+    pub show_app: bool,
+    /// Show hosted process logs.
+    pub show_processes: bool,
 }
 
 impl Default for LogFilter {
@@ -375,6 +400,8 @@ impl Default for LogFilter {
             show_info: true,
             show_warn: true,
             show_error: true,
+            show_app: true,
+            show_processes: true,
         }
     }
 }
@@ -388,6 +415,17 @@ impl LogFilter {
     /// Pass None if self.text is empty, or Some(&lowercase_text) otherwise.
     #[inline]
     pub fn matches_with_text_lower(&self, entry: &LogEntry, text_lower: Option<&str>) -> bool {
+        let is_process_log = looks_like_process_log_tag(entry.source.as_ref())
+            || entry
+                .thread
+                .as_ref()
+                .map(|t| looks_like_process_log_tag(t.as_ref()))
+                .unwrap_or(false);
+
+        if (!self.show_app && !is_process_log) || (!self.show_processes && is_process_log) {
+            return false;
+        }
+
         let level_ok = match entry.level {
             Level::TRACE => self.show_trace,
             Level::DEBUG => self.show_debug,

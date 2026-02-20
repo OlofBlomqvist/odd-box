@@ -608,6 +608,7 @@ fn build_exchange_row<'a>(exchange: &CapturedExchange, _is_selected: bool) -> El
                     .size(super::super::text_size(11))
                     .wrapping(Wrapping::None)
             )
+            .clip(true)
             .width(Length::FillPortion(3)),
             container(
                 text(path_str)
@@ -616,6 +617,7 @@ fn build_exchange_row<'a>(exchange: &CapturedExchange, _is_selected: bool) -> El
                     .wrapping(Wrapping::None)
                     .style(dim_text_style)
             )
+            .clip(true)
             .width(Length::FillPortion(5)),
         ]
         .spacing(8)
@@ -1198,9 +1200,12 @@ fn rich_body_section<'a>(
                 })
                 .size(ts(11))
                 .color(accent_color),
-            container(text(kind_label).font(Font::MONOSPACE).size(ts(10)).style(
-                dim_text_style
-            ))
+            container(
+                text(kind_label)
+                    .font(Font::MONOSPACE)
+                    .size(ts(10))
+                    .style(dim_text_style)
+            )
             .padding(Padding {
                 top: 1.0,
                 right: 6.0,

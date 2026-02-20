@@ -177,6 +177,13 @@ pub async fn reload_from_disk(global_state: Arc<GlobalState>) -> Result<()> {
         );
     }
 
+    // Update global environment variables on the orchestrator so any
+    // newly registered specs pick up the latest values.
+    global_state
+        .process_registry
+        .orchestrator()
+        .set_global_env(new_configuration.env.clone());
+
     // Spawn new/updated process backends via cruma-proc-host
     for (backend_id, proc) in cloned_modified_procs {
         match new_configuration.resolve_process_backend(&backend_id, &proc) {

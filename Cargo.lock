@@ -3063,6 +3063,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "iced_selection"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ab7ead659318b8eea8f864bafe96f761e244c32e11d55035b99dcf0c56ba757"
+dependencies = [
+ "iced_widget",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "iced_tiny_skia"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4706,6 +4716,7 @@ dependencies = [
  "flate2",
  "http-body-util",
  "iced",
+ "iced_selection",
  "image",
  "ksni",
  "lazy_static",
