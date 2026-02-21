@@ -9,11 +9,7 @@ env:
 root_dir: "~"
 default_log_format: standard
 auto_start: true
-
-cruma:
-  id: 3e77aa0b-9767-4979-bb09-e2e8fe199480
-  key: aca26f80ef234e13b81ee69ef13878e2
-
+cruma: anon
 admin_api_host: null
 admin_api_password: null
 

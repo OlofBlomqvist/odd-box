@@ -1,3 +1,4 @@
+mod certificates;
 mod backends;
 pub(in crate::gui) mod body_content;
 mod cruma;

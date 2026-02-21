@@ -59,6 +59,17 @@ pub async fn cruma_thread(
     let terminator = cruma_proxy_lib::termination::Terminator::new(p.clone(), cruma_conf.clone());
     let mut proxy_service = ProxyService::new(cruma_conf.clone(), terminator);
     proxy_service.set_capture_store(state.http_capture_store.clone());
+    // Start certificate management — this handles cert monitoring, proactive
+    // ACME DNS-01 issuance, and site list publishing automatically.
+    // We pass the shared CertStatusHandle from GlobalState so that every
+    // runtime cycle (after auth mode switches) writes into the same handle
+    // the GUI reads from.
+    runtime.start_cert_management_with_handle(
+        proxy_service.terminator().clone(),
+        cruma_conf.clone(),
+        state.cruma_cert_status.clone(),
+    );
+
     let proxy_service = Arc::new(proxy_service);
 
     loop {
@@ -75,8 +86,8 @@ pub async fn cruma_thread(
             match evt {
                 Ok(agent_event) => {
                     match agent_event {
-                        cruma_tunnels_lib::AgentEvent::AnonymousTunnelAssigned { assigned_domain, welcome_message }
-                        | cruma_tunnels_lib::AgentEvent::AuthenticatedTunnelAssigned { assigned_domain, welcome_message } => {
+                        cruma_tunnels_lib::AgentEvent::AnonymousTunnelAssigned { assigned_domain, welcome_message, .. }
+                        | cruma_tunnels_lib::AgentEvent::AuthenticatedTunnelAssigned { assigned_domain, welcome_message, .. } => {
                                 tracing::info!(assigned_domain, welcome_message);
                                 state.cruma_assignment.store(Some(std::sync::Arc::new(
                                     crate::global_state::CrumaAssignedDomain {

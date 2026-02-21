@@ -90,6 +90,11 @@ pub mod global_state {
         /// When enabled, records request/response metadata and (optionally) body
         /// bytes for every proxied HTTP exchange flowing through the cruma proxy stack.
         pub http_capture_store: Arc<cruma_proxy_lib::proxying::capture_store::HttpCaptureStore>,
+        /// Shared handle to the latest certificate status snapshot.
+        /// Created once at startup; every `cruma_thread` cycle writes into
+        /// the same handle via `start_cert_management_with_handle`, so the
+        /// GUI always reads from a single stable location.
+        pub cruma_cert_status: cruma_tunnels_lib::CertStatusHandle,
     }
     impl GlobalState {
         pub fn uptime(&self) -> Result<std::time::Duration, SystemTimeError> {
@@ -134,6 +139,7 @@ pub mod global_state {
                 tui_log_buffer,
                 tokio_handle,
                 http_capture_store,
+                cruma_cert_status: cruma_tunnels_lib::new_cert_status_handle(),
             }
         }
 

@@ -790,6 +790,7 @@ pub enum Page {
     Frontends,
     ManagedProcesses,
     Updates,
+    Certificates,
     EditFrontend,
     EditBackend,
 }
@@ -805,6 +806,7 @@ impl Page {
             Page::Frontends => "Frontends",
             Page::ManagedProcesses => "Managed Processes",
             Page::Updates => "Updates",
+            Page::Certificates => "Certificates",
             Page::EditFrontend => "Edit Frontend",
             Page::EditBackend => "Edit Backend",
         }
@@ -821,6 +823,7 @@ impl Page {
             Page::Frontends => "◧",
             Page::ManagedProcesses => "⚙",
             Page::Updates => "↑",
+            Page::Certificates => "🛡",
             Page::EditFrontend => "✎",
             Page::EditBackend => "✎",
         }
@@ -4043,6 +4046,7 @@ impl OddBoxGui {
             Page::Frontends,
             Page::ManagedProcesses,
             Page::Updates,
+            Page::Certificates,
         ];
 
         let nav_buttons: Vec<Element<'_, Message>> = nav_items
@@ -4424,6 +4428,7 @@ impl OddBoxGui {
             Page::Frontends => self.view_frontends(),
             Page::ManagedProcesses => self.view_processes(),
             Page::Updates => self.view_updates(),
+            Page::Certificates => self.view_certificates(),
             Page::EditFrontend => self.view_edit_frontend(),
             Page::EditBackend => self.view_edit_backend(),
         };
