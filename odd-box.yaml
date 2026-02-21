@@ -1,47 +1,13 @@
-version: V4
-log_level: Trace
-port_range_start: 6666
-ip: 0.0.0.0
-
-env:
-  kale: erik
-
-root_dir: "~"
-default_log_format: standard
-auto_start: true
-cruma: anon
-admin_api_host: null
-admin_api_password: null
-
-backends:
-
-  omni:
-    type: remote
-
-    endpoints:
-
-      - addr: omni.se
-        port: 443
-
-    protocol: h1
-    https: true
-    keep_original_host_header: false
-
-frontends:
-
-  http:
-    port: 80
-
-    routes:
-
-      omni:
-        backend: omni
-        forward_subdomains: false
-        redirect_to_https: false
-        lets_encrypt: false
-        enable_cruma: true
-
-  https:
-    port: 443
-    cert: self_signed
-    routes: inherit
+backends: []
+frontends: []
+listeners:
+- port: 8080
+  addr: localhost
+  tls: false
+  cert_mode: self_signed
+- port: 4343
+  addr: localhost
+  tls: true
+  cert_mode: self_signed
+tunnel_secret: ANON
+tunnel_id: ANON
