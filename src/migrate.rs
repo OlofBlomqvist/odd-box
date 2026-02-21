@@ -3,12 +3,46 @@
 
 use anyhow::{Result, bail};
 use serde_yaml::Value;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 /// Main entry point for config migration.
 ///
 /// Detects the input format (TOML vs YAML) automatically based on file
 /// extension and content, then delegates to the appropriate parser.
 pub fn migrate_v4_config(old_path: &str) -> Result<()> {
+    let rendered = render_migrated_config(old_path)?;
+    print!("{}", rendered.yaml);
+    print_stdout_guidance(old_path, rendered.source_format);
+    Ok(())
+}
+
+/// Interactive migration workflow for terminal usage.
+///
+/// Prompts the user to confirm in-place migration. On confirmation, writes the
+/// migrated config back to the same path and moves the original file to
+/// `<file>.backupN`.
+pub fn migrate_v4_config_with_in_place_prompt(old_path: &str) -> Result<()> {
+    let rendered = render_migrated_config(old_path)?;
+    if confirm_in_place_write(old_path, rendered.source_format)? {
+        let backup_path = write_migrated_in_place(Path::new(old_path), &rendered.yaml)?;
+        eprintln!();
+        eprintln!("Migration complete (from {}).", rendered.source_format);
+        eprintln!("Wrote migrated config to: {old_path}");
+        eprintln!("Previous config backup: {}", backup_path.display());
+    } else {
+        print!("{}", rendered.yaml);
+        print_stdout_guidance(old_path, rendered.source_format);
+    }
+    Ok(())
+}
+
+struct MigrationRender {
+    yaml: String,
+    source_format: &'static str,
+}
+
+fn render_migrated_config(old_path: &str) -> Result<MigrationRender> {
     let contents = std::fs::read_to_string(old_path)
         .map_err(|e| anyhow::anyhow!("Failed to read {old_path}: {e}"))?;
 
@@ -22,6 +56,116 @@ pub fn migrate_v4_config(old_path: &str) -> Result<()> {
     } else {
         migrate_v4_yaml(old_path, &contents)
     }
+}
+
+fn print_stdout_guidance(old_path: &str, source_format: &str) {
+    eprintln!();
+    eprintln!("Migration complete (from {source_format}).");
+    eprintln!("Review the output above, then save it:");
+    eprintln!("  odd-box --migrate {old_path} > odd-box.yaml");
+}
+
+fn confirm_in_place_write(old_path: &str, source_format: &str) -> Result<bool> {
+    eprintln!();
+    eprintln!("Migration ready (from {source_format}).");
+    eprintln!("Write migrated config in-place?");
+    eprintln!("  target : {old_path}");
+    eprintln!("  action : move current file to backup[n], then write migrated YAML to target");
+    eprint!("Proceed? [y/N]: ");
+    std::io::stderr().flush()?;
+
+    let mut input = String::new();
+    std::io::stdin()
+        .read_line(&mut input)
+        .map_err(|e| anyhow::anyhow!("Failed to read confirmation input: {e}"))?;
+
+    let answer = input.trim().to_ascii_lowercase();
+    Ok(matches!(answer.as_str(), "y" | "yes"))
+}
+
+fn write_migrated_in_place(target: &Path, yaml: &str) -> Result<PathBuf> {
+    if !target.exists() {
+        bail!(
+            "Cannot migrate in-place: '{}' does not exist",
+            target.display()
+        );
+    }
+
+    let backup_path = next_backup_path(target)?;
+    let temp_path = temp_output_path(target)?;
+
+    let mut temp_file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temp_path)
+        .map_err(|e| {
+            anyhow::anyhow!("Failed to create temp file '{}': {e}", temp_path.display())
+        })?;
+    temp_file
+        .write_all(yaml.as_bytes())
+        .and_then(|_| temp_file.sync_all())
+        .map_err(|e| anyhow::anyhow!("Failed to write temp file '{}': {e}", temp_path.display()))?;
+    drop(temp_file);
+
+    if let Err(err) = std::fs::rename(target, &backup_path) {
+        let _ = std::fs::remove_file(&temp_path);
+        bail!("Failed to create backup '{}': {err}", backup_path.display());
+    }
+
+    if let Err(err) = std::fs::rename(&temp_path, target) {
+        let restore_err = std::fs::rename(&backup_path, target).err();
+        let _ = std::fs::remove_file(&temp_path);
+        match restore_err {
+            Some(restore_err) => bail!(
+                "Failed to replace '{}' with migrated config: {err}. \
+                 Also failed to restore original config from '{}': {restore_err}",
+                target.display(),
+                backup_path.display(),
+            ),
+            None => bail!(
+                "Failed to replace '{}' with migrated config: {err}. \
+                 Original file was restored.",
+                target.display(),
+            ),
+        }
+    }
+
+    Ok(backup_path)
+}
+
+fn next_backup_path(target: &Path) -> Result<PathBuf> {
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .ok_or_else(|| anyhow::anyhow!("Invalid target path '{}'", target.display()))?;
+
+    for idx in 1..=10_000u32 {
+        let candidate = parent.join(format!("{file_name}.backup{idx}"));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    bail!(
+        "Could not allocate backup name for '{}' (too many existing backups)",
+        target.display()
+    );
+}
+
+fn temp_output_path(target: &Path) -> Result<PathBuf> {
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .ok_or_else(|| anyhow::anyhow!("Invalid target path '{}'", target.display()))?;
+    let pid = std::process::id();
+    let now_nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| anyhow::anyhow!("System clock error while creating temp path: {e}"))?
+        .as_nanos();
+
+    Ok(parent.join(format!(".{file_name}.migrating.{pid}.{now_nanos}.tmp")))
 }
 
 /// Heuristic: if the content contains TOML table headers like `[[hosted_process]]`
@@ -63,7 +207,7 @@ fn looks_like_toml(contents: &str) -> bool {
 ///   - `odd_box_url`, `odd_box_password` (dropped — no equivalent)
 ///   - `env_vars` for global environment
 ///   - `port_range_start` for auto-assigned ports
-fn migrate_v3_toml(old_path: &str, contents: &str) -> Result<()> {
+fn migrate_v3_toml(old_path: &str, contents: &str) -> Result<MigrationRender> {
     let toml_val: toml::Value = contents
         .parse()
         .map_err(|e| anyhow::anyhow!("Failed to parse {old_path} as TOML: {e}"))?;
@@ -109,10 +253,26 @@ fn migrate_v3_toml(old_path: &str, contents: &str) -> Result<()> {
     let mut global_env = serde_yaml::Mapping::new();
 
     // ── Global env vars ────────────────────────────────────────────────
-    if let Some(env_table) = table.get("env_vars").and_then(|v| v.as_table()) {
-        for (k, v) in env_table {
-            if let Some(val) = v.as_str() {
-                global_env.insert(y_str(k), Value::String(val.to_string()));
+    // V1 format: env_vars = [{ key = "k", value = "v" }, ...]
+    // V3 format: [env_vars]  k = "v"
+    if let Some(env_val) = table.get("env_vars") {
+        if let Some(env_table) = env_val.as_table() {
+            // V3 table format: { k = "v", ... }
+            for (k, v) in env_table {
+                if let Some(val) = v.as_str() {
+                    global_env.insert(y_str(k), Value::String(val.to_string()));
+                }
+            }
+        } else if let Some(env_arr) = env_val.as_array() {
+            // V1 array-of-pairs format: [{ key = "k", value = "v" }, ...]
+            for pair in env_arr {
+                if let Some(pair_table) = pair.as_table() {
+                    let key = pair_table.get("key").and_then(|v| v.as_str());
+                    let val = pair_table.get("value").and_then(|v| v.as_str());
+                    if let (Some(k), Some(v)) = (key, val) {
+                        global_env.insert(y_str(k), Value::String(v.to_string()));
+                    }
+                }
             }
         }
     }
@@ -123,13 +283,13 @@ fn migrate_v3_toml(old_path: &str, contents: &str) -> Result<()> {
     let mut http_listener = serde_yaml::Mapping::new();
     http_listener.insert(y_str("port"), Value::Number(http_port.into()));
     http_listener.insert(y_str("addr"), Value::String(listener_addr(ip)));
-    http_listener.insert(y_str("tls"), Value::Bool(false));
+    http_listener.insert(y_str("kind"), Value::String("http".into()));
     listeners.push(Value::Mapping(http_listener));
 
     let mut https_listener = serde_yaml::Mapping::new();
     https_listener.insert(y_str("port"), Value::Number(tls_port.into()));
     https_listener.insert(y_str("addr"), Value::String(listener_addr(ip)));
-    https_listener.insert(y_str("tls"), Value::Bool(true));
+    https_listener.insert(y_str("kind"), Value::String("https".into()));
     listeners.push(Value::Mapping(https_listener));
 
     // ── Hosted processes ───────────────────────────────────────────────
@@ -190,11 +350,24 @@ fn migrate_v3_toml(old_path: &str, contents: &str) -> Result<()> {
             let proc_id = sanitize_id(&host_name);
 
             // Per-process env (merge global + per-process)
+            // Supports both V1 array-of-pairs and V3 table formats.
             let mut proc_env = global_env.clone();
-            if let Some(env_table) = entry.get("env").and_then(|v| v.as_table()) {
-                for (k, v) in env_table {
-                    if let Some(val) = v.as_str() {
-                        proc_env.insert(y_str(k), Value::String(val.to_string()));
+            if let Some(env_val) = entry.get("env_vars").or_else(|| entry.get("env")) {
+                if let Some(env_table) = env_val.as_table() {
+                    for (k, v) in env_table {
+                        if let Some(val) = v.as_str() {
+                            proc_env.insert(y_str(k), Value::String(val.to_string()));
+                        }
+                    }
+                } else if let Some(env_arr) = env_val.as_array() {
+                    for pair in env_arr {
+                        if let Some(pair_table) = pair.as_table() {
+                            let key = pair_table.get("key").and_then(|v| v.as_str());
+                            let val = pair_table.get("value").and_then(|v| v.as_str());
+                            if let (Some(k), Some(v)) = (key, val) {
+                                proc_env.insert(y_str(k), Value::String(v.to_string()));
+                            }
+                        }
                     }
                 }
             }
@@ -243,12 +416,23 @@ fn migrate_v3_toml(old_path: &str, contents: &str) -> Result<()> {
                 process.insert(y_str("upstream_protocol"), Value::String(proto.to_string()));
             }
 
+            // Check if the hosted process uses HTTPS upstream
+            let use_https = entry
+                .get("https")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            if use_https {
+                process.insert(y_str("upstream_tls"), Value::Bool(true));
+            }
+
             processes.push(Value::Mapping(process));
 
             // Create a backend for this process
+            let backend_kind = if use_https { "https" } else { "http" };
             let mut backend = serde_yaml::Mapping::new();
             backend.insert(y_str("id"), Value::String(proc_id.clone()));
-            backend.insert(y_str("kind"), Value::String("http".into()));
+            backend.insert(y_str("kind"), Value::String(backend_kind.into()));
             backend.insert(
                 y_str("destination"),
                 Value::String(format!("localhost:{assigned_port}")),
@@ -279,35 +463,61 @@ fn migrate_v3_toml(old_path: &str, contents: &str) -> Result<()> {
 
             let backend_id = sanitize_id(&host_name);
 
-            // Parse backends array: [{ address, port, https }]
+            // V1 format: target_hostname + port + https (flat fields)
+            // V3 format: backends = [{ address, port, https }]
             let remote_backends = entry
                 .get("backends")
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
 
-            if let Some(first) = remote_backends.first().and_then(|b| b.as_table()) {
-                let address = first
+            let (address, port, use_https) = if let Some(first) =
+                remote_backends.first().and_then(|b| b.as_table())
+            {
+                // V3 nested backends array
+                let addr = first
                     .get("address")
                     .and_then(|v| v.as_str())
                     .unwrap_or("localhost");
-                let port = first.get("port").and_then(|v| v.as_integer()).unwrap_or(80) as u16;
-                let use_https = first
+                let p = first.get("port").and_then(|v| v.as_integer()).unwrap_or(80) as u16;
+                let https = first
                     .get("https")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-
-                let kind = if use_https { "https" } else { "http" };
-
-                let mut backend = serde_yaml::Mapping::new();
-                backend.insert(y_str("id"), Value::String(backend_id.clone()));
-                backend.insert(y_str("kind"), Value::String(kind.into()));
-                backend.insert(
-                    y_str("destination"),
-                    Value::String(format!("{address}:{port}")),
+                (addr.to_string(), p, https)
+            } else if let Some(target_host) = entry.get("target_hostname").and_then(|v| v.as_str())
+            {
+                // V1 flat fields
+                let p = entry.get("port").and_then(|v| v.as_integer()).unwrap_or(80) as u16;
+                let https = entry
+                    .get("https")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                (target_host.to_string(), p, https)
+            } else {
+                eprintln!(
+                    "Warning: remote_target '{host_name}' has no backends array \
+                         and no target_hostname, skipping backend creation"
                 );
-                backends.push(Value::Mapping(backend));
-            }
+                // Still create the frontend so we don't silently drop it,
+                // but mark the issue.
+                let mut frontend = serde_yaml::Mapping::new();
+                frontend.insert(y_str("hostname"), Value::String(host_name));
+                frontend.insert(y_str("backend_id"), Value::String(backend_id));
+                frontends.push(Value::Mapping(frontend));
+                continue;
+            };
+
+            let kind = if use_https { "https" } else { "http" };
+
+            let mut backend = serde_yaml::Mapping::new();
+            backend.insert(y_str("id"), Value::String(backend_id.clone()));
+            backend.insert(y_str("kind"), Value::String(kind.into()));
+            backend.insert(
+                y_str("destination"),
+                Value::String(format!("{address}:{port}")),
+            );
+            backends.push(Value::Mapping(backend));
 
             // Frontend
             let mut frontend = serde_yaml::Mapping::new();
@@ -360,6 +570,18 @@ fn migrate_v3_toml(old_path: &str, contents: &str) -> Result<()> {
              The admin UI is built into the GUI/TUI."
         );
     }
+    if table.contains_key("root_dir") {
+        eprintln!(
+            "Note: $root_dir / $cfg_dir variable expansion is not supported in the new \
+             format. You may need to replace $root_dir and $cfg_dir with absolute paths \
+             in the generated config."
+        );
+    }
+    for dropped in ["admin_api_port", "log_level", "default_log_format", "alpn"] {
+        if table.contains_key(dropped) {
+            eprintln!("Note: '{dropped}' is no longer used and has been dropped.");
+        }
+    }
 
     // ── Emit output ────────────────────────────────────────────────────
     emit_output(
@@ -368,7 +590,7 @@ fn migrate_v3_toml(old_path: &str, contents: &str) -> Result<()> {
         &processes,
         &frontends,
         &global_env,
-        // V3 TOML had no cruma tunnel config — default to local-only
+        // V3 TOML had no cruma tunnel config — default to no `cruma` listener
         "ANON",
         "ANON",
         true,
@@ -380,7 +602,7 @@ fn migrate_v3_toml(old_path: &str, contents: &str) -> Result<()> {
 // ─── V4 YAML migration ────────────────────────────────────────────────────
 
 /// Migrate a V4 YAML config to the agent YAML format.
-fn migrate_v4_yaml(old_path: &str, contents: &str) -> Result<()> {
+fn migrate_v4_yaml(old_path: &str, contents: &str) -> Result<MigrationRender> {
     let v4: Value = serde_yaml::from_str(contents)
         .map_err(|e| anyhow::anyhow!("Failed to parse {old_path} as YAML: {e}"))?;
 
@@ -588,7 +810,7 @@ fn migrate_v4_yaml(old_path: &str, contents: &str) -> Result<()> {
         let mut listener = serde_yaml::Mapping::new();
         listener.insert(y_str("port"), Value::Number(port.into()));
         listener.insert(y_str("addr"), Value::String(listener_addr(addr)));
-        listener.insert(y_str("tls"), Value::Bool(false));
+        listener.insert(y_str("kind"), Value::String("http".into()));
         listeners.push(Value::Mapping(listener));
 
         parse_yaml_routes(http, &mut frontends);
@@ -602,7 +824,7 @@ fn migrate_v4_yaml(old_path: &str, contents: &str) -> Result<()> {
         let mut listener = serde_yaml::Mapping::new();
         listener.insert(y_str("port"), Value::Number(port.into()));
         listener.insert(y_str("addr"), Value::String(listener_addr(addr)));
-        listener.insert(y_str("tls"), Value::Bool(true));
+        listener.insert(y_str("kind"), Value::String("https".into()));
         listeners.push(Value::Mapping(listener));
 
         // "inherit" means the HTTPS routes are the same as HTTP routes
@@ -647,20 +869,32 @@ fn emit_output(
     tunnel_id: &str,
     tunnel_secret: &str,
     local_only: bool,
-    source_format: &str,
-    old_path: &str,
-) -> Result<()> {
+    source_format: &'static str,
+    _old_path: &str,
+) -> Result<MigrationRender> {
     let mut output = serde_yaml::Mapping::new();
+    let mut listeners_out = listeners.to_vec();
+
+    if !local_only && !listeners_have_kind(&listeners_out, "cruma") {
+        let mut cruma_listener = serde_yaml::Mapping::new();
+        cruma_listener.insert(y_str("kind"), Value::String("cruma".into()));
+        listeners_out.push(Value::Mapping(cruma_listener));
+    }
 
     output.insert(y_str("tunnel_id"), Value::String(tunnel_id.to_string()));
     output.insert(
         y_str("tunnel_secret"),
         Value::String(tunnel_secret.to_string()),
     );
-    output.insert(y_str("local_only"), Value::Bool(local_only));
 
-    if !listeners.is_empty() {
-        output.insert(y_str("listeners"), Value::Sequence(listeners.to_vec()));
+    // In explicit listener-kind configs, `kind: cruma` is the source of truth.
+    // Keep `local_only` only for legacy implicit-listener outputs.
+    if !listeners_use_explicit_kinds(&listeners_out) {
+        output.insert(y_str("local_only"), Value::Bool(local_only));
+    }
+
+    if !listeners_out.is_empty() {
+        output.insert(y_str("listeners"), Value::Sequence(listeners_out));
     }
     if !backends.is_empty() {
         output.insert(y_str("backends"), Value::Sequence(backends.to_vec()));
@@ -680,14 +914,10 @@ fn emit_output(
         "# Migrated from odd-box {source_format} config\n\
          # Review this file carefully before using it.\n\n"
     );
-    println!("{header}{yaml}");
-
-    eprintln!();
-    eprintln!("Migration complete (from {source_format}).");
-    eprintln!("Review the output above, then save it:");
-    eprintln!("  odd-box --migrate {old_path} > odd-box.yaml");
-
-    Ok(())
+    Ok(MigrationRender {
+        yaml: format!("{header}{yaml}"),
+        source_format,
+    })
 }
 
 /// Parse route mappings from a V4 YAML frontends.http or frontends.https block.
@@ -763,7 +993,7 @@ fn parse_cruma_config(v4: &Value) -> (String, String, bool) {
         return (id, key, local_only);
     }
 
-    // No cruma config → local-only mode
+    // No cruma config -> no `cruma` listener
     ("ANON".into(), "ANON".into(), true)
 }
 
@@ -774,6 +1004,24 @@ fn listener_addr(ip: &str) -> String {
         "127.0.0.1" | "localhost" => "localhost".into(),
         other => other.into(),
     }
+}
+
+fn listeners_have_kind(listeners: &[Value], kind: &str) -> bool {
+    listeners.iter().any(|value| {
+        value
+            .as_mapping()
+            .and_then(|mapping| mapping.get(&y_str("kind")))
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| v == kind)
+    })
+}
+
+fn listeners_use_explicit_kinds(listeners: &[Value]) -> bool {
+    listeners.iter().any(|value| {
+        value
+            .as_mapping()
+            .is_some_and(|mapping| mapping.contains_key(&y_str("kind")))
+    })
 }
 
 /// Derive a config-safe ID from a hostname.
@@ -875,5 +1123,207 @@ backends:
 host_name = "test.localhost"
 "#;
         assert!(looks_like_toml(toml_content));
+    }
+
+    #[test]
+    fn v1_remote_target_with_target_hostname() {
+        let toml_input = r#"
+version = "V1"
+http_port = 8080
+tls_port = 4343
+
+[[remote_target]]
+host_name = "images.local"
+target_hostname = "images.dev.bookvisit.com"
+port = 443
+https = true
+"#;
+        let toml_val: toml::Value = toml_input.parse().unwrap();
+        let table = toml_val.as_table().unwrap();
+
+        let remotes = table.get("remote_target").unwrap().as_array().unwrap();
+        let entry = remotes[0].as_table().unwrap();
+
+        // Verify the V1 fields are present
+        assert_eq!(
+            entry.get("target_hostname").unwrap().as_str().unwrap(),
+            "images.dev.bookvisit.com"
+        );
+        assert_eq!(entry.get("port").unwrap().as_integer().unwrap(), 443);
+        assert!(entry.get("https").unwrap().as_bool().unwrap());
+
+        // The old code would look for entry.get("backends") which is None
+        assert!(entry.get("backends").is_none());
+
+        // Verify sanitize_id produces the expected backend_id
+        let host_name = entry.get("host_name").unwrap().as_str().unwrap();
+        assert_eq!(sanitize_id(host_name), "images-local");
+
+        // Now run the full migration and verify it doesn't error
+        let result = migrate_v3_toml("<test>", toml_input);
+        assert!(result.is_ok(), "migration failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn v1_env_vars_array_of_pairs() {
+        let toml_input = r#"
+version = "V1"
+http_port = 8080
+tls_port = 4343
+env_vars = [
+    { key = "MY_KEY", value = "my_value" },
+    { key = "OTHER", value = "other_val" },
+]
+
+[[hosted_process]]
+host_name = "app.local"
+bin = "myapp"
+args = []
+env_vars = [
+    { key = "PORT", value = "5000" },
+]
+"#;
+        let toml_val: toml::Value = toml_input.parse().unwrap();
+        let table = toml_val.as_table().unwrap();
+
+        // Global env_vars should be an array, not a table
+        let env_val = table.get("env_vars").unwrap();
+        assert!(
+            env_val.as_array().is_some(),
+            "env_vars should be an array in V1"
+        );
+        assert!(env_val.as_table().is_none());
+
+        // Per-process env_vars should also be an array
+        let hosted = table.get("hosted_process").unwrap().as_array().unwrap();
+        let proc_env = hosted[0].as_table().unwrap().get("env_vars").unwrap();
+        assert!(proc_env.as_array().is_some());
+
+        // Run the full migration
+        let result = migrate_v3_toml("<test>", toml_input);
+        assert!(result.is_ok(), "migration failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn v1_hosted_process_with_https() {
+        let toml_input = r#"
+version = "V1"
+http_port = 8080
+tls_port = 4343
+port_range_start = 4200
+
+[[hosted_process]]
+host_name = "payment.local"
+bin = "PaymentService"
+https = true
+args = []
+env_vars = []
+"#;
+        // Run the full migration — should not error
+        let result = migrate_v3_toml("<test>", toml_input);
+        assert!(result.is_ok(), "migration failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn v1_full_config_migration() {
+        // A realistic V1 config with all the tricky bits:
+        // - array-of-pairs env_vars (global and per-process)
+        // - remote_target with target_hostname
+        // - hosted_process with https flag
+        // - hosted_process with explicit port
+        let toml_input = r#"
+version = "V1"
+http_port = 8080
+tls_port = 4343
+ip = "0.0.0.0"
+port_range_start = 4200
+auto_start = true
+env_vars = [
+    { key = "GLOBAL_KEY", value = "global_val" },
+]
+
+[[hosted_process]]
+host_name = "api.local"
+dir = "/app/api"
+bin = "api-server"
+args = ["--port", "$port"]
+env_vars = [
+    { key = "DB_HOST", value = "localhost" },
+]
+
+[[hosted_process]]
+host_name = "payment.local"
+dir = "/app/payment"
+bin = "payment-svc"
+https = true
+args = []
+port = 5003
+env_vars = [
+    { key = "PORT", value = "5003" },
+]
+
+[[remote_target]]
+host_name = "images.local"
+target_hostname = "cdn.example.com"
+port = 443
+https = true
+
+[[dir_server]]
+host_name = "docs.local"
+dir = "/var/docs"
+"#;
+        let result = migrate_v3_toml("<test>", toml_input);
+        assert!(result.is_ok(), "migration failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn next_backup_path_rotates_suffix() {
+        let unique = format!(
+            "odd-box-migrate-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let target = root.join("odd-box.yaml");
+        std::fs::write(&target, "version: V4\n").unwrap();
+        std::fs::write(root.join("odd-box.yaml.backup1"), "a").unwrap();
+        std::fs::write(root.join("odd-box.yaml.backup2"), "b").unwrap();
+
+        let next = next_backup_path(&target).unwrap();
+        assert_eq!(next, root.join("odd-box.yaml.backup3"));
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn write_migrated_in_place_creates_backup_and_replaces_target() {
+        let unique = format!(
+            "odd-box-migrate-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let target = root.join("odd-box.yaml");
+        std::fs::write(&target, "old-config: true\n").unwrap();
+
+        let backup = write_migrated_in_place(&target, "new-config: true\n").unwrap();
+        assert_eq!(backup, root.join("odd-box.yaml.backup1"));
+
+        let current = std::fs::read_to_string(&target).unwrap();
+        let previous = std::fs::read_to_string(&backup).unwrap();
+        assert_eq!(current, "new-config: true\n");
+        assert_eq!(previous, "old-config: true\n");
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

@@ -6,8 +6,9 @@ use anyhow::{Result, bail};
 use clap::Parser;
 use cruma::bootstrap::{BootstrapOptions, bootstrap_from_config};
 use cruma::config::{TunnelCliConfiguration, load_config_from_path};
-use cruma::gui::{GuiOptions, Page, ThemeMode};
+use cruma::gui::{DashboardViewMode, GuiOptions, Page, ThemeMode};
 use cruma::tui::TuiOptions;
+use std::io::IsTerminal;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -109,6 +110,9 @@ fn main() -> Result<()> {
     }
 
     if let Some(old_path) = &args.migrate {
+        if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+            return migrate::migrate_v4_config_with_in_place_prompt(old_path);
+        }
         return migrate::migrate_v4_config(old_path);
     }
 
@@ -125,6 +129,23 @@ fn main() -> Result<()> {
     // ── Load configuration ─────────────────────────────────────────────
 
     let config_path = args.config.clone().unwrap_or_else(find_config_file);
+
+    // Detect legacy TOML configs and give a helpful error before the YAML
+    // parser produces a confusing "expected value at line 1 column 1".
+    if looks_like_legacy_toml(&config_path) {
+        bail!(
+            "The config file '{}' appears to be in the old TOML format.\n\n\
+             odd-box now uses the YAML config format. To migrate, run:\n\n\
+             \x20 odd-box --migrate {}\n\n\
+             Interactive terminals will prompt to migrate in-place and create\n\
+             automatic backups (backup[n]). You can also redirect stdout:\n\n\
+             \x20 odd-box --migrate {} > odd-box.yaml\n\
+             \x20 odd-box -c odd-box.yaml",
+            config_path,
+            config_path,
+            config_path,
+        );
+    }
 
     let mut config = load_config_from_path(std::path::Path::new(&config_path))?;
     config.config_path = Some(config_path.clone().into());
@@ -152,6 +173,9 @@ fn main() -> Result<()> {
     let theme = ThemeMode::from_cli_or_env(args.theme.as_deref());
     let want_gui = args.gui || (!args.tui && !args.headless && !is_headless_environment());
 
+    // ── Odd-box icon (embedded PNG) for tray + window branding ─────────
+    const ODD_BOX_ICON: &[u8] = include_bytes!("assets/odd-box-icon.png");
+
     if want_gui {
         // ── GUI path ───────────────────────────────────────────────────
         //
@@ -178,16 +202,20 @@ fn main() -> Result<()> {
             app_version: VERSION.into(),
             logo_light: None,
             logo_dark: None,
+            tray_icon: Some(ODD_BOX_ICON.to_vec()),
+            window_icon: Some(ODD_BOX_ICON.to_vec()),
             pages: vec![
                 Page::Dashboard,
                 Page::Backends,
                 Page::Frontends,
+                Page::Listeners,
                 Page::Processes,
                 Page::Requests,
                 Page::Certificates,
                 Page::Observations,
             ],
             theme,
+            default_dashboard_view_mode: DashboardViewMode::Classic,
             update_info: None,
             linux_application_id: Some("odd-box".into()),
             notification_app_name: Some("odd-box".into()),
@@ -228,8 +256,9 @@ fn main() -> Result<()> {
 
 /// odd-box enforces at most 1 HTTP listener and 1 HTTPS listener.
 fn validate_odd_box_constraints(config: &TunnelCliConfiguration) -> Result<()> {
-    let http_count = config.listeners.iter().filter(|l| !l.tls).count();
-    let https_count = config.listeners.iter().filter(|l| l.tls).count();
+    let http_count = config.listeners.iter().filter(|l| l.is_http()).count();
+    let https_count = config.listeners.iter().filter(|l| l.is_https()).count();
+    let cruma_count = config.listeners.iter().filter(|l| l.is_cruma()).count();
     if http_count > 1 {
         bail!(
             "odd-box supports at most 1 HTTP listener, found {http_count}. \
@@ -239,6 +268,12 @@ fn validate_odd_box_constraints(config: &TunnelCliConfiguration) -> Result<()> {
     if https_count > 1 {
         bail!(
             "odd-box supports at most 1 HTTPS listener, found {https_count}. \
+             Remove extra listeners from your config or use the cruma binary directly."
+        );
+    }
+    if cruma_count > 1 {
+        bail!(
+            "odd-box supports at most 1 CRUMA listener, found {cruma_count}. \
              Remove extra listeners from your config or use the cruma binary directly."
         );
     }
@@ -275,15 +310,14 @@ fn init_config() -> Result<()> {
 
 tunnel_id: ANON
 tunnel_secret: ANON
-local_only: true
 
 listeners:
   - port: 8080
     addr: localhost
-    tls: false
+    kind: http
   - port: 4343
     addr: localhost
-    tls: true
+    kind: https
 
 backends: []
 processes: []
@@ -298,6 +332,38 @@ frontends: []
     println!("  1. Edit {target} to add your backends, processes, and frontends");
     println!("  2. Run `odd-box` to start the proxy");
     Ok(())
+}
+
+/// Check whether a config file looks like a legacy TOML config (V2/V3/V4).
+///
+/// Uses file extension and a quick content heuristic so we can give the
+/// user a helpful migration message instead of a cryptic YAML parse error.
+fn looks_like_legacy_toml(path: &str) -> bool {
+    if path.ends_with(".toml") {
+        return true;
+    }
+    // For extensionless files or ambiguous extensions, peek at the content.
+    if path.ends_with(".yaml") || path.ends_with(".yml") {
+        return false;
+    }
+    if let Ok(content) = std::fs::read_to_string(path) {
+        for line in content.lines().take(30) {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            // TOML table header
+            if trimmed.starts_with("[[") || trimmed.starts_with('[') {
+                return true;
+            }
+            // TOML key = "value" style (with equals, no colon)
+            if trimmed.contains('=') && !trimmed.contains(':') {
+                return true;
+            }
+            break;
+        }
+    }
+    false
 }
 
 /// Detect whether we are running in an environment without a display.
