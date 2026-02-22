@@ -4,7 +4,7 @@ mod self_update;
 
 use anyhow::{Result, bail};
 use clap::Parser;
-use cruma::bootstrap::{BootstrapOptions, bootstrap_from_config};
+use cruma::bootstrap::BootstrapOptions;
 use cruma::config::{TunnelCliConfiguration, load_config_from_path};
 use cruma::gui::{DashboardViewMode, GuiOptions, Page, ThemeMode};
 use cruma::tui::TuiOptions;
@@ -76,14 +76,15 @@ struct Args {
 
 // We intentionally use a synchronous `fn main()` rather than `#[tokio::main]`.
 //
-// The cruma GUI (`run_gui_with_runtime`) creates its own tokio runtime
-// internally, so if we were already inside a tokio runtime (as `#[tokio::main]`
-// provides) the nested `Runtime::new()` call inside iced would panic with
-// "Cannot start a runtime from within a runtime."
+// The cruma GUI creates its own tokio runtime internally, so if we were
+// already inside a tokio runtime (as `#[tokio::main]` provides) the nested
+// `Runtime::new()` call inside iced would panic with "Cannot start a
+// runtime from within a runtime."
 //
-// Instead we create a short-lived runtime for bootstrapping, drop it before
-// entering the GUI path, and for the TUI / headless paths we create a runtime
-// that lives for the entire duration of the process.
+// For the GUI path we use `run_gui_with_config` which bootstraps the agent
+// runtime inside the GUI's own tokio runtime — no temporary runtime needed.
+// For the TUI / headless paths we create a runtime that lives for the
+// entire duration of the process.
 fn main() -> Result<()> {
     // Install the rustls crypto provider before any TLS operations.
     // This matches what the cruma binary does in its main().
@@ -179,24 +180,12 @@ fn main() -> Result<()> {
     if want_gui {
         // ── GUI path ───────────────────────────────────────────────────
         //
-        // `run_gui_with_runtime` is synchronous — it creates its own
-        // tokio runtime internally and blocks until the GUI window is
-        // closed.  We must NOT be inside a tokio runtime when we call it,
-        // so we bootstrap with a temporary runtime, extract the result,
-        // and then drop the runtime before entering the GUI.
-        let runtime = {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()?;
-            let runtime = rt.block_on(bootstrap_from_config(
-                config,
-                bootstrap_options,
-                cancel.clone(),
-            ))?;
-            drop(rt);
-            Arc::new(runtime)
-        };
-
+        // `run_gui_with_config` bootstraps the agent runtime (orchestrator,
+        // transport workers, cert manager) inside the GUI's own tokio
+        // runtime.  This avoids the old temp-runtime pattern where
+        // `drop(rt)` killed the orchestrator task, leaving transport
+        // workers sending into dead channels and preventing domain
+        // assignment.
         let gui_options = GuiOptions {
             app_name: NAME.into(),
             app_version: VERSION.into(),
@@ -221,7 +210,7 @@ fn main() -> Result<()> {
             notification_app_name: Some("odd-box".into()),
             custom_pages: pages::custom_gui_pages(),
         };
-        cruma::gui::run_gui_with_runtime(runtime, cancel, gui_options)?;
+        cruma::gui::run_gui_with_config(config, bootstrap_options, cancel, gui_options)?;
     } else {
         // ── TUI / Headless path ────────────────────────────────────────
         //
@@ -232,8 +221,10 @@ fn main() -> Result<()> {
             .build()?;
 
         rt.block_on(async {
-            let runtime =
-                Arc::new(bootstrap_from_config(config, bootstrap_options, cancel.clone()).await?);
+            let runtime = Arc::new(
+                cruma::bootstrap::bootstrap_from_config(config, bootstrap_options, cancel.clone())
+                    .await?,
+            );
 
             if args.tui {
                 let tui_options = TuiOptions {
