@@ -29,9 +29,15 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
                   It delegates all heavy lifting to the cruma agent library."
 )]
 struct Args {
-    /// Path to configuration file (YAML)
+    /// Path to configuration file (YAML).
+    /// Can be passed as a positional argument or with -c / --config.
     #[arg(short, long, value_name = "FILE")]
     config: Option<String>,
+
+    /// Config file path (positional, same as --config).
+    /// When both are given, --config takes precedence.
+    #[arg(value_name = "CONFIG_FILE", conflicts_with = "config")]
+    config_positional: Option<String>,
 
     /// Run the graphical user interface
     #[arg(long, conflicts_with_all = ["tui", "headless"])]
@@ -92,6 +98,9 @@ fn main() -> Result<()> {
         .install_default()
         .expect("Failed to install default crypto provider");
 
+    // ── Odd-box embedded assets ────────────────────────────────────────
+    const ODD_BOX_404: &[u8] = include_bytes!("assets/404.html");
+
     let args = Args::parse();
 
     // ── One-shot commands (no config needed) ───────────────────────────
@@ -129,7 +138,9 @@ fn main() -> Result<()> {
 
     // ── Load configuration ─────────────────────────────────────────────
 
-    let config_path = args.config.clone().unwrap_or_else(find_config_file);
+    let config_path = args.config
+        .or(args.config_positional)
+        .unwrap_or_else(find_config_file);
 
     // Detect legacy TOML configs and give a helpful error before the YAML
     // parser produces a confusing "expected value at line 1 column 1".
@@ -150,6 +161,20 @@ fn main() -> Result<()> {
 
     let mut config = load_config_from_path(std::path::Path::new(&config_path))?;
     config.config_path = Some(config_path.clone().into());
+
+    // ── Odd-box branding for directory listing / dir-server error pages ─
+    config.dir_listing_branding = Some(cruma::cruma_proxy_lib::types::DirListingBranding {
+        logo_url: Some("https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/ob3.png".into()),
+        logo_link_url: Some("https://github.com/OlofBlomqvist/odd-box".into()),
+    });
+
+    // ── Odd-box custom 404 page (embedded at compile time) ─────────────
+    {
+        let not_found_path = std::env::temp_dir().join("odd-box-404.html");
+        if std::fs::write(&not_found_path, ODD_BOX_404).is_ok() {
+            config.custom_pages.not_found_page = Some(not_found_path);
+        }
+    }
 
     // odd-box constraint: max 1 HTTP + 1 HTTPS listener
     validate_odd_box_constraints(&config)?;
@@ -198,6 +223,7 @@ fn main() -> Result<()> {
                 Page::Backends,
                 Page::Frontends,
                 Page::Listeners,
+                Page::Graph,
                 Page::Processes,
                 Page::Requests,
                 Page::Certificates,
