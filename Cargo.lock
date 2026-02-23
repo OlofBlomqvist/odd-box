@@ -1458,6 +1458,7 @@ dependencies = [
  "tracing-subscriber",
  "tray-icon",
  "tui-qrcode",
+ "which",
  "winrt-notification",
 ]
 
