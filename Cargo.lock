@@ -1422,6 +1422,7 @@ dependencies = [
  "clap_complete_nushell",
  "cocoa",
  "crossterm",
+ "cruma-local-service-scan",
  "cruma-proc-host",
  "cruma-proxy-lib",
  "cruma-ring-log",
@@ -1461,6 +1462,10 @@ dependencies = [
  "which",
  "winrt-notification",
 ]
+
+[[package]]
+name = "cruma-local-service-scan"
+version = "0.3.0-beta.3"
 
 [[package]]
 name = "cruma-proc-host"
