@@ -1415,6 +1415,7 @@ version = "0.3.0-beta.3"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "base64",
  "bytes",
  "chrono",
  "clap",

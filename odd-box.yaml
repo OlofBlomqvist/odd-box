@@ -2,6 +2,17 @@ backends:
 - id: images-localhost
   kind: https
   destination: images.dev.bookvisit.com:443
+- id: backend-2
+  kind: local-directory
+  destination: /tmp
+  allow_directory_indexing: true
+  render_markdown: false
+  spa_fallback: false
+  form_auth:
+    users:
+    - - kalle
+      - kula
+    secret: 0bd48b445a1968a2ed5056863dda1f6d764374ef0d045a4c4f22afc8fa87f07c
 frontends:
 - hostname: images.local
   process_id: images-local
@@ -98,6 +109,20 @@ frontends:
   listener_kinds:
   - http
   - https
+- hostname: kalle.localhost
+  backend_id: backend-2
+  listener_kinds:
+  - http
+  - https
+- hostname: banana.localhost
+  backend_id: backend-2
+- hostname: pylol
+  process_id: ibe-local
+  form_auth:
+    users:
+    - - sdfsdf
+      - fff
+    secret: 334000a1cb8cb4533736cc7e7295b306a647513211d444e4bb29bea36f24e5d3
 processes:
 - id: images-local
   command: dotnet
@@ -105,10 +130,10 @@ processes:
   - EasyAccessHotels.Images.dll
   working_directory: /Users/olof/repos/odd-box/EasyAccessHotels.Images/publish
   env:
-    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
     ext-svc-url: http://externalservices.local:80
-    fd-api-url: fdapi.local:80
     bv_sigr_server: //signalr.local
+    fd-api-url: fdapi.local:80
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
   auto_start: false
   restart_policy: on-failure
 - id: admin-local
@@ -117,11 +142,11 @@ processes:
   - use-kestrel
   working_directory: /Users/olof/repos/odd-box/EasyAccessHotels.AdminAPI/publish
   env:
-    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
-    bv_sigr_server: //signalr.local
-    fd-api-url: fdapi.local:80
-    host_base_addr: http://admin.local/
     ext-svc-url: http://externalservices.local:80
+    host_base_addr: http://admin.local/
+    bv_sigr_server: //signalr.local
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    fd-api-url: fdapi.local:80
   auto_start: false
   restart_policy: on-failure
 - id: search-local
@@ -131,10 +156,10 @@ processes:
   working_directory: /Users/olof/repos/odd-box/EasyAccessHotels.Search/publish
   env:
     bv_sigr_server: //signalr.local
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
     host_base_addr: http://search.local/
     fd-api-url: fdapi.local:80
     ext-svc-url: http://externalservices.local:80
-    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
   auto_start: false
   restart_policy: on-failure
 - id: pms-local
@@ -143,10 +168,10 @@ processes:
   - use-kestrel
   working_directory: /Users/olof/repos/odd-box/EasyAccessHotels.PMSConnectivity/publish
   env:
-    bv_sigr_server: //signalr.local
-    ext-svc-url: http://externalservices.local:80
     bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    ext-svc-url: http://externalservices.local:80
     fd-api-url: fdapi.local:80
+    bv_sigr_server: //signalr.local
   auto_start: false
   restart_policy: on-failure
 - id: restapi-local
@@ -155,20 +180,20 @@ processes:
   - use-kestrel
   working_directory: /Users/olof/repos/odd-box/EasyAccessHotels.RESTAPI/publish
   env:
-    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
     fd-api-url: fdapi.local:80
-    ext-svc-url: http://externalservices.local:80
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
     bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
   auto_start: false
   restart_policy: on-failure
 - id: extchanman-localhost
   command: BookVisit.ChannelManagerExternalAPI
   working_directory: /Users/olof/repos/odd-box/BookVisit.ChannelManagerExternalAPI/publish
   env:
-    fd-api-url: fdapi.local:80
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
     ext-svc-url: http://externalservices.local:80
     bv_sigr_server: //signalr.local
-    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    fd-api-url: fdapi.local:80
   auto_start: false
   restart_policy: on-failure
 - id: channelmanager-local
@@ -178,9 +203,9 @@ processes:
   working_directory: /Users/olof/repos/odd-box/BookVisit.ChannelManagerService/publish
   env:
     fd-api-url: fdapi.local:80
-    ext-svc-url: http://externalservices.local:80
     bv_sigr_server: //signalr.local
     bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    ext-svc-url: http://externalservices.local:80
   auto_start: false
   restart_policy: on-failure
 - id: devportal-local
@@ -189,10 +214,10 @@ processes:
   - use-kestrel
   working_directory: /Users/olof/repos/odd-box/BookVisit.DeveloperPortal/publish
   env:
-    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
-    ext-svc-url: http://externalservices.local:80
     fd-api-url: fdapi.local:80
     bv_sigr_server: //signalr.local
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    ext-svc-url: http://externalservices.local:80
   auto_start: false
   restart_policy: on-failure
 - id: externalservices-local
@@ -201,11 +226,11 @@ processes:
   - use-kestrel
   working_directory: /Users/olof/repos/odd-box/BookVisit.ExternalServices/publish
   env:
-    bv_sigr_server: //signalr.local
+    PORT: '9600'
     bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
     ext-svc-url: http://externalservices.local:80
+    bv_sigr_server: //signalr.local
     fd-api-url: fdapi.local:80
-    PORT: '9600'
   auto_start: false
   restart_policy: on-failure
 - id: payment-local
@@ -213,9 +238,9 @@ processes:
   working_directory: ~/work/visit/repos/Visit.PaymentService/Visit.PaymentService/bin/Debug/net8.0
   env:
     bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    fd-api-url: fdapi.local:80
     ext-svc-url: http://externalservices.local:80
     bv_sigr_server: //signalr.local
-    fd-api-url: fdapi.local:80
   auto_start: false
   restart_policy: on-failure
 - id: fdapi-local
@@ -224,11 +249,11 @@ processes:
   - use-kestrel
   working_directory: /Users/olof/repos/odd-box/EasyAccessHotels.FrontdeskAPI/publish
   env:
-    fd-api-url: fdapi.local:80
-    PORT: '5007'
-    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
-    bv_sigr_server: //signalr.local
     ext-svc-url: http://externalservices.local:80
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    PORT: '5007'
+    fd-api-url: fdapi.local:80
+    bv_sigr_server: //signalr.local
   auto_start: false
   restart_policy: on-failure
 - id: frontdeskwebapi-local
@@ -238,9 +263,9 @@ processes:
   working_directory: /Users/olof/repos/odd-box/EasyAccessHotels.FrontdeskWebAPI/publish
   env:
     bv_sigr_server: //signalr.local
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
     fd-api-url: fdapi.local:80
     ext-svc-url: http://externalservices.local:80
-    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
   auto_start: false
   restart_policy: on-failure
 - id: ota-local
@@ -249,10 +274,10 @@ processes:
   - use-kestrel
   working_directory: /Users/olof/repos/odd-box/EasyAccessHotels.OTAService/publish
   env:
+    fd-api-url: fdapi.local:80
     bv_sigr_server: //signalr.local
     bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
     ext-svc-url: http://externalservices.local:80
-    fd-api-url: fdapi.local:80
   auto_start: false
   restart_policy: on-failure
 - id: priceexport-local
@@ -262,8 +287,8 @@ processes:
   working_directory: /Users/olof/repos/odd-box/EasyAccessHotels.PriceExport/publish
   env:
     bv_sigr_server: //signalr.local
-    fd-api-url: fdapi.local:80
     bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    fd-api-url: fdapi.local:80
     ext-svc-url: http://externalservices.local:80
   auto_start: false
   restart_policy: on-failure
@@ -273,11 +298,11 @@ processes:
   - use-kestrel
   working_directory: /Users/olof/repos/odd-box/EasyAccessHotels.SignalR/publish
   env:
-    PORT: '5006'
-    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
-    bv_sigr_server: //signalr.local
     fd-api-url: fdapi.local:80
     ext-svc-url: http://externalservices.local:80
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    PORT: '5006'
+    bv_sigr_server: //signalr.local
   auto_start: false
   restart_policy: on-failure
 - id: bo-local
@@ -286,10 +311,10 @@ processes:
   - use-kestrel
   working_directory: /Users/olof/repos/odd-box/EasyAccessHotels.Web/publish
   env:
-    ext-svc-url: http://externalservices.local:80
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
     fd-api-url: fdapi.local:80
     bv_sigr_server: //signalr.local
-    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    ext-svc-url: http://externalservices.local:80
   auto_start: false
   restart_policy: on-failure
 - id: ibe-local
@@ -299,34 +324,34 @@ processes:
   - dev
   working_directory: ~/work/visit/repos/BookVisit.IBE
   env:
-    fd-api-url: fdapi.local:80
-    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
     bv_sigr_server: //signalr.local
     ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
   auto_start: false
   restart_policy: on-failure
 - id: partner-api-localhost
   command: BookVisit.IntegrationPartnerApi
   working_directory: /Users/olof/repos/odd-box/BookVisit.IntegrationPartnerApi/publish
   env:
-    ext-svc-url: http://externalservices.local:80
     fd-api-url: fdapi.local:80
-    bv_sigr_server: //signalr.local
     bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
   auto_start: false
   restart_policy: on-failure
 global_env:
+  bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
   ext-svc-url: http://externalservices.local:80
   bv_sigr_server: //signalr.local
   fd-api-url: fdapi.local:80
-  bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
 listeners:
 - kind: http
   port: 80
   addr: all
   cert_mode: self_signed
 - kind: https
-  port: 443
+  port: 4431
   addr: all
   cert_mode: self_signed
 - kind: cruma
@@ -335,3 +360,8 @@ listeners:
   cert_mode: from_frontend
 tunnel_secret: ANON
 tunnel_id: ANON
+custom_pages:
+  not_found_page: /var/folders/rv/4cys614d0cb_gskbfghr4k240000gn/T/odd-box-404.html
+dir_listing_branding:
+  logo_url: https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/ob3.png
+  logo_link_url: https://github.com/OlofBlomqvist/odd-box
