@@ -163,8 +163,9 @@ fn main() -> Result<()> {
     config.config_path = Some(config_path.clone().into());
 
     // ── Odd-box branding for directory listing / dir-server error pages ─
+    const ODD_BOX_LOGO_DATAURI: &str = include_str!("assets/odd-box-icon-datauri.txt");
     config.dir_listing_branding = Some(cruma::cruma_proxy_lib::types::DirListingBranding {
-        logo_url: Some("https://raw.githubusercontent.com/OlofBlomqvist/odd-box/main/ob3.png".into()),
+        logo_url: Some(ODD_BOX_LOGO_DATAURI.into()),
         logo_link_url: Some("https://github.com/OlofBlomqvist/odd-box".into()),
     });
 
