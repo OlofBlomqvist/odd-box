@@ -1424,6 +1424,7 @@ dependencies = [
  "crossterm",
  "cruma-proc-host",
  "cruma-proxy-lib",
+ "cruma-ring-log",
  "cruma-tunnels-lib",
  "directories",
  "embed-resource",
@@ -1465,6 +1466,7 @@ name = "cruma-proc-host"
 version = "0.3.0-beta.3"
 dependencies = [
  "arc-swap",
+ "cruma-ring-log",
  "nix",
  "sysinfo",
  "tokio",
@@ -1536,6 +1538,14 @@ dependencies = [
  "uuid",
  "webpki-roots 1.0.5",
  "x509-parser 0.17.0",
+]
+
+[[package]]
+name = "cruma-ring-log"
+version = "0.3.0-beta.3"
+dependencies = [
+ "arc-swap",
+ "tokio",
 ]
 
 [[package]]
@@ -3188,8 +3198,6 @@ dependencies = [
 [[package]]
 name = "iced_selection"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ab7ead659318b8eea8f864bafe96f761e244c32e11d55035b99dcf0c56ba757"
 dependencies = [
  "iced_widget",
  "unicode-segmentation",

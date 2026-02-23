@@ -1,13 +1,165 @@
-backends: []
-frontends: []
+backends:
+- id: backend-1
+  kind: https
+  destination: omni:443
+- id: backend-2
+  kind: https
+  destination: omni.se:443
+  upstream_protocol: H2
+frontends:
+- hostname: x
+  process_id: tmp
+  listener_kinds:
+  - cruma
+  form_auth:
+    users:
+    - - kalle
+      - erik
+    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
+- hostname: woo
+  backend_id: backend-1
+- hostname: '@'
+  process_id: tmp
+  listener_kinds:
+  - cruma
+  form_auth:
+    users:
+    - - kalle
+      - erik
+    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
+- hostname: asd81
+  process_id: tmp
+  listener_kinds:
+  - cruma
+  form_auth:
+    users:
+    - - kalle
+      - erik
+    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
+- hostname: asd8
+  process_id: tmp
+  listener_kinds:
+  - cruma
+  form_auth:
+    users:
+    - - kalle
+      - erik
+    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
+- hostname: asd7
+  process_id: tmp
+  listener_kinds:
+  - cruma
+  form_auth:
+    users:
+    - - kalle
+      - erik
+    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
+- hostname: asd6
+  process_id: tmp
+  listener_kinds:
+  - cruma
+  form_auth:
+    users:
+    - - kalle
+      - erik
+    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
+- hostname: asd5
+  process_id: tmp
+  listener_kinds:
+  - cruma
+  form_auth:
+    users:
+    - - kalle
+      - erik
+    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
+- hostname: asd4
+  process_id: tmp
+  listener_kinds:
+  - cruma
+  form_auth:
+    users:
+    - - kalle
+      - erik
+    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
+- hostname: asd3
+  process_id: tmp
+  listener_kinds:
+  - cruma
+  form_auth:
+    users:
+    - - kalle
+      - erik
+    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
+- hostname: asd2
+  process_id: tmp
+  listener_kinds:
+  - cruma
+  form_auth:
+    users:
+    - - kalle
+      - erik
+    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
+- hostname: asd1
+  process_id: tmp
+  listener_kinds:
+  - cruma
+  form_auth:
+    users:
+    - - kalle
+      - erik
+    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
+- hostname: sdfsdf123
+  process_id: tmp
+  listener_kinds:
+  - cruma
+  form_auth:
+    users:
+    - - kalle
+      - erik
+    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
+- hostname: gdfgdfg3
+  process_id: tmp
+  listener_kinds:
+  - cruma
+  form_auth:
+    users:
+    - - kalle
+      - erik
+    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
+- hostname: sfsfsdfklj123
+  process_id: tmp
+  listener_kinds:
+  - cruma
+  form_auth:
+    users:
+    - - kalle
+      - erik
+    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
+- hostname: kkfjksjdf123
+  process_id: tmp
+  listener_kinds:
+  - cruma
+  form_auth:
+    users:
+    - - kalle
+      - erik
+    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
+processes:
+- id: process-1
+  command: python3
+  args:
+  - -m
+  - http.server
+  working_directory: /tmp/
+  restart_policy: on-failure
 listeners:
-- port: 8080
+- kind: https
+  port: 4343
   addr: localhost
-  tls: false
   cert_mode: self_signed
-- port: 4343
+- kind: cruma
+  port: 1
   addr: localhost
-  tls: true
-  cert_mode: self_signed
+  cert_mode: from_frontend
 tunnel_secret: ANON
 tunnel_id: ANON

@@ -191,8 +191,8 @@ fn main() -> Result<()> {
             app_version: VERSION.into(),
             logo_light: None,
             logo_dark: None,
-            tray_icon: Some(ODD_BOX_ICON.to_vec()),
-            window_icon: Some(ODD_BOX_ICON.to_vec()),
+            tray_icon_shape: cruma::gui::TrayIconShape::Box,
+	    window_icon: Some(ODD_BOX_ICON.to_vec()),
             pages: vec![
                 Page::Dashboard,
                 Page::Backends,
