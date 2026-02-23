@@ -428,17 +428,6 @@ fn migrate_v3_toml(old_path: &str, contents: &str) -> Result<MigrationRender> {
 
             processes.push(Value::Mapping(process));
 
-            // Create a backend for this process
-            let backend_kind = if use_https { "https" } else { "http" };
-            let mut backend = serde_yaml::Mapping::new();
-            backend.insert(y_str("id"), Value::String(proc_id.clone()));
-            backend.insert(y_str("kind"), Value::String(backend_kind.into()));
-            backend.insert(
-                y_str("destination"),
-                Value::String(format!("localhost:{assigned_port}")),
-            );
-            backends.push(Value::Mapping(backend));
-
             // Create a frontend mapping hostname → process
             let mut frontend = serde_yaml::Mapping::new();
             frontend.insert(y_str("hostname"), Value::String(host_name));
@@ -621,6 +610,7 @@ fn migrate_v4_yaml(old_path: &str, contents: &str) -> Result<MigrationRender> {
     let mut frontends = Vec::<Value>::new();
     let mut listeners = Vec::<Value>::new();
     let mut global_env = serde_yaml::Mapping::new();
+    let mut process_ids = std::collections::HashSet::<String>::new();
 
     // ── Parse global env ───────────────────────────────────────────────
     if let Some(env_map) = v4.get("env").and_then(|e| e.as_mapping()) {
@@ -715,19 +705,46 @@ fn migrate_v4_yaml(old_path: &str, contents: &str) -> Result<MigrationRender> {
                     if !proc_env.is_empty() {
                         process.insert(y_str("env"), Value::Mapping(proc_env));
                     }
+
+                    // Carry over upstream protocol hints (H2, H2CPK, etc.)
+                    let hints: Vec<String> = def
+                        .get(&Value::String("hints".into()))
+                        .and_then(|v| v.as_sequence())
+                        .map(|seq| {
+                            seq.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let upstream_protocol = if hints.iter().any(|h| h == "H2CPK") {
+                        Some("H2PK")
+                    } else if hints.iter().any(|h| h == "H2") {
+                        Some("H2")
+                    } else {
+                        None
+                    };
+                    if let Some(proto) = upstream_protocol {
+                        process.insert(
+                            y_str("upstream_protocol"),
+                            Value::String(proto.to_string()),
+                        );
+                    }
+
+                    // Carry over HTTPS upstream flag.
+                    let use_https = def
+                        .get(&Value::String("https".into()))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    if use_https {
+                        process.insert(y_str("upstream_tls"), Value::Bool(true));
+                    }
+
                     processes.push(Value::Mapping(process));
 
-                    // Process-backed routes use process_id in frontends,
-                    // but we also create a backend entry so the proxy knows
-                    // where to forward traffic.
-                    let mut backend = serde_yaml::Mapping::new();
-                    backend.insert(y_str("id"), Value::String(id));
-                    backend.insert(y_str("kind"), Value::String("http".into()));
-                    backend.insert(
-                        y_str("destination"),
-                        Value::String(format!("localhost:{assigned_port}")),
-                    );
-                    backends.push(Value::Mapping(backend));
+                    // Track this ID as a process so that frontends
+                    // referencing it emit `process_id` instead of
+                    // `backend_id`.
+                    process_ids.insert(id);
                 }
                 "remote" => {
                     let endpoints = def
@@ -813,7 +830,7 @@ fn migrate_v4_yaml(old_path: &str, contents: &str) -> Result<MigrationRender> {
         listener.insert(y_str("kind"), Value::String("http".into()));
         listeners.push(Value::Mapping(listener));
 
-        parse_yaml_routes(http, &mut frontends);
+        parse_yaml_routes(http, &mut frontends, &process_ids);
     }
 
     // ── Parse frontends (HTTPS) ────────────────────────────────────────
@@ -835,7 +852,7 @@ fn migrate_v4_yaml(old_path: &str, contents: &str) -> Result<MigrationRender> {
             .unwrap_or(false);
 
         if !is_inherit {
-            parse_yaml_routes(https, &mut frontends);
+            parse_yaml_routes(https, &mut frontends, &process_ids);
         }
     }
 
@@ -921,7 +938,11 @@ fn emit_output(
 }
 
 /// Parse route mappings from a V4 YAML frontends.http or frontends.https block.
-fn parse_yaml_routes(section: &Value, frontends: &mut Vec<Value>) {
+fn parse_yaml_routes(
+    section: &Value,
+    frontends: &mut Vec<Value>,
+    process_ids: &std::collections::HashSet<String>,
+) {
     let routes = match section.get("routes").and_then(|r| r.as_mapping()) {
         Some(r) => r,
         None => return,
@@ -948,8 +969,12 @@ fn parse_yaml_routes(section: &Value, frontends: &mut Vec<Value>) {
         }
 
         let mut frontend = serde_yaml::Mapping::new();
-        frontend.insert(y_str("hostname"), Value::String(hostname));
-        frontend.insert(y_str("backend_id"), Value::String(backend_id));
+        frontend.insert(y_str("hostname"), Value::String(hostname.clone()));
+        if process_ids.contains(&backend_id) {
+            frontend.insert(y_str("process_id"), Value::String(backend_id));
+        } else {
+            frontend.insert(y_str("backend_id"), Value::String(backend_id));
+        }
 
         // Carry over forward_host if present
         if let Value::Mapping(m) = target {
@@ -1325,5 +1350,142 @@ dir = "/var/docs"
         assert_eq!(previous, "old-config: true\n");
 
         std::fs::remove_dir_all(&root).unwrap();
+    }
+}
+
+
+#[cfg(test)]
+mod process_migration_tests {
+    use super::*;
+
+    /// V3 TOML: hosted processes should NOT produce a backend entry.
+    #[test]
+    fn v3_process_produces_no_backend() {
+        let toml_input = "version = \"V3\"\nhttp_port = 8080\ntls_port = 4343\nport_range_start = 4200\n\n[[hosted_process]]\nhost_name = \"api.localhost\"\nbin = \"my-api\"\nargs = [\"--port\", \"$port\"]\n";
+        let result = migrate_v3_toml("<test>", toml_input).unwrap();
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&result.yaml).unwrap();
+
+        let processes = parsed.get("processes").and_then(|p| p.as_sequence()).unwrap();
+        assert_eq!(processes.len(), 1);
+        assert_eq!(processes[0].get("id").unwrap().as_str().unwrap(), "api-localhost");
+
+        // Should NOT have a backend for the process
+        let backends = parsed.get("backends").and_then(|b| b.as_sequence());
+        assert!(backends.is_none() || backends.unwrap().is_empty(),
+            "process should not produce a backend entry");
+
+        // Frontend should use process_id
+        let frontends = parsed.get("frontends").and_then(|f| f.as_sequence()).unwrap();
+        assert_eq!(frontends.len(), 1);
+        assert!(frontends[0].get("process_id").is_some(), "frontend should reference process_id");
+        assert!(frontends[0].get("backend_id").is_none(), "frontend should NOT have backend_id");
+    }
+
+    /// V3 TOML: remote targets should still produce backends normally.
+    #[test]
+    fn v3_remote_still_produces_backend() {
+        let toml_input = "version = \"V3\"\nhttp_port = 8080\ntls_port = 4343\n\n[[remote_target]]\nhost_name = \"cdn.localhost\"\ntarget_hostname = \"cdn.example.com\"\nport = 443\nhttps = true\n";
+        let result = migrate_v3_toml("<test>", toml_input).unwrap();
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&result.yaml).unwrap();
+
+        let backends = parsed.get("backends").and_then(|b| b.as_sequence()).unwrap();
+        assert_eq!(backends.len(), 1);
+
+        let frontends = parsed.get("frontends").and_then(|f| f.as_sequence()).unwrap();
+        assert!(frontends[0].get("backend_id").is_some());
+        assert!(frontends[0].get("process_id").is_none());
+    }
+
+    /// V3 TOML: upstream_tls and upstream_protocol are carried over.
+    #[test]
+    fn v3_process_carries_upstream_settings() {
+        let toml_input = "version = \"V3\"\nhttp_port = 8080\ntls_port = 4343\nport_range_start = 4200\n\n[[hosted_process]]\nhost_name = \"grpc.localhost\"\nbin = \"grpc-server\"\nargs = []\nhttps = true\nhints = [\"H2CPK\"]\n";
+        let result = migrate_v3_toml("<test>", toml_input).unwrap();
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&result.yaml).unwrap();
+
+        let processes = parsed.get("processes").and_then(|p| p.as_sequence()).unwrap();
+        assert_eq!(processes[0].get("upstream_tls").unwrap().as_bool().unwrap(), true);
+        assert_eq!(processes[0].get("upstream_protocol").unwrap().as_str().unwrap(), "H2PK");
+    }
+
+    /// V4 YAML: process-type backends should NOT produce a backend entry.
+    #[test]
+    fn v4_process_produces_no_backend_and_frontend_uses_process_id() {
+        let yaml_input = "version: V4\nport_range_start: 4200\nbackends:\n  my-api:\n    type: process\n    bin: my-api-server\n    dir: /app\nfrontends:\n  http:\n    port: 8080\n    routes:\n      api.localhost: my-api\n";
+        let result = migrate_v4_yaml("<test>", yaml_input).unwrap();
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&result.yaml).unwrap();
+
+        let processes = parsed.get("processes").and_then(|p| p.as_sequence()).unwrap();
+        assert_eq!(processes.len(), 1);
+        assert_eq!(processes[0].get("id").unwrap().as_str().unwrap(), "my-api");
+
+        // Should NOT have a backend for the process
+        let backends = parsed.get("backends").and_then(|b| b.as_sequence());
+        assert!(backends.is_none() || backends.unwrap().is_empty(),
+            "process should not produce a backend entry");
+
+        // Frontend should use process_id
+        let frontends = parsed.get("frontends").and_then(|f| f.as_sequence()).unwrap();
+        let api_fe = frontends.iter().find(|f| {
+            f.get("hostname").and_then(|h| h.as_str()).map(|h| h == "api.localhost").unwrap_or(false)
+        }).expect("should have frontend for api.localhost");
+        assert_eq!(api_fe.get("process_id").unwrap().as_str().unwrap(), "my-api");
+        assert!(api_fe.get("backend_id").is_none(), "should NOT have backend_id");
+    }
+
+    /// V4 YAML: remote-type backends should still produce backends.
+    #[test]
+    fn v4_remote_still_produces_backend() {
+        let yaml_input = "version: V4\nbackends:\n  cdn:\n    type: remote\n    endpoints: [\"cdn.example.com:443\"]\n    https: true\nfrontends:\n  http:\n    port: 8080\n    routes:\n      cdn.localhost: cdn\n";
+        let result = migrate_v4_yaml("<test>", yaml_input).unwrap();
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&result.yaml).unwrap();
+
+        let backends = parsed.get("backends").and_then(|b| b.as_sequence()).unwrap();
+        assert_eq!(backends.len(), 1);
+        assert_eq!(backends[0].get("id").unwrap().as_str().unwrap(), "cdn");
+
+        let frontends = parsed.get("frontends").and_then(|f| f.as_sequence()).unwrap();
+        let cdn_fe = frontends.iter().find(|f| {
+            f.get("hostname").and_then(|h| h.as_str()).map(|h| h == "cdn.localhost").unwrap_or(false)
+        }).unwrap();
+        assert!(cdn_fe.get("backend_id").is_some());
+        assert!(cdn_fe.get("process_id").is_none());
+    }
+
+    /// V4 YAML: upstream_tls and upstream_protocol should be carried over.
+    #[test]
+    fn v4_process_carries_upstream_settings() {
+        let yaml_input = "version: V4\nport_range_start: 4200\nbackends:\n  grpc-svc:\n    type: process\n    bin: grpc-server\n    https: true\n    hints: [\"H2CPK\"]\nfrontends:\n  http:\n    port: 8080\n    routes:\n      grpc.localhost: grpc-svc\n";
+        let result = migrate_v4_yaml("<test>", yaml_input).unwrap();
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&result.yaml).unwrap();
+
+        let processes = parsed.get("processes").and_then(|p| p.as_sequence()).unwrap();
+        assert_eq!(processes[0].get("upstream_tls").unwrap().as_bool().unwrap(), true);
+        assert_eq!(processes[0].get("upstream_protocol").unwrap().as_str().unwrap(), "H2PK");
+    }
+
+    /// V4 YAML: mixed config with both processes and remotes.
+    #[test]
+    fn v4_mixed_process_and_remote() {
+        let yaml_input = "version: V4\nport_range_start: 4200\nbackends:\n  my-app:\n    type: process\n    bin: app-server\n  my-cdn:\n    type: remote\n    endpoints: [\"cdn.example.com:443\"]\n    https: true\nfrontends:\n  http:\n    port: 8080\n    routes:\n      app.localhost: my-app\n      cdn.localhost: my-cdn\n";
+        let result = migrate_v4_yaml("<test>", yaml_input).unwrap();
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&result.yaml).unwrap();
+
+        let processes = parsed.get("processes").and_then(|p| p.as_sequence()).unwrap();
+        assert_eq!(processes.len(), 1);
+        assert_eq!(processes[0].get("id").unwrap().as_str().unwrap(), "my-app");
+
+        let backends = parsed.get("backends").and_then(|b| b.as_sequence()).unwrap();
+        assert_eq!(backends.len(), 1);
+        assert_eq!(backends[0].get("id").unwrap().as_str().unwrap(), "my-cdn");
+
+        let frontends = parsed.get("frontends").and_then(|f| f.as_sequence()).unwrap();
+        let app_fe = frontends.iter().find(|f| f.get("hostname").unwrap().as_str().unwrap() == "app.localhost").unwrap();
+        assert!(app_fe.get("process_id").is_some());
+        assert!(app_fe.get("backend_id").is_none());
+
+        let cdn_fe = frontends.iter().find(|f| f.get("hostname").unwrap().as_str().unwrap() == "cdn.localhost").unwrap();
+        assert!(cdn_fe.get("backend_id").is_some());
+        assert!(cdn_fe.get("process_id").is_none());
     }
 }

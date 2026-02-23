@@ -1,165 +1,259 @@
-backends:
-- id: backend-1
-  kind: https
-  destination: omni:443
-- id: backend-2
-  kind: https
-  destination: omni.se:443
-  upstream_protocol: H2
-frontends:
-- hostname: x
-  process_id: tmp
-  listener_kinds:
-  - cruma
-  form_auth:
-    users:
-    - - kalle
-      - erik
-    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
-- hostname: woo
-  backend_id: backend-1
-- hostname: '@'
-  process_id: tmp
-  listener_kinds:
-  - cruma
-  form_auth:
-    users:
-    - - kalle
-      - erik
-    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
-- hostname: asd81
-  process_id: tmp
-  listener_kinds:
-  - cruma
-  form_auth:
-    users:
-    - - kalle
-      - erik
-    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
-- hostname: asd8
-  process_id: tmp
-  listener_kinds:
-  - cruma
-  form_auth:
-    users:
-    - - kalle
-      - erik
-    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
-- hostname: asd7
-  process_id: tmp
-  listener_kinds:
-  - cruma
-  form_auth:
-    users:
-    - - kalle
-      - erik
-    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
-- hostname: asd6
-  process_id: tmp
-  listener_kinds:
-  - cruma
-  form_auth:
-    users:
-    - - kalle
-      - erik
-    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
-- hostname: asd5
-  process_id: tmp
-  listener_kinds:
-  - cruma
-  form_auth:
-    users:
-    - - kalle
-      - erik
-    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
-- hostname: asd4
-  process_id: tmp
-  listener_kinds:
-  - cruma
-  form_auth:
-    users:
-    - - kalle
-      - erik
-    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
-- hostname: asd3
-  process_id: tmp
-  listener_kinds:
-  - cruma
-  form_auth:
-    users:
-    - - kalle
-      - erik
-    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
-- hostname: asd2
-  process_id: tmp
-  listener_kinds:
-  - cruma
-  form_auth:
-    users:
-    - - kalle
-      - erik
-    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
-- hostname: asd1
-  process_id: tmp
-  listener_kinds:
-  - cruma
-  form_auth:
-    users:
-    - - kalle
-      - erik
-    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
-- hostname: sdfsdf123
-  process_id: tmp
-  listener_kinds:
-  - cruma
-  form_auth:
-    users:
-    - - kalle
-      - erik
-    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
-- hostname: gdfgdfg3
-  process_id: tmp
-  listener_kinds:
-  - cruma
-  form_auth:
-    users:
-    - - kalle
-      - erik
-    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
-- hostname: sfsfsdfklj123
-  process_id: tmp
-  listener_kinds:
-  - cruma
-  form_auth:
-    users:
-    - - kalle
-      - erik
-    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
-- hostname: kkfjksjdf123
-  process_id: tmp
-  listener_kinds:
-  - cruma
-  form_auth:
-    users:
-    - - kalle
-      - erik
-    secret: 8169de9927a35862526791056f8741d79f72850490160e4a3918c6818f4c2a4d
-processes:
-- id: process-1
-  command: python3
-  args:
-  - -m
-  - http.server
-  working_directory: /tmp/
-  restart_policy: on-failure
-listeners:
-- kind: https
-  port: 4343
-  addr: localhost
-  cert_mode: self_signed
-- kind: cruma
-  port: 1
-  addr: localhost
-  cert_mode: from_frontend
-tunnel_secret: ANON
+# Migrated from odd-box V3 TOML config
+# Review this file carefully before using it.
+
 tunnel_id: ANON
+tunnel_secret: ANON
+listeners:
+- port: 80
+  addr: all
+  kind: http
+- port: 443
+  addr: all
+  kind: https
+backends:
+- id: images-localhost
+  kind: https
+  destination: images.dev.bookvisit.com:443
+processes:
+- id: images-local
+  command: dotnet
+  args:
+  - EasyAccessHotels.Images.dll
+  working_directory: $root_dir/EasyAccessHotels.Images/publish
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+- id: admin-local
+  command: EasyAccessHotels.AdminAPI
+  args:
+  - use-kestrel
+  working_directory: $root_dir/EasyAccessHotels.AdminAPI/publish
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+    host_base_addr: http://admin.local/
+- id: search-local
+  command: EasyAccessHotels.Search
+  args:
+  - use-kestrel
+  working_directory: $root_dir/EasyAccessHotels.Search/publish
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+    host_base_addr: http://search.local/
+- id: pms-local
+  command: EasyAccessHotels.PMSConnectivity
+  args:
+  - use-kestrel
+  working_directory: $root_dir/EasyAccessHotels.PMSConnectivity/publish
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+- id: restapi-local
+  command: EasyAccessHotels.RESTAPI
+  args:
+  - use-kestrel
+  working_directory: $root_dir/EasyAccessHotels.RESTAPI/publish
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+- id: extchanman-localhost
+  command: BookVisit.ChannelManagerExternalAPI
+  working_directory: $root_dir/BookVisit.ChannelManagerExternalAPI/publish
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+- id: channelmanager-local
+  command: BookVisit.ChannelManagerService
+  args:
+  - use-kestrel
+  working_directory: $root_dir/BookVisit.ChannelManagerService/publish
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+- id: devportal-local
+  command: BookVisit.DeveloperPortal
+  args:
+  - use-kestrel
+  working_directory: $root_dir/BookVisit.DeveloperPortal/publish
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+- id: externalservices-local
+  command: BookVisit.ExternalServices
+  args:
+  - use-kestrel
+  working_directory: $root_dir/BookVisit.ExternalServices/publish
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+    PORT: '9600'
+- id: payment-local
+  command: Visit.PaymentService
+  working_directory: ~/work/visit/repos/Visit.PaymentService/Visit.PaymentService/bin/Debug/net8.0
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+- id: fdapi-local
+  command: EasyAccessHotels.FrontdeskAPI
+  args:
+  - use-kestrel
+  working_directory: $root_dir/EasyAccessHotels.FrontdeskAPI/publish
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+    PORT: '5007'
+- id: frontdeskwebapi-local
+  command: EasyAccessHotels.FrontdeskWebAPI
+  args:
+  - use-kestrel
+  working_directory: $root_dir/EasyAccessHotels.FrontdeskWebAPI/publish
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+- id: ota-local
+  command: EasyAccessHotels.OTAService
+  args:
+  - use-kestrel
+  working_directory: $root_dir/EasyAccessHotels.OTAService/publish
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+- id: priceexport-local
+  command: EasyAccessHotels.PriceExport
+  args:
+  - use-kestrel
+  working_directory: $root_dir/EasyAccessHotels.PriceExport/publish
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+- id: signalr-local
+  command: EasyAccessHotels.SignalR
+  args:
+  - use-kestrel
+  working_directory: $root_dir/EasyAccessHotels.SignalR/publish
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+    PORT: '5006'
+- id: bo-local
+  command: EasyAccessHotels.Web
+  args:
+  - use-kestrel
+  working_directory: $root_dir/EasyAccessHotels.Web/publish
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+- id: ibe-local
+  command: npm
+  args:
+  - run
+  - dev
+  working_directory: ~/work/visit/repos/BookVisit.IBE
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+- id: partner-api-localhost
+  command: BookVisit.IntegrationPartnerApi
+  working_directory: $root_dir/BookVisit.IntegrationPartnerApi/publish
+  auto_start: false
+  env:
+    bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+    bv_sigr_server: //signalr.local
+    ext-svc-url: http://externalservices.local:80
+    fd-api-url: fdapi.local:80
+frontends:
+- hostname: images.local
+  process_id: images-local
+- hostname: admin.local
+  process_id: admin-local
+- hostname: search.local
+  process_id: search-local
+- hostname: pms.local
+  process_id: pms-local
+- hostname: restapi.local
+  process_id: restapi-local
+- hostname: extchanman.localhost
+  process_id: extchanman-localhost
+- hostname: channelmanager.local
+  process_id: channelmanager-local
+- hostname: devportal.local
+  process_id: devportal-local
+- hostname: externalservices.local
+  process_id: externalservices-local
+- hostname: payment.local
+  process_id: payment-local
+- hostname: fdapi.local
+  process_id: fdapi-local
+- hostname: frontdeskwebapi.local
+  process_id: frontdeskwebapi-local
+- hostname: ota.local
+  process_id: ota-local
+- hostname: priceexport.local
+  process_id: priceexport-local
+- hostname: signalr.local
+  process_id: signalr-local
+- hostname: bo.local
+  process_id: bo-local
+- hostname: ibe.local
+  process_id: ibe-local
+- hostname: partner-api.localhost
+  process_id: partner-api-localhost
+- hostname: images.localhost
+  backend_id: images-localhost
+global_env:
+  bv_telemetry_server: https://jaeger-collector.bv.k8s.dev.visitgroup.com:443/
+  bv_sigr_server: //signalr.local
+  ext-svc-url: http://externalservices.local:80
+  fd-api-url: fdapi.local:80
