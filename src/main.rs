@@ -1,7 +1,5 @@
 mod configuration;
 mod migrate;
-mod pages;
-mod self_update;
 
 use anyhow::{Result, bail};
 use clap::Parser;
@@ -94,20 +92,6 @@ fn main() -> Result<()> {
 
     // ── One-shot commands (no config needed) ───────────────────────────
 
-    if args.update {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?;
-        let result = rt.block_on(self_update::update())?;
-        match result {
-            self_update::UpdateAction::Updated => {
-                println!("odd-box updated successfully. Please restart.");
-            }
-            self_update::UpdateAction::NoUpdateNeeded => {}
-        }
-        return Ok(());
-    }
-
     if args.init {
         return init_config();
     }
@@ -120,14 +104,16 @@ fn main() -> Result<()> {
 
     // ── Load configuration ─────────────────────────────────────────────
 
-    let config_path = args.config
+    let config_path = args
+        .config
         .or(args.config_positional)
         .unwrap_or_else(find_config_file);
 
     // Try loading directly (supports YAML, TOML, JSON).  If that fails
     // and the file looks like a legacy odd-box TOML config, auto-migrate
     // it to the current format, back up the original, and continue.
-    let (mut config, config_path) = match load_config_from_path(std::path::Path::new(&config_path)) {
+    let (mut config, config_path) = match load_config_from_path(std::path::Path::new(&config_path))
+    {
         Ok(cfg) => (cfg, config_path),
         Err(load_err) if looks_like_legacy_toml(&config_path) => {
             let (cfg, new_path) = migrate::auto_migrate(&config_path)?;
@@ -152,8 +138,6 @@ fn main() -> Result<()> {
             config.custom_pages.not_found_page = Some(not_found_path);
         }
     }
-
-
 
     // ── Build bootstrap options ────────────────────────────────────────
 
@@ -187,7 +171,7 @@ fn main() -> Result<()> {
             logo_light: None,
             logo_dark: None,
             tray_icon_shape: cruma::gui::TrayIconShape::Box,
-	    window_icon: Some(ODD_BOX_ICON.to_vec()),
+            window_icon: Some(ODD_BOX_ICON.to_vec()),
             pages: vec![
                 Page::Dashboard,
                 Page::Backends,
@@ -204,7 +188,7 @@ fn main() -> Result<()> {
             update_info: None,
             linux_application_id: Some("odd-box".into()),
             notification_app_name: Some("odd-box".into()),
-            custom_pages: pages::custom_gui_pages(),
+            custom_pages: vec![],
             on_bootstrap: Some(Box::new(register_oddbox_resolver)),
         };
         cruma::gui::run_gui_with_config(config, bootstrap_options, cancel, gui_options)?;
@@ -278,10 +262,7 @@ fn register_oddbox_resolver(runtime: &Arc<ApplicationRuntime>) {
             let proc_name = ctx
                 .uri
                 .query()
-                .and_then(|q| {
-                    q.split('&')
-                        .find_map(|pair| pair.strip_prefix("proc="))
-                })
+                .and_then(|q| q.split('&').find_map(|pair| pair.strip_prefix("proc=")))
                 .map(|s| s.to_string());
 
             let Some(name) = proc_name else {
@@ -314,8 +295,6 @@ fn register_oddbox_resolver(runtime: &Arc<ApplicationRuntime>) {
         .insert(DynamicBackendId::from("odd-box"), resolver);
     cfg_handle.store(Arc::new(cfg));
 }
-
-
 
 /// Search for a config file in the current directory.
 fn find_config_file() -> String {
