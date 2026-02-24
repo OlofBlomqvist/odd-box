@@ -9,7 +9,7 @@ use cruma::bootstrap::{ApplicationRuntime, BootstrapOptions};
 use cruma::config::{TunnelCliConfiguration, load_config_from_path};
 use cruma::gui::{DashboardViewMode, GuiOptions, Page, ThemeMode};
 use cruma::tui::TuiOptions;
-use std::io::IsTerminal;
+
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -60,10 +60,6 @@ struct Args {
     #[arg(long)]
     init: bool,
 
-    /// Migrate a V4 odd-box config to the new agent format
-    #[arg(long, value_name = "OLD_CONFIG")]
-    migrate: Option<String>,
-
     /// Print JSON schema for the config format
     #[arg(long)]
     config_schema: bool,
@@ -71,14 +67,6 @@ struct Args {
     /// Theme: light, dark, system
     #[arg(long, value_name = "MODE")]
     theme: Option<String>,
-
-    /// Tower server address
-    #[arg(long = "tower-server", default_value = "tower.cruma.io:443")]
-    tower_server: String,
-
-    /// Transport protocol: auto, quic, h2
-    #[arg(long, default_value = "auto")]
-    protocol: String,
 }
 
 // We intentionally use a synchronous `fn main()` rather than `#[tokio::main]`.
@@ -120,13 +108,6 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    if let Some(old_path) = &args.migrate {
-        if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-            return migrate::migrate_v4_config_with_in_place_prompt(old_path);
-        }
-        return migrate::migrate_v4_config(old_path);
-    }
-
     if args.init {
         return init_config();
     }
@@ -143,24 +124,18 @@ fn main() -> Result<()> {
         .or(args.config_positional)
         .unwrap_or_else(find_config_file);
 
-    // Detect legacy TOML configs and give a helpful error before the YAML
-    // parser produces a confusing "expected value at line 1 column 1".
-    if looks_like_legacy_toml(&config_path) {
-        bail!(
-            "The config file '{}' appears to be in the old TOML format.\n\n\
-             odd-box now uses the YAML config format. To migrate, run:\n\n\
-             \x20 odd-box --migrate {}\n\n\
-             Interactive terminals will prompt to migrate in-place and create\n\
-             automatic backups (backup[n]). You can also redirect stdout:\n\n\
-             \x20 odd-box --migrate {} > odd-box.yaml\n\
-             \x20 odd-box -c odd-box.yaml",
-            config_path,
-            config_path,
-            config_path,
-        );
-    }
-
-    let mut config = load_config_from_path(std::path::Path::new(&config_path))?;
+    // Try loading directly (supports YAML, TOML, JSON).  If that fails
+    // and the file looks like a legacy odd-box TOML config, auto-migrate
+    // it to the current format, back up the original, and continue.
+    let (mut config, config_path) = match load_config_from_path(std::path::Path::new(&config_path)) {
+        Ok(cfg) => (cfg, config_path),
+        Err(load_err) if looks_like_legacy_toml(&config_path) => {
+            let (cfg, new_path) = migrate::auto_migrate(&config_path)?;
+            let new_path_str = new_path.to_string_lossy().into_owned();
+            (cfg, new_path_str)
+        }
+        Err(load_err) => return Err(load_err.into()),
+    };
     config.config_path = Some(config_path.clone().into());
 
     // ── Odd-box branding for directory listing / dir-server error pages ─
@@ -180,21 +155,15 @@ fn main() -> Result<()> {
 
 
 
-    // ── Determine protocol and build bootstrap options ─────────────────
-
-    let protocol = match args.protocol.to_lowercase().as_str() {
-        "quic" => cruma::config::Protocol::Quic,
-        "h2" => cruma::config::Protocol::H2,
-        _ => cruma::config::Protocol::Auto,
-    };
+    // ── Build bootstrap options ────────────────────────────────────────
 
     let cancel = CancellationToken::new();
     let bootstrap_options = BootstrapOptions {
-        protocol,
+        protocol: cruma::config::Protocol::Auto,
         cache_dir: None,
         temp: config.temp,
         profile: config.profile.clone(),
-        tower_server: args.tower_server.clone(),
+        tower_server: "tower.cruma.io:443".to_string(),
     };
 
     let theme = ThemeMode::from_cli_or_env(args.theme.as_deref());
@@ -351,6 +320,8 @@ fn register_oddbox_resolver(runtime: &Arc<ApplicationRuntime>) {
 /// Search for a config file in the current directory.
 fn find_config_file() -> String {
     for candidate in [
+        "odd-box.toml",
+        "oddbox.toml",
         "odd-box.yaml",
         "oddbox.yaml",
         "odd-box.yml",
@@ -361,39 +332,39 @@ fn find_config_file() -> String {
             return candidate.to_string();
         }
     }
-    "odd-box.yaml".to_string()
+    "odd-box.toml".to_string()
 }
 
 /// Generate a minimal starter config.
 fn init_config() -> Result<()> {
-    let target = "odd-box.yaml";
+    let target = "odd-box.toml";
     if std::fs::metadata(target).is_ok() {
         bail!("{target} already exists. Remove it first or use a different directory.");
     }
 
-    let yaml = format!(
+    let toml = format!(
         r#"# odd-box configuration
 # Generated by {NAME} v{VERSION}
 # See https://github.com/OlofBlomqvist/odd-box for documentation
 
-tunnel_id: ANON
-tunnel_secret: ANON
+backends = []
+frontends = []
 
-listeners:
-  - port: 8080
-    addr: localhost
-    kind: http
-  - port: 4343
-    addr: localhost
-    kind: https
+[[listeners]]
+port = 8080
+addr = "localhost"
+kind = "http"
+tls = false
 
-backends: []
-processes: []
-frontends: []
+[[listeners]]
+port = 4343
+addr = "localhost"
+kind = "https"
+tls = true
 "#
     );
 
-    std::fs::write(target, &yaml)?;
+    std::fs::write(target, &toml)?;
     println!("Created {target}");
     println!();
     println!("Next steps:");
@@ -402,35 +373,54 @@ frontends: []
     Ok(())
 }
 
-/// Check whether a config file looks like a legacy TOML config (V2/V3/V4).
+/// Check whether a config file looks like a **legacy** odd-box TOML config
+/// (V1/V2/V3) as opposed to a new-format cruma TOML config.
 ///
-/// Uses file extension and a quick content heuristic so we can give the
-/// user a helpful migration message instead of a cryptic YAML parse error.
+/// The distinction matters because `.toml` files now also serve as a valid
+/// config format for the current cruma schema.  We look for telltale
+/// legacy markers (`version = "V…"`, `[[hosted_process]]`, etc.) so that
+/// new-format TOML files are loaded directly by cruma and only genuine
+/// legacy files go through the auto-migration path.
 fn looks_like_legacy_toml(path: &str) -> bool {
-    if path.ends_with(".toml") {
-        return true;
-    }
-    // For extensionless files or ambiguous extensions, peek at the content.
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    // YAML / YML files are never legacy TOML.
     if path.ends_with(".yaml") || path.ends_with(".yml") {
         return false;
     }
-    if let Ok(content) = std::fs::read_to_string(path) {
-        for line in content.lines().take(30) {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-            // TOML table header
-            if trimmed.starts_with("[[") || trimmed.starts_with('[') {
-                return true;
-            }
-            // TOML key = "value" style (with equals, no colon)
-            if trimmed.contains('=') && !trimmed.contains(':') {
-                return true;
-            }
-            break;
+
+    // Look for markers that only appear in legacy odd-box configs.
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        // Explicit version tag from V1/V2/V3 configs.
+        if trimmed.starts_with("version") && trimmed.contains('"') {
+            return true;
+        }
+        // Section headers unique to the legacy schema.
+        if trimmed == "[[hosted_process]]"
+            || trimmed == "[[remote_target]]"
+            || trimmed == "[[dir_server]]"
+            || trimmed.starts_with("[[hosted_process.") // e.g. [[hosted_process.backends]]
+            || trimmed.starts_with("[[remote_target.")
+        {
+            return true;
+        }
+        // Legacy top-level keys that don't exist in the new format.
+        if trimmed.starts_with("root_dir")
+            || trimmed.starts_with("port_range_start")
+            || trimmed.starts_with("hosted_process")
+            || trimmed.starts_with("remote_target")
+        {
+            return true;
         }
     }
+
     false
 }
 

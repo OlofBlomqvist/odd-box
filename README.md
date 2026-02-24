@@ -2,7 +2,7 @@
 
 ## ODD-BOX
 
-A simple, cross-platform reverse proxy server tailored for local development and tinkering. Think of it as a lightweight alternative to something like IIS or Caddy, with declarative YAML configuration and built-in process management.
+A simple, cross-platform reverse proxy server tailored for local development and tinkering. Think of it as a lightweight alternative to something like IIS or Caddy, with declarative TOML configuration and built-in process management.
 
 odd-box manages your backend services, routes traffic by hostname, terminates TLS with automatic certificate generation, and keeps your processes running — all from a single config file that's easy to share and reproduce.
 
@@ -18,7 +18,7 @@ You can also build it yourself, or install it using brew, cargo, nix, or devbox 
 
 - **Cross-platform** — Windows, Linux, macOS
 - **Three UI modes** — graphical (GUI), terminal (TUI), or headless
-- **YAML configuration** — simple, declarative, easy to share
+- **TOML configuration** — simple, declarative, easy to share (YAML and JSON also supported)
 - **Process management** — keep specified binaries running automatically
 - **Reverse proxy** — route traffic to local or remote backends by hostname
 - **Static file hosting** — serve local directories with optional markdown rendering
@@ -46,24 +46,23 @@ Generate a starter configuration file:
 odd-box --init
 ```
 
-This creates an `odd-box.yaml` that looks like this:
+This creates an `odd-box.toml` that looks like this:
 
-```yaml
-tunnel_id: ANON
-tunnel_secret: ANON
-local_only: true
+```toml
+backends = []
+frontends = []
 
-listeners:
-  - port: 8080
-    addr: localhost
-    tls: false
-  - port: 4343
-    addr: localhost
-    tls: true
+[[listeners]]
+port = 8080
+addr = "localhost"
+kind = "http"
+tls = false
 
-backends: []
-processes: []
-frontends: []
+[[listeners]]
+port = 4343
+addr = "localhost"
+kind = "https"
+tls = true
 ```
 
 Then run odd-box:
@@ -84,67 +83,75 @@ Open your browser at `https://localhost:4343` to access the web interface and co
 
 ## Configuration
 
-odd-box uses YAML configuration. Here's a more complete example:
+odd-box uses TOML configuration by default (YAML and JSON are also supported). Here's a more complete example:
 
-```yaml
+```toml
 # odd-box configuration
-tunnel_id: ANON
-tunnel_secret: ANON
-local_only: true
-
-listeners:
-  - port: 8080
-    addr: localhost
-    tls: false
-  - port: 4343
-    addr: localhost
-    tls: true
-
-# Backends define upstream targets
-backends:
-  # Reverse proxy to a running service
-  - id: my-api
-    kind: http
-    destination: "localhost:3000"
-
-  # Serve a local directory
-  - id: docs
-    kind: local-directory
-    destination: /home/user/docs
-    allow_directory_indexing: true
-    render_markdown: true
-
-# Processes that odd-box manages (start/stop/restart)
-processes:
-  - id: my-app
-    command: node
-    args: [server.js]
-    working_directory: /home/user/my-app
-    auto_start: true
-    start_on_request: true
-    idle_timeout_seconds: 300
-    env:
-      NODE_ENV: development
-
-  - id: python-server
-    command: python
-    args: ["-m", "http.server", "9000"]
-    auto_start: false
-
-# Frontends map hostnames to backends or processes
-frontends:
-  - hostname: my-api.localhost
-    process_id: my-app
-
-  - hostname: docs.localhost
-    backend_id: docs
-
-  - hostname: py.localhost
-    backend_id: python-server
 
 # Global environment variables for all hosted processes
-global_env:
-  RUST_LOG: info
+[global_env]
+RUST_LOG = "info"
+
+# Listeners
+[[listeners]]
+port = 8080
+addr = "localhost"
+kind = "http"
+tls = false
+
+[[listeners]]
+port = 4343
+addr = "localhost"
+kind = "https"
+tls = true
+
+# Backends define upstream targets
+
+# Reverse proxy to a running service
+[[backends]]
+id = "my-api"
+kind = "http"
+destination = "localhost:3000"
+
+# Serve a local directory
+[[backends]]
+id = "docs"
+kind = "local-directory"
+destination = "/home/user/docs"
+allow_directory_indexing = true
+render_markdown = true
+
+# Processes that odd-box manages (start/stop/restart)
+[[processes]]
+id = "my-app"
+command = "node"
+args = ["server.js"]
+working_directory = "/home/user/my-app"
+auto_start = true
+start_on_request = true
+idle_timeout_seconds = 300
+
+[processes.env]
+NODE_ENV = "development"
+
+[[processes]]
+id = "python-server"
+command = "python"
+args = ["-m", "http.server", "9000"]
+auto_start = false
+
+# Frontends map hostnames to backends or processes
+[[frontends]]
+hostname = "my-api.localhost"
+process_id = "my-app"
+
+[[frontends]]
+hostname = "docs.localhost"
+backend_id = "docs"
+
+[[frontends]]
+hostname = "py.localhost"
+process_id = "python-server"
 ```
 
 ### Configuration options
@@ -154,10 +161,10 @@ Run `odd-box --config-schema` to print the full JSON schema for all available co
 ### Specifying a config file
 
 ```
-odd-box --config path/to/my-config.yaml
+odd-box --config path/to/my-config.toml
 ```
 
-If no `--config` is given, odd-box looks for `odd-box.yaml`, `oddbox.yaml`, `odd-box.yml`, `oddbox.yml`, or `config.yaml` in the current directory.
+If no `--config` is given, odd-box looks for config files in the current directory in this order: `odd-box.toml`, `oddbox.toml`, `odd-box.yaml`, `oddbox.yaml`, `odd-box.yml`, `oddbox.yml`, `config.yaml`.
 
 ## Installation
 
@@ -206,13 +213,13 @@ nix build github:OlofBlomqvist/odd-box
 
 ## Migrating from odd-box v1/v2 (TOML config)
 
-If you have an existing odd-box configuration in the old TOML or V4 YAML format, use the built-in migration tool:
+If you have an existing odd-box configuration in the old TOML format, odd-box will automatically detect and migrate it on startup. Simply point odd-box at your old config:
 
 ```sh
-odd-box --migrate old-config.toml > odd-box.yaml
+odd-box -c old-config.toml
 ```
 
-Review the generated `odd-box.yaml`, then start odd-box normally. The migration tool handles conversion of hosted processes, remote targets, directory servers, listeners, and tunnel credentials.
+odd-box will back up the original file (to `<file>.backup1`), write the migrated config alongside it, and continue booting — no manual migration step required.
 
 ## Self-Update
 
@@ -230,17 +237,14 @@ For package-managed installs, odd-box will tell you to use your package manager 
 odd-box [OPTIONS]
 
 Options:
-  -c, --config <FILE>       Path to configuration file (YAML)
+  -c, --config <FILE>       Path to configuration file (TOML, YAML, or JSON)
       --gui                 Run the graphical user interface
       --tui                 Run the terminal user interface
       --headless            Run in headless mode (no UI)
       --update              Run self-update
       --init                Initialize a new config file
-      --migrate <OLD_CONFIG> Migrate an old config to the new format
       --config-schema       Print JSON schema for the config format
       --theme <MODE>        Theme: light, dark, system
-      --tower-server <ADDR> Tower server address [default: tower.cruma.io:443]
-      --protocol <PROTO>    Transport protocol: auto, quic, h2 [default: auto]
   -h, --help                Print help
   -V, --version             Print version
 ```

@@ -11,42 +11,42 @@ use std::path::{Path, PathBuf};
 
 use crate::configuration::AnyOddBoxConfig;
 
-/// Main entry point for config migration.
+/// Automatically migrate a legacy config file to the current TOML format.
 ///
-/// Detects the input format automatically, upgrades to cruma format,
-/// and prints to stdout.
-pub fn migrate_v4_config(old_path: &str) -> Result<()> {
+/// 1. Reads and parses the old config (any generation).
+/// 2. Upgrades through the chain to `TunnelCliConfiguration`.
+/// 3. Writes the migrated TOML next to the original (`.toml` extension).
+/// 4. Backs up the original to `<file>.backup<N>`.
+///
+/// Returns `(config, new_toml_path)` so the caller can continue booting
+/// with the migrated config without re-reading from disk.
+pub fn auto_migrate(old_path: &str) -> Result<(cruma::config::TunnelCliConfiguration, PathBuf)> {
     let rendered = render_migrated_config(old_path)?;
-    print!("{}", rendered.yaml);
-    print_stdout_guidance(old_path, rendered.source_format);
-    Ok(())
-}
+    let output_path = toml_output_path(old_path);
 
-/// Interactive migration workflow for terminal usage.
-///
-/// Prompts the user to confirm in-place migration.  On confirmation, writes the
-/// migrated config back to the same path and moves the original file to
-/// `<file>.backupN`.
-pub fn migrate_v4_config_with_in_place_prompt(old_path: &str) -> Result<()> {
-    let rendered = render_migrated_config(old_path)?;
-    let output_path = yaml_output_path(old_path);
-    let output_display = output_path.display();
-    if confirm_in_place_write(old_path, &output_path, rendered.source_format)? {
-        let backup_path =
-            write_migrated_in_place(Path::new(old_path), &output_path, &rendered.yaml)?;
-        eprintln!();
-        eprintln!("Migration complete (from {}).", rendered.source_format);
-        eprintln!("Wrote migrated config to: {output_display}");
-        eprintln!("Previous config backup: {}", backup_path.display());
-    } else {
-        print!("{}", rendered.yaml);
-        print_stdout_guidance(old_path, rendered.source_format);
-    }
-    Ok(())
+    let backup_path =
+        write_migrated_in_place(Path::new(old_path), &output_path, &rendered.content)?;
+
+    eprintln!();
+    eprintln!(
+        "Automatically migrated {} config to the current TOML format.",
+        rendered.source_format
+    );
+    eprintln!("  new config : {}", output_path.display());
+    eprintln!("  backup     : {}", backup_path.display());
+    eprintln!();
+
+    // Re-parse the written TOML so the caller gets an identical result to
+    // what `load_config_from_path` would produce.
+    let cfg: cruma::config::TunnelCliConfiguration =
+        toml::from_str(&rendered.content)
+            .map_err(|e| anyhow::anyhow!("BUG: migrated TOML failed to parse: {e}"))?;
+
+    Ok((cfg, output_path))
 }
 
 struct MigrationRender {
-    yaml: String,
+    content: String,
     source_format: &'static str,
 }
 
@@ -54,10 +54,12 @@ fn render_migrated_config(old_path: &str) -> Result<MigrationRender> {
     let contents = std::fs::read_to_string(old_path)
         .map_err(|e| anyhow::anyhow!("Failed to read {old_path}: {e}"))?;
 
-    // If the file is already valid cruma YAML, there's nothing to migrate.
-    if serde_yaml::from_str::<cruma::config::TunnelCliConfiguration>(&contents).is_ok() {
+    // If the file is already valid cruma config, there's nothing to migrate.
+    if serde_yaml::from_str::<cruma::config::TunnelCliConfiguration>(&contents).is_ok()
+        || toml::from_str::<cruma::config::TunnelCliConfiguration>(&contents).is_ok()
+    {
         bail!(
-            "The config file '{old_path}' is already in the current YAML format.\n\
+            "The config file '{old_path}' is already in the current format.\n\
              No migration needed — you can use it directly:\n\n\
              \x20 odd-box -c {old_path}"
         );
@@ -78,8 +80,8 @@ fn render_migrated_config(old_path: &str) -> Result<MigrationRender> {
         .upgrade_to_cruma()
         .map_err(|e| anyhow::anyhow!("Failed to upgrade config: {e}"))?;
 
-    // Serialize the TunnelCliConfiguration to YAML.
-    let yaml = serde_yaml::to_string(&cruma_cfg)
+    // Serialize the TunnelCliConfiguration to TOML.
+    let toml_str = toml::to_string_pretty(&cruma_cfg)
         .map_err(|e| anyhow::anyhow!("Failed to serialize migrated config: {e}"))?;
 
     let header = format!(
@@ -87,41 +89,14 @@ fn render_migrated_config(old_path: &str) -> Result<MigrationRender> {
          # Review this file carefully before using it.\n\n"
     );
     Ok(MigrationRender {
-        yaml: format!("{header}{yaml}"),
+        content: format!("{header}{toml_str}"),
         source_format,
     })
 }
 
 // ─── File I/O helpers ──────────────────────────────────────────────────────
 
-fn print_stdout_guidance(old_path: &str, source_format: &str) {
-    eprintln!();
-    eprintln!("Migration complete (from {source_format}).");
-    eprintln!("Review the output above, then save it:");
-    eprintln!("  odd-box --migrate {old_path} > odd-box.yaml");
-}
-
-fn confirm_in_place_write(old_path: &str, output_path: &Path, source_format: &str) -> Result<bool> {
-    let output_display = output_path.display();
-    eprintln!();
-    eprintln!("Migration ready (from {source_format}).");
-    eprintln!("Write migrated config?");
-    eprintln!("  source : {old_path}");
-    eprintln!("  output : {output_display}");
-    eprintln!("  action : back up original to <file>.backup[n], write migrated YAML to output");
-    eprint!("Proceed? [y/N]: ");
-    std::io::stderr().flush()?;
-
-    let mut input = String::new();
-    std::io::stdin()
-        .read_line(&mut input)
-        .map_err(|e| anyhow::anyhow!("Failed to read confirmation input: {e}"))?;
-
-    let answer = input.trim().to_ascii_lowercase();
-    Ok(matches!(answer.as_str(), "y" | "yes"))
-}
-
-fn write_migrated_in_place(old_path: &Path, output_path: &Path, yaml: &str) -> Result<PathBuf> {
+fn write_migrated_in_place(old_path: &Path, output_path: &Path, content: &str) -> Result<PathBuf> {
     if !old_path.exists() {
         bail!(
             "Cannot migrate in-place: '{}' does not exist",
@@ -140,7 +115,7 @@ fn write_migrated_in_place(old_path: &Path, output_path: &Path, yaml: &str) -> R
             anyhow::anyhow!("Failed to create temp file '{}': {e}", temp_path.display())
         })?;
     temp_file
-        .write_all(yaml.as_bytes())
+        .write_all(content.as_bytes())
         .and_then(|_| temp_file.sync_all())
         .map_err(|e| {
             anyhow::anyhow!("Failed to write temp file '{}': {e}", temp_path.display())
@@ -211,15 +186,15 @@ fn temp_output_path(target: &Path) -> Result<PathBuf> {
     )))
 }
 
-/// Compute the YAML output path for a migration.
+/// Compute the TOML output path for a migration.
 ///
-/// If the input already ends in `.yaml` / `.yml`, reuse it as-is.
-/// Otherwise replace the extension (e.g. `.toml` → `.yaml`) or append `.yaml`.
-fn yaml_output_path(old_path: &str) -> PathBuf {
+/// If the input already ends in `.toml`, reuse it as-is.
+/// Otherwise replace the extension (e.g. `.yaml` → `.toml`) or append `.toml`.
+fn toml_output_path(old_path: &str) -> PathBuf {
     let p = Path::new(old_path);
     match p.extension().and_then(|e| e.to_str()) {
-        Some("yaml" | "yml") => p.to_path_buf(),
-        _ => p.with_extension("yaml"),
+        Some("toml") => p.to_path_buf(),
+        _ => p.with_extension("toml"),
     }
 }
 
@@ -284,7 +259,7 @@ mod tests {
     }
 
     #[test]
-    fn write_migrated_in_place_renames_toml_to_yaml() {
+    fn write_migrated_in_place_writes_to_new_output_path() {
         let unique = format!(
             "odd-box-migrate-rename-{}-{}",
             std::process::id(),
@@ -297,16 +272,14 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
 
         let old_path = root.join("odd-box.toml");
-        let output_path = root.join("odd-box.yaml");
+        let output_path = root.join("odd-box.toml");
         std::fs::write(&old_path, "version = \"V3\"\n").unwrap();
 
-        let backup = write_migrated_in_place(&old_path, &output_path, "tunnel_id: ANON\n").unwrap();
+        let backup = write_migrated_in_place(&old_path, &output_path, "backends = []\nfrontends = []\n").unwrap();
         assert_eq!(backup, root.join("odd-box.toml.backup1"));
 
-        // Old .toml is gone (moved to backup)
-        assert!(!old_path.exists());
-        // New .yaml exists with migrated content
-        assert_eq!(std::fs::read_to_string(&output_path).unwrap(), "tunnel_id: ANON\n");
+        // Output path has the migrated content (same path as old, overwritten)
+        assert_eq!(std::fs::read_to_string(&output_path).unwrap(), "backends = []\nfrontends = []\n");
         // Backup has the original content
         assert_eq!(std::fs::read_to_string(&backup).unwrap(), "version = \"V3\"\n");
 
@@ -314,20 +287,19 @@ mod tests {
     }
 
     #[test]
-    fn yaml_output_path_replaces_toml_extension() {
-        assert_eq!(yaml_output_path("odd-box.toml"), PathBuf::from("odd-box.yaml"));
-        assert_eq!(yaml_output_path("config.toml"), PathBuf::from("config.yaml"));
+    fn toml_output_path_replaces_yaml_extension() {
+        assert_eq!(toml_output_path("odd-box.yaml"), PathBuf::from("odd-box.toml"));
     }
 
     #[test]
-    fn yaml_output_path_keeps_yaml_extension() {
-        assert_eq!(yaml_output_path("odd-box.yaml"), PathBuf::from("odd-box.yaml"));
-        assert_eq!(yaml_output_path("config.yml"), PathBuf::from("config.yml"));
+    fn toml_output_path_keeps_toml_extension() {
+        assert_eq!(toml_output_path("config.toml"), PathBuf::from("config.toml"));
     }
 
     #[test]
-    fn yaml_output_path_appends_yaml_when_no_extension() {
-        assert_eq!(yaml_output_path("odd-box"), PathBuf::from("odd-box.yaml"));
+    fn toml_output_path_appends_toml_when_no_extension() {
+        assert_eq!(toml_output_path("myconfig"), PathBuf::from("myconfig.toml"));
+        assert_eq!(toml_output_path("odd-box"), PathBuf::from("odd-box.toml"));
     }
 
     // ── Typed migration tests ──────────────────────────────────────────
@@ -338,6 +310,13 @@ mod tests {
         let (cfg, _) = any
             .upgrade_to_cruma()
             .map_err(|e| anyhow::anyhow!("upgrade failed: {e}"))?;
+
+        // Verify the config round-trips through TOML (catches serialization issues early)
+        let toml_str = toml::to_string_pretty(&cfg)
+            .map_err(|e| anyhow::anyhow!("TOML serialize failed: {e}"))?;
+        let _: cruma::config::TunnelCliConfiguration = toml::from_str(&toml_str)
+            .map_err(|e| anyhow::anyhow!("TOML round-trip failed: {e}"))?;
+
         Ok(cfg)
     }
 
@@ -528,7 +507,7 @@ enable_directory_browsing = true
     }
 
     #[test]
-    fn serialization_round_trips() {
+    fn serialization_round_trips_toml() {
         let toml_input = r#"
 version = "V3"
 http_port = 8080
@@ -541,13 +520,14 @@ bin = "my-api"
 args = []
 "#;
         let cfg = migrate_from_str(toml_input).unwrap();
-        let yaml = serde_yaml::to_string(&cfg).unwrap();
+        let toml_out = toml::to_string_pretty(&cfg).unwrap();
 
-        // Should be valid YAML that parses back
-        let parsed: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
-        assert!(parsed.get("processes").is_some());
-        assert!(parsed.get("listeners").is_some());
-        assert!(parsed.get("frontends").is_some());
+        // Should be valid TOML that parses back
+        let parsed: cruma::config::TunnelCliConfiguration =
+            toml::from_str(&toml_out).unwrap();
+        assert_eq!(parsed.processes.len(), 1);
+        assert_eq!(parsed.listeners.len(), 2);
+        assert_eq!(parsed.frontends.len(), 1);
     }
 
     #[test]
@@ -740,5 +720,42 @@ env_vars = [
         assert_eq!(proc.args, vec!["--dir", "/srv/data", "--port", "$port"]);
         assert_eq!(proc.env.get("LISTEN").map(|s| s.as_str()), Some("0.0.0.0:$port"));
         assert_eq!(proc.env.get("STORAGE").map(|s| s.as_str()), Some("/srv/storage"));
+    }
+
+    #[test]
+    fn init_toml_template_parses_as_valid_cruma_config() {
+        let toml_input = format!(
+            r#"# odd-box configuration
+# Generated by {} v{}
+# See https://github.com/OlofBlomqvist/odd-box for documentation
+
+backends = []
+frontends = []
+
+[[listeners]]
+port = 8080
+addr = "localhost"
+kind = "http"
+tls = false
+
+[[listeners]]
+port = 4343
+addr = "localhost"
+kind = "https"
+tls = true
+"#,
+            crate::NAME,
+            crate::VERSION,
+        );
+        let cfg: cruma::config::TunnelCliConfiguration =
+            toml::from_str(&toml_input).expect("init template must parse as valid TOML config");
+
+        assert_eq!(cfg.listeners.len(), 2);
+        assert!(cfg.backends.is_empty());
+        assert!(cfg.frontends.is_empty());
+        assert!(cfg.processes.is_empty());
+        // tunnel_id / tunnel_secret should get serde defaults
+        assert_eq!(cfg.tunnel_id, "ANON");
+        assert_eq!(cfg.tunnel_secret, "ANON");
     }
 }
