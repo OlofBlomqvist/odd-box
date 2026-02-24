@@ -4,7 +4,7 @@ mod self_update;
 
 use anyhow::{Result, bail};
 use clap::Parser;
-use cruma::bootstrap::BootstrapOptions;
+use cruma::bootstrap::{ApplicationRuntime, BootstrapOptions};
 use cruma::config::{TunnelCliConfiguration, load_config_from_path};
 use cruma::gui::{DashboardViewMode, GuiOptions, Page, ThemeMode};
 use cruma::tui::TuiOptions;
@@ -236,6 +236,7 @@ fn main() -> Result<()> {
             linux_application_id: Some("odd-box".into()),
             notification_app_name: Some("odd-box".into()),
             custom_pages: pages::custom_gui_pages(),
+            on_bootstrap: Some(Box::new(register_oddbox_resolver)),
         };
         cruma::gui::run_gui_with_config(config, bootstrap_options, cancel, gui_options)?;
     } else {
@@ -252,6 +253,8 @@ fn main() -> Result<()> {
                 cruma::bootstrap::bootstrap_from_config(config, bootstrap_options, cancel.clone())
                     .await?,
             );
+
+            register_oddbox_resolver(&runtime);
 
             if args.tui {
                 let tui_options = TuiOptions {
@@ -270,6 +273,77 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Register odd-box's custom dynamic backend resolver on the live runtime.
+///
+/// This is called from all three entry paths (GUI via `on_bootstrap`, TUI,
+/// and headless) so the resolver is always available regardless of mode.
+///
+/// We have this here to support a legacy-feature of odd-box used in
+/// CI and Pipelines that are still in use which we do not want to break.
+///
+fn register_oddbox_resolver(runtime: &Arc<ApplicationRuntime>) {
+    use cruma::cruma_proxy_lib::types::{
+        DynamicBackendId, DynamicBackendResolver, ResolvedBackend, Target,
+    };
+    use cruma::process_hosting::{DefaultProcessHost, ProcessHost};
+
+    // Grab a handle to the process host from the runtime.  We wrap it in
+    // an Arc so the closure (which must be Fn + Send + Sync) can share it.
+    let process_host = Arc::new(DefaultProcessHost::with_orchestrator(
+        runtime.process_host.orchestrator().clone(),
+    ));
+
+    let resolver: DynamicBackendResolver = Arc::new(move |ctx| {
+        let process_host = process_host.clone();
+        Box::pin(async move {
+            // Only allow from the loopback adapter.
+            if !ctx.client_addr.ip().is_loopback() {
+                return Ok(None);
+            }
+            // Match "/STOP?proc=<name>"
+            if ctx.path != "/STOP" {
+                return Ok(None);
+            }
+            let proc_name = ctx
+                .uri
+                .query()
+                .and_then(|q| {
+                    q.split('&')
+                        .find_map(|pair| pair.strip_prefix("proc="))
+                })
+                .map(|s| s.to_string());
+
+            let Some(name) = proc_name else {
+                return Ok(Some(Arc::new(ResolvedBackend::Target(Target::Respond {
+                    status: 400,
+                    body: Some(b"missing ?proc= parameter".to_vec()),
+                    content_type: Some("text/plain".into()),
+                }))));
+            };
+
+            match process_host.stop_process(&name) {
+                Ok(()) => Ok(Some(Arc::new(ResolvedBackend::Target(Target::Respond {
+                    status: 200,
+                    body: Some(format!("stopped process '{name}'").into_bytes()),
+                    content_type: Some("text/plain".into()),
+                })))),
+                Err(e) => Ok(Some(Arc::new(ResolvedBackend::Target(Target::Respond {
+                    status: 500,
+                    body: Some(format!("failed to stop '{name}': {e}").into_bytes()),
+                    content_type: Some("text/plain".into()),
+                })))),
+            }
+        })
+    });
+
+    // Register the resolver into the live proxy configuration.
+    let cfg_handle = &runtime.proxy_configuration;
+    let mut cfg = cfg_handle.load().as_ref().clone();
+    cfg.dynamic_backend_resolvers
+        .insert(DynamicBackendId::from("odd-box"), resolver);
+    cfg_handle.store(Arc::new(cfg));
 }
 
 /// odd-box enforces at most 1 HTTP listener and 1 HTTPS listener.
