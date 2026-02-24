@@ -177,8 +177,7 @@ fn main() -> Result<()> {
         }
     }
 
-    // odd-box constraint: max 1 HTTP + 1 HTTPS listener
-    validate_odd_box_constraints(&config)?;
+
 
     // ── Determine protocol and build bootstrap options ─────────────────
 
@@ -346,31 +345,7 @@ fn register_oddbox_resolver(runtime: &Arc<ApplicationRuntime>) {
     cfg_handle.store(Arc::new(cfg));
 }
 
-/// odd-box enforces at most 1 HTTP listener and 1 HTTPS listener.
-fn validate_odd_box_constraints(config: &TunnelCliConfiguration) -> Result<()> {
-    let http_count = config.listeners.iter().filter(|l| l.is_http()).count();
-    let https_count = config.listeners.iter().filter(|l| l.is_https()).count();
-    let cruma_count = config.listeners.iter().filter(|l| l.is_cruma()).count();
-    if http_count > 1 {
-        bail!(
-            "odd-box supports at most 1 HTTP listener, found {http_count}. \
-             Remove extra listeners from your config or use the cruma binary directly."
-        );
-    }
-    if https_count > 1 {
-        bail!(
-            "odd-box supports at most 1 HTTPS listener, found {https_count}. \
-             Remove extra listeners from your config or use the cruma binary directly."
-        );
-    }
-    if cruma_count > 1 {
-        bail!(
-            "odd-box supports at most 1 CRUMA listener, found {cruma_count}. \
-             Remove extra listeners from your config or use the cruma binary directly."
-        );
-    }
-    Ok(())
-}
+
 
 /// Search for a config file in the current directory.
 fn find_config_file() -> String {
