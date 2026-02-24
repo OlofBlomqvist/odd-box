@@ -75,7 +75,7 @@ fn render_migrated_config(old_path: &str) -> Result<MigrationRender> {
     };
 
     let (cruma_cfg, _version) = any_config
-        .upgrade_to_cruma()
+        .upgrade_to_cruma_with_path(Some(old_path))
         .map_err(|e| anyhow::anyhow!("Failed to upgrade config: {e}"))?;
 
     // Serialize the TunnelCliConfiguration to YAML.
@@ -548,5 +548,196 @@ args = []
         assert!(parsed.get("processes").is_some());
         assert!(parsed.get("listeners").is_some());
         assert!(parsed.get("frontends").is_some());
+    }
+
+    #[test]
+    fn v3_root_dir_expanded_in_process_bin_and_dir() {
+        let toml_input = r#"
+version = "V3"
+root_dir = "/srv/odd-box"
+http_port = 8080
+tls_port = 4343
+port_range_start = 4200
+
+[[hosted_process]]
+host_name = "app.localhost"
+bin = "$root_dir/bin/my-server"
+dir = "$root_dir/apps/myapp"
+args = ["--config", "$root_dir/etc/app.toml"]
+"#;
+        let cfg = migrate_from_str(toml_input).unwrap();
+
+        assert_eq!(cfg.processes.len(), 1);
+        let proc = &cfg.processes[0];
+        assert_eq!(proc.command, "/srv/odd-box/bin/my-server");
+        assert_eq!(
+            proc.working_directory.as_deref(),
+            Some(std::path::Path::new("/srv/odd-box/apps/myapp"))
+        );
+        assert_eq!(proc.args, vec!["--config", "/srv/odd-box/etc/app.toml"]);
+    }
+
+    #[test]
+    fn v3_root_dir_expanded_in_dir_server() {
+        let toml_input = r#"
+version = "V3"
+root_dir = "/srv/odd-box"
+http_port = 8080
+tls_port = 4343
+
+[[dir_server]]
+host_name = "docs.localhost"
+dir = "$root_dir/static/docs"
+enable_directory_browsing = true
+"#;
+        let cfg = migrate_from_str(toml_input).unwrap();
+
+        assert_eq!(cfg.backends.len(), 1);
+        assert_eq!(cfg.backends[0].destination, "/srv/odd-box/static/docs");
+    }
+
+    #[test]
+    fn v3_port_expanded_in_args() {
+        let toml_input = r#"
+version = "V3"
+http_port = 8080
+tls_port = 4343
+port_range_start = 4200
+
+[[hosted_process]]
+host_name = "svc.localhost"
+bin = "my-svc"
+args = ["--port", "$port", "--bind", "0.0.0.0:$port"]
+"#;
+        let cfg = migrate_from_str(toml_input).unwrap();
+
+        assert_eq!(cfg.processes.len(), 1);
+        let proc = &cfg.processes[0];
+        // port_range_start is 4200, first process gets port 4200
+        assert_eq!(proc.args, vec!["--port", "4200", "--bind", "0.0.0.0:4200"]);
+    }
+
+    #[test]
+    fn v3_root_dir_expanded_in_env_vars() {
+        let toml_input = r#"
+version = "V3"
+root_dir = "/opt/apps"
+http_port = 8080
+tls_port = 4343
+port_range_start = 4200
+
+[[hosted_process]]
+host_name = "env.localhost"
+bin = "server"
+args = []
+env_vars = [
+    { key = "DATA_DIR", value = "$root_dir/data" },
+    { key = "LOG_FILE", value = "$root_dir/logs/app.log" },
+]
+"#;
+        let cfg = migrate_from_str(toml_input).unwrap();
+
+        assert_eq!(cfg.processes.len(), 1);
+        let proc = &cfg.processes[0];
+        assert_eq!(proc.env.get("DATA_DIR").map(|s| s.as_str()), Some("/opt/apps/data"));
+        assert_eq!(proc.env.get("LOG_FILE").map(|s| s.as_str()), Some("/opt/apps/logs/app.log"));
+    }
+
+    #[test]
+    fn v3_root_dir_expanded_in_global_env_vars() {
+        let toml_input = r#"
+version = "V3"
+root_dir = "/srv"
+http_port = 8080
+tls_port = 4343
+port_range_start = 4200
+env_vars = [
+    { key = "BASE", value = "$root_dir/shared" },
+]
+
+[[hosted_process]]
+host_name = "g.localhost"
+bin = "server"
+args = []
+"#;
+        let cfg = migrate_from_str(toml_input).unwrap();
+
+        // Global env should have expanded $root_dir
+        assert_eq!(cfg.global_env.get("BASE").map(|s| s.as_str()), Some("/srv/shared"));
+        // Process inherits expanded global env
+        assert_eq!(cfg.processes[0].env.get("BASE").map(|s| s.as_str()), Some("/srv/shared"));
+    }
+
+    #[test]
+    fn v3_no_root_dir_defaults_to_dot() {
+        let toml_input = r#"
+version = "V3"
+http_port = 8080
+tls_port = 4343
+port_range_start = 4200
+
+[[hosted_process]]
+host_name = "rel.localhost"
+bin = "$root_dir/bin/server"
+dir = "$root_dir/work"
+args = []
+"#;
+        let cfg = migrate_from_str(toml_input).unwrap();
+
+        let proc = &cfg.processes[0];
+        // When root_dir is unset, $root_dir resolves to "."
+        assert_eq!(proc.command, "./bin/server");
+        assert_eq!(
+            proc.working_directory.as_deref(),
+            Some(std::path::Path::new("./work"))
+        );
+    }
+
+    #[test]
+    fn v3_explicit_port_used_for_dollar_port_expansion() {
+        let toml_input = r#"
+version = "V3"
+http_port = 8080
+tls_port = 4343
+port_range_start = 4200
+
+[[hosted_process]]
+host_name = "fixed.localhost"
+bin = "server"
+port = 9999
+args = ["--listen", "$port"]
+"#;
+        let cfg = migrate_from_str(toml_input).unwrap();
+
+        let proc = &cfg.processes[0];
+        // When an explicit port is set, $port should use that value
+        assert_eq!(proc.args, vec!["--listen", "9999"]);
+    }
+
+    #[test]
+    fn v3_combined_vars_in_single_string() {
+        let toml_input = r#"
+version = "V3"
+root_dir = "/srv"
+http_port = 8080
+tls_port = 4343
+port_range_start = 5000
+
+[[hosted_process]]
+host_name = "combo.localhost"
+bin = "$root_dir/bin/app"
+args = ["--dir", "$root_dir/data", "--port", "$port"]
+env_vars = [
+    { key = "LISTEN", value = "0.0.0.0:$port" },
+    { key = "STORAGE", value = "$root_dir/storage" },
+]
+"#;
+        let cfg = migrate_from_str(toml_input).unwrap();
+
+        let proc = &cfg.processes[0];
+        assert_eq!(proc.command, "/srv/bin/app");
+        assert_eq!(proc.args, vec!["--dir", "/srv/data", "--port", "5000"]);
+        assert_eq!(proc.env.get("LISTEN").map(|s| s.as_str()), Some("0.0.0.0:5000"));
+        assert_eq!(proc.env.get("STORAGE").map(|s| s.as_str()), Some("/srv/storage"));
     }
 }
