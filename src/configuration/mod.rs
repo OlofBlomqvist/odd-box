@@ -15,7 +15,6 @@ pub mod v3;
 
 use cruma::config::TunnelCliConfiguration;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 
 // ---------------------------------------------------------------------------
 // Shared types used across all config generations
@@ -150,20 +149,8 @@ impl AnyOddBoxConfig {
     /// `TunnelCliConfiguration`.
     ///
     /// Returns `(config, original_version)`.
-    #[allow(dead_code)]
     pub fn upgrade_to_cruma(
         &self,
-    ) -> Result<(TunnelCliConfiguration, OddBoxConfigVersion), String> {
-        self.upgrade_to_cruma_with_path(None)
-    }
-
-    /// Upgrade any config generation all the way to a cruma
-    /// `TunnelCliConfiguration`, using `config_path` to resolve `$cfg_dir`.
-    ///
-    /// Returns `(config, original_version)`.
-    pub fn upgrade_to_cruma_with_path(
-        &self,
-        config_path: Option<&str>,
     ) -> Result<(TunnelCliConfiguration, OddBoxConfigVersion), String> {
         // First, upgrade through the typed chain to get a V3Config.
         let v3 = match self {
@@ -186,7 +173,7 @@ impl AnyOddBoxConfig {
         };
 
         // Then convert V3 → TunnelCliConfiguration (the cruma/V4 format).
-        let cruma_cfg = v3_to_cruma(&v3.0, config_path)?;
+        let cruma_cfg = v3_to_cruma(&v3.0)?;
         Ok((cruma_cfg, v3.1))
     }
 }
@@ -195,26 +182,16 @@ impl AnyOddBoxConfig {
 // V3 → TunnelCliConfiguration conversion
 // ---------------------------------------------------------------------------
 
-/// Expand V3 placeholder variables (`$root_dir`, `$cfg_dir`, `$port`) in a
-/// string.  Unknown `$…` tokens are left untouched so they can still be
-/// interpreted as shell variables by the spawned process.
-fn expand_v3_vars(s: &str, root_dir: &str, cfg_dir: &str, port: Option<&str>) -> String {
-    let mut out = s.replace("$root_dir", root_dir);
-    out = out.replace("$cfg_dir", cfg_dir);
-    if let Some(p) = port {
-        out = out.replace("$port", p);
-    }
-    out
+/// Expand the V3-only `$root_dir` placeholder in a string.
+///
+/// Other V3 placeholders (`$cfg_dir`, `$port`) are handled by cruma at
+/// runtime, so they are intentionally left untouched.
+fn expand_root_dir(s: &str, root_dir: &str) -> String {
+    s.replace("$root_dir", root_dir)
 }
 
 /// Convert a typed V3Config into a cruma `TunnelCliConfiguration`.
-///
-/// `config_path` is the path to the original config file (if known) and is
-/// used to resolve the `$cfg_dir` placeholder variable.
-pub fn v3_to_cruma(
-    v3: &v3::V3Config,
-    config_path: Option<&str>,
-) -> Result<TunnelCliConfiguration, String> {
+pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> {
     use cruma::config::*;
     use std::collections::HashMap;
 
@@ -224,30 +201,21 @@ pub fn v3_to_cruma(
     let mut listeners = Vec::<ListenerDefinition>::new();
     let mut global_env = HashMap::<String, String>::new();
 
-    // ── Resolve V3 placeholder base values ─────────────────────────────
-    // `$root_dir` → value of root_dir field, or current working directory.
+    // ── Resolve V3 `$root_dir` ─────────────────────────────────────────
+    // `$root_dir` → value of root_dir field, or "." (CWD) when unset.
+    // This variable is V3-only; cruma's format does not have it, so we
+    // must inline it before writing the new config.
     let root_dir = v3
         .root_dir
         .as_deref()
-        .unwrap_or_else(|| {
-            // Fallback: use "." (CWD) — the user can always set an absolute
-            // path later in the migrated config.
-            "."
-        })
+        .unwrap_or(".")
         .to_owned();
 
-    // `$cfg_dir` → parent directory of the config file, or ".".
-    let cfg_dir = config_path
-        .or(v3.path.as_deref())
-        .and_then(|p| Path::new(p).parent())
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| ".".to_owned());
-
-    // ── Global env vars (expand $root_dir / $cfg_dir) ──────────────────
+    // ── Global env vars (expand $root_dir) ─────────────────────────────
     for ev in &v3.env_vars {
         global_env.insert(
             ev.key.clone(),
-            expand_v3_vars(&ev.value, &root_dir, &cfg_dir, None),
+            expand_root_dir(&ev.value, &root_dir),
         );
     }
 
@@ -293,40 +261,38 @@ pub fn v3_to_cruma(
                 p
             });
 
-            let port_str = assigned_port.to_string();
-
-            // Per-process env (merge global + per-process, expanding vars)
+            // Per-process env (merge global + per-process, expanding $root_dir)
             let mut proc_env = global_env.clone();
             if let Some(env_vars) = &proc.env_vars {
                 for ev in env_vars {
                     proc_env.insert(
                         ev.key.clone(),
-                        expand_v3_vars(&ev.value, &root_dir, &cfg_dir, Some(&port_str)),
+                        expand_root_dir(&ev.value, &root_dir),
                     );
                 }
             }
             // Inject PORT if not present
             proc_env
                 .entry("PORT".to_string())
-                .or_insert_with(|| port_str.clone());
+                .or_insert_with(|| assigned_port.to_string());
 
             // Convert hints to upstream protocol
             let upstream_protocol = hints_to_upstream_protocol(proc.hints.as_ref());
 
             let process_id = proc.host_name.clone();
 
-            // Expand V3 placeholder variables in paths and arguments
-            let expanded_bin = expand_v3_vars(&proc.bin, &root_dir, &cfg_dir, Some(&port_str));
+            // Expand $root_dir in paths and arguments
+            let expanded_bin = expand_root_dir(&proc.bin, &root_dir);
             let expanded_dir = proc
                 .dir
                 .as_ref()
-                .map(|d| expand_v3_vars(d, &root_dir, &cfg_dir, Some(&port_str)));
+                .map(|d| expand_root_dir(d, &root_dir));
             let expanded_args: Vec<String> = proc
                 .args
                 .as_ref()
                 .map(|args| {
                     args.iter()
-                        .map(|a| expand_v3_vars(a, &root_dir, &cfg_dir, Some(&port_str)))
+                        .map(|a| expand_root_dir(a, &root_dir))
                         .collect()
                 })
                 .unwrap_or_default();
@@ -467,8 +433,8 @@ pub fn v3_to_cruma(
         for dir in dirs {
             let backend_id = dir.host_name.clone();
 
-            // Expand $root_dir / $cfg_dir in dir_server paths
-            let expanded_dir = expand_v3_vars(&dir.dir, &root_dir, &cfg_dir, None);
+            // Expand $root_dir in dir_server paths
+            let expanded_dir = expand_root_dir(&dir.dir, &root_dir);
 
             backends.push(BackendDefinition {
                 id: backend_id.clone(),

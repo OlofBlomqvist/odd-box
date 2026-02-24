@@ -75,7 +75,7 @@ fn render_migrated_config(old_path: &str) -> Result<MigrationRender> {
     };
 
     let (cruma_cfg, _version) = any_config
-        .upgrade_to_cruma_with_path(Some(old_path))
+        .upgrade_to_cruma()
         .map_err(|e| anyhow::anyhow!("Failed to upgrade config: {e}"))?;
 
     // Serialize the TunnelCliConfiguration to YAML.
@@ -597,7 +597,7 @@ enable_directory_browsing = true
     }
 
     #[test]
-    fn v3_port_expanded_in_args() {
+    fn v3_port_left_for_cruma_to_expand() {
         let toml_input = r#"
 version = "V3"
 http_port = 8080
@@ -613,8 +613,8 @@ args = ["--port", "$port", "--bind", "0.0.0.0:$port"]
 
         assert_eq!(cfg.processes.len(), 1);
         let proc = &cfg.processes[0];
-        // port_range_start is 4200, first process gets port 4200
-        assert_eq!(proc.args, vec!["--port", "4200", "--bind", "0.0.0.0:4200"]);
+        // $port is handled by cruma at runtime, so it must NOT be expanded here
+        assert_eq!(proc.args, vec!["--port", "$port", "--bind", "0.0.0.0:$port"]);
     }
 
     #[test]
@@ -694,7 +694,7 @@ args = []
     }
 
     #[test]
-    fn v3_explicit_port_used_for_dollar_port_expansion() {
+    fn v3_dollar_port_preserved_even_with_explicit_port() {
         let toml_input = r#"
 version = "V3"
 http_port = 8080
@@ -710,8 +710,8 @@ args = ["--listen", "$port"]
         let cfg = migrate_from_str(toml_input).unwrap();
 
         let proc = &cfg.processes[0];
-        // When an explicit port is set, $port should use that value
-        assert_eq!(proc.args, vec!["--listen", "9999"]);
+        // $port is resolved by cruma at runtime, not during migration
+        assert_eq!(proc.args, vec!["--listen", "$port"]);
     }
 
     #[test]
@@ -735,9 +735,10 @@ env_vars = [
         let cfg = migrate_from_str(toml_input).unwrap();
 
         let proc = &cfg.processes[0];
+        // $root_dir is expanded (V3-only), $port is left for cruma
         assert_eq!(proc.command, "/srv/bin/app");
-        assert_eq!(proc.args, vec!["--dir", "/srv/data", "--port", "5000"]);
-        assert_eq!(proc.env.get("LISTEN").map(|s| s.as_str()), Some("0.0.0.0:5000"));
+        assert_eq!(proc.args, vec!["--dir", "/srv/data", "--port", "$port"]);
+        assert_eq!(proc.env.get("LISTEN").map(|s| s.as_str()), Some("0.0.0.0:$port"));
         assert_eq!(proc.env.get("STORAGE").map(|s| s.as_str()), Some("/srv/storage"));
     }
 }
