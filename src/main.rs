@@ -1,3 +1,4 @@
+mod configuration;
 mod migrate;
 mod pages;
 mod self_update;
