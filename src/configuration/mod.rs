@@ -13,7 +13,7 @@ pub mod v1;
 pub mod v2;
 pub mod v3;
 
-use cruma::config::TunnelCliConfiguration;
+use cruma::{config::TunnelCliConfiguration, cruma_proxy_lib::types::AcmeDirectory};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -205,18 +205,11 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
     // `$root_dir` → value of root_dir field, or "." (CWD) when unset.
     // This variable is V3-only; cruma's format does not have it, so we
     // must inline it before writing the new config.
-    let root_dir = v3
-        .root_dir
-        .as_deref()
-        .unwrap_or(".")
-        .to_owned();
+    let root_dir = v3.root_dir.as_deref().unwrap_or(".").to_owned();
 
     // ── Global env vars (expand $root_dir) ─────────────────────────────
     for ev in &v3.env_vars {
-        global_env.insert(
-            ev.key.clone(),
-            expand_root_dir(&ev.value, &root_dir),
-        );
+        global_env.insert(ev.key.clone(), expand_root_dir(&ev.value, &root_dir));
     }
 
     let ip = v3
@@ -265,10 +258,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
             let mut proc_env = global_env.clone();
             if let Some(env_vars) = &proc.env_vars {
                 for ev in env_vars {
-                    proc_env.insert(
-                        ev.key.clone(),
-                        expand_root_dir(&ev.value, &root_dir),
-                    );
+                    proc_env.insert(ev.key.clone(), expand_root_dir(&ev.value, &root_dir));
                 }
             }
             // Inject PORT if not present
@@ -283,18 +273,11 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
 
             // Expand $root_dir in paths and arguments
             let expanded_bin = expand_root_dir(&proc.bin, &root_dir);
-            let expanded_dir = proc
-                .dir
-                .as_ref()
-                .map(|d| expand_root_dir(d, &root_dir));
+            let expanded_dir = proc.dir.as_ref().map(|d| expand_root_dir(d, &root_dir));
             let expanded_args: Vec<String> = proc
                 .args
                 .as_ref()
-                .map(|args| {
-                    args.iter()
-                        .map(|a| expand_root_dir(a, &root_dir))
-                        .collect()
-                })
+                .map(|args| args.iter().map(|a| expand_root_dir(a, &root_dir)).collect())
                 .unwrap_or_default();
 
             processes.push(ProcessDefinition {
@@ -441,9 +424,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
                 kind: TargetKind::LocalDirectory,
                 destination: expanded_dir,
                 upstream_protocol: UpstreamProtocol::H1,
-                allow_directory_indexing: Some(
-                    dir.enable_directory_browsing.unwrap_or(false),
-                ),
+                allow_directory_indexing: Some(dir.enable_directory_browsing.unwrap_or(false)),
                 render_markdown: Some(dir.render_markdown.unwrap_or(false)),
                 spa_fallback: None,
                 form_auth: None,
@@ -500,13 +481,13 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
         profile: None,
         custom_pages: Default::default(),
         dir_listing_branding: None,
+        acme_directory: AcmeDirectory::LetsEncrypt { staging: false },
+        acme_eab: None,
     })
 }
 
 /// Convert V3 hints to cruma UpstreamProtocol.
-fn hints_to_upstream_protocol(
-    hints: Option<&Vec<v3::Hint>>,
-) -> cruma::config::UpstreamProtocol {
+fn hints_to_upstream_protocol(hints: Option<&Vec<v3::Hint>>) -> cruma::config::UpstreamProtocol {
     use cruma::config::UpstreamProtocol;
     let hints = match hints {
         Some(h) => h,

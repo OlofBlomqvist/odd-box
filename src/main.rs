@@ -143,6 +143,7 @@ fn main() -> Result<()> {
 
     let cancel = CancellationToken::new();
     let bootstrap_options = BootstrapOptions {
+        skip_cache_lock: true,
         protocol: cruma::config::Protocol::Auto,
         cache_dir: None,
         temp: config.temp,
