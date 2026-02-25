@@ -1,7 +1,7 @@
 mod configuration;
 mod migrate;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use cruma::bootstrap::{ApplicationRuntime, BootstrapOptions};
 use cruma::config::{TunnelCliConfiguration, load_config_from_path};
@@ -165,10 +165,15 @@ fn main() -> Result<()> {
 
     // ── Load configuration ─────────────────────────────────────────────
 
-    let config_path = args
-        .config
-        .or(args.config_positional)
-        .unwrap_or_else(find_config_file);
+    // Track whether the user gave us an explicit path.  When they did we
+    // never auto-create — a missing explicit path is always an error.
+    let explicit_config = args.config.or(args.config_positional);
+    let explicit = explicit_config.is_some();
+    let config_path = match explicit_config {
+        Some(p) => p,
+        // No path given: find an existing config or create a default one.
+        None => find_or_create_default_config()?,
+    };
 
     // Try loading directly (supports YAML, TOML, JSON).  If that fails
     // and the file looks like a legacy odd-box TOML config, auto-migrate
@@ -180,6 +185,11 @@ fn main() -> Result<()> {
             let (cfg, new_path) = migrate::auto_migrate(&config_path)?;
             let new_path_str = new_path.to_string_lossy().into_owned();
             (cfg, new_path_str)
+        }
+        Err(load_err) if explicit => {
+            return Err(load_err.context(format!(
+                "failed to load config from '{config_path}'"
+            )));
         }
         Err(load_err) => return Err(load_err.into()),
     };
@@ -380,8 +390,21 @@ fn register_oddbox_resolver(runtime: &Arc<ApplicationRuntime>) {
 }
 
 /// Search for a config file in the current directory.
-fn find_config_file() -> String {
-    for candidate in [
+/// Search for an existing config file and return its path.
+/// If no config is found anywhere, create a starter config at the default
+/// platform location and return that path.
+///
+/// Search order:
+///   1. Current working directory — several conventional file names.
+///   2. Platform config directory:
+///        Linux:   `$XDG_CONFIG_HOME/odd-box/` (defaults to `~/.config/odd-box/`)
+///        macOS:   `~/Library/Application Support/odd-box/`
+///                 AND `~/.config/odd-box/` (many devs use dotfiles here)
+///        Windows: `%APPDATA%\\odd-box\\`
+///   3. Auto-create a starter config in the platform config dir so that
+///      first-run (e.g. launching the .app bundle) always succeeds.
+fn find_or_create_default_config() -> Result<String> {
+    const CWD_CANDIDATES: &[&str] = &[
         "odd-box.toml",
         "oddbox.toml",
         "odd-box.yaml",
@@ -389,22 +412,66 @@ fn find_config_file() -> String {
         "odd-box.yml",
         "oddbox.yml",
         "config.yaml",
-    ] {
+    ];
+
+    // 1. Current working directory.
+    for candidate in CWD_CANDIDATES {
         if std::fs::metadata(candidate).is_ok() {
-            return candidate.to_string();
+            return Ok(candidate.to_string());
         }
     }
-    "odd-box.toml".to_string()
+
+    // 2. Platform config directories.
+    //    Build the list of directories to probe in preference order.
+    let mut config_dirs_to_check: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(d) = dirs::config_dir() {
+        config_dirs_to_check.push(d.join("odd-box"));
+    }
+    // On macOS dirs::config_dir() returns ~/Library/Application Support.
+    // Also probe ~/.config/odd-box/ since that is where many developers
+    // keep dotfiles and where the terminal build naturally lands.
+    #[cfg(target_os = "macos")]
+    if let Some(home) = dirs::home_dir() {
+        let dotconfig = home.join(".config").join("odd-box");
+        if !config_dirs_to_check.contains(&dotconfig) {
+            config_dirs_to_check.push(dotconfig);
+        }
+    }
+    for odd_box_dir in &config_dirs_to_check {
+        for candidate in ["odd-box.toml", "odd-box.yaml", "odd-box.yml"] {
+            let path = odd_box_dir.join(candidate);
+            if path.exists() {
+                return Ok(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+
+    // 3. Nothing found — create a starter config at the first writable
+    //    platform config directory so that first-run always has something
+    //    to load (e.g. launching the macOS .app bundle for the first time).
+    let create_dir = config_dirs_to_check.into_iter().next().ok_or_else(|| {
+        anyhow::anyhow!(
+            "No config file found and could not determine a platform config directory.\n\
+             Pass --config <path> or create odd-box.toml in the current directory."
+        )
+    })?;
+    let create_path = create_dir.join("odd-box.toml");
+    std::fs::create_dir_all(&create_dir)
+        .with_context(|| format!("failed to create config directory {:?}", create_dir))?;
+    std::fs::write(&create_path, default_config_toml())
+        .with_context(|| format!("failed to write default config to {:?}", create_path))?;
+    eprintln!(
+        "No config file found — created a starter config at {}\n\
+         Edit it to add your backends and frontends, then restart odd-box.",
+        create_path.display()
+    );
+    Ok(create_path.to_string_lossy().into_owned())
 }
 
 /// Generate a minimal starter config.
-fn init_config() -> Result<()> {
-    let target = "odd-box.toml";
-    if std::fs::metadata(target).is_ok() {
-        bail!("{target} already exists. Remove it first or use a different directory.");
-    }
-
-    let toml = format!(
+/// Returns the contents of a minimal starter config file.
+fn default_config_toml() -> String {
+    format!(
         r#"# odd-box configuration
 # Generated by {NAME} v{VERSION}
 # See https://github.com/OlofBlomqvist/odd-box for documentation
@@ -424,8 +491,15 @@ addr = "localhost"
 kind = "https"
 tls = true
 "#
-    );
+    )
+}
 
+fn init_config() -> Result<()> {
+    let target = "odd-box.toml";
+    if std::fs::metadata(target).is_ok() {
+        bail!("{target} already exists. Remove it first or use a different directory.");
+    }
+    let toml = default_config_toml();
     std::fs::write(target, &toml)?;
     println!("Created {target}");
     println!();
