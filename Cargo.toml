@@ -15,6 +15,7 @@ cruma = { path = "cruma-sdk/cruma-tunnel-agent-bin" }
 # Core
 anyhow = "1.0"
 clap = { version = "4.4", features = ["derive"] }
+semver = "*"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 

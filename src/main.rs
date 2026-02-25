@@ -7,9 +7,70 @@ use cruma::bootstrap::{ApplicationRuntime, BootstrapOptions};
 use cruma::config::{TunnelCliConfiguration, load_config_from_path};
 use cruma::gui::{DashboardViewMode, GuiOptions, Page, ThemeMode};
 use cruma::tui::TuiOptions;
+use cruma::versions::{AppUpdateProvider, InstallMethod, detect_install_method};
+use semver::Version;
 
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+
+/// odd-box implementation of [`AppUpdateProvider`].
+///
+/// Provides update instructions and About-page links tailored to odd-box
+/// rather than the cruma tunnel agent.
+struct OddBoxUpdateProvider {
+    latest: Option<Version>,
+    method: InstallMethod,
+}
+
+impl AppUpdateProvider for OddBoxUpdateProvider {
+    fn latest_version(&self) -> Option<&Version> {
+        self.latest.as_ref()
+    }
+
+    // detect_install_method() is application-agnostic — it only inspects the
+    // exe path and env vars — so we can reuse it directly.  The default trait
+    // implementations for install_method_label() and is_managed_install() are
+    // derived from this, so no boilerplate needed.
+    fn install_method(&self) -> InstallMethod {
+        self.method
+    }
+
+    fn update_instructions(&self, new_version: &Version) -> String {
+        match self.method {
+            InstallMethod::Homebrew => {
+                format!("Update to {new_version} by running:\n  brew upgrade odd-box")
+            }
+            InstallMethod::Cargo => {
+                format!("Update to {new_version} by running:\n  cargo install odd-box")
+            }
+            InstallMethod::Nix => {
+                format!(
+                    "A new version ({new_version}) is available. \
+                     Update your Nix flake input or nixpkgs pin to pick it up."
+                )
+            }
+            InstallMethod::MacOsApp | InstallMethod::Direct | InstallMethod::Npm => {
+                format!(
+                    "odd-box {new_version} is available. \
+                     Download it from https://github.com/OlofBlomqvist/odd-box/releases"
+                )
+            }
+        }
+    }
+
+    fn about_links(&self) -> Vec<(String, String)> {
+        vec![
+            (
+                "GitHub".into(),
+                "https://github.com/OlofBlomqvist/odd-box".into(),
+            ),
+            (
+                "Releases".into(),
+                "https://github.com/OlofBlomqvist/odd-box/releases".into(),
+            ),
+        ]
+    }
+}
 
 // Re-export rustls so we can install the crypto provider.
 use rustls;
@@ -157,6 +218,21 @@ fn main() -> Result<()> {
     // ── Odd-box icon (embedded PNG) for tray + window branding ─────────
     const ODD_BOX_ICON: &[u8] = include_bytes!("assets/odd-box-icon.png");
 
+    // ── Check for a newer stable odd-box release (best-effort, ~5 s timeout) ─
+    // We do this synchronously before handing control to either the GUI or TUI
+    // runtime so the result is available immediately on startup.  A tiny
+    // single-thread runtime is used here; it is fully dropped before the GUI
+    // creates its own multi-thread runtime, avoiding any nested-runtime issues.
+    let latest_odd_box_version: Option<Version> =
+        match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt.block_on(find_latest_version_of_odd_box()),
+            Err(_) => None,
+        };
+    let install_method = detect_install_method();
+
     if want_gui {
         // ── GUI path ───────────────────────────────────────────────────
         //
@@ -186,7 +262,10 @@ fn main() -> Result<()> {
             ],
             theme,
             default_dashboard_view_mode: DashboardViewMode::Classic,
-            update_info: None,
+            update_provider: Some(Arc::new(OddBoxUpdateProvider {
+                latest: latest_odd_box_version,
+                method: install_method,
+            })),
             linux_application_id: Some("odd-box".into()),
             notification_app_name: Some("odd-box".into()),
             custom_pages: vec![],
@@ -214,7 +293,10 @@ fn main() -> Result<()> {
                 let tui_options = TuiOptions {
                     app_name: NAME.into(),
                     app_version: VERSION.into(),
-                    update_info: None,
+                    update_provider: Some(Arc::new(OddBoxUpdateProvider {
+                        latest: latest_odd_box_version,
+                        method: install_method,
+                    })),
                 };
                 cruma::tui::run_tui_with_runtime(runtime, cancel, tui_options).await
             } else {
@@ -413,4 +495,48 @@ fn is_headless_environment() -> bool {
         }
     }
     false
+}
+
+/// Fetch the latest stable (non-pre-release) odd-box release from GitHub.
+///
+/// Queries the GitHub releases API, ignores anything with `prerelease: true`
+/// or an unparseable semver tag, and returns the highest remaining version.
+/// Returns `None` on any network or parse failure so callers always get a
+/// best-effort result without ever blocking startup indefinitely.
+async fn find_latest_version_of_odd_box() -> Option<Version> {
+    #[derive(serde::Deserialize)]
+    struct GhRelease {
+        tag_name: String,
+        prerelease: bool,
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .user_agent(concat!("odd-box/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .ok()?;
+
+    let releases: Vec<GhRelease> = client
+        .get("https://api.github.com/repos/OlofBlomqvist/odd-box/releases")
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+
+    let current = Version::parse(env!("CARGO_PKG_VERSION").trim_start_matches('v')).ok()?;
+
+    let latest = releases
+        .into_iter()
+        .filter(|r| !r.prerelease)
+        .filter_map(|r| {
+            let tag = r.tag_name.trim_start_matches('v');
+            Version::parse(tag).ok()
+        })
+        .max()?;
+
+    if latest > current { Some(latest) } else { None }
 }
