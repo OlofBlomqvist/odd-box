@@ -1,16 +1,84 @@
-FROM rust:latest AS builder
+# Alpine is musl-native, so we get a genuine static-friendly musl binary
+# without any cross-compilation complexity.
+#
+# NOTE: cruma-sdk is a symlink in the repository.  The build script
+# (build_static_linux_bin_with_docker.sh) resolves it to a real directory
+# and passes two separate build contexts to Docker:
+#
+#   docker build \
+#       --build-context cruma-sdk=<real-cruma-sdk-path> \
+#       ...
+#
+# The Dockerfile references that second context with:
+#   COPY --from=cruma-sdk . ./cruma-sdk/
+#
+FROM rust:alpine AS builder
 
-# Install MUSL tools and dependencies
-RUN apt-get update && apt-get install -y musl-tools musl-dev
+# ── System build dependencies ──────────────────────────────────────────────
+#
+# cmake + make + perl + g++  — required by aws-lc-rs (bundled C crypto)
+# pkgconfig                  — used by many -sys crates
+# musl-dev                   — musl headers / libc
+#
+# X11 group     — needed by iced/winit (X11 backend)
+# Wayland group — needed by iced/winit (Wayland backend)
+# fontconfig    — needed by iced font loading
+# dbus-dev      — needed by ksni (Linux system tray)
+# gtk+3.0-dev   — needed by rfd (native file-picker dialogs)
+# openssl-dev   — needed by various -sys crates even when using rustls
+RUN apk add --no-cache \
+    # Build toolchain
+    musl-dev \
+    cmake \
+    make \
+    perl \
+    pkgconfig \
+    g++ \
+    # X11 (iced / winit)
+    libx11-dev \
+    libxcursor-dev \
+    libxrandr-dev \
+    libxi-dev \
+    libxinerama-dev \
+    # Wayland (iced / winit)
+    wayland-dev \
+    libxkbcommon-dev \
+    # Font rendering (iced)
+    fontconfig-dev \
+    # System tray (ksni via D-Bus)
+    dbus-dev \
+    # File-picker dialogs (rfd)
+    gtk+3.0-dev \
+    # OpenSSL headers (various -sys crates)
+    openssl-dev
 
-# Add the MUSL target
+# ── Rust target ────────────────────────────────────────────────────────────
+# rust:alpine ships the musl toolchain by default; we add it explicitly so
+# the build is reproducible even if the base image ever changes.
 RUN rustup target add x86_64-unknown-linux-musl
 
-# Set the working directory
+# aws-lc-rs needs to find a C compiler for the target
+ENV CC_x86_64_unknown_linux_musl=gcc
+# Tell pkg-config not to complain about cross-root mismatches
+ENV PKG_CONFIG_ALLOW_CROSS=1
+
+# ── Source ─────────────────────────────────────────────────────────────────
 WORKDIR /usr/src/odd-box
 
-# Copy the project files
+# Copy the main project files first (excluding cruma-sdk — it's a symlink
+# in the repo and is injected via a separate --build-context below).
 COPY . .
 
-# Build the project with the MUSL target
-RUN cargo build --release --target=x86_64-unknown-linux-musl
+# Overlay the real cruma-sdk directory (resolved by the build script and
+# passed in as a named build context so Docker never has to follow the
+# symlink itself).
+COPY --from=cruma-sdk . ./cruma-sdk/
+
+# ── Build ──────────────────────────────────────────────────────────────────
+RUN cargo build --release --target x86_64-unknown-linux-musl -p odd-box
+
+# ── Minimal output image ───────────────────────────────────────────────────
+FROM scratch AS export
+COPY --from=builder \
+    /usr/src/odd-box/target/x86_64-unknown-linux-musl/release/odd-box \
+    /odd-box
