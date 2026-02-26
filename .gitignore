@@ -1,5 +1,6 @@
 temp
 .*
+!.github
 /target
 .odd_box_cache
 TODO.MD

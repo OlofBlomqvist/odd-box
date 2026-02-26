@@ -1,13 +1,13 @@
-name: Manually Triggered Build and Release Upload
+name: Build and Release
 
 on:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Git reference (branch or commit) to build from'
+        description: 'Git reference (branch or tag) to build from'
         required: true
-      release_name:
-        description: 'Release name or tag to upload the artifact to'
+      release_tag:
+        description: 'GitHub release tag to upload artifacts to (must already exist)'
         required: true
 
 env:
@@ -23,85 +23,114 @@ jobs:
       matrix:
         include:
 
+          # ── Linux: static musl binaries via Dockerfile.build ────────────────
+          # These use Docker so all GUI/crypto C dependencies are satisfied
+          # without polluting the runner environment.
           - os: ubuntu-latest
-            artifact_path: target/x86_64-unknown-linux-musl/release/odd-box
             artifact_name: odd-box-x86_64-unknown-linux-musl
             target: x86_64-unknown-linux-musl
-            
-          - os: ubuntu-latest
-            artifact_path: target/x86_64-unknown-linux-gnu/release/odd-box
-            artifact_name: odd-box-x86_64-unknown-linux-gnu
-            target: x86_64-unknown-linux-gnu
+            build_method: docker
 
+          - os: ubuntu-latest
+            artifact_name: odd-box-aarch64-unknown-linux-musl
+            target: aarch64-unknown-linux-musl
+            build_method: docker_qemu   # docker + QEMU emulation
+
+          # ── Windows ─────────────────────────────────────────────────────────
           - os: windows-latest
-            artifact_path: target/x86_64-pc-windows-msvc/release/odd-box.exe
             artifact_name: odd-box-x86_64-pc-windows-msvc.exe
             target: x86_64-pc-windows-msvc
+            build_method: cargo_windows
 
+          # ── macOS arm64: .app bundle + DMG (distributed via Homebrew cask) ──
+          # macos-latest is arm64 (Apple Silicon) — builds aarch64-apple-darwin.
           - os: macos-latest
-            artifact_path: target/x86_64-apple-darwin/release/odd-box
+            artifact_name: odd-box-aarch64-apple-darwin.dmg
+            target: aarch64-apple-darwin
+            build_method: macos_dmg
+
+          # ── macOS x86_64: raw binary (Intel Mac fallback) ───────────────────
+          # macos-13 is the last x86_64 GitHub-hosted runner.
+          - os: macos-13
             artifact_name: odd-box-x86_64-apple-darwin
             target: x86_64-apple-darwin
-            dmg_name: odd-box-x86_64-apple-darwin.dmg
-
-          - os: macos-latest
-            artifact_path: target/aarch64-apple-darwin/release/odd-box
-            artifact_name: odd-box-aarch64-apple-darwin
-            target: aarch64-apple-darwin
-            dmg_name: odd-box-aarch64-apple-darwin.dmg
+            build_method: cargo_macos
 
     steps:
-      - uses: actions/checkout@v2
+      - name: Checkout odd-box
+        uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.ref }}  # This checks out the git reference specified by the user
+          ref: ${{ github.event.inputs.ref }}
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      # cruma-sdk is a symlink on developer machines (points to an absolute
+      # local path).  On CI we replace it with a real checkout so cargo can
+      # resolve the path dependency.
+      - name: Checkout cruma-sdk
+        uses: actions/checkout@v4
         with:
-          toolchain: nightly
+          repository: umbra-yurei/cruma-sdk
+          path: cruma-sdk
+          token: ${{ secrets.CRUMA_SDK_TOKEN }}
 
-      - name: Install target
-        run: rustup target add ${{ matrix.target }}
+      - name: Setup Rust (nightly)
+        uses: dtolnay/rust-toolchain@nightly
 
-      - name: Install musl-tools
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-       
-      - name: Install NASM
-        if: startsWith(matrix.os, 'windows')
+      # ── Linux: Docker-based build (handles GUI/crypto C deps) ───────────────
+      - name: Set up QEMU (aarch64 Linux only)
+        if: matrix.build_method == 'docker_qemu'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Build Linux binary (Docker)
+        if: startsWith(matrix.build_method, 'docker')
+        run: |
+          PLATFORM_ARG=""
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
+            PLATFORM_ARG="--platform linux/arm64"
+          fi
+          DOCKER_BUILDKIT=1 docker build \
+            $PLATFORM_ARG \
+            --file Dockerfile.build \
+            --build-context "cruma-sdk=$(realpath cruma-sdk)" \
+            --build-arg RUST_TARGET="${{ matrix.target }}" \
+            --target export \
+            --output "type=local,dest=_docker_out" \
+            .
+          mv _docker_out/odd-box "${{ matrix.artifact_name }}"
+
+      # ── Windows ─────────────────────────────────────────────────────────────
+      - name: Install NASM (Windows)
+        if: matrix.build_method == 'cargo_windows'
         uses: ilammy/setup-nasm@v1
 
-      - name: Configure NASM for CMake (Windows only)
-        if: startsWith(matrix.os, 'windows')
-        run: |
-          $env:CMAKE_ASM_NASM_COMPILER = "nasm"
-          
-      - name: Build
-        run: |
-          if ("${{ matrix.no_default_features }}" -eq "true") {
-            cargo build --release --verbose --no-default-features --target ${{ matrix.target }}
-          } else {
-            cargo build --release --verbose --target ${{ matrix.target }}
-          }
+      - name: Build (Windows)
+        if: matrix.build_method == 'cargo_windows'
         shell: pwsh
-
-      - name: Rename Artifact
-        run: mv ${{ matrix.artifact_path }} ${{ matrix.artifact_name }}
-
-      - name: Build DMG (macOS only)
-        if: contains(matrix.target, 'apple-darwin')
         run: |
-          rm -rf dmg-root
-          mkdir -p dmg-root
-          cp "${{ matrix.artifact_name }}" "dmg-root/odd-box"
-          chmod +x "dmg-root/odd-box"
-          hdiutil create -volname "odd-box" -srcfolder dmg-root -ov -format UDZO "${{ matrix.dmg_name }}"
-        shell: bash
+          rustup target add ${{ matrix.target }}
+          cargo build --release --target ${{ matrix.target }}
+          Move-Item "target/${{ matrix.target }}/release/odd-box.exe" "${{ matrix.artifact_name }}"
 
-      # Assuming you have gh CLI installed in the runner
-      - name: Upload Release Artifact
-        run: gh release upload ${{ github.event.inputs.release_name }} ${{ matrix.artifact_name }}  # Upload to the specified release
+      # ── macOS x86_64 raw binary ──────────────────────────────────────────────
+      - name: Build macOS raw binary (Intel)
+        if: matrix.build_method == 'cargo_macos'
+        run: |
+          rustup target add ${{ matrix.target }}
+          cargo build --release --target ${{ matrix.target }}
+          mv "target/${{ matrix.target }}/release/odd-box" "${{ matrix.artifact_name }}"
 
-      - name: Upload Release DMG
-        if: contains(matrix.target, 'apple-darwin')
-        run: gh release upload ${{ github.event.inputs.release_name }} ${{ matrix.dmg_name }}
+      # ── macOS arm64 DMG ──────────────────────────────────────────────────────
+      - name: Install cargo-bundle
+        if: matrix.build_method == 'macos_dmg'
+        run: cargo install cargo-bundle
+
+      - name: Install create-dmg
+        if: matrix.build_method == 'macos_dmg'
+        run: brew install create-dmg
+
+      - name: Build macOS app bundle + DMG
+        if: matrix.build_method == 'macos_dmg'
+        run: DMG_OUT="${{ matrix.artifact_name }}" bash pack-osx.sh
+
+      # ── Upload ───────────────────────────────────────────────────────────────
+      - name: Upload release artifact
+        run: gh release upload "${{ github.event.inputs.release_tag }}" "${{ matrix.artifact_name }}"
