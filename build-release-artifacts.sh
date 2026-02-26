@@ -1,20 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build odd-box release assets locally into release-v<version>/.
+# Build odd-box release artifacts into release-v<version>/.
 #
-# Output names match GitHub release assets used by Homebrew generators:
-#   odd-box-x86_64-unknown-linux-gnu
+# Default artifacts mirror current CI/release outputs:
 #   odd-box-x86_64-unknown-linux-musl
-#   odd-box-aarch64-apple-darwin
+#   odd-box-aarch64-unknown-linux-musl
 #   odd-box-x86_64-apple-darwin
 #   odd-box-aarch64-apple-darwin.dmg
-#   odd-box-x86_64-apple-darwin.dmg
 #
-# Notes:
-# - Windows asset is intentionally not built here.
-# - DMG creation requires macOS (hdiutil).
-# - Linux musl build uses ./build_static_linux_bin_with_docker.sh when available.
+# Optional:
+#   odd-box-x86_64-unknown-linux-gnu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
@@ -35,8 +31,16 @@ OUT_DIR="release-v${VERSION}"
 ALL_TARGETS=(
   "x86_64-unknown-linux-gnu"
   "x86_64-unknown-linux-musl"
-  "aarch64-apple-darwin"
+  "aarch64-unknown-linux-musl"
   "x86_64-apple-darwin"
+  "aarch64-apple-darwin-dmg"
+)
+
+DEFAULT_TARGETS=(
+  "x86_64-unknown-linux-musl"
+  "aarch64-unknown-linux-musl"
+  "x86_64-apple-darwin"
+  "aarch64-apple-darwin-dmg"
 )
 
 SELECTED_TARGETS=()
@@ -44,22 +48,23 @@ EXCLUDED_TARGETS=()
 SKIP_EXISTING=0
 
 usage() {
-  cat <<'EOF'
+  cat <<'USAGE'
 Usage: ./build-release-artifacts.sh [--target <name>] [--targets <csv>] [--exclude <name>] [--skip-existing]
 
 Supported target names:
   linux-gnu, linux-x86_64-gnu, x86_64-unknown-linux-gnu
   linux-musl, linux-x86_64-musl, x86_64-unknown-linux-musl
-  macos-arm64, darwin-arm64, aarch64-apple-darwin
+  linux-musl-arm64, linux-aarch64-musl, aarch64-unknown-linux-musl
   macos-x86_64, darwin-x86_64, x86_64-apple-darwin
-  macos, darwin, all
+  macos-arm64-dmg, darwin-arm64-dmg, aarch64-apple-darwin-dmg
+  macos, linux-musl-all, release, all
 
 Examples:
   ./build-release-artifacts.sh
   ./build-release-artifacts.sh --target linux-musl
-  ./build-release-artifacts.sh --targets macos,linux-musl
+  ./build-release-artifacts.sh --targets macos,linux-musl-all
   ./build-release-artifacts.sh --exclude linux-gnu --skip-existing
-EOF
+USAGE
 }
 
 normalize_target() {
@@ -70,14 +75,23 @@ normalize_target() {
     linux-musl|linux-x86_64-musl|x86_64-unknown-linux-musl)
       echo "x86_64-unknown-linux-musl"
       ;;
-    macos-arm64|darwin-arm64|aarch64-apple-darwin)
-      echo "aarch64-apple-darwin"
+    linux-musl-arm64|linux-aarch64-musl|aarch64-unknown-linux-musl)
+      echo "aarch64-unknown-linux-musl"
       ;;
     macos-x86_64|darwin-x86_64|x86_64-apple-darwin)
       echo "x86_64-apple-darwin"
       ;;
+    macos-arm64-dmg|darwin-arm64-dmg|aarch64-apple-darwin-dmg)
+      echo "aarch64-apple-darwin-dmg"
+      ;;
     macos|darwin)
-      echo "aarch64-apple-darwin,x86_64-apple-darwin"
+      echo "x86_64-apple-darwin,aarch64-apple-darwin-dmg"
+      ;;
+    linux-musl-all)
+      echo "x86_64-unknown-linux-musl,aarch64-unknown-linux-musl"
+      ;;
+    release)
+      echo "x86_64-unknown-linux-musl,aarch64-unknown-linux-musl,x86_64-apple-darwin,aarch64-apple-darwin-dmg"
       ;;
     all)
       echo "all"
@@ -108,6 +122,7 @@ expand_and_append() {
   local mode="$1"
   local raw="$2"
   local normalized
+
   normalized="$(normalize_target "${raw}")" || {
     echo "error: unsupported target '${raw}'" >&2
     usage >&2
@@ -178,20 +193,7 @@ host_os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 host_arch="$(uname -m)"
 
 if [[ ${#SELECTED_TARGETS[@]} -eq 0 ]]; then
-  case "${host_os}:${host_arch}" in
-    linux:x86_64)
-      SELECTED_TARGETS=("x86_64-unknown-linux-gnu" "x86_64-unknown-linux-musl")
-      ;;
-    darwin:arm64|darwin:aarch64)
-      SELECTED_TARGETS=("aarch64-apple-darwin" "x86_64-apple-darwin")
-      ;;
-    darwin:x86_64)
-      SELECTED_TARGETS=("x86_64-apple-darwin")
-      ;;
-    *)
-      SELECTED_TARGETS=("${ALL_TARGETS[@]}")
-      ;;
-  esac
+  SELECTED_TARGETS=("${DEFAULT_TARGETS[@]}")
 fi
 
 filtered=()
@@ -223,20 +225,27 @@ release_name_for_target() {
   case "$1" in
     x86_64-unknown-linux-gnu) echo "odd-box-x86_64-unknown-linux-gnu" ;;
     x86_64-unknown-linux-musl) echo "odd-box-x86_64-unknown-linux-musl" ;;
-    aarch64-apple-darwin) echo "odd-box-aarch64-apple-darwin" ;;
+    aarch64-unknown-linux-musl) echo "odd-box-aarch64-unknown-linux-musl" ;;
     x86_64-apple-darwin) echo "odd-box-x86_64-apple-darwin" ;;
+    aarch64-apple-darwin-dmg) echo "odd-box-aarch64-apple-darwin.dmg" ;;
     *) return 1 ;;
   esac
 }
 
 can_build_target_on_host() {
   local target="$1"
-  case "${host_os}:${target}" in
-    linux:x86_64-unknown-linux-gnu|linux:x86_64-unknown-linux-musl)
-      return 0
+  case "${target}" in
+    x86_64-unknown-linux-gnu)
+      [[ "${host_os}" == "linux" ]]
       ;;
-    darwin:aarch64-apple-darwin|darwin:x86_64-apple-darwin)
-      return 0
+    x86_64-apple-darwin)
+      [[ "${host_os}" == "darwin" ]]
+      ;;
+    aarch64-apple-darwin-dmg)
+      [[ "${host_os}" == "darwin" && ( "${host_arch}" == "arm64" || "${host_arch}" == "aarch64" ) ]]
+      ;;
+    x86_64-unknown-linux-musl|aarch64-unknown-linux-musl)
+      [[ "${host_os}" == "linux" || "${host_os}" == "darwin" ]]
       ;;
     *)
       return 1
@@ -244,15 +253,73 @@ can_build_target_on_host() {
   esac
 }
 
-copy_built_binary() {
+build_linux_musl_with_docker() {
   local target="$1"
-  local src="$2"
-  local name
-  name="$(release_name_for_target "${target}")"
-  local dst="${OUT_DIR}/${name}"
-  cp "${src}" "${dst}"
-  chmod +x "${dst}" || true
-  echo "  -> ${dst}"
+  local output_path="$2"
+
+  require_command docker
+
+  local cruma_sdk_real
+  cruma_sdk_real="$(realpath cruma-sdk)"
+  if [[ ! -d "${cruma_sdk_real}" ]]; then
+    echo "error: cruma-sdk symlink resolves to '${cruma_sdk_real}' which does not exist" >&2
+    exit 1
+  fi
+
+  local cruma_ignore="${cruma_sdk_real}/.dockerignore"
+  local cruma_ignore_created=0
+
+  if [[ ! -f "${cruma_ignore}" ]]; then
+    cat > "${cruma_ignore}" <<'IGNORE'
+**/target
+**/.git
+**/.DS_Store
+**/node_modules
+**/.cruma-tunnel-cache
+**/.odd-box-cruma-cache
+**/.h2t_cache
+**/.h2t_db
+**/.acme_cache
+odd-box
+IGNORE
+    cruma_ignore_created=1
+  fi
+
+  local docker_out="${SCRIPT_DIR}/target/_docker_out_${target}"
+  rm -rf "${docker_out}"
+
+  cleanup_docker_build() {
+    if [[ ${cruma_ignore_created} -eq 1 && -f "${cruma_ignore}" ]]; then
+      rm -f "${cruma_ignore}"
+    fi
+    rm -rf "${docker_out}"
+  }
+  trap cleanup_docker_build EXIT
+
+  local platform_arg=()
+  if [[ "${target}" == "aarch64-unknown-linux-musl" ]]; then
+    platform_arg=(--platform linux/arm64)
+  fi
+
+  DOCKER_BUILDKIT=1 docker build \
+    "${platform_arg[@]}" \
+    --file Dockerfile.build \
+    --build-context "cruma-sdk=${cruma_sdk_real}" \
+    --build-arg "RUST_TARGET=${target}" \
+    --target export \
+    --output "type=local,dest=${docker_out}" \
+    .
+
+  mkdir -p "$(dirname "${output_path}")"
+  mv "${docker_out}/odd-box" "${output_path}"
+  chmod +x "${output_path}" || true
+
+  if command -v strip >/dev/null 2>&1 && [[ "${target}" != "aarch64-unknown-linux-musl" ]]; then
+    strip "${output_path}" || true
+  fi
+
+  trap - EXIT
+  cleanup_docker_build
 }
 
 build_target() {
@@ -272,11 +339,14 @@ build_target() {
   fi
 
   case "${target}" in
-    x86_64-unknown-linux-musl)
-      echo "[build] ${target} via Docker helper"
-      require_command docker
-      ./build_static_linux_bin_with_docker.sh
-      copy_built_binary "${target}" "${SCRIPT_DIR}/target/odd-box-x86_64-linux-musl"
+    x86_64-unknown-linux-musl|aarch64-unknown-linux-musl)
+      echo "[build] ${target} via Docker"
+      build_linux_musl_with_docker "${target}" "${final_path}"
+      ;;
+    aarch64-apple-darwin-dmg)
+      echo "[build] ${target} via pack-osx.sh"
+      require_command bash
+      DMG_OUT="${SCRIPT_DIR}/${final_path}" bash pack-osx.sh
       ;;
     *)
       echo "[build] ${target} via cargo"
@@ -284,42 +354,11 @@ build_target() {
       require_command rustup
       rustup target add "${target}" >/dev/null
       cargo build --release --target "${target}"
-      copy_built_binary "${target}" "${SCRIPT_DIR}/target/${target}/release/odd-box"
+      mkdir -p "${OUT_DIR}"
+      cp "${SCRIPT_DIR}/target/${target}/release/odd-box" "${final_path}"
+      chmod +x "${final_path}" || true
       ;;
   esac
-}
-
-build_dmg_for_target() {
-  local target="$1"
-  local asset
-  asset="$(release_name_for_target "${target}")"
-  local bin_path="${OUT_DIR}/${asset}"
-  local dmg_path="${OUT_DIR}/${asset}.dmg"
-
-  if [[ ! -f "${bin_path}" ]]; then
-    return
-  fi
-
-  if [[ ${SKIP_EXISTING} -eq 1 && -f "${dmg_path}" ]]; then
-    echo "[skip] ${asset}.dmg (exists)"
-    return
-  fi
-
-  if [[ "${host_os}" != "darwin" ]]; then
-    echo "[skip] ${asset}.dmg (DMG creation requires macOS/hdiutil)"
-    return
-  fi
-
-  require_command hdiutil
-
-  local tmp_dir
-  tmp_dir="$(mktemp -d)"
-  cp "${bin_path}" "${tmp_dir}/odd-box"
-  chmod +x "${tmp_dir}/odd-box"
-
-  echo "[dmg] ${asset}.dmg"
-  hdiutil create -volname "odd-box" -srcfolder "${tmp_dir}" -ov -format UDZO "${dmg_path}" >/dev/null
-  rm -rf "${tmp_dir}"
 }
 
 mkdir -p "${OUT_DIR}"
@@ -332,14 +371,10 @@ for t in "${SELECTED_TARGETS[@]}"; do
   build_target "${t}"
 done
 
-for t in "${SELECTED_TARGETS[@]}"; do
-  case "${t}" in
-    aarch64-apple-darwin|x86_64-apple-darwin)
-      build_dmg_for_target "${t}"
-      ;;
-  esac
-done
-
 echo
 echo "==> Done. Artifacts in ${OUT_DIR}:"
-find "${OUT_DIR}" -maxdepth 1 -type f -printf "  %f\n" | sort
+if compgen -G "${OUT_DIR}/*" >/dev/null; then
+  find "${OUT_DIR}" -maxdepth 1 -type f | sed "s#^${OUT_DIR}/#  #" | sort
+else
+  echo "  (none)"
+fi

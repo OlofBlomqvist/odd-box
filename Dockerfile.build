@@ -1,18 +1,26 @@
 # Alpine is musl-native, so we get a genuine static-friendly musl binary
 # without any cross-compilation complexity.
 #
+# Supports two targets via the RUST_TARGET build arg:
+#   x86_64-unknown-linux-musl   (default, native on amd64 runner)
+#   aarch64-unknown-linux-musl  (native on arm64 runner / QEMU via --platform linux/arm64)
+#
 # NOTE: cruma-sdk is a symlink in the repository.  The build script
-# (build_static_linux_bin_with_docker.sh) resolves it to a real directory
-# and passes two separate build contexts to Docker:
+# resolves it to a real directory and passes two separate build contexts:
 #
 #   docker build \
 #       --build-context cruma-sdk=<real-cruma-sdk-path> \
+#       --build-arg RUST_TARGET=x86_64-unknown-linux-musl \
 #       ...
 #
 # The Dockerfile references that second context with:
 #   COPY --from=cruma-sdk . ./cruma-sdk/
 #
+ARG RUST_TARGET=x86_64-unknown-linux-musl
+
 FROM rust:alpine AS builder
+
+ARG RUST_TARGET
 
 # ── System build dependencies ──────────────────────────────────────────────
 #
@@ -53,12 +61,14 @@ RUN apk add --no-cache \
     openssl-dev
 
 # ── Rust target ────────────────────────────────────────────────────────────
-# rust:alpine ships the musl toolchain by default; we add it explicitly so
-# the build is reproducible even if the base image ever changes.
-RUN rustup target add x86_64-unknown-linux-musl
+# rust:alpine ships the musl toolchain for the host arch by default; we add
+# the requested target explicitly so the build is reproducible.
+RUN rustup target add "${RUST_TARGET}"
 
-# aws-lc-rs needs to find a C compiler for the target
-ENV CC_x86_64_unknown_linux_musl=gcc
+# aws-lc-rs needs to find a C compiler for the target.
+# When running natively (same arch as the Docker --platform) gcc is the right
+# compiler for both x86_64 and aarch64 musl.
+ENV CC=gcc
 # Tell pkg-config not to complain about cross-root mismatches
 ENV PKG_CONFIG_ALLOW_CROSS=1
 
@@ -75,10 +85,11 @@ COPY . .
 COPY --from=cruma-sdk . ./cruma-sdk/
 
 # ── Build ──────────────────────────────────────────────────────────────────
-RUN cargo build --release --target x86_64-unknown-linux-musl -p odd-box
+RUN cargo build --release --target "${RUST_TARGET}" -p odd-box
 
 # ── Minimal output image ───────────────────────────────────────────────────
 FROM scratch AS export
+ARG RUST_TARGET
 COPY --from=builder \
-    /usr/src/odd-box/target/x86_64-unknown-linux-musl/release/odd-box \
+    /usr/src/odd-box/target/${RUST_TARGET}/release/odd-box \
     /odd-box

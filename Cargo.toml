@@ -43,3 +43,10 @@ h2 = { git = 'https://github.com/OlofBlomqvist/h2' }
 
 [profile.release]
 opt-level = 'z'
+
+[package.metadata.bundle]
+name = "Odd Box"
+identifier = "se.twnet.oddbox"
+icon = ["icons/icon.icns"]
+short_description = "a dead simple reverse proxy server and web server"
+copyright = "Copyright © Olof Blomqvist"
