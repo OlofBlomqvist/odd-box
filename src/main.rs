@@ -1,5 +1,7 @@
 mod configuration;
 mod migrate;
+mod profile_page;
+mod profiles;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -163,37 +165,109 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // ── Determine UI mode early (needed for profile ask_on_startup) ───────
+    let want_gui = args.gui || (!args.tui && !args.headless && !is_headless_environment());
+
     // ── Load configuration ─────────────────────────────────────────────
 
-    // Track whether the user gave us an explicit path.  When they did we
-    // never auto-create — a missing explicit path is always an error.
     let explicit_config = args.config.or(args.config_positional);
     let explicit = explicit_config.is_some();
-    let config_path = match explicit_config {
-        Some(p) => p,
-        // No path given: find an existing config or create a default one.
-        None => find_or_create_default_config()?,
-    };
 
-    // Try loading directly (supports YAML, TOML, JSON).  If that fails
-    // and the file looks like a legacy odd-box TOML config, auto-migrate
-    // it to the current format, back up the original, and continue.
-    let (mut config, config_path) = match load_config_from_path(std::path::Path::new(&config_path))
-    {
-        Ok(cfg) => (cfg, config_path),
-        Err(load_err) if looks_like_legacy_toml(&config_path) => {
-            let (cfg, new_path) = migrate::auto_migrate(&config_path)?;
-            let new_path_str = new_path.to_string_lossy().into_owned();
-            (cfg, new_path_str)
+    // ── Profiles ───────────────────────────────────────────────────────
+    let mut saved_profiles = profiles::load_profiles();
+
+    // Whether we will open the GUI straight to the Profiles page because
+    // the user wants to pick a profile interactively.
+    let mut initial_gui_page: Option<String> = None;
+
+    // The resolved config file path.  `None` means we are in "stub" mode
+    // (GUI ask_on_startup — proxy starts with defaults until the user
+    // switches to a profile from the GUI).
+    let resolved_config_path: Option<String>;
+
+    if let Some(explicit_path) = explicit_config {
+        // ── Explicit --config / positional arg ─────────────────────
+        resolved_config_path = Some(explicit_path.clone());
+
+        // Auto-register the path in profiles if not already present.
+        let path_obj = std::path::Path::new(&explicit_path);
+        if !profiles::path_already_registered(path_obj, &saved_profiles.profiles) {
+            let name = profiles::derive_profile_name(path_obj, &saved_profiles.profiles);
+            saved_profiles.profiles.push(profiles::ProfileEntry {
+                name,
+                path: path_obj.to_path_buf(),
+            });
+            if let Err(e) = profiles::save_profiles(&saved_profiles) {
+                tracing::warn!("Could not save profiles.toml: {e}");
+            }
         }
-        Err(load_err) if explicit => {
-            return Err(load_err.context(format!(
+    } else if saved_profiles.ask_on_startup {
+        // ── ask_on_startup ─────────────────────────────────────────
+        if want_gui {
+            // GUI mode: start with a default config stub and navigate
+            // straight to the Profiles page so the user can pick.
+            resolved_config_path = None;
+            initial_gui_page = Some("profiles".to_string());
+        } else {
+            // TUI / headless mode: show a terminal menu.
+            resolved_config_path = Some(terminal_profile_picker(&saved_profiles)?);
+        }
+    } else if let Some(default_name) = &saved_profiles.default_profile.clone() {
+        // ── Named default profile ──────────────────────────────────
+        match saved_profiles.profiles.iter().find(|e| &e.name == default_name) {
+            Some(entry) => {
+                resolved_config_path = Some(entry.path.to_string_lossy().into_owned());
+            }
+            None => {
+                tracing::warn!(
+                    "Default profile '{default_name}' not found in profiles.toml; \
+                     falling back to auto-discovery."
+                );
+                let path = find_or_create_default_config()?;
+                ensure_main_profile_registered(&mut saved_profiles, &path);
+                resolved_config_path = Some(path);
+            }
+        }
+    } else {
+        // ── Auto-discovery (existing behaviour) ────────────────────
+        let path = find_or_create_default_config()?;
+        ensure_main_profile_registered(&mut saved_profiles, &path);
+        resolved_config_path = Some(path);
+    }
+
+    // ── Actually load the config (or use a stub) ───────────────────────
+
+    let (mut config, config_path_for_runtime) = if let Some(config_path) = resolved_config_path {
+        // Try loading directly (supports YAML, TOML, JSON).  If that fails
+        // and the file looks like a legacy odd-box TOML config, auto-migrate
+        // it to the current format, back up the original, and continue.
+        let result = match load_config_from_path(std::path::Path::new(&config_path)) {
+            Ok(cfg) => Ok((cfg, config_path.clone())),
+            Err(load_err) if looks_like_legacy_toml(&config_path) => {
+                let (cfg, new_path) = migrate::auto_migrate(&config_path)?;
+                let new_path_str = new_path.to_string_lossy().into_owned();
+                Ok((cfg, new_path_str))
+            }
+            Err(load_err) if explicit => Err(load_err.context(format!(
                 "failed to load config from '{config_path}'"
-            )));
-        }
-        Err(load_err) => return Err(load_err.into()),
+            ))),
+            Err(load_err) => Err(load_err.into()),
+        };
+        result?
+    } else {
+        // Stub mode: no config file selected yet (ask_on_startup + GUI).
+        // Deserialize a minimal config so the proxy starts with an empty
+        // setup (no backends, frontends, listeners) until the user selects
+        // a profile from the GUI.
+        let stub: TunnelCliConfiguration =
+            toml::from_str("backends = []\nfrontends = []").expect("valid minimal config");
+        (stub, String::new())
     };
-    config.config_path = Some(config_path.clone().into());
+    let config_path_for_runtime: String = config_path_for_runtime;
+
+    if !config_path_for_runtime.is_empty() {
+        config.config_path = Some(config_path_for_runtime.clone().into());
+    }
 
     // ── Odd-box branding for directory listing / dir-server error pages ─
     config.dir_listing_branding = Some(cruma::cruma_proxy_lib::types::DirListingBranding {
@@ -223,7 +297,6 @@ fn main() -> Result<()> {
     };
 
     let theme = ThemeMode::from_cli_or_env(args.theme.as_deref());
-    let want_gui = args.gui || (!args.tui && !args.headless && !is_headless_environment());
 
     // ── Odd-box icon (embedded PNG) for tray + window branding ─────────
     const ODD_BOX_ICON: &[u8] = include_bytes!("assets/odd-box-icon.png");
@@ -278,8 +351,11 @@ fn main() -> Result<()> {
             })),
             linux_application_id: Some("odd-box".into()),
             notification_app_name: Some("odd-box".into()),
-            custom_pages: vec![],
+            custom_pages: vec![
+                Box::new(profile_page::ProfilePage::new(saved_profiles)),
+            ],
             on_bootstrap: Some(Box::new(register_oddbox_resolver)),
+            initial_page: initial_gui_page,
         };
         cruma::gui::run_gui_with_config(config, bootstrap_options, cancel, gui_options)?;
     } else {
@@ -613,4 +689,97 @@ async fn find_latest_version_of_odd_box() -> Option<Version> {
         .max()?;
 
     if latest > current { Some(latest) } else { None }
+}
+
+/// Ensure a `"main"` profile entry exists for `config_path` and save
+/// `profiles.toml` if anything changed.
+fn ensure_main_profile_registered(saved: &mut profiles::ProfilesConfig, config_path: &str) {
+    let path_obj = std::path::Path::new(config_path);
+    if !profiles::path_already_registered(path_obj, &saved.profiles) {
+        // Check if we already have a profile named "main"; if so derive a name.
+        let name = if saved.profiles.iter().any(|e| e.name == "main") {
+            profiles::derive_profile_name(path_obj, &saved.profiles)
+        } else {
+            "main".to_string()
+        };
+        saved.profiles.push(profiles::ProfileEntry {
+            name,
+            path: path_obj.to_path_buf(),
+        });
+        if let Err(e) = profiles::save_profiles(saved) {
+            tracing::warn!("Could not persist profiles.toml: {e}");
+        }
+    }
+}
+
+/// Interactive terminal profile picker for TUI / headless `ask_on_startup`.
+///
+/// Prints a numbered list and reads a line from stdin.  Empty input
+/// selects the default profile (if configured).  Returns the chosen
+/// profile path as a string.
+fn terminal_profile_picker(saved: &profiles::ProfilesConfig) -> Result<String> {
+    use std::io::{BufRead, Write};
+
+    if saved.profiles.is_empty() {
+        anyhow::bail!(
+            "ask_on_startup is enabled but no profiles are configured in profiles.toml.\n\
+             Run with --config <path> to register a profile, or edit profiles.toml manually."
+        );
+    }
+
+    let default_name = saved.default_profile.as_deref();
+
+    eprintln!("\nSelect a profile:");
+    for (i, entry) in saved.profiles.iter().enumerate() {
+        let marker = if default_name == Some(&entry.name) {
+            " [default]"
+        } else {
+            ""
+        };
+        eprintln!("  {}. {}  {}{}", i + 1, entry.name, entry.path.display(), marker);
+    }
+
+    let default_idx = default_name
+        .and_then(|name| saved.profiles.iter().position(|e| e.name == name))
+        .map(|i| i + 1);
+
+    let prompt = match default_idx {
+        Some(d) => format!("Enter number (or press Enter for default) [{}]: ", d),
+        None => "Enter number: ".to_string(),
+    };
+
+    eprint!("{prompt}");
+    std::io::stderr().flush().ok();
+
+    let stdin = std::io::stdin();
+    let line = stdin
+        .lock()
+        .lines()
+        .next()
+        .transpose()
+        .unwrap_or(None)
+        .unwrap_or_default();
+    let line = line.trim().to_string();
+
+    let chosen_index: usize = if line.is_empty() {
+        match default_idx {
+            Some(d) => d - 1,
+            None => {
+                anyhow::bail!("No default profile configured; please enter a number.");
+            }
+        }
+    } else {
+        let n: usize = line
+            .parse::<usize>()
+            .map_err(|_| anyhow::anyhow!("Invalid selection: '{line}'"))?;
+        if n == 0 || n > saved.profiles.len() {
+            anyhow::bail!(
+                "Selection {n} out of range (1–{})",
+                saved.profiles.len()
+            );
+        }
+        n - 1
+    };
+
+    Ok(saved.profiles[chosen_index].path.to_string_lossy().into_owned())
 }

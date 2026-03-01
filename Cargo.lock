@@ -1411,13 +1411,14 @@ dependencies = [
 
 [[package]]
 name = "cruma"
-version = "0.3.0-beta.3"
+version = "1.0.0-RC1"
 dependencies = [
  "anyhow",
  "arc-swap",
  "base64",
  "bytes",
  "chrono",
+ "cidr",
  "clap",
  "clap_complete",
  "clap_complete_nushell",
@@ -1468,11 +1469,11 @@ dependencies = [
 
 [[package]]
 name = "cruma-local-service-scan"
-version = "0.3.0-beta.3"
+version = "1.0.0-RC1"
 
 [[package]]
 name = "cruma-proc-host"
-version = "0.3.0-beta.3"
+version = "1.0.0-RC1"
 dependencies = [
  "arc-swap",
  "cruma-ring-log",
@@ -1551,7 +1552,7 @@ dependencies = [
 
 [[package]]
 name = "cruma-ring-log"
-version = "0.3.0-beta.3"
+version = "1.0.0-RC1"
 dependencies = [
  "arc-swap",
  "tokio",
@@ -1559,7 +1560,7 @@ dependencies = [
 
 [[package]]
 name = "cruma-tunnels-lib"
-version = "0.3.0-beta.3"
+version = "1.0.0-RC1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4929,6 +4930,7 @@ dependencies = [
  "cruma",
  "dirs 5.0.1",
  "reqwest",
+ "rfd",
  "rustls",
  "schemars",
  "self_update",
