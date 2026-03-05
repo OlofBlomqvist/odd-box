@@ -45,11 +45,11 @@ jobs:
             target: aarch64-apple-darwin
             build_method: macos_dmg
 
-          # ── macOS x86_64: raw binary ─────────────────────────────────────────
+          # ── macOS x86_64: .app bundle + DMG ─────────────────────────────────
           - os: macos-13
-            artifact_name: odd-box-x86_64-apple-darwin
+            artifact_name: odd-box-x86_64-apple-darwin.dmg
             target: x86_64-apple-darwin
-            build_method: cargo_macos
+            build_method: macos_dmg
 
     steps:
       - name: Checkout odd-box
@@ -109,14 +109,6 @@ jobs:
           if (-not (Test-Path "${{ matrix.artifact_name }}")) {
             throw "expected artifact not found: ${{ matrix.artifact_name }}"
           }
-
-      # ── macOS x86_64 raw binary ──────────────────────────────────────────────
-      - name: Build macOS raw binary (Intel)
-        if: matrix.build_method == 'cargo_macos'
-        run: |
-          rustup target add ${{ matrix.target }}
-          cargo build --release --target ${{ matrix.target }}
-          mv "target/${{ matrix.target }}/release/odd-box" "${{ matrix.artifact_name }}"
 
       # ── macOS arm64 DMG ──────────────────────────────────────────────────────
       - name: Install cargo-bundle

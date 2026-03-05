@@ -7,12 +7,13 @@ set -euo pipefail
 #   odd-box-x86_64-unknown-linux-musl
 #   odd-box-aarch64-unknown-linux-musl
 #   odd-box-x86_64-pc-windows-msvc.exe
-#   odd-box-x86_64-apple-darwin
+#   odd-box-x86_64-apple-darwin.dmg
 #   odd-box-aarch64-apple-darwin.dmg
 #
 # Optional:
 #   odd-box-x86_64-unknown-linux-gnu
 #   odd-box-x86_64-pc-windows-gnu.exe
+#   odd-box-x86_64-apple-darwin
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
@@ -43,6 +44,7 @@ ALL_TARGETS=(
   "aarch64-unknown-linux-musl"
   "x86_64-pc-windows-msvc"
   "x86_64-pc-windows-gnu"
+  "x86_64-apple-darwin-dmg"
   "x86_64-apple-darwin"
   "aarch64-apple-darwin-dmg"
 )
@@ -51,7 +53,7 @@ DEFAULT_TARGETS=(
   "x86_64-unknown-linux-musl"
   "aarch64-unknown-linux-musl"
   "x86_64-pc-windows-msvc"
-  "x86_64-apple-darwin"
+  "x86_64-apple-darwin-dmg"
   "aarch64-apple-darwin-dmg"
 )
 
@@ -69,6 +71,7 @@ Supported target names:
   linux-musl-arm64, linux-aarch64-musl, aarch64-unknown-linux-musl
   windows-msvc, windows-x86_64-msvc, x86_64-pc-windows-msvc
   windows-gnu, windows-x86_64-gnu, x86_64-pc-windows-gnu
+  macos-x86_64-dmg, darwin-x86_64-dmg, x86_64-apple-darwin-dmg
   macos-x86_64, darwin-x86_64, x86_64-apple-darwin
   macos-arm64-dmg, darwin-arm64-dmg, aarch64-apple-darwin-dmg
   macos, linux-musl-all, release, all
@@ -98,6 +101,9 @@ normalize_target() {
     windows-gnu|windows-x86_64-gnu|x86_64-pc-windows-gnu)
       echo "x86_64-pc-windows-gnu"
       ;;
+    macos-x86_64-dmg|darwin-x86_64-dmg|x86_64-apple-darwin-dmg)
+      echo "x86_64-apple-darwin-dmg"
+      ;;
     macos-x86_64|darwin-x86_64|x86_64-apple-darwin)
       echo "x86_64-apple-darwin"
       ;;
@@ -105,13 +111,13 @@ normalize_target() {
       echo "aarch64-apple-darwin-dmg"
       ;;
     macos|darwin)
-      echo "x86_64-apple-darwin,aarch64-apple-darwin-dmg"
+      echo "x86_64-apple-darwin-dmg,aarch64-apple-darwin-dmg"
       ;;
     linux-musl-all)
       echo "x86_64-unknown-linux-musl,aarch64-unknown-linux-musl"
       ;;
     release)
-      echo "x86_64-unknown-linux-musl,aarch64-unknown-linux-musl,x86_64-pc-windows-msvc,x86_64-apple-darwin,aarch64-apple-darwin-dmg"
+      echo "x86_64-unknown-linux-musl,aarch64-unknown-linux-musl,x86_64-pc-windows-msvc,x86_64-apple-darwin-dmg,aarch64-apple-darwin-dmg"
       ;;
     all)
       echo "all"
@@ -248,6 +254,7 @@ release_name_for_target() {
     aarch64-unknown-linux-musl) echo "odd-box-aarch64-unknown-linux-musl" ;;
     x86_64-pc-windows-msvc) echo "odd-box-x86_64-pc-windows-msvc.exe" ;;
     x86_64-pc-windows-gnu) echo "odd-box-x86_64-pc-windows-gnu.exe" ;;
+    x86_64-apple-darwin-dmg) echo "odd-box-x86_64-apple-darwin.dmg" ;;
     x86_64-apple-darwin) echo "odd-box-x86_64-apple-darwin" ;;
     aarch64-apple-darwin-dmg) echo "odd-box-aarch64-apple-darwin.dmg" ;;
     *) return 1 ;;
@@ -273,6 +280,9 @@ can_build_target_on_host() {
       ;;
     x86_64-pc-windows-gnu)
       [[ "${host_os}" == mingw* || "${host_os}" == msys* || "${host_os}" == cygwin* ]] || has_mingw_linker
+      ;;
+    x86_64-apple-darwin-dmg)
+      [[ "${host_os}" == "darwin" && ( "${host_arch}" == "x86_64" || "${host_arch}" == "amd64" ) ]]
       ;;
     x86_64-apple-darwin)
       [[ "${host_os}" == "darwin" ]]
@@ -390,7 +400,7 @@ build_target() {
       echo "[build] ${target} via Docker"
       build_linux_musl_with_docker "${target}" "${final_path}"
       ;;
-    aarch64-apple-darwin-dmg)
+    x86_64-apple-darwin-dmg|aarch64-apple-darwin-dmg)
       echo "[build] ${target} via pack-osx.sh"
       require_command bash
       DMG_OUT="${SCRIPT_DIR}/${final_path}" bash pack-osx.sh
