@@ -1463,6 +1463,7 @@ dependencies = [
  "tray-icon",
  "tui-qrcode",
  "which",
+ "windows-sys 0.61.2",
  "winrt-notification",
 ]
 
