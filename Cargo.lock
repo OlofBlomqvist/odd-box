@@ -611,7 +611,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b7b6141e96a8c160799cc2d5adecd5cbbe5054cb8c7c4af53da0f83bb7ad256"
 dependencies = [
  "aws-lc-sys",
- "untrusted 0.7.1",
  "zeroize",
 ]
 
@@ -3035,7 +3034,6 @@ dependencies = [
  "http",
  "hyper",
  "hyper-util",
- "log",
  "rustls",
  "rustls-native-certs 0.8.3",
  "rustls-pki-types",
@@ -3563,7 +3561,6 @@ version = "0.8.4"
 source = "git+https://github.com/OlofBlomqvist/instant-acme.git#dc6c1cc85107ef06bfbee278bd1573dc40b0ba3c"
 dependencies = [
  "async-trait",
- "aws-lc-rs",
  "base64",
  "bytes",
  "http",
@@ -3574,6 +3571,7 @@ dependencies = [
  "hyper-rustls",
  "hyper-util",
  "rcgen",
+ "ring",
  "rustls",
  "rustls-pki-types",
  "serde",
@@ -5889,7 +5887,6 @@ version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10b99e0098aa4082912d4c649628623db6aba77335e4f4569ff5083a6448b32e"
 dependencies = [
- "aws-lc-rs",
  "pem",
  "ring",
  "rustls-pki-types",
@@ -6037,6 +6034,7 @@ dependencies = [
  "pin-project-lite",
  "quinn 0.11.9",
  "rustls",
+ "rustls-native-certs 0.8.3",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -6114,7 +6112,7 @@ dependencies = [
  "cfg-if",
  "getrandom 0.2.17",
  "libc",
- "untrusted 0.9.0",
+ "untrusted",
  "windows-sys 0.52.0",
 ]
 
@@ -6280,7 +6278,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
 dependencies = [
  "rustls-pki-types",
- "untrusted 0.9.0",
+ "untrusted",
 ]
 
 [[package]]
@@ -6292,7 +6290,7 @@ dependencies = [
  "aws-lc-rs",
  "ring",
  "rustls-pki-types",
- "untrusted 0.9.0",
+ "untrusted",
 ]
 
 [[package]]
@@ -7846,12 +7844,6 @@ checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
-
-[[package]]
-name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
@@ -9338,7 +9330,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eb3e137310115a65136898d2079f003ce33331a6c4b0d51f1531d1be082b6425"
 dependencies = [
  "asn1-rs",
- "aws-lc-rs",
  "data-encoding",
  "der-parser",
  "lazy_static",
