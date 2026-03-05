@@ -45,6 +45,56 @@ pub fn auto_migrate(old_path: &str) -> Result<(cruma::config::TunnelCliConfigura
     Ok((cfg, output_path))
 }
 
+/// Check whether a config file looks like a **legacy** odd-box TOML config
+/// (V1/V2/V3) as opposed to a new-format cruma TOML config.
+pub fn looks_like_legacy_toml(path: &Path) -> bool {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    // YAML / YML files are never legacy TOML.
+    let is_yaml = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| matches!(e.to_ascii_lowercase().as_str(), "yaml" | "yml"))
+        .unwrap_or(false);
+    if is_yaml {
+        return false;
+    }
+
+    // Look for markers that only appear in legacy odd-box configs.
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        // Explicit version tag from V1/V2/V3 configs.
+        if trimmed.starts_with("version") && trimmed.contains('"') {
+            return true;
+        }
+        // Section headers unique to the legacy schema.
+        if trimmed == "[[hosted_process]]"
+            || trimmed == "[[remote_target]]"
+            || trimmed == "[[dir_server]]"
+            || trimmed.starts_with("[[hosted_process.") // e.g. [[hosted_process.backends]]
+            || trimmed.starts_with("[[remote_target.")
+        {
+            return true;
+        }
+        // Legacy top-level keys that don't exist in the new format.
+        if trimmed.starts_with("root_dir")
+            || trimmed.starts_with("port_range_start")
+            || trimmed.starts_with("hosted_process")
+            || trimmed.starts_with("remote_target")
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
 struct MigrationRender {
     content: String,
     source_format: &'static str,
@@ -531,7 +581,7 @@ args = []
     }
 
     #[test]
-    fn v3_root_dir_expanded_in_process_bin_and_dir() {
+    fn v3_root_dir_preserved_in_process_bin_and_dir() {
         let toml_input = r#"
 version = "V3"
 root_dir = "/srv/odd-box"
@@ -547,18 +597,20 @@ args = ["--config", "$root_dir/etc/app.toml"]
 "#;
         let cfg = migrate_from_str(toml_input).unwrap();
 
+        // root_dir is passed through to cruma so it can expand at load time
+        assert_eq!(cfg.root_dir.as_deref(), Some("/srv/odd-box"));
         assert_eq!(cfg.processes.len(), 1);
         let proc = &cfg.processes[0];
-        assert_eq!(proc.command, "/srv/odd-box/bin/my-server");
+        assert_eq!(proc.command, "$root_dir/bin/my-server");
         assert_eq!(
             proc.working_directory.as_deref(),
-            Some(std::path::Path::new("/srv/odd-box/apps/myapp"))
+            Some(std::path::Path::new("$root_dir/apps/myapp"))
         );
-        assert_eq!(proc.args, vec!["--config", "/srv/odd-box/etc/app.toml"]);
+        assert_eq!(proc.args, vec!["--config", "$root_dir/etc/app.toml"]);
     }
 
     #[test]
-    fn v3_root_dir_expanded_in_dir_server() {
+    fn v3_root_dir_preserved_in_dir_server() {
         let toml_input = r#"
 version = "V3"
 root_dir = "/srv/odd-box"
@@ -572,8 +624,9 @@ enable_directory_browsing = true
 "#;
         let cfg = migrate_from_str(toml_input).unwrap();
 
+        assert_eq!(cfg.root_dir.as_deref(), Some("/srv/odd-box"));
         assert_eq!(cfg.backends.len(), 1);
-        assert_eq!(cfg.backends[0].destination, "/srv/odd-box/static/docs");
+        assert_eq!(cfg.backends[0].destination, "$root_dir/static/docs");
     }
 
     #[test]
@@ -598,7 +651,7 @@ args = ["--port", "$port", "--bind", "0.0.0.0:$port"]
     }
 
     #[test]
-    fn v3_root_dir_expanded_in_env_vars() {
+    fn v3_root_dir_preserved_in_env_vars() {
         let toml_input = r#"
 version = "V3"
 root_dir = "/opt/apps"
@@ -617,14 +670,15 @@ env_vars = [
 "#;
         let cfg = migrate_from_str(toml_input).unwrap();
 
+        assert_eq!(cfg.root_dir.as_deref(), Some("/opt/apps"));
         assert_eq!(cfg.processes.len(), 1);
         let proc = &cfg.processes[0];
-        assert_eq!(proc.env.get("DATA_DIR").map(|s| s.as_str()), Some("/opt/apps/data"));
-        assert_eq!(proc.env.get("LOG_FILE").map(|s| s.as_str()), Some("/opt/apps/logs/app.log"));
+        assert_eq!(proc.env.get("DATA_DIR").map(|s| s.as_str()), Some("$root_dir/data"));
+        assert_eq!(proc.env.get("LOG_FILE").map(|s| s.as_str()), Some("$root_dir/logs/app.log"));
     }
 
     #[test]
-    fn v3_root_dir_expanded_in_global_env_vars() {
+    fn v3_root_dir_preserved_in_global_env_vars() {
         let toml_input = r#"
 version = "V3"
 root_dir = "/srv"
@@ -642,14 +696,14 @@ args = []
 "#;
         let cfg = migrate_from_str(toml_input).unwrap();
 
-        // Global env should have expanded $root_dir
-        assert_eq!(cfg.global_env.get("BASE").map(|s| s.as_str()), Some("/srv/shared"));
-        // Process inherits expanded global env
-        assert_eq!(cfg.processes[0].env.get("BASE").map(|s| s.as_str()), Some("/srv/shared"));
+        assert_eq!(cfg.root_dir.as_deref(), Some("/srv"));
+        // $root_dir is preserved for cruma to expand at load time
+        assert_eq!(cfg.global_env.get("BASE").map(|s| s.as_str()), Some("$root_dir/shared"));
+        assert_eq!(cfg.processes[0].env.get("BASE").map(|s| s.as_str()), Some("$root_dir/shared"));
     }
 
     #[test]
-    fn v3_no_root_dir_defaults_to_dot() {
+    fn v3_no_root_dir_means_no_root_dir_field() {
         let toml_input = r#"
 version = "V3"
 http_port = 8080
@@ -664,12 +718,13 @@ args = []
 "#;
         let cfg = migrate_from_str(toml_input).unwrap();
 
+        // When root_dir is unset in V3, cruma gets None and falls back to cwd
+        assert_eq!(cfg.root_dir, None);
         let proc = &cfg.processes[0];
-        // When root_dir is unset, $root_dir resolves to "."
-        assert_eq!(proc.command, "./bin/server");
+        assert_eq!(proc.command, "$root_dir/bin/server");
         assert_eq!(
             proc.working_directory.as_deref(),
-            Some(std::path::Path::new("./work"))
+            Some(std::path::Path::new("$root_dir/work"))
         );
     }
 
@@ -714,12 +769,13 @@ env_vars = [
 "#;
         let cfg = migrate_from_str(toml_input).unwrap();
 
+        assert_eq!(cfg.root_dir.as_deref(), Some("/srv"));
         let proc = &cfg.processes[0];
-        // $root_dir is expanded (V3-only), $port is left for cruma
-        assert_eq!(proc.command, "/srv/bin/app");
-        assert_eq!(proc.args, vec!["--dir", "/srv/data", "--port", "$port"]);
+        // Both $root_dir and $port are preserved for cruma to expand
+        assert_eq!(proc.command, "$root_dir/bin/app");
+        assert_eq!(proc.args, vec!["--dir", "$root_dir/data", "--port", "$port"]);
         assert_eq!(proc.env.get("LISTEN").map(|s| s.as_str()), Some("0.0.0.0:$port"));
-        assert_eq!(proc.env.get("STORAGE").map(|s| s.as_str()), Some("/srv/storage"));
+        assert_eq!(proc.env.get("STORAGE").map(|s| s.as_str()), Some("$root_dir/storage"));
     }
 
     #[test]
@@ -757,5 +813,53 @@ tls = true
         // tunnel_id / tunnel_secret should get serde defaults
         assert_eq!(cfg.tunnel_id, "ANON");
         assert_eq!(cfg.tunnel_secret, "ANON");
+    }
+
+    #[test]
+    fn v3_cfg_dir_preserved_in_migrated_output() {
+        // $cfg_dir must survive V3→cruma conversion unchanged so that
+        // cruma can expand it at process-spawn time.
+        let toml_input = r#"
+version = "V3"
+http_port = 8080
+tls_port = 4343
+port_range_start = 4200
+env_vars = [
+    { key = "GLOBAL_VAR", value = "$cfg_dir/shared" },
+]
+
+[[hosted_process]]
+host_name = "app.localhost"
+bin = "$cfg_dir/bin/server"
+dir = "$cfg_dir/work"
+args = ["--config", "$cfg_dir/etc/app.toml"]
+env_vars = [
+    { key = "DATA_DIR", value = "$cfg_dir/data" },
+]
+
+[[dir_server]]
+host_name = "docs.localhost"
+dir = "$cfg_dir/static/docs"
+"#;
+        let cfg = migrate_from_str(toml_input).unwrap();
+
+        let proc = &cfg.processes[0];
+        assert_eq!(proc.command, "$cfg_dir/bin/server",
+            "bin should preserve $cfg_dir");
+        assert_eq!(proc.working_directory.as_ref().map(|p| p.to_str().unwrap()),
+            Some("$cfg_dir/work"),
+            "dir should preserve $cfg_dir");
+        assert_eq!(proc.args, vec!["--config", "$cfg_dir/etc/app.toml"],
+            "args should preserve $cfg_dir");
+        assert_eq!(proc.env.get("DATA_DIR").map(|s| s.as_str()),
+            Some("$cfg_dir/data"),
+            "per-process env should preserve $cfg_dir");
+        assert_eq!(cfg.global_env.get("GLOBAL_VAR").map(|s| s.as_str()),
+            Some("$cfg_dir/shared"),
+            "global env should preserve $cfg_dir");
+
+        let dir_backend = cfg.backends.iter().find(|b| b.id == "docs.localhost").unwrap();
+        assert_eq!(dir_backend.destination, "$cfg_dir/static/docs",
+            "dir_server destination should preserve $cfg_dir");
     }
 }

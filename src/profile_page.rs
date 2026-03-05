@@ -74,6 +74,33 @@ impl ProfilePage {
     fn active_config_path(ctx: &CustomPageContext) -> Option<std::path::PathBuf> {
         ctx.app_runtime.proxy_config.load().config_path.clone()
     }
+
+    fn display_path(path: &std::path::Path) -> String {
+        let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| {
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(path))
+                    .unwrap_or_else(|_| path.to_path_buf())
+            }
+        });
+        let s = absolute.display().to_string();
+        if let Some(home) = dirs::home_dir() {
+            let home_str = home.display().to_string();
+            if let Some(rest) = s.strip_prefix(&home_str) {
+                return format!("~{rest}");
+            }
+        }
+        s
+    }
+
+    fn has_supported_config_extension(path: &std::path::Path) -> bool {
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| matches!(e.to_ascii_lowercase().as_str(), "yaml" | "yml" | "toml"))
+            .unwrap_or(false)
+    }
 }
 
 impl CustomPage for ProfilePage {
@@ -104,17 +131,7 @@ impl CustomPage for ProfilePage {
         // ── Header ───────────────────────────────────────────────────
         let active_label = active_path
             .as_deref()
-            .map(|p| {
-                // Try to abbreviate with ~ for home dir.
-                let s = p.display().to_string();
-                if let Some(home) = dirs::home_dir() {
-                    let home_str = home.display().to_string();
-                    if let Some(rest) = s.strip_prefix(&home_str) {
-                        return format!("~{rest}");
-                    }
-                }
-                s
-            })
+            .map(Self::display_path)
             .unwrap_or_else(|| "(none – select a profile below)".into());
 
         let header = column![
@@ -157,19 +174,7 @@ impl CustomPage for ProfilePage {
             let is_default = default_name == Some(entry.name.as_str());
 
             // Abbreviated path string.
-            let path_str = {
-                let s = entry.path.display().to_string();
-                if let Some(home) = dirs::home_dir() {
-                    let home_str = home.display().to_string();
-                    if let Some(rest) = s.strip_prefix(&home_str) {
-                        format!("~{rest}")
-                    } else {
-                        s
-                    }
-                } else {
-                    s
-                }
-            };
+            let path_str = Self::display_path(&entry.path);
 
             let status_indicator = if is_active {
                 text("● ").color(Color::from_rgb(0.2, 0.8, 0.4))
@@ -683,7 +688,8 @@ impl CustomPage for ProfilePage {
                     return cruma::iced::Task::none();
                 };
                 let name = name.trim().to_string();
-                let path = std::path::PathBuf::from(path_str.trim());
+                let mut path = std::path::PathBuf::from(path_str.trim());
+                let mut migrated_from_legacy = false;
 
                 if name.is_empty() {
                     self.status = "Profile name cannot be empty".into();
@@ -693,17 +699,65 @@ impl CustomPage for ProfilePage {
                     self.status = format!("File not found: {}", path.display());
                     return cruma::iced::Task::none();
                 }
+                if !path.is_file() {
+                    self.status = format!("Not a file: {}", path.display());
+                    return cruma::iced::Task::none();
+                }
+                if !Self::has_supported_config_extension(&path) {
+                    self.status = "Config file must use .yaml, .yml, or .toml".into();
+                    return cruma::iced::Task::none();
+                }
+
+                match cruma::config::load_config_from_path(&path) {
+                    Ok(_) => {}
+                    Err(_load_err)
+                        if crate::migrate::looks_like_legacy_toml(&path)
+                            && path
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .map(|e| e.eq_ignore_ascii_case("toml"))
+                                .unwrap_or(false) =>
+                    {
+                        match crate::migrate::auto_migrate(&path.to_string_lossy()) {
+                            Ok((_cfg, new_path)) => {
+                                path = new_path;
+                                migrated_from_legacy = true;
+                            }
+                            Err(e) => {
+                                self.status =
+                                    format!("Failed to auto-migrate '{}': {e}", path.display());
+                                return cruma::iced::Task::none();
+                            }
+                        }
+                    }
+                    Err(load_err) => {
+                        self.status = format!(
+                            "Invalid config '{}': {load_err}",
+                            path.display()
+                        );
+                        return cruma::iced::Task::none();
+                    }
+                }
+
                 if self.profiles.profiles.iter().any(|e| e.name == name) {
                     self.status = format!("Profile '{name}' already exists");
                     return cruma::iced::Task::none();
                 }
+                let stored_path = path.clone();
                 self.profiles.profiles.push(ProfileEntry {
                     name: name.clone(),
-                    path,
+                    path: stored_path,
                 });
                 match save_profiles(&self.profiles) {
                     Ok(()) => {
-                        self.status = format!("Added profile '{name}'");
+                        self.status = if migrated_from_legacy {
+                            format!(
+                                "Added profile '{name}' (auto-migrated to '{}')",
+                                path.display()
+                            )
+                        } else {
+                            format!("Added profile '{name}'")
+                        };
                         self.add_name.clear();
                         self.add_path.clear();
                     }
@@ -805,8 +859,7 @@ impl CustomPage for ProfilePage {
             ACTION_BROWSE => {
                 if let Some(path) = rfd::FileDialog::new()
                     .set_title("Select odd-box config file")
-                    .add_filter("Config files", &["yaml", "yml", "toml", "json"])
-                    .add_filter("All files", &["*"])
+                    .add_filter("Supported config files", &["yaml", "yml", "toml"])
                     .pick_file()
                 {
                     self.add_path = path.display().to_string();

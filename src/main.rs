@@ -243,7 +243,7 @@ fn main() -> Result<()> {
         // it to the current format, back up the original, and continue.
         let result = match load_config_from_path(std::path::Path::new(&config_path)) {
             Ok(cfg) => Ok((cfg, config_path.clone())),
-            Err(load_err) if looks_like_legacy_toml(&config_path) => {
+            Err(load_err) if migrate::looks_like_legacy_toml(std::path::Path::new(&config_path)) => {
                 let (cfg, new_path) = migrate::auto_migrate(&config_path)?;
                 let new_path_str = new_path.to_string_lossy().into_owned();
                 Ok((cfg, new_path_str))
@@ -583,57 +583,6 @@ fn init_config() -> Result<()> {
     println!("  1. Edit {target} to add your backends, processes, and frontends");
     println!("  2. Run `odd-box` to start the proxy");
     Ok(())
-}
-
-/// Check whether a config file looks like a **legacy** odd-box TOML config
-/// (V1/V2/V3) as opposed to a new-format cruma TOML config.
-///
-/// The distinction matters because `.toml` files now also serve as a valid
-/// config format for the current cruma schema.  We look for telltale
-/// legacy markers (`version = "V…"`, `[[hosted_process]]`, etc.) so that
-/// new-format TOML files are loaded directly by cruma and only genuine
-/// legacy files go through the auto-migration path.
-fn looks_like_legacy_toml(path: &str) -> bool {
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-
-    // YAML / YML files are never legacy TOML.
-    if path.ends_with(".yaml") || path.ends_with(".yml") {
-        return false;
-    }
-
-    // Look for markers that only appear in legacy odd-box configs.
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        // Explicit version tag from V1/V2/V3 configs.
-        if trimmed.starts_with("version") && trimmed.contains('"') {
-            return true;
-        }
-        // Section headers unique to the legacy schema.
-        if trimmed == "[[hosted_process]]"
-            || trimmed == "[[remote_target]]"
-            || trimmed == "[[dir_server]]"
-            || trimmed.starts_with("[[hosted_process.") // e.g. [[hosted_process.backends]]
-            || trimmed.starts_with("[[remote_target.")
-        {
-            return true;
-        }
-        // Legacy top-level keys that don't exist in the new format.
-        if trimmed.starts_with("root_dir")
-            || trimmed.starts_with("port_range_start")
-            || trimmed.starts_with("hosted_process")
-            || trimmed.starts_with("remote_target")
-        {
-            return true;
-        }
-    }
-
-    false
 }
 
 /// Detect whether we are running in an environment without a display.
