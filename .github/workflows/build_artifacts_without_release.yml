@@ -102,6 +102,14 @@ jobs:
           cargo build --release --target ${{ matrix.target }}
           Move-Item "target/${{ matrix.target }}/release/odd-box.exe" "${{ matrix.artifact_name }}"
 
+      - name: Verify Windows artifact
+        if: matrix.build_method == 'cargo_windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${{ matrix.artifact_name }}")) {
+            throw "expected artifact not found: ${{ matrix.artifact_name }}"
+          }
+
       # ── macOS x86_64 raw binary ──────────────────────────────────────────────
       - name: Build macOS raw binary (Intel)
         if: matrix.build_method == 'cargo_macos'

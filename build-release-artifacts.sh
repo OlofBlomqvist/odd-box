@@ -6,11 +6,13 @@ set -euo pipefail
 # Default artifacts mirror current CI/release outputs:
 #   odd-box-x86_64-unknown-linux-musl
 #   odd-box-aarch64-unknown-linux-musl
+#   odd-box-x86_64-pc-windows-msvc.exe
 #   odd-box-x86_64-apple-darwin
 #   odd-box-aarch64-apple-darwin.dmg
 #
 # Optional:
 #   odd-box-x86_64-unknown-linux-gnu
+#   odd-box-x86_64-pc-windows-gnu.exe
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
@@ -39,6 +41,8 @@ ALL_TARGETS=(
   "x86_64-unknown-linux-gnu"
   "x86_64-unknown-linux-musl"
   "aarch64-unknown-linux-musl"
+  "x86_64-pc-windows-msvc"
+  "x86_64-pc-windows-gnu"
   "x86_64-apple-darwin"
   "aarch64-apple-darwin-dmg"
 )
@@ -46,6 +50,7 @@ ALL_TARGETS=(
 DEFAULT_TARGETS=(
   "x86_64-unknown-linux-musl"
   "aarch64-unknown-linux-musl"
+  "x86_64-pc-windows-msvc"
   "x86_64-apple-darwin"
   "aarch64-apple-darwin-dmg"
 )
@@ -62,6 +67,8 @@ Supported target names:
   linux-gnu, linux-x86_64-gnu, x86_64-unknown-linux-gnu
   linux-musl, linux-x86_64-musl, x86_64-unknown-linux-musl
   linux-musl-arm64, linux-aarch64-musl, aarch64-unknown-linux-musl
+  windows-msvc, windows-x86_64-msvc, x86_64-pc-windows-msvc
+  windows-gnu, windows-x86_64-gnu, x86_64-pc-windows-gnu
   macos-x86_64, darwin-x86_64, x86_64-apple-darwin
   macos-arm64-dmg, darwin-arm64-dmg, aarch64-apple-darwin-dmg
   macos, linux-musl-all, release, all
@@ -85,6 +92,12 @@ normalize_target() {
     linux-musl-arm64|linux-aarch64-musl|aarch64-unknown-linux-musl)
       echo "aarch64-unknown-linux-musl"
       ;;
+    windows-msvc|windows-x86_64-msvc|x86_64-pc-windows-msvc)
+      echo "x86_64-pc-windows-msvc"
+      ;;
+    windows-gnu|windows-x86_64-gnu|x86_64-pc-windows-gnu)
+      echo "x86_64-pc-windows-gnu"
+      ;;
     macos-x86_64|darwin-x86_64|x86_64-apple-darwin)
       echo "x86_64-apple-darwin"
       ;;
@@ -98,7 +111,7 @@ normalize_target() {
       echo "x86_64-unknown-linux-musl,aarch64-unknown-linux-musl"
       ;;
     release)
-      echo "x86_64-unknown-linux-musl,aarch64-unknown-linux-musl,x86_64-apple-darwin,aarch64-apple-darwin-dmg"
+      echo "x86_64-unknown-linux-musl,aarch64-unknown-linux-musl,x86_64-pc-windows-msvc,x86_64-apple-darwin,aarch64-apple-darwin-dmg"
       ;;
     all)
       echo "all"
@@ -233,10 +246,20 @@ release_name_for_target() {
     x86_64-unknown-linux-gnu) echo "odd-box-x86_64-unknown-linux-gnu" ;;
     x86_64-unknown-linux-musl) echo "odd-box-x86_64-unknown-linux-musl" ;;
     aarch64-unknown-linux-musl) echo "odd-box-aarch64-unknown-linux-musl" ;;
+    x86_64-pc-windows-msvc) echo "odd-box-x86_64-pc-windows-msvc.exe" ;;
+    x86_64-pc-windows-gnu) echo "odd-box-x86_64-pc-windows-gnu.exe" ;;
     x86_64-apple-darwin) echo "odd-box-x86_64-apple-darwin" ;;
     aarch64-apple-darwin-dmg) echo "odd-box-aarch64-apple-darwin.dmg" ;;
     *) return 1 ;;
   esac
+}
+
+has_cargo_xwin() {
+  command -v cargo-xwin >/dev/null 2>&1
+}
+
+has_mingw_linker() {
+  command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1
 }
 
 can_build_target_on_host() {
@@ -244,6 +267,12 @@ can_build_target_on_host() {
   case "${target}" in
     x86_64-unknown-linux-gnu)
       [[ "${host_os}" == "linux" ]]
+      ;;
+    x86_64-pc-windows-msvc)
+      [[ "${host_os}" == mingw* || "${host_os}" == msys* || "${host_os}" == cygwin* ]] || has_cargo_xwin
+      ;;
+    x86_64-pc-windows-gnu)
+      [[ "${host_os}" == mingw* || "${host_os}" == msys* || "${host_os}" == cygwin* ]] || has_mingw_linker
       ;;
     x86_64-apple-darwin)
       [[ "${host_os}" == "darwin" ]]
@@ -346,7 +375,13 @@ build_target() {
   fi
 
   if ! can_build_target_on_host "${target}"; then
-    echo "[skip] ${target} (unsupported on host ${host_os}/${host_arch})"
+    if [[ "${target}" == "x86_64-pc-windows-msvc" ]]; then
+      echo "[skip] ${target} (requires Windows host or cargo-xwin for cross-build on ${host_os}/${host_arch})"
+    elif [[ "${target}" == "x86_64-pc-windows-gnu" ]]; then
+      echo "[skip] ${target} (requires Windows host or x86_64-w64-mingw32-gcc for cross-build on ${host_os}/${host_arch})"
+    else
+      echo "[skip] ${target} (unsupported on host ${host_os}/${host_arch})"
+    fi
     return
   fi
 
@@ -365,10 +400,23 @@ build_target() {
       require_command cargo
       require_command rustup
       rustup target add "${target}" >/dev/null
-      cargo build --release --target "${target}"
+      if [[ "${target}" == "x86_64-pc-windows-msvc" && "${host_os}" != mingw* && "${host_os}" != msys* && "${host_os}" != cygwin* ]]; then
+        if has_cargo_xwin; then
+          cargo xwin build --release --target "${target}"
+        else
+          echo "error: cargo-xwin not found; cannot build ${target} on ${host_os}/${host_arch}" >&2
+          exit 1
+        fi
+      else
+        cargo build --release --target "${target}"
+      fi
       mkdir -p "${OUT_DIR}"
-      cp "${SCRIPT_DIR}/target/${target}/release/odd-box" "${final_path}"
-      chmod +x "${final_path}" || true
+      if [[ "${target}" == "x86_64-pc-windows-msvc" || "${target}" == "x86_64-pc-windows-gnu" ]]; then
+        cp "${SCRIPT_DIR}/target/${target}/release/odd-box.exe" "${final_path}"
+      else
+        cp "${SCRIPT_DIR}/target/${target}/release/odd-box" "${final_path}"
+        chmod +x "${final_path}" || true
+      fi
       ;;
   esac
 }
