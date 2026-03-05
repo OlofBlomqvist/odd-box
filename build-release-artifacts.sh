@@ -20,7 +20,14 @@ if [[ -d "${CARGO_BIN_DIR}" && ":$PATH:" != *":${CARGO_BIN_DIR}:"* ]]; then
   export PATH="${CARGO_BIN_DIR}:$PATH"
 fi
 
-VERSION="$(sed -n 's/^version\s*=\s*"\(.*\)"/\1/p' Cargo.toml | head -1)"
+VERSION="$(
+  awk -F'"' '/^version[[:space:]]*=/ {print $2; exit}' Cargo.toml
+)"
+if [[ -z "${VERSION}" ]]; then
+  VERSION="$(
+    awk -F"'" '/^version[[:space:]]*=/ {print $2; exit}' Cargo.toml
+  )"
+fi
 if [[ -z "${VERSION}" ]]; then
   echo "error: failed to read version from Cargo.toml" >&2
   exit 1
@@ -296,19 +303,24 @@ IGNORE
   }
   trap cleanup_docker_build EXIT
 
-  local platform_arg=()
   if [[ "${target}" == "aarch64-unknown-linux-musl" ]]; then
-    platform_arg=(--platform linux/arm64)
+    DOCKER_BUILDKIT=1 docker build \
+      --platform linux/arm64 \
+      --file Dockerfile.build \
+      --build-context "cruma-sdk=${cruma_sdk_real}" \
+      --build-arg "RUST_TARGET=${target}" \
+      --target export \
+      --output "type=local,dest=${docker_out}" \
+      .
+  else
+    DOCKER_BUILDKIT=1 docker build \
+      --file Dockerfile.build \
+      --build-context "cruma-sdk=${cruma_sdk_real}" \
+      --build-arg "RUST_TARGET=${target}" \
+      --target export \
+      --output "type=local,dest=${docker_out}" \
+      .
   fi
-
-  DOCKER_BUILDKIT=1 docker build \
-    "${platform_arg[@]}" \
-    --file Dockerfile.build \
-    --build-context "cruma-sdk=${cruma_sdk_real}" \
-    --build-arg "RUST_TARGET=${target}" \
-    --target export \
-    --output "type=local,dest=${docker_out}" \
-    .
 
   mkdir -p "$(dirname "${output_path}")"
   mv "${docker_out}/odd-box" "${output_path}"
