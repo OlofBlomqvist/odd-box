@@ -276,6 +276,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
             frontends.push(FrontendDefinition {
                 hostname: HostName(proc.host_name.clone()),
                 backend_id: None,
+                path_routes: vec![],
                 process_id: Some(process_id.clone()),
                 listener_kinds: None,
                 form_auth: None,
@@ -292,6 +293,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
                 frontends.push(FrontendDefinition {
                     hostname: HostName(format!("*.{}", proc.host_name)),
                     backend_id: None,
+                    path_routes: vec![],
                     process_id: Some(process_id),
                     listener_kinds: None,
                     form_auth: None,
@@ -359,6 +361,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
             frontends.push(FrontendDefinition {
                 hostname: HostName(remote.host_name.clone()),
                 backend_id: Some(backend_id.clone()),
+                path_routes: vec![],
                 process_id: None,
                 listener_kinds: None,
                 form_auth: None,
@@ -374,6 +377,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
                 frontends.push(FrontendDefinition {
                     hostname: HostName(format!("*.{}", remote.host_name)),
                     backend_id: Some(backend_id),
+                    path_routes: vec![],
                     process_id: None,
                     listener_kinds: None,
                     form_auth: None,
@@ -410,6 +414,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
             frontends.push(FrontendDefinition {
                 hostname: HostName(dir.host_name.clone()),
                 backend_id: Some(backend_id.clone()),
+                path_routes: vec![],
                 process_id: None,
                 listener_kinds: None,
                 form_auth: None,
@@ -425,6 +430,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
                 frontends.push(FrontendDefinition {
                     hostname: HostName(format!("*.{}", dir.host_name)),
                     backend_id: Some(backend_id),
+                    path_routes: vec![],
                     process_id: None,
                     listener_kinds: None,
                     form_auth: None,

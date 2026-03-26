@@ -1410,7 +1410,7 @@ dependencies = [
 
 [[package]]
 name = "cruma"
-version = "1.0.0-RC1"
+version = "1.0.0-RC2"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1469,11 +1469,11 @@ dependencies = [
 
 [[package]]
 name = "cruma-local-service-scan"
-version = "1.0.0-RC1"
+version = "1.0.0-RC2"
 
 [[package]]
 name = "cruma-proc-host"
-version = "1.0.0-RC1"
+version = "1.0.0-RC2"
 dependencies = [
  "arc-swap",
  "cruma-ring-log",
@@ -1552,7 +1552,7 @@ dependencies = [
 
 [[package]]
 name = "cruma-ring-log"
-version = "1.0.0-RC1"
+version = "1.0.0-RC2"
 dependencies = [
  "arc-swap",
  "tokio",
@@ -1560,7 +1560,7 @@ dependencies = [
 
 [[package]]
 name = "cruma-tunnels-lib"
-version = "1.0.0-RC1"
+version = "1.0.0-RC2"
 dependencies = [
  "anyhow",
  "arc-swap",
