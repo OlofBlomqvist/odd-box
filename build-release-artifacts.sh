@@ -247,6 +247,42 @@ require_command() {
   }
 }
 
+dockerignore_excludes_path() {
+  local dockerignore_path="$1"
+  local path_name="$2"
+
+  if [[ ! -f "${dockerignore_path}" ]]; then
+    return 1
+  fi
+
+  grep -Eq "^[[:space:]]*(${path_name}|${path_name}/|${path_name}/\\*\\*|\\*\\*/${path_name}|\\*\\*/${path_name}/|\\*\\*/${path_name}/\\*\\*)[[:space:]]*$" "${dockerignore_path}"
+}
+
+warn_if_large_cruma_paths_not_ignored() {
+  local cruma_sdk_real="$1"
+  local cruma_ignore="$2"
+  local missing=()
+  local path_name size
+
+  for path_name in target target-cross .git; do
+    if dockerignore_excludes_path "${cruma_ignore}" "${path_name}"; then
+      continue
+    fi
+
+    if [[ -e "${cruma_sdk_real}/${path_name}" ]]; then
+      size="$(du -sh "${cruma_sdk_real}/${path_name}" 2>/dev/null | cut -f1 || true)"
+      missing+=("${path_name}${size:+ (${size})}")
+    fi
+  done
+
+  if [[ ${#missing[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  echo "warning: ${cruma_ignore} does not clearly exclude large Docker context paths: ${missing[*]}" >&2
+  echo "warning: add explicit root entries like 'target', 'target/**', 'target-cross', 'target-cross/**', '.git', '.git/**'" >&2
+}
+
 release_name_for_target() {
   case "$1" in
     x86_64-unknown-linux-gnu) echo "odd-box-x86_64-unknown-linux-gnu" ;;
@@ -330,6 +366,8 @@ odd-box
 IGNORE
     cruma_ignore_created=1
   fi
+
+  warn_if_large_cruma_paths_not_ignored "${cruma_sdk_real}" "${cruma_ignore}"
 
   local docker_out="${SCRIPT_DIR}/target/_docker_out_${target}"
   rm -rf "${docker_out}"

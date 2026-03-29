@@ -1,4 +1,5 @@
-target/
+**/target
+target-cross
 .git/
 .gitignore
 Dockerfile
