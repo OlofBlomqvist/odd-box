@@ -335,6 +335,41 @@ can_build_target_on_host() {
   esac
 }
 
+cleanup_docker_build() {
+  local cruma_ignore_path="$1"
+  local docker_out_path="$2"
+  local cruma_ignore_was_created="$3"
+
+  if [[ "${cruma_ignore_was_created}" -eq 1 && -f "${cruma_ignore_path}" ]]; then
+    rm -f "${cruma_ignore_path}"
+  fi
+  rm -rf "${docker_out_path}"
+}
+
+docker_supports_platform() {
+  local platform="$1"
+  local info
+
+  if ! info="$(docker version --format '{{json .Server.Arch}} {{json .Server.Os}}' 2>/dev/null)" || [[ -z "${info}" ]]; then
+    return 1
+  fi
+
+  case "${platform}" in
+    linux/amd64)
+      [[ "${info}" == *'"amd64"'* && "${info}" == *'"linux"'* ]]
+      ;;
+    linux/arm64)
+      if [[ "${info}" == *'"arm64"'* && "${info}" == *'"linux"'* ]]; then
+        return 0
+      fi
+      docker buildx inspect 2>/dev/null | grep -Eq 'Platforms:.*linux/arm64'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 build_linux_musl_with_docker() {
   local target="$1"
   local output_path="$2"
@@ -371,16 +406,19 @@ IGNORE
 
   local docker_out="${SCRIPT_DIR}/target/_docker_out_${target}"
   rm -rf "${docker_out}"
-
-  cleanup_docker_build() {
-    if [[ ${cruma_ignore_created} -eq 1 && -f "${cruma_ignore}" ]]; then
-      rm -f "${cruma_ignore}"
-    fi
-    rm -rf "${docker_out}"
-  }
-  trap cleanup_docker_build EXIT
+  trap 'cleanup_docker_build "$cruma_ignore" "$docker_out" "$cruma_ignore_created"' EXIT
 
   if [[ "${target}" == "aarch64-unknown-linux-musl" ]]; then
+    if ! docker_supports_platform "linux/arm64"; then
+      echo "error: Docker on this host is not ready to run linux/arm64 build steps." >&2
+      echo "error: building ${target} from $(uname -s)/$(uname -m) requires arm64 support via Docker Desktop or binfmt/QEMU." >&2
+      echo "error: verify 'docker buildx inspect --bootstrap' reports linux/arm64 in Platforms, then retry." >&2
+      echo "error: on a typical Linux Docker host you can enable it with:" >&2
+      echo "error:   docker run --privileged --rm tonistiigi/binfmt --install arm64" >&2
+      echo "error:   docker buildx inspect --bootstrap" >&2
+      exit 1
+    fi
+
     DOCKER_BUILDKIT=1 docker build \
       --platform linux/arm64 \
       --file Dockerfile.build \
@@ -408,7 +446,7 @@ IGNORE
   fi
 
   trap - EXIT
-  cleanup_docker_build
+  cleanup_docker_build "${cruma_ignore}" "${docker_out}" "${cruma_ignore_created}"
 }
 
 build_target() {
