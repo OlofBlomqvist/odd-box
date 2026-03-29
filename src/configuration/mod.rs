@@ -264,11 +264,11 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
                 working_directory: proc.dir.as_ref().map(|d| d.into()),
                 env: proc_env,
                 auto_start: proc.auto_start.unwrap_or(auto_start_global),
-                start_on_request: false,
+                start_on_request: true, // keep legacy behavior
                 restart_policy: ProcessRestartPolicy::Never,
                 upstream_protocol,
                 upstream_tls: proc.https.unwrap_or(false),
-                backend_timeout_seconds: None,
+                backend_timeout_seconds: Some(60), // legacy behavior was unlimited while new default using None is 10 sec. lets do 1min at least
                 idle_timeout_seconds: None,
             });
 

@@ -212,7 +212,7 @@ fn main() -> Result<()> {
                 Page::Requests,
                 Page::Certificates,
                 Page::Observations,
-                Page::Notices
+                Page::Notices,
             ],
             theme,
             default_dashboard_view_mode: DashboardViewMode::Classic,
@@ -222,9 +222,7 @@ fn main() -> Result<()> {
             })),
             linux_application_id: Some("odd-box".into()),
             notification_app_name: Some("odd-box".into()),
-            custom_pages: vec![
-                Box::new(profile_page::ProfilePage::new(saved_profiles)),
-            ],
+            custom_pages: vec![Box::new(profile_page::ProfilePage::new(saved_profiles))],
             on_bootstrap: Some(Box::new(register_oddbox_resolver)),
             initial_page: initial_gui_page,
         };
@@ -287,9 +285,12 @@ fn register_oddbox_resolver(runtime: &Arc<ApplicationRuntime>) {
     let process_host = Arc::new(DefaultProcessHost::with_orchestrator(
         runtime.process_host.orchestrator().clone(),
     ));
+    let runtime_for_resolver = runtime.clone();
+    let source_listeners = runtime.source_listeners.clone();
 
     let resolver: DynamicBackendResolver = Arc::new(move |ctx| {
         let process_host = process_host.clone();
+        let runtime = runtime_for_resolver.clone();
         Box::pin(async move {
             // Only allow from the loopback adapter.
             if !ctx.client_addr.ip().is_loopback() {
@@ -305,13 +306,97 @@ fn register_oddbox_resolver(runtime: &Arc<ApplicationRuntime>) {
                 .and_then(|q| q.split('&').find_map(|pair| pair.strip_prefix("proc=")))
                 .map(|s| s.to_string());
 
-            let Some(name) = proc_name else {
+            let Some(mut name) = proc_name else {
+                let config = runtime.proxy_config.load();
+                let orchestrator = process_host.orchestrator();
+                let mut stopped = 0usize;
+                let mut failed = 0usize;
+
+                for def in config.processes.iter() {
+                    let Some(host) = orchestrator.find_host(&def.id) else {
+                        continue;
+                    };
+
+                    if !host.status().running {
+                        continue;
+                    }
+
+                    match process_host.stop_process(&def.id) {
+                        Ok(()) => {
+                            stopped += 1;
+                        }
+                        Err(err) => {
+                            tracing::error!(
+                                process_id = %def.id,
+                                error = %err,
+                                "Failed to stop hosted process from /STOP"
+                            );
+                            failed += 1;
+                        }
+                    }
+                }
+
+                let body = if failed > 0 {
+                    format!("stopped {stopped} process(es), {failed} failed")
+                } else {
+                    format!("stopped {stopped} process(es)")
+                };
+
                 return Ok(Some(Arc::new(ResolvedBackend::Target(Target::Respond {
-                    status: 400,
-                    body: Some(b"missing ?proc= parameter".to_vec()),
+                    status: 200,
+                    body: Some(body.into_bytes()),
                     content_type: Some("text/plain".into()),
                 }))));
             };
+
+            if !name.is_empty() {
+                // build candidate names: the original, plus a dot-to-dash variant if applicable
+                let mut candidates = vec![name.clone()];
+                if name.contains('.') {
+                    candidates.push(name.replace('.', "-"));
+                }
+
+                let mut resolved: Option<String> = None;
+                if let Ok(procs) = process_host.list_processes() {
+                    for candidate in &candidates {
+                        if procs.iter().any(|p| p.id == *candidate) {
+                            resolved = Some(candidate.clone());
+                            break;
+                        }
+                        let prefix_matches: Vec<_> = procs
+                            .iter()
+                            .filter(|p| p.id.starts_with(candidate.as_str()))
+                            .collect();
+                        if prefix_matches.len() == 1 {
+                            resolved = Some(prefix_matches[0].id.clone());
+                            break;
+                        }
+                    }
+                }
+
+                match resolved {
+                    Some(new_name) if new_name != name => {
+                        tracing::debug!(
+                            "overriding proc stop target as there is a single match: {} --> {}",
+                            name,
+                            new_name
+                        );
+                        name = new_name;
+                    }
+                    Some(_) => { /* exact match on original name, nothing to override */ }
+                    None => {
+                        let tried = candidates.join("' or '");
+                        tracing::debug!(
+                            "The /STOP command failed because there is no process matching '{tried}' exactly or as a prefix.",
+                        );
+                        return Ok(Some(Arc::new(ResolvedBackend::Target(Target::Respond {
+                            status: 500,
+                            body: Some(format!("The /STOP command failed because there is no process matching '{tried}' exactly or as a prefix.").into_bytes()),
+                            content_type: Some("text/plain".into()),
+                        }))));
+                    }
+                }
+            }
 
             match process_host.stop_process(&name) {
                 Ok(()) => Ok(Some(Arc::new(ResolvedBackend::Target(Target::Respond {
@@ -328,12 +413,51 @@ fn register_oddbox_resolver(runtime: &Arc<ApplicationRuntime>) {
         })
     });
 
-    // Register the resolver into the live proxy configuration.
-    let cfg_handle = &runtime.proxy_configuration;
-    let mut cfg = cfg_handle.load().as_ref().clone();
-    cfg.dynamic_backend_resolvers
-        .insert(DynamicBackendId::from("odd-box"), resolver);
-    cfg_handle.store(Arc::new(cfg));
+    runtime.register_proxy_config_mutator(Arc::new(move |cfg| {
+        cfg.dynamic_backend_resolvers
+            .insert(DynamicBackendId::from("odd-box"), resolver.clone());
+        inject_local_stop_routes(cfg, &source_listeners.load());
+    }));
+}
+
+fn inject_local_stop_routes(
+    cfg: &mut cruma::cruma_proxy_lib::types::Configuration,
+    _source_listeners: &[cruma::config::ListenerDefinition],
+) {
+    const STOP_ROUTE_NAME: &str = "odd-box-stop-hook";
+
+    let stop_route = || cruma::cruma_proxy_lib::types::HttpRoute {
+        name: STOP_ROUTE_NAME.to_string(),
+        priority: 10_000,
+        filter: cruma::cruma_proxy_lib::types::HttpMatch::HostAndPath {
+            hosts: vec![
+                cruma::cruma_proxy_lib::types::HostPattern::Exact {
+                    value: "localhost".to_string(),
+                },
+                cruma::cruma_proxy_lib::types::HostPattern::Ip {
+                    addr: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                },
+                cruma::cruma_proxy_lib::types::HostPattern::Ip {
+                    addr: std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
+                },
+            ],
+            prefixes: vec!["/STOP".to_string()],
+        },
+        middlewares: Vec::new(),
+        target: cruma::cruma_proxy_lib::types::Target::DynamicBackend {
+            resolver: cruma::cruma_proxy_lib::types::DynamicBackendId::from("odd-box"),
+        },
+    };
+
+    for built_listener in &mut cfg.listeners {
+        if let cruma::cruma_proxy_lib::types::Listener::Http(http_listener) = built_listener {
+            http_listener
+                .routes
+                .0
+                .retain(|route| route.name != STOP_ROUTE_NAME);
+            http_listener.routes.0.insert(0, stop_route());
+        }
+    }
 }
 
 fn parse_cli() -> Result<TunnelCli> {
@@ -389,7 +513,9 @@ fn reject_unsupported_cli_surface(args: &[std::ffi::OsString]) -> Result<()> {
         bail!("`--generate-completions` is not supported by odd-box.");
     }
 
-    if raw.get(1) == Some(&"config") || (raw.get(1) == Some(&"help") && raw.get(2) == Some(&"config")) {
+    if raw.get(1) == Some(&"config")
+        || (raw.get(1) == Some(&"help") && raw.get(2) == Some(&"config"))
+    {
         bail!("`odd-box config ...` is not supported.");
     }
 
@@ -423,11 +549,14 @@ fn cli_protocol(cli: &TunnelCli) -> cruma::config::Protocol {
 fn load_runtime_config(
     cli: &TunnelCli,
     want_gui: bool,
-) -> Result<(TunnelCliConfiguration, String, Option<String>, profiles::ProfilesConfig)> {
+) -> Result<(
+    TunnelCliConfiguration,
+    String,
+    Option<String>,
+    profiles::ProfilesConfig,
+)> {
     match &cli.command {
-        Some(TunnelCliCmd::Start(start_cmd)) => {
-            load_start_config(start_cmd, want_gui)
-        }
+        Some(TunnelCliCmd::Start(start_cmd)) => load_start_config(start_cmd, want_gui),
         Some(TunnelCliCmd::Proxy(_)) | Some(TunnelCliCmd::Serve(_)) => {
             let config = TunnelCliConfiguration::new(cli)?;
             let config_path = config
@@ -444,7 +573,12 @@ fn load_runtime_config(
 fn load_start_config(
     start_cmd: &StartCmd,
     want_gui: bool,
-) -> Result<(TunnelCliConfiguration, String, Option<String>, profiles::ProfilesConfig)> {
+) -> Result<(
+    TunnelCliConfiguration,
+    String,
+    Option<String>,
+    profiles::ProfilesConfig,
+)> {
     let explicit_config = start_cmd
         .path
         .as_ref()
@@ -477,7 +611,11 @@ fn load_start_config(
             resolved_config_path = Some(terminal_profile_picker(&saved_profiles)?);
         }
     } else if let Some(default_name) = &saved_profiles.default_profile.clone() {
-        match saved_profiles.profiles.iter().find(|e| &e.name == default_name) {
+        match saved_profiles
+            .profiles
+            .iter()
+            .find(|e| &e.name == default_name)
+        {
             Some(entry) => {
                 resolved_config_path = Some(entry.path.to_string_lossy().into_owned());
             }
@@ -500,14 +638,16 @@ fn load_start_config(
     let (config, config_path_for_runtime) = if let Some(config_path) = resolved_config_path {
         let result = match load_config_from_path(std::path::Path::new(&config_path)) {
             Ok(cfg) => Ok((cfg, config_path.clone())),
-            Err(_load_err) if migrate::looks_like_legacy_toml(std::path::Path::new(&config_path)) => {
+            Err(_load_err)
+                if migrate::looks_like_legacy_toml(std::path::Path::new(&config_path)) =>
+            {
                 let (cfg, new_path) = migrate::auto_migrate(&config_path)?;
                 let new_path_str = new_path.to_string_lossy().into_owned();
                 Ok((cfg, new_path_str))
             }
-            Err(load_err) if explicit => Err(load_err.context(format!(
-                "failed to load config from '{config_path}'"
-            ))),
+            Err(load_err) if explicit => {
+                Err(load_err.context(format!("failed to load config from '{config_path}'")))
+            }
             Err(load_err) => Err(load_err.into()),
         };
         result?
@@ -517,7 +657,12 @@ fn load_start_config(
         (stub, String::new())
     };
 
-    Ok((config, config_path_for_runtime, initial_gui_page, saved_profiles))
+    Ok((
+        config,
+        config_path_for_runtime,
+        initial_gui_page,
+        saved_profiles,
+    ))
 }
 
 /// Search for a config file in the current directory.
@@ -741,7 +886,13 @@ fn terminal_profile_picker(saved: &profiles::ProfilesConfig) -> Result<String> {
         } else {
             ""
         };
-        eprintln!("  {}. {}  {}{}", i + 1, entry.name, entry.path.display(), marker);
+        eprintln!(
+            "  {}. {}  {}{}",
+            i + 1,
+            entry.name,
+            entry.path.display(),
+            marker
+        );
     }
 
     let default_idx = default_name
@@ -778,13 +929,13 @@ fn terminal_profile_picker(saved: &profiles::ProfilesConfig) -> Result<String> {
             .parse::<usize>()
             .map_err(|_| anyhow::anyhow!("Invalid selection: '{line}'"))?;
         if n == 0 || n > saved.profiles.len() {
-            anyhow::bail!(
-                "Selection {n} out of range (1–{})",
-                saved.profiles.len()
-            );
+            anyhow::bail!("Selection {n} out of range (1–{})", saved.profiles.len());
         }
         n - 1
     };
 
-    Ok(saved.profiles[chosen_index].path.to_string_lossy().into_owned())
+    Ok(saved.profiles[chosen_index]
+        .path
+        .to_string_lossy()
+        .into_owned())
 }
