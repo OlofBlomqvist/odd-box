@@ -4,9 +4,11 @@ mod profile_page;
 mod profiles;
 
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches};
 use cruma::bootstrap::{ApplicationRuntime, BootstrapOptions};
-use cruma::config::{TunnelCliConfiguration, load_config_from_path};
+use cruma::config::{
+    ProxyCmd, StartCmd, TunnelCli, TunnelCliCmd, TunnelCliConfiguration, load_config_from_path,
+};
 use cruma::gui::{DashboardViewMode, GuiOptions, Page, ThemeMode};
 use cruma::tui::TuiOptions;
 use cruma::versions::{AppUpdateProvider, InstallMethod, detect_install_method};
@@ -80,56 +82,6 @@ use rustls;
 pub const NAME: &str = "odd-box";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// odd-box — a dead simple reverse proxy server
-#[derive(Parser)]
-#[command(
-    name = "odd-box",
-    version = VERSION,
-    about = "A simple reverse proxy and process manager",
-    long_about = "odd-box is a lightweight reverse proxy that manages backends, \
-                  frontends, hosted processes, and TLS certificates.\n\n\
-                  It delegates all heavy lifting to the cruma agent library."
-)]
-struct Args {
-    /// Path to configuration file (YAML).
-    /// Can be passed as a positional argument or with -c / --config.
-    #[arg(short, long, value_name = "FILE")]
-    config: Option<String>,
-
-    /// Config file path (positional, same as --config).
-    /// When both are given, --config takes precedence.
-    #[arg(value_name = "CONFIG_FILE", conflicts_with = "config")]
-    config_positional: Option<String>,
-
-    /// Run the graphical user interface
-    #[arg(long, conflicts_with_all = ["tui", "headless"])]
-    gui: bool,
-
-    /// Run the terminal user interface
-    #[arg(long, conflicts_with_all = ["gui", "headless"])]
-    tui: bool,
-
-    /// Run in headless mode (no UI)
-    #[arg(long, conflicts_with_all = ["gui", "tui"])]
-    headless: bool,
-
-    /// Run self-update
-    #[arg(long)]
-    update: bool,
-
-    /// Initialize a new config file
-    #[arg(long)]
-    init: bool,
-
-    /// Print JSON schema for the config format
-    #[arg(long)]
-    config_schema: bool,
-
-    /// Theme: light, dark, system
-    #[arg(long, value_name = "MODE")]
-    theme: Option<String>,
-}
-
 // We intentionally use a synchronous `fn main()` rather than `#[tokio::main]`.
 //
 // The cruma GUI creates its own tokio runtime internally, so if we were
@@ -151,118 +103,36 @@ fn main() -> Result<()> {
     // ── Odd-box embedded assets ────────────────────────────────────────
     const ODD_BOX_404: &[u8] = include_bytes!("assets/404.html");
 
-    let args = Args::parse();
+    let cli = parse_cli()?;
 
     // ── One-shot commands (no config needed) ───────────────────────────
-
-    if args.init {
-        return init_config();
+    if cli.generate_completions.is_some() {
+        bail!("`--generate-completions` is not supported by odd-box.");
     }
 
-    if args.config_schema {
-        let schema = schemars::schema_for!(TunnelCliConfiguration);
-        println!("{}", serde_json::to_string_pretty(&schema)?);
-        return Ok(());
+    match &cli.command {
+        Some(TunnelCliCmd::Schema) => {
+            let schema = schemars::schema_for!(TunnelCliConfiguration);
+            println!("{}", serde_json::to_string_pretty(&schema)?);
+            return Ok(());
+        }
+        Some(TunnelCliCmd::ShowCache) => {
+            let cache_dir = cruma::bootstrap::get_cache_dir(&cli)?;
+            println!("Cache directory: {}", cache_dir.display());
+            return Ok(());
+        }
+        Some(TunnelCliCmd::ClearCache) => {
+            return cruma::bootstrap::clear_cache_dir(&cli);
+        }
+        Some(TunnelCliCmd::Config(_)) => bail!("`odd-box config ...` is not supported."),
+        _ => {}
     }
 
     // ── Determine UI mode early (needed for profile ask_on_startup) ───────
-    let want_gui = args.gui || (!args.tui && !args.headless && !is_headless_environment());
+    let want_gui = should_launch_gui(&cli);
 
-    // ── Load configuration ─────────────────────────────────────────────
-
-    let explicit_config = args.config.or(args.config_positional);
-    let explicit = explicit_config.is_some();
-
-    // ── Profiles ───────────────────────────────────────────────────────
-    let mut saved_profiles = profiles::load_profiles();
-
-    // Whether we will open the GUI straight to the Profiles page because
-    // the user wants to pick a profile interactively.
-    let mut initial_gui_page: Option<String> = None;
-
-    // The resolved config file path.  `None` means we are in "stub" mode
-    // (GUI ask_on_startup — proxy starts with defaults until the user
-    // switches to a profile from the GUI).
-    let resolved_config_path: Option<String>;
-
-    if let Some(explicit_path) = explicit_config {
-        // ── Explicit --config / positional arg ─────────────────────
-        resolved_config_path = Some(explicit_path.clone());
-
-        // Auto-register the path in profiles if not already present.
-        let path_obj = std::path::Path::new(&explicit_path);
-        if !profiles::path_already_registered(path_obj, &saved_profiles.profiles) {
-            let name = profiles::derive_profile_name(path_obj, &saved_profiles.profiles);
-            saved_profiles.profiles.push(profiles::ProfileEntry {
-                name,
-                path: path_obj.to_path_buf(),
-            });
-            if let Err(e) = profiles::save_profiles(&saved_profiles) {
-                tracing::warn!("Could not save profiles.toml: {e}");
-            }
-        }
-    } else if saved_profiles.ask_on_startup {
-        // ── ask_on_startup ─────────────────────────────────────────
-        if want_gui {
-            // GUI mode: start with a default config stub and navigate
-            // straight to the Profiles page so the user can pick.
-            resolved_config_path = None;
-            initial_gui_page = Some("profiles".to_string());
-        } else {
-            // TUI / headless mode: show a terminal menu.
-            resolved_config_path = Some(terminal_profile_picker(&saved_profiles)?);
-        }
-    } else if let Some(default_name) = &saved_profiles.default_profile.clone() {
-        // ── Named default profile ──────────────────────────────────
-        match saved_profiles.profiles.iter().find(|e| &e.name == default_name) {
-            Some(entry) => {
-                resolved_config_path = Some(entry.path.to_string_lossy().into_owned());
-            }
-            None => {
-                tracing::warn!(
-                    "Default profile '{default_name}' not found in profiles.toml; \
-                     falling back to auto-discovery."
-                );
-                let path = find_or_create_default_config()?;
-                ensure_main_profile_registered(&mut saved_profiles, &path);
-                resolved_config_path = Some(path);
-            }
-        }
-    } else {
-        // ── Auto-discovery (existing behaviour) ────────────────────
-        let path = find_or_create_default_config()?;
-        ensure_main_profile_registered(&mut saved_profiles, &path);
-        resolved_config_path = Some(path);
-    }
-
-    // ── Actually load the config (or use a stub) ───────────────────────
-
-    let (mut config, config_path_for_runtime) = if let Some(config_path) = resolved_config_path {
-        // Try loading directly (supports YAML, TOML, JSON).  If that fails
-        // and the file looks like a legacy odd-box TOML config, auto-migrate
-        // it to the current format, back up the original, and continue.
-        let result = match load_config_from_path(std::path::Path::new(&config_path)) {
-            Ok(cfg) => Ok((cfg, config_path.clone())),
-            Err(load_err) if migrate::looks_like_legacy_toml(std::path::Path::new(&config_path)) => {
-                let (cfg, new_path) = migrate::auto_migrate(&config_path)?;
-                let new_path_str = new_path.to_string_lossy().into_owned();
-                Ok((cfg, new_path_str))
-            }
-            Err(load_err) if explicit => Err(load_err.context(format!(
-                "failed to load config from '{config_path}'"
-            ))),
-            Err(load_err) => Err(load_err.into()),
-        };
-        result?
-    } else {
-        // Stub mode: no config file selected yet (ask_on_startup + GUI).
-        // Deserialize a minimal config so the proxy starts with an empty
-        // setup (no backends, frontends, listeners) until the user selects
-        // a profile from the GUI.
-        let stub: TunnelCliConfiguration =
-            toml::from_str("backends = []\nfrontends = []").expect("valid minimal config");
-        (stub, String::new())
-    };
+    let (mut config, config_path_for_runtime, initial_gui_page, saved_profiles) =
+        load_runtime_config(&cli, want_gui)?;
     let config_path_for_runtime: String = config_path_for_runtime;
 
     if !config_path_for_runtime.is_empty() {
@@ -289,14 +159,14 @@ fn main() -> Result<()> {
     let cancel = CancellationToken::new();
     let bootstrap_options = BootstrapOptions {
         skip_cache_lock: true,
-        protocol: cruma::config::Protocol::Auto,
+        protocol: cli_protocol(&cli),
         cache_dir: None,
         temp: config.temp,
         profile: config.profile.clone(),
-        tower_server: "tower.cruma.io:443".to_string(),
+        tower_server: cli.tower_server.clone(),
     };
 
-    let theme = ThemeMode::from_cli_or_env(args.theme.as_deref());
+    let theme = ThemeMode::from_cli_or_env(cli.theme.as_deref());
 
     // ── Odd-box icon (embedded PNG) for tray + window branding ─────────
     const ODD_BOX_ICON: &[u8] = include_bytes!("assets/odd-box-icon.png");
@@ -342,6 +212,7 @@ fn main() -> Result<()> {
                 Page::Requests,
                 Page::Certificates,
                 Page::Observations,
+                Page::Notices
             ],
             theme,
             default_dashboard_view_mode: DashboardViewMode::Classic,
@@ -375,7 +246,7 @@ fn main() -> Result<()> {
 
             register_oddbox_resolver(&runtime);
 
-            if args.tui {
+            if cli.tui || command_is_gui_incompatible(&cli) {
                 let tui_options = TuiOptions {
                     app_name: NAME.into(),
                     app_version: VERSION.into(),
@@ -463,6 +334,190 @@ fn register_oddbox_resolver(runtime: &Arc<ApplicationRuntime>) {
     cfg.dynamic_backend_resolvers
         .insert(DynamicBackendId::from("odd-box"), resolver);
     cfg_handle.store(Arc::new(cfg));
+}
+
+fn parse_cli() -> Result<TunnelCli> {
+    let args: Vec<_> = std::env::args_os().collect();
+    let rewritten_args = cruma::config::try_rewrite_bare_config_path(&args);
+    let args_to_parse = rewritten_args.as_deref().unwrap_or(&args);
+
+    reject_unsupported_cli_surface(args_to_parse)?;
+
+    let cmd = TunnelCli::command()
+        .name(NAME)
+        .bin_name(NAME)
+        .about("A simple reverse proxy and process manager")
+        .long_about(
+            "odd-box is a lightweight reverse proxy that manages backends, \
+             frontends, hosted processes, and TLS certificates.\n\n\
+             It delegates all heavy lifting to the cruma agent library.",
+        )
+        .mut_arg("generate_completions", |arg| arg.hide(true))
+        .mut_subcommands(|sub| {
+            if sub.get_name() == "config" {
+                sub.hide(true)
+            } else {
+                sub
+            }
+        });
+    let matches = match cmd.try_get_matches_from(args_to_parse) {
+        Ok(matches) => matches,
+        Err(err) => {
+            err.print()?;
+            std::process::exit(err.exit_code());
+        }
+    };
+    let mut cli = TunnelCli::from_arg_matches(&matches)?;
+
+    if cli.command.is_none() {
+        if let Some(config_path) = cli.config.take() {
+            cli.command = Some(TunnelCliCmd::Start(StartCmd {
+                path: Some(config_path),
+            }));
+        } else {
+            cli.command = Some(TunnelCliCmd::Start(StartCmd { path: None }));
+        }
+    }
+
+    Ok(cli)
+}
+
+fn reject_unsupported_cli_surface(args: &[std::ffi::OsString]) -> Result<()> {
+    let raw: Vec<&str> = args.iter().filter_map(|arg| arg.to_str()).collect();
+
+    if raw.iter().any(|arg| *arg == "--generate-completions") {
+        bail!("`--generate-completions` is not supported by odd-box.");
+    }
+
+    if raw.get(1) == Some(&"config") || (raw.get(1) == Some(&"help") && raw.get(2) == Some(&"config")) {
+        bail!("`odd-box config ...` is not supported.");
+    }
+
+    Ok(())
+}
+fn command_is_gui_incompatible(cli: &TunnelCli) -> bool {
+    matches!(
+        &cli.command,
+        Some(TunnelCliCmd::Proxy(_)) | Some(TunnelCliCmd::Serve(_))
+    )
+}
+
+fn should_launch_gui(cli: &TunnelCli) -> bool {
+    if cli.headless {
+        return false;
+    }
+    if cli.tui || command_is_gui_incompatible(cli) {
+        return false;
+    }
+    !is_headless_environment()
+}
+
+fn cli_protocol(cli: &TunnelCli) -> cruma::config::Protocol {
+    match &cli.command {
+        Some(TunnelCliCmd::Proxy(ProxyCmd { protocol, .. })) => protocol.clone(),
+        Some(TunnelCliCmd::Serve(serve_args)) => serve_args.protocol.clone(),
+        _ => cruma::config::Protocol::Auto,
+    }
+}
+
+fn load_runtime_config(
+    cli: &TunnelCli,
+    want_gui: bool,
+) -> Result<(TunnelCliConfiguration, String, Option<String>, profiles::ProfilesConfig)> {
+    match &cli.command {
+        Some(TunnelCliCmd::Start(start_cmd)) => {
+            load_start_config(start_cmd, want_gui)
+        }
+        Some(TunnelCliCmd::Proxy(_)) | Some(TunnelCliCmd::Serve(_)) => {
+            let config = TunnelCliConfiguration::new(cli)?;
+            let config_path = config
+                .config_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            Ok((config, config_path, None, profiles::load_profiles()))
+        }
+        _ => bail!("no runtime command provided"),
+    }
+}
+
+fn load_start_config(
+    start_cmd: &StartCmd,
+    want_gui: bool,
+) -> Result<(TunnelCliConfiguration, String, Option<String>, profiles::ProfilesConfig)> {
+    let explicit_config = start_cmd
+        .path
+        .as_ref()
+        .map(|path| path.to_string_lossy().into_owned());
+    let explicit = explicit_config.is_some();
+
+    let mut saved_profiles = profiles::load_profiles();
+    let mut initial_gui_page: Option<String> = None;
+    let resolved_config_path: Option<String>;
+
+    if let Some(explicit_path) = explicit_config {
+        resolved_config_path = Some(explicit_path.clone());
+
+        let path_obj = std::path::Path::new(&explicit_path);
+        if !profiles::path_already_registered(path_obj, &saved_profiles.profiles) {
+            let name = profiles::derive_profile_name(path_obj, &saved_profiles.profiles);
+            saved_profiles.profiles.push(profiles::ProfileEntry {
+                name,
+                path: path_obj.to_path_buf(),
+            });
+            if let Err(e) = profiles::save_profiles(&saved_profiles) {
+                tracing::warn!("Could not save profiles.toml: {e}");
+            }
+        }
+    } else if saved_profiles.ask_on_startup {
+        if want_gui {
+            resolved_config_path = None;
+            initial_gui_page = Some("profiles".to_string());
+        } else {
+            resolved_config_path = Some(terminal_profile_picker(&saved_profiles)?);
+        }
+    } else if let Some(default_name) = &saved_profiles.default_profile.clone() {
+        match saved_profiles.profiles.iter().find(|e| &e.name == default_name) {
+            Some(entry) => {
+                resolved_config_path = Some(entry.path.to_string_lossy().into_owned());
+            }
+            None => {
+                tracing::warn!(
+                    "Default profile '{default_name}' not found in profiles.toml; \
+                     falling back to auto-discovery."
+                );
+                let path = find_or_create_default_config()?;
+                ensure_main_profile_registered(&mut saved_profiles, &path);
+                resolved_config_path = Some(path);
+            }
+        }
+    } else {
+        let path = find_or_create_default_config()?;
+        ensure_main_profile_registered(&mut saved_profiles, &path);
+        resolved_config_path = Some(path);
+    }
+
+    let (config, config_path_for_runtime) = if let Some(config_path) = resolved_config_path {
+        let result = match load_config_from_path(std::path::Path::new(&config_path)) {
+            Ok(cfg) => Ok((cfg, config_path.clone())),
+            Err(_load_err) if migrate::looks_like_legacy_toml(std::path::Path::new(&config_path)) => {
+                let (cfg, new_path) = migrate::auto_migrate(&config_path)?;
+                let new_path_str = new_path.to_string_lossy().into_owned();
+                Ok((cfg, new_path_str))
+            }
+            Err(load_err) if explicit => Err(load_err.context(format!(
+                "failed to load config from '{config_path}'"
+            ))),
+            Err(load_err) => Err(load_err.into()),
+        };
+        result?
+    } else {
+        let stub: TunnelCliConfiguration =
+            toml::from_str("backends = []\nfrontends = []").expect("valid minimal config");
+        (stub, String::new())
+    };
+
+    Ok((config, config_path_for_runtime, initial_gui_page, saved_profiles))
 }
 
 /// Search for a config file in the current directory.
@@ -570,6 +625,7 @@ tls = true
     )
 }
 
+#[allow(dead_code)]
 fn init_config() -> Result<()> {
     let target = "odd-box.toml";
     if std::fs::metadata(target).is_ok() {
