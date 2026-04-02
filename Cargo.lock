@@ -1408,7 +1408,7 @@ dependencies = [
 
 [[package]]
 name = "cruma"
-version = "1.0.0-RC2"
+version = "1.0.0-RC3"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1467,11 +1467,11 @@ dependencies = [
 
 [[package]]
 name = "cruma-local-service-scan"
-version = "1.0.0-RC2"
+version = "1.0.0-RC3"
 
 [[package]]
 name = "cruma-proc-host"
-version = "1.0.0-RC2"
+version = "1.0.0-RC3"
 dependencies = [
  "arc-swap",
  "cruma-ring-log",
@@ -1511,6 +1511,7 @@ dependencies = [
  "image",
  "imbl",
  "instant-acme",
+ "jsonwebtoken",
  "mime_guess",
  "moka",
  "once_cell",
@@ -1550,7 +1551,7 @@ dependencies = [
 
 [[package]]
 name = "cruma-ring-log"
-version = "1.0.0-RC2"
+version = "1.0.0-RC3"
 dependencies = [
  "arc-swap",
  "tokio",
@@ -1558,7 +1559,7 @@ dependencies = [
 
 [[package]]
 name = "cruma-tunnels-lib"
-version = "1.0.0-RC2"
+version = "1.0.0-RC3"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3732,6 +3733,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "jsonwebtoken"
+version = "9.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a87cc7a48537badeae96744432de36f4be2b4a34a05a5ef32e9dd8a1c169dde"
+dependencies = [
+ "base64",
+ "js-sys",
+ "pem",
+ "ring",
+ "serde",
+ "serde_json",
+ "simple_asn1",
+]
+
+[[package]]
 name = "kamadak-exif"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4979,7 +4995,7 @@ dependencies = [
 
 [[package]]
 name = "odd-box"
-version = "2.0.0-Preview"
+version = "2.0.0-Preview2"
 dependencies = [
  "anyhow",
  "clap",
@@ -6802,6 +6818,18 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "simple_asn1"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d585997b0ac10be3c5ee635f1bab02d512760d14b7c468801ac8a01d9ae5f1d"
+dependencies = [
+ "num-bigint",
+ "num-traits",
+ "thiserror 2.0.18",
+ "time",
+]
 
 [[package]]
 name = "simplecss"
