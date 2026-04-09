@@ -5004,7 +5004,7 @@ dependencies = [
 
 [[package]]
 name = "odd-box"
-version = "2.0.0-Preview2"
+version = "2.0.0-Preview3"
 dependencies = [
  "anyhow",
  "clap",

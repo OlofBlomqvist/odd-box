@@ -21,6 +21,7 @@ ARG RUST_TARGET=x86_64-unknown-linux-musl
 FROM rust:alpine AS builder
 
 ARG RUST_TARGET
+ARG RUST_TOOLCHAIN=nightly-2026-01-01
 
 # ── System build dependencies ──────────────────────────────────────────────
 #
@@ -61,9 +62,10 @@ RUN apk add --no-cache \
     openssl-dev
 
 # ── Rust target ────────────────────────────────────────────────────────────
-# rust:alpine ships the musl toolchain for the host arch by default; we add
-# the requested target explicitly so the build is reproducible.
-RUN rustup target add "${RUST_TARGET}"
+# The repository pins a nightly toolchain; install the requested target on
+# that exact toolchain so cargo doesn't later switch toolchains and lose it.
+RUN rustup toolchain install "${RUST_TOOLCHAIN}" && \
+    rustup target add --toolchain "${RUST_TOOLCHAIN}" "${RUST_TARGET}"
 
 # aws-lc-rs needs to find a C compiler for the target.
 # When running natively (same arch as the Docker --platform) gcc is the right

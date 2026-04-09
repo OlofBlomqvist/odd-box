@@ -8,6 +8,7 @@ set -euo pipefail
 #   odd-box-aarch64-unknown-linux-musl
 #   odd-box-x86_64-pc-windows-msvc.exe
 #   odd-box-x86_64-apple-darwin.dmg
+#   odd-box-aarch64-apple-darwin
 #   odd-box-aarch64-apple-darwin.dmg
 #
 # Optional:
@@ -21,6 +22,19 @@ cd "${SCRIPT_DIR}"
 CARGO_BIN_DIR="${CARGO_HOME:-$HOME/.cargo}/bin"
 if [[ -d "${CARGO_BIN_DIR}" && ":$PATH:" != *":${CARGO_BIN_DIR}:"* ]]; then
   export PATH="${CARGO_BIN_DIR}:$PATH"
+fi
+
+RUST_TOOLCHAIN="$(
+  awk -F'"' '/^channel[[:space:]]*=/ {print $2; exit}' rust-toolchain.toml 2>/dev/null
+)"
+if [[ -z "${RUST_TOOLCHAIN}" ]]; then
+  RUST_TOOLCHAIN="$(
+    awk -F"'" '/^channel[[:space:]]*=/ {print $2; exit}' rust-toolchain.toml 2>/dev/null
+  )"
+fi
+if [[ -z "${RUST_TOOLCHAIN}" ]]; then
+  echo "error: failed to read toolchain channel from rust-toolchain.toml" >&2
+  exit 1
 fi
 
 VERSION="$(
@@ -46,6 +60,7 @@ ALL_TARGETS=(
   "x86_64-pc-windows-gnu"
   "x86_64-apple-darwin-dmg"
   "x86_64-apple-darwin"
+  "aarch64-apple-darwin"
   "aarch64-apple-darwin-dmg"
 )
 
@@ -54,6 +69,7 @@ DEFAULT_TARGETS=(
   "aarch64-unknown-linux-musl"
   "x86_64-pc-windows-msvc"
   "x86_64-apple-darwin-dmg"
+  "aarch64-apple-darwin"
   "aarch64-apple-darwin-dmg"
 )
 
@@ -73,6 +89,7 @@ Supported target names:
   windows-gnu, windows-x86_64-gnu, x86_64-pc-windows-gnu
   macos-x86_64-dmg, darwin-x86_64-dmg, x86_64-apple-darwin-dmg
   macos-x86_64, darwin-x86_64, x86_64-apple-darwin
+  macos-arm64, darwin-arm64, aarch64-apple-darwin
   macos-arm64-dmg, darwin-arm64-dmg, aarch64-apple-darwin-dmg
   macos, linux-musl-all, release, all
 
@@ -107,17 +124,20 @@ normalize_target() {
     macos-x86_64|darwin-x86_64|x86_64-apple-darwin)
       echo "x86_64-apple-darwin"
       ;;
+    macos-arm64|darwin-arm64|aarch64-apple-darwin)
+      echo "aarch64-apple-darwin"
+      ;;
     macos-arm64-dmg|darwin-arm64-dmg|aarch64-apple-darwin-dmg)
       echo "aarch64-apple-darwin-dmg"
       ;;
     macos|darwin)
-      echo "x86_64-apple-darwin-dmg,aarch64-apple-darwin-dmg"
+      echo "x86_64-apple-darwin-dmg,aarch64-apple-darwin,aarch64-apple-darwin-dmg"
       ;;
     linux-musl-all)
       echo "x86_64-unknown-linux-musl,aarch64-unknown-linux-musl"
       ;;
     release)
-      echo "x86_64-unknown-linux-musl,aarch64-unknown-linux-musl,x86_64-pc-windows-msvc,x86_64-apple-darwin-dmg,aarch64-apple-darwin-dmg"
+      echo "x86_64-unknown-linux-musl,aarch64-unknown-linux-musl,x86_64-pc-windows-msvc,x86_64-apple-darwin-dmg,aarch64-apple-darwin,aarch64-apple-darwin-dmg"
       ;;
     all)
       echo "all"
@@ -292,6 +312,7 @@ release_name_for_target() {
     x86_64-pc-windows-gnu) echo "odd-box-x86_64-pc-windows-gnu.exe" ;;
     x86_64-apple-darwin-dmg) echo "odd-box-x86_64-apple-darwin.dmg" ;;
     x86_64-apple-darwin) echo "odd-box-x86_64-apple-darwin" ;;
+    aarch64-apple-darwin) echo "odd-box-aarch64-apple-darwin" ;;
     aarch64-apple-darwin-dmg) echo "odd-box-aarch64-apple-darwin.dmg" ;;
     *) return 1 ;;
   esac
@@ -323,6 +344,9 @@ can_build_target_on_host() {
     x86_64-apple-darwin)
       [[ "${host_os}" == "darwin" ]]
       ;;
+    aarch64-apple-darwin)
+      [[ "${host_os}" == "darwin" && ( "${host_arch}" == "arm64" || "${host_arch}" == "aarch64" ) ]]
+      ;;
     aarch64-apple-darwin-dmg)
       [[ "${host_os}" == "darwin" && ( "${host_arch}" == "arm64" || "${host_arch}" == "aarch64" ) ]]
       ;;
@@ -349,20 +373,26 @@ cleanup_docker_build() {
 docker_supports_platform() {
   local platform="$1"
   local info
+  local buildx_info
 
   if ! info="$(docker version --format '{{json .Server.Arch}} {{json .Server.Os}}' 2>/dev/null)" || [[ -z "${info}" ]]; then
     return 1
   fi
 
+  buildx_info="$(docker buildx inspect 2>/dev/null || true)"
+
   case "${platform}" in
     linux/amd64)
-      [[ "${info}" == *'"amd64"'* && "${info}" == *'"linux"'* ]]
+      if [[ "${info}" == *'"amd64"'* && "${info}" == *'"linux"'* ]]; then
+        return 0
+      fi
+      [[ "${buildx_info}" == *"linux/amd64"* ]]
       ;;
     linux/arm64)
       if [[ "${info}" == *'"arm64"'* && "${info}" == *'"linux"'* ]]; then
         return 0
       fi
-      docker buildx inspect 2>/dev/null | grep -Eq 'Platforms:.*linux/arm64'
+      [[ "${buildx_info}" == *"linux/arm64"* ]]
       ;;
     *)
       return 1
@@ -405,43 +435,48 @@ IGNORE
   warn_if_large_cruma_paths_not_ignored "${cruma_sdk_real}" "${cruma_ignore}"
 
   local docker_out="${SCRIPT_DIR}/target/_docker_out_${target}"
+  local docker_platform
   rm -rf "${docker_out}"
   trap 'cleanup_docker_build "$cruma_ignore" "$docker_out" "$cruma_ignore_created"' EXIT
 
-  if [[ "${target}" == "aarch64-unknown-linux-musl" ]]; then
-    if ! docker_supports_platform "linux/arm64"; then
-      echo "error: Docker on this host is not ready to run linux/arm64 build steps." >&2
-      echo "error: building ${target} from $(uname -s)/$(uname -m) requires arm64 support via Docker Desktop or binfmt/QEMU." >&2
-      echo "error: verify 'docker buildx inspect --bootstrap' reports linux/arm64 in Platforms, then retry." >&2
-      echo "error: on a typical Linux Docker host you can enable it with:" >&2
-      echo "error:   docker run --privileged --rm tonistiigi/binfmt --install arm64" >&2
-      echo "error:   docker buildx inspect --bootstrap" >&2
+  case "${target}" in
+    x86_64-unknown-linux-musl)
+      docker_platform="linux/amd64"
+      ;;
+    aarch64-unknown-linux-musl)
+      docker_platform="linux/arm64"
+      ;;
+    *)
+      echo "error: unsupported musl Docker target '${target}'" >&2
       exit 1
-    fi
+      ;;
+  esac
 
-    DOCKER_BUILDKIT=1 docker build \
-      --platform linux/arm64 \
-      --file Dockerfile.build \
-      --build-context "cruma-sdk=${cruma_sdk_real}" \
-      --build-arg "RUST_TARGET=${target}" \
-      --target export \
-      --output "type=local,dest=${docker_out}" \
-      .
-  else
-    DOCKER_BUILDKIT=1 docker build \
-      --file Dockerfile.build \
-      --build-context "cruma-sdk=${cruma_sdk_real}" \
-      --build-arg "RUST_TARGET=${target}" \
-      --target export \
-      --output "type=local,dest=${docker_out}" \
-      .
+  if ! docker_supports_platform "${docker_platform}"; then
+    echo "error: Docker on this host is not ready to run ${docker_platform} build steps." >&2
+    echo "error: building ${target} from $(uname -s)/$(uname -m) requires ${docker_platform} support via Docker Desktop or binfmt/QEMU." >&2
+    echo "error: verify 'docker buildx inspect --bootstrap' reports ${docker_platform} in Platforms, then retry." >&2
+    echo "error: on a typical Linux Docker host you can enable it with:" >&2
+    echo "error:   docker run --privileged --rm tonistiigi/binfmt --install ${docker_platform#linux/}" >&2
+    echo "error:   docker buildx inspect --bootstrap" >&2
+    exit 1
   fi
+
+  DOCKER_BUILDKIT=1 docker build \
+    --platform "${docker_platform}" \
+    --file Dockerfile.build \
+    --build-context "cruma-sdk=${cruma_sdk_real}" \
+    --build-arg "RUST_TARGET=${target}" \
+    --build-arg "RUST_TOOLCHAIN=${RUST_TOOLCHAIN}" \
+    --target export \
+    --output "type=local,dest=${docker_out}" \
+    .
 
   mkdir -p "$(dirname "${output_path}")"
   mv "${docker_out}/odd-box" "${output_path}"
   chmod +x "${output_path}" || true
 
-  if command -v strip >/dev/null 2>&1 && [[ "${target}" != "aarch64-unknown-linux-musl" ]]; then
+  if [[ "${host_os}" == "linux" ]] && command -v strip >/dev/null 2>&1 && [[ "${target}" != "aarch64-unknown-linux-musl" ]]; then
     strip "${output_path}" || true
   fi
 
