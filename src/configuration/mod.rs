@@ -285,7 +285,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
                 oauth2_auth: None,
                 middlewares: Vec::new(),
                 alpn: None,
-                forward_host_header: proc.forward_subdomains.unwrap_or(false),
+                forward_host_header: true,
                 cert_mode_override: None,
                 cert_mode_overrides: None,
             });
@@ -304,7 +304,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
                     oauth2_auth: None,
                     middlewares: Vec::new(),
                     alpn: None,
-                    forward_host_header: proc.forward_subdomains.unwrap_or(false),
+                    forward_host_header: true,
                     cert_mode_override: None,
                     cert_mode_overrides: None,
                 });
@@ -376,7 +376,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
                 oauth2_auth: None,
                 middlewares: Vec::new(),
                 alpn: None,
-                forward_host_header: remote.forward_subdomains.unwrap_or(false),
+                forward_host_header: remote.keep_original_host_header.unwrap_or(true),
                 cert_mode_override: None,
                 cert_mode_overrides: None,
             });
@@ -394,7 +394,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
                     oauth2_auth: None,
                     middlewares: Vec::new(),
                     alpn: None,
-                    forward_host_header: remote.forward_subdomains.unwrap_or(false),
+                    forward_host_header: remote.keep_original_host_header.unwrap_or(true),
                     cert_mode_override: None,
                     cert_mode_overrides: None,
                 });
@@ -435,7 +435,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
                 oauth2_auth: None,
                 middlewares: Vec::new(),
                 alpn: None,
-                forward_host_header: false,
+                forward_host_header: true,
                 cert_mode_override: None,
                 cert_mode_overrides: None,
             });
@@ -453,7 +453,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
                     oauth2_auth: None,
                     middlewares: Vec::new(),
                     alpn: None,
-                    forward_host_header: false,
+                    forward_host_header: true,
                     cert_mode_override: None,
                     cert_mode_overrides: None,
                 });
