@@ -267,6 +267,104 @@ require_command() {
   }
 }
 
+verify_windows_icon_resources() {
+  local exe_path="$1"
+
+  require_command objdump
+
+  [[ -f "${exe_path}" ]] || {
+    echo "error: expected Windows artifact not found: ${exe_path}" >&2
+    exit 1
+  }
+
+  local objdump_out
+  objdump_out="$(objdump -x "${exe_path}")"
+
+  if ! grep -Eq 'Resource Directory \[\.rsrc\]' <<< "${objdump_out}"; then
+    echo "error: ${exe_path} is missing a PE resource directory (.rsrc)" >&2
+    exit 1
+  fi
+
+  if ! node - "${exe_path}" <<'NODE'
+const fs = require('fs');
+const path = process.argv[2];
+const buf = fs.readFileSync(path);
+
+function u16(o) { return buf.readUInt16LE(o); }
+function u32(o) { return buf.readUInt32LE(o); }
+
+const peOff = u32(0x3c);
+const optOff = peOff + 24;
+const optSize = u16(peOff + 20);
+const dataDirOff = optOff + 112; // PE32+
+const resourceRva = u32(dataDirOff + 8 * 2);
+const resourceSize = u32(dataDirOff + 8 * 2 + 4);
+
+if (!resourceRva || !resourceSize) {
+  process.exit(2);
+}
+
+const numSections = u16(peOff + 6);
+const sectionTable = optOff + optSize;
+const sections = [];
+
+for (let i = 0; i < numSections; i++) {
+  const off = sectionTable + i * 40;
+  sections.push({
+    virtualSize: u32(off + 8),
+    virtualAddress: u32(off + 12),
+    rawSize: u32(off + 16),
+    rawPtr: u32(off + 20),
+  });
+}
+
+function rvaToFileOffset(rva) {
+  const section = sections.find((s) => rva >= s.virtualAddress
+    && rva < s.virtualAddress + Math.max(s.virtualSize, s.rawSize));
+  if (!section) {
+    throw new Error(`RVA 0x${rva.toString(16)} not mapped to a section`);
+  }
+  return section.rawPtr + (rva - section.virtualAddress);
+}
+
+const resourceBase = rvaToFileOffset(resourceRva);
+
+function parseDir(relOff) {
+  const off = resourceBase + relOff;
+  const named = u16(off + 12);
+  const ids = u16(off + 14);
+  const total = named + ids;
+  const entries = [];
+
+  for (let i = 0; i < total; i++) {
+    const eoff = off + 16 + i * 8;
+    const nameOrId = u32(eoff);
+    const data = u32(eoff + 4);
+    entries.push({
+      id: (nameOrId & 0x80000000) ? null : nameOrId,
+      isDir: (data & 0x80000000) !== 0,
+      childRel: data & 0x7fffffff,
+    });
+  }
+
+  return entries;
+}
+
+const top = parseDir(0);
+const typeIds = new Set(top.filter((e) => e.isDir && e.id != null).map((e) => e.id));
+const hasIcon = typeIds.has(3);
+const hasGroupIcon = typeIds.has(14);
+
+if (!hasIcon || !hasGroupIcon) {
+  process.exit(3);
+}
+NODE
+  then
+    echo "error: ${exe_path} is missing RT_ICON and/or RT_GROUP_ICON resources" >&2
+    exit 1
+  fi
+}
+
 dockerignore_excludes_path() {
   local dockerignore_path="$1"
   local path_name="$2"
@@ -534,6 +632,7 @@ build_target() {
       mkdir -p "${OUT_DIR}"
       if [[ "${target}" == "x86_64-pc-windows-msvc" || "${target}" == "x86_64-pc-windows-gnu" ]]; then
         cp "${SCRIPT_DIR}/target/${target}/release/odd-box.exe" "${final_path}"
+        verify_windows_icon_resources "${final_path}"
       else
         cp "${SCRIPT_DIR}/target/${target}/release/odd-box" "${final_path}"
         chmod +x "${final_path}" || true
