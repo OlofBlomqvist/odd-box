@@ -2,6 +2,10 @@
 
 ## ODD-BOX
 
+> ⚠ The coming v2 release fully replaces the current source code as it is a complete rewrite. 
+No more features will be added to the v0.1.x line. Version 2.0.0 will default to GUI but continue to support TUI and headless mode.
+Once v2 is released, the cruma-tunnels branch will replace the main branch, and the upstream repo odd-box v2 is built on, is expected to be made public.
+
 A simple, cross-platform reverse proxy server tailored for local development and tinkering. Think of it as a lightweight (and more streamlined) alternative to something like IIS, but with a key difference: configuration is primarily done declaratively through structured files, rather than a graphical user interface.
 
 It allows you to configure a list of processes to run and host them behind their own custom hostnames. Self-signed certificates for HTTPS are automatically generated when accessing a site thru the terminating proxy service the first time (cached in .odd-box-cache dir). As with most reverse-proxy servers, odd-box also supports targetting remote backend servers.
