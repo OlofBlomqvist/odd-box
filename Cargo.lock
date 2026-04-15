@@ -1417,7 +1417,7 @@ dependencies = [
 
 [[package]]
 name = "cruma"
-version = "1.0.0-RC4"
+version = "1.0.0-RC5"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1496,7 +1496,7 @@ dependencies = [
 
 [[package]]
 name = "cruma-proxy-lib"
-version = "0.1.0"
+version = "1.0.0-RC4"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -5024,7 +5024,7 @@ dependencies = [
 
 [[package]]
 name = "odd-box"
-version = "2.0.0-Preview3"
+version = "2.0.0-Preview4"
 dependencies = [
  "anyhow",
  "clap",
