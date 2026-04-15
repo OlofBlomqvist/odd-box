@@ -102,6 +102,10 @@ fn main() -> Result<()> {
 
     // ── Odd-box embedded assets ────────────────────────────────────────
     const ODD_BOX_404: &[u8] = include_bytes!("assets/404.html");
+    const ODD_BOX_502: &[u8] = include_bytes!("assets/502.html");
+    const ODD_BOX_504: &[u8] = include_bytes!("assets/504.html");
+    const ODD_BOX_OFFLINE: &[u8] = include_bytes!("assets/offline.html");
+    const ODD_BOX_503: &[u8] = include_bytes!("assets/503.html");
 
     let cli = parse_cli()?;
 
@@ -142,15 +146,27 @@ fn main() -> Result<()> {
     // ── Odd-box branding for directory listing / dir-server error pages ─
     config.dir_listing_branding = Some(cruma::cruma_proxy_lib::types::DirListingBranding {
         logo_url: None,
+        logo_url_light: None,
         logo_link_url: Some("https://github.com/OlofBlomqvist/odd-box".into()),
         logo_png_bytes: Some(ODD_BOX_ICON.to_vec()),
+        logo_png_bytes_light: Some(ODD_BOX_ICON_LIGHT.to_vec()),
     });
 
-    // ── Odd-box custom 404 page (embedded at compile time) ─────────────
+    // ── Odd-box custom error pages (embedded at compile time) ──────────
     {
-        let not_found_path = std::env::temp_dir().join("odd-box-404.html");
-        if std::fs::write(&not_found_path, ODD_BOX_404).is_ok() {
-            config.custom_pages.not_found_page = Some(not_found_path);
+        let tmp = std::env::temp_dir();
+        let pages: &[(&[u8], &str, fn(&mut cruma::config::CustomPages, std::path::PathBuf))] = &[
+            (ODD_BOX_404,     "odd-box-404.html",     |cp, p| cp.not_found_page      = Some(p)),
+            (ODD_BOX_502,     "odd-box-502.html",     |cp, p| cp.bad_gateway_page     = Some(p)),
+            (ODD_BOX_504,     "odd-box-504.html",     |cp, p| cp.gateway_timeout_page = Some(p)),
+            (ODD_BOX_OFFLINE, "odd-box-offline.html", |cp, p| cp.process_offline_page      = Some(p)),
+            (ODD_BOX_503,     "odd-box-503.html",     |cp, p| cp.service_unavailable_page  = Some(p)),
+        ];
+        for (bytes, filename, set) in pages {
+            let path = tmp.join(filename);
+            if std::fs::write(&path, bytes).is_ok() {
+                set(&mut config.custom_pages, path);
+            }
         }
     }
 
@@ -170,6 +186,8 @@ fn main() -> Result<()> {
 
     // ── Odd-box icon (embedded PNG) for tray + window branding ─────────
     const ODD_BOX_ICON: &[u8] = include_bytes!("assets/odd-box-icon.png");
+    // Light-mode variant (dark lines on transparent, visible on white backgrounds)
+    const ODD_BOX_ICON_LIGHT: &[u8] = include_bytes!("../ob3_black.png");
 
     // ── Check for a newer stable odd-box release (best-effort, ~5 s timeout) ─
     // We do this synchronously before handing control to either the GUI or TUI
