@@ -271,6 +271,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
                 upstream_tls: proc.https.unwrap_or(false),
                 backend_timeout_seconds: Some(60), // legacy behavior was unlimited while new default using None is 10 sec. lets do 1min at least
                 idle_timeout_seconds: None,
+                binary_watch: None,
             });
 
             // Frontend routing
