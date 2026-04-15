@@ -100,6 +100,9 @@ fn main() -> Result<()> {
         .install_default()
         .expect("Failed to install default crypto provider");
 
+    // Brand tunnel registration with the embedding application name.
+    cruma_tunnels_lib::init(NAME);
+
     // ── Odd-box embedded assets ────────────────────────────────────────
     const ODD_BOX_404: &[u8] = include_bytes!("assets/404.html");
     const ODD_BOX_502: &[u8] = include_bytes!("assets/502.html");

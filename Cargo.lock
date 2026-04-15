@@ -5029,6 +5029,7 @@ dependencies = [
  "anyhow",
  "clap",
  "cruma",
+ "cruma-tunnels-lib",
  "dirs 5.0.1",
  "reqwest",
  "rfd",
