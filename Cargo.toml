@@ -48,6 +48,7 @@ winresource = "0.1"
 
 [profile.release]
 opt-level = 'z'
+strip = true 
 
 [package.metadata.bundle]
 name = "Odd Box"
