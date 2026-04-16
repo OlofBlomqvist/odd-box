@@ -258,6 +258,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
             let process_id = proc.host_name.clone();
 
             processes.push(ProcessDefinition {
+                binary_watch: None,
                 id: process_id.clone(),
                 command: proc.bin.clone(),
                 args: proc.args.clone().unwrap_or_default(),
