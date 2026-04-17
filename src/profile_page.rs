@@ -36,6 +36,20 @@ const ACTION_RENAME_SUBMIT: u32 = 9;
 const ACTION_RENAME_CANCEL: u32 = 10;
 /// Open native file-picker to choose a config file path (`None`).
 const ACTION_BROWSE: u32 = 11;
+/// Begin editing a profile's path — opens inline editor (`Text(name)`).
+const ACTION_EDIT_PATH_BEGIN: u32 = 12;
+/// Edit-path input value changed (`Text(value)`).
+const ACTION_EDIT_PATH_INPUT: u32 = 13;
+/// Commit the path edit (`Pair(profile_name, new_path)`).
+const ACTION_EDIT_PATH_SUBMIT: u32 = 14;
+/// Cancel an in-progress path edit (`None`).
+const ACTION_EDIT_PATH_CANCEL: u32 = 15;
+/// Open native file-picker while editing an existing profile's path (`Text(profile_name)`).
+const ACTION_EDIT_PATH_BROWSE: u32 = 16;
+/// Switch to the built-in home config (`Text(path)`).
+const ACTION_SWITCH_HOME: u32 = 17;
+/// Set the built-in home config as default, i.e. clear default_profile (`None`).
+const ACTION_SET_DEFAULT_HOME: u32 = 18;
 
 // ── Page struct ───────────────────────────────────────────────────────────────
 
@@ -51,6 +65,10 @@ pub struct ProfilePage {
     rename_target: Option<String>,
     /// The new name being typed in the inline rename editor.
     rename_value: String,
+    /// Which profile (by name) is having its path edited, if any.
+    edit_path_target: Option<String>,
+    /// The new path being typed in the inline path editor.
+    edit_path_value: String,
 }
 
 impl ProfilePage {
@@ -62,6 +80,8 @@ impl ProfilePage {
             add_path: String::new(),
             rename_target: None,
             rename_value: String::new(),
+            edit_path_target: None,
+            edit_path_value: String::new(),
         }
     }
 
@@ -100,6 +120,12 @@ impl ProfilePage {
             .and_then(|e| e.to_str())
             .map(|e| matches!(e.to_ascii_lowercase().as_str(), "yaml" | "yml" | "toml"))
             .unwrap_or(false)
+    }
+
+    /// The canonical platform default config path: `<config_dir>/odd-box/odd-box.yaml`.
+    /// This is the "home" config — always shown as a built-in profile.
+    fn home_config_path() -> Option<std::path::PathBuf> {
+        dirs::config_dir().map(|d| d.join("odd-box").join("odd-box.yaml"))
     }
 }
 
@@ -152,16 +178,127 @@ impl CustomPage for ProfilePage {
         // ── Profile list ─────────────────────────────────────────────
         let mut profile_rows: Vec<Element<Message>> = Vec::new();
 
-        if self.profiles.profiles.is_empty() {
-            profile_rows.push(
-                text("No profiles yet. Add one below.")
+        // ── Built-in "Home config" row ────────────────────────────────
+        if let Some(home_path) = Self::home_config_path() {
+            let home_path_str = Self::display_path(&home_path);
+            let home_canonical = std::fs::canonicalize(&home_path).ok();
+            let home_is_active = match (&active_canonical, &home_canonical) {
+                (Some(a), Some(b)) => a == b,
+                // also match when the active path equals the unresolved home path
+                _ => active_path.as_deref().map(|p| p == home_path).unwrap_or(false),
+            };
+            let home_is_default = self.profiles.default_profile.is_none();
+            let home_file_missing = !home_path.exists();
+
+            let home_indicator = if home_file_missing {
+                text("⚠ ").color(Color::from_rgb(1.0, 0.55, 0.0))
+            } else if home_is_active {
+                text("● ").color(Color::from_rgb(0.2, 0.8, 0.4))
+            } else if home_is_default {
+                text("★ ").color(Color::from_rgb(1.0, 0.8, 0.0))
+            } else {
+                text("  ")
+            };
+
+            let home_name = row![
+                text("Home config")
                     .size(13.0)
-                    .color(if is_dark {
-                        Color::from_rgb(0.5, 0.5, 0.5)
-                    } else {
-                        Color::from_rgb(0.5, 0.5, 0.5)
-                    })
-                    .into(),
+                    .color(if is_dark { Color::WHITE } else { Color::BLACK })
+                    .width(Length::Fixed(130.0)),
+                text("  🔒").size(11.0).color(Color::from_rgb(0.5, 0.5, 0.5)),
+            ]
+            .align_y(Alignment::Center)
+            .width(Length::Fixed(160.0));
+
+            let home_path_label = text(if home_file_missing {
+                format!("{home_path_str}  (file not found)")
+            } else {
+                home_path_str
+            })
+            .size(11.0)
+            .color(if home_file_missing {
+                Color::from_rgb(0.85, 0.35, 0.25)
+            } else {
+                Color::from_rgb(0.5, 0.5, 0.5)
+            })
+            .width(Length::Fill);
+
+            let home_switch_btn = button(text("Switch").size(12.0))
+                .padding(Padding::from([4.0, 10.0]))
+                .on_press(Message::CustomPageAction {
+                    page_id: "profiles".into(),
+                    action_id: ACTION_SWITCH_HOME,
+                    payload: CustomPayload::Text(home_path.to_string_lossy().into_owned()),
+                })
+                .style(move |theme: &Theme, status| {
+                    let palette = theme.extended_palette();
+                    let bg = if home_is_active { palette.success.base.color } else { palette.primary.base.color };
+                    let bg_h = if home_is_active { palette.success.strong.color } else { palette.primary.strong.color };
+                    use cruma::iced::widget::button;
+                    button::Style {
+                        background: Some(cruma::iced::Background::Color(
+                            if matches!(status, button::Status::Hovered | button::Status::Pressed) { bg_h } else { bg },
+                        )),
+                        text_color: Color::WHITE,
+                        border: cruma::iced::Border { radius: 4.0.into(), ..Default::default() },
+                        ..Default::default()
+                    }
+                });
+
+            let home_default_btn = button(
+                text(if home_is_default { "★ Default" } else { "Set default" }).size(11.0),
+            )
+            .padding(Padding::from([4.0, 8.0]))
+            .on_press(Message::CustomPageAction {
+                page_id: "profiles".into(),
+                action_id: ACTION_SET_DEFAULT_HOME,
+                payload: CustomPayload::None,
+            })
+            .style(move |theme: &Theme, status| {
+                use cruma::iced::widget::button;
+                let palette = theme.extended_palette();
+                let bg = if home_is_default { Color::from_rgb(0.5, 0.4, 0.0) } else { palette.background.strong.color };
+                let bg_h = if home_is_default { Color::from_rgb(0.6, 0.5, 0.0) } else { palette.background.weak.color };
+                button::Style {
+                    background: Some(cruma::iced::Background::Color(
+                        if matches!(status, button::Status::Hovered | button::Status::Pressed) { bg_h } else { bg },
+                    )),
+                    text_color: if is_dark { Color::WHITE } else { Color::BLACK },
+                    border: cruma::iced::Border { radius: 4.0.into(), ..Default::default() },
+                    ..Default::default()
+                }
+            });
+
+            let home_row_bg = if home_is_active {
+                Color::from_rgba(0.2, 0.8, 0.4, 0.08)
+            } else {
+                Color::from_rgba(0.3, 0.3, 0.8, 0.04)
+            };
+
+            profile_rows.push(
+                container(
+                    row![
+                        home_indicator,
+                        home_name,
+                        home_path_label,
+                        home_switch_btn,
+                        Space::new().width(6.0),
+                        home_default_btn,
+                        // spacer where delete button would be, to keep column widths aligned
+                        Space::new().width(38.0),
+                    ]
+                    .align_y(Alignment::Center)
+                    .spacing(4.0)
+                    .width(Length::Fill),
+                )
+                .padding(Padding::from([6.0, 8.0]))
+                .style(move |_theme: &Theme| container::Style {
+                    background: Some(cruma::iced::Background::Color(home_row_bg)),
+                    border: cruma::iced::Border { radius: 6.0.into(), ..Default::default() },
+                    ..Default::default()
+                })
+                .width(Length::Fill)
+                .into(),
             );
         }
 
@@ -172,11 +309,14 @@ impl CustomPage for ProfilePage {
                 _ => false,
             };
             let is_default = default_name == Some(entry.name.as_str());
+            let file_missing = !entry.path.exists();
 
             // Abbreviated path string.
             let path_str = Self::display_path(&entry.path);
 
-            let status_indicator = if is_active {
+            let status_indicator = if file_missing {
+                text("⚠ ").color(Color::from_rgb(1.0, 0.55, 0.0))
+            } else if is_active {
                 text("● ").color(Color::from_rgb(0.2, 0.8, 0.4))
             } else if is_default {
                 text("★ ").color(Color::from_rgb(1.0, 0.8, 0.0))
@@ -269,10 +409,120 @@ impl CustomPage for ProfilePage {
                     .into()
             };
 
-            let path_text = text(path_str)
+            let is_editing_path = self.edit_path_target.as_deref() == Some(&entry.name);
+
+            // ── Path cell: either inline path editor or static label + edit btn ──
+            let path_cell: Element<Message> = if is_editing_path {
+                let profile_name = name_cloned.clone();
+                let new_path = self.edit_path_value.clone();
+                let can_submit = !new_path.trim().is_empty()
+                    && new_path.trim() != entry.path.to_string_lossy().as_ref();
+
+                let input = text_input("Path to config file", &self.edit_path_value)
+                    .on_input(|v| Message::CustomPageAction {
+                        page_id: "profiles".into(),
+                        action_id: ACTION_EDIT_PATH_INPUT,
+                        payload: CustomPayload::Text(v),
+                    })
+                    .padding(Padding::from([4.0, 6.0]))
+                    .size(11.0)
+                    .width(Length::Fill);
+
+                let browse_btn = button(text("…").size(11.0))
+                    .padding(Padding::from([4.0, 8.0]))
+                    .on_press(Message::CustomPageAction {
+                        page_id: "profiles".into(),
+                        action_id: ACTION_EDIT_PATH_BROWSE,
+                        payload: CustomPayload::Text(profile_name.clone()),
+                    })
+                    .style(|theme: &Theme, status| {
+                        use cruma::iced::widget::button;
+                        let palette = theme.extended_palette();
+                        button::Style {
+                            background: Some(cruma::iced::Background::Color(
+                                if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+                                    palette.background.strong.color
+                                } else {
+                                    palette.background.weak.color
+                                },
+                            )),
+                            text_color: palette.background.base.text,
+                            border: cruma::iced::Border { radius: 3.0.into(), ..Default::default() },
+                            ..Default::default()
+                        }
+                    });
+
+                let ok_btn = {
+                    let pn = profile_name.clone();
+                    let np = new_path.clone();
+                    let btn = button(text("✓").size(12.0)).padding(Padding::from([4.0, 8.0]));
+                    if can_submit {
+                        btn.on_press(Message::CustomPageAction {
+                            page_id: "profiles".into(),
+                            action_id: ACTION_EDIT_PATH_SUBMIT,
+                            payload: CustomPayload::Pair(pn, np),
+                        })
+                    } else {
+                        btn
+                    }
+                };
+
+                let cancel_btn = button(text("✕").size(12.0))
+                    .padding(Padding::from([4.0, 8.0]))
+                    .on_press(Message::CustomPageAction {
+                        page_id: "profiles".into(),
+                        action_id: ACTION_EDIT_PATH_CANCEL,
+                        payload: CustomPayload::None,
+                    });
+
+                row![input, Space::new().width(4.0), browse_btn, Space::new().width(2.0), ok_btn, Space::new().width(2.0), cancel_btn]
+                    .align_y(Alignment::Center)
+                    .width(Length::Fill)
+                    .into()
+            } else {
+                let label = text(if file_missing {
+                    format!("{path_str}  (file not found)")
+                } else {
+                    path_str
+                })
                 .size(11.0)
-                .color(Color::from_rgb(0.5, 0.5, 0.5))
+                .color(if file_missing {
+                    Color::from_rgb(0.85, 0.35, 0.25)
+                } else {
+                    Color::from_rgb(0.5, 0.5, 0.5)
+                })
                 .width(Length::Fill);
+
+                let edit_path_btn = button(text("✎").size(11.0))
+                    .padding(Padding::from([2.0, 6.0]))
+                    .on_press(Message::CustomPageAction {
+                        page_id: "profiles".into(),
+                        action_id: ACTION_EDIT_PATH_BEGIN,
+                        payload: CustomPayload::Text(name_cloned.clone()),
+                    })
+                    .style(|theme: &Theme, status| {
+                        use cruma::iced::widget::button;
+                        let palette = theme.extended_palette();
+                        button::Style {
+                            background: Some(cruma::iced::Background::Color(
+                                if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+                                    palette.background.strong.color
+                                } else {
+                                    Color::TRANSPARENT
+                                },
+                            )),
+                            text_color: palette.background.base.text,
+                            border: cruma::iced::Border { radius: 3.0.into(), ..Default::default() },
+                            ..Default::default()
+                        }
+                    });
+
+                row![label, edit_path_btn]
+                    .align_y(Alignment::Center)
+                    .spacing(2.0)
+                    .width(Length::Fill)
+                    .into()
+            };
 
             let switch_btn = button(text("Switch").size(12.0))
                 .padding(Padding::from([4.0, 10.0]))
@@ -387,7 +637,7 @@ impl CustomPage for ProfilePage {
                 row![
                     status_indicator,
                     name_cell,
-                    path_text,
+                    path_cell,
                     switch_btn,
                     Space::new().width(6.0),
                     default_btn,
@@ -870,6 +1120,104 @@ impl CustomPage for ProfilePage {
                             &self.profiles.profiles,
                         );
                     }
+                }
+            }
+
+            ACTION_EDIT_PATH_BEGIN => {
+                if let CustomPayload::Text(name) = payload {
+                    if let Some(entry) = self.profiles.profiles.iter().find(|e| e.name == name) {
+                        self.edit_path_value = entry.path.to_string_lossy().into_owned();
+                        self.edit_path_target = Some(name);
+                        self.status.clear();
+                    }
+                }
+            }
+
+            ACTION_EDIT_PATH_INPUT => {
+                if let CustomPayload::Text(v) = payload {
+                    self.edit_path_value = v;
+                }
+            }
+
+            ACTION_EDIT_PATH_BROWSE => {
+                if let CustomPayload::Text(name) = payload {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Select odd-box config file")
+                        .add_filter("Supported config files", &["yaml", "yml", "toml"])
+                        .pick_file()
+                    {
+                        self.edit_path_value = path.display().to_string();
+                        self.edit_path_target = Some(name);
+                    }
+                }
+            }
+
+            ACTION_EDIT_PATH_SUBMIT => {
+                let CustomPayload::Pair(name, new_path_str) = payload else {
+                    return cruma::iced::Task::none();
+                };
+                let new_path_str = new_path_str.trim().to_string();
+                let new_path = std::path::PathBuf::from(&new_path_str);
+
+                if !new_path.exists() {
+                    self.status = format!("File not found: {new_path_str}");
+                    return cruma::iced::Task::none();
+                }
+                if !new_path.is_file() {
+                    self.status = format!("Not a file: {new_path_str}");
+                    return cruma::iced::Task::none();
+                }
+                if !Self::has_supported_config_extension(&new_path) {
+                    self.status = "Config file must use .yaml, .yml, or .toml".into();
+                    return cruma::iced::Task::none();
+                }
+
+                for entry in &mut self.profiles.profiles {
+                    if entry.name == name {
+                        entry.path = new_path.clone();
+                        break;
+                    }
+                }
+                match save_profiles(&self.profiles) {
+                    Ok(()) => {
+                        self.status = format!("Updated path for '{name}'");
+                        self.edit_path_target = None;
+                        self.edit_path_value.clear();
+                    }
+                    Err(e) => self.status = format!("Failed to save profiles: {e}"),
+                }
+            }
+
+            ACTION_EDIT_PATH_CANCEL => {
+                self.edit_path_target = None;
+                self.edit_path_value.clear();
+            }
+
+            ACTION_SWITCH_HOME => {
+                let CustomPayload::Text(path_str) = payload else {
+                    return cruma::iced::Task::none();
+                };
+                let path = std::path::PathBuf::from(&path_str);
+                match cruma::config::load_config_from_path(&path) {
+                    Ok(mut config) => {
+                        config.config_path = Some(path);
+                        let _ = ctx.config_update_tx.send(
+                            cruma::utils::ConfigUpdateRequest::ReloadFromDisk { config },
+                        );
+                        self.status = "Switched to Home config".into();
+                    }
+                    Err(e) => {
+                        self.status = format!("Failed to load home config: {e}");
+                    }
+                }
+            }
+
+            ACTION_SET_DEFAULT_HOME => {
+                // Clearing default_profile means "use the home config on startup".
+                self.profiles.default_profile = None;
+                match save_profiles(&self.profiles) {
+                    Ok(()) => self.status = "Default set to Home config".into(),
+                    Err(e) => self.status = format!("Failed to save profiles: {e}"),
                 }
             }
 

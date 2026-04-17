@@ -183,7 +183,7 @@ fn main() -> Result<()> {
     let bootstrap_options = BootstrapOptions {
         skip_cache_lock: true,
         protocol: cli_protocol(&cli),
-        cache_dir: None,
+        cache_dir: dirs::cache_dir().map(|d| d.join("odd-box")),
         temp: config.temp,
         profile: config.profile.clone(),
         tower_server: cli.tower_server.clone(),
@@ -703,6 +703,24 @@ fn load_start_config(
             .iter()
             .find(|e| &e.name == default_name)
         {
+            Some(entry) if !entry.path.exists() => {
+                tracing::warn!(
+                    "Default profile '{default_name}' points to a missing file '{}'; \
+                     falling back to profile selection.",
+                    entry.path.display()
+                );
+                if want_gui {
+                    resolved_config_path = None;
+                    initial_gui_page = Some("profiles".to_string());
+                } else {
+                    anyhow::bail!(
+                        "Default profile '{default_name}' points to a missing file: {}\n\
+                         Run with --config <path> to use a different config, or edit \
+                         profiles.toml to fix the path.",
+                        entry.path.display()
+                    );
+                }
+            }
             Some(entry) => {
                 resolved_config_path = Some(entry.path.to_string_lossy().into_owned());
             }
@@ -739,9 +757,39 @@ fn load_start_config(
         };
         result?
     } else {
-        let stub: TunnelCliConfiguration =
-            toml::from_str("backends = []\nfrontends = []").expect("valid minimal config");
-        (stub, String::new())
+        // Profiles page is showing — no profile was chosen yet.
+        // Try to load the odd-box default config path so the GUI shows real
+        // data rather than a blank state, and so any save lands in the right
+        // place instead of cruma's fallback cruma.yaml.
+        let default_path = dirs::config_dir().map(|d| d.join("odd-box").join("odd-box.yaml"));
+        if let Some(path) = default_path {
+            let loaded = if path.exists() {
+                match load_config_from_path(&path) {
+                    Ok(cfg) => Some((cfg, path.to_string_lossy().into_owned())),
+                    Err(_) if migrate::looks_like_legacy_toml(&path) => {
+                        migrate::auto_migrate(&path.to_string_lossy())
+                            .ok()
+                            .map(|(cfg, new_path)| (cfg, new_path.to_string_lossy().into_owned()))
+                    }
+                    Err(_) => None,
+                }
+            } else {
+                None
+            };
+            if let Some((mut cfg, path_str)) = loaded {
+                cfg.config_path = Some(std::path::PathBuf::from(&path_str));
+                (cfg, path_str)
+            } else {
+                let mut stub: TunnelCliConfiguration =
+                    toml::from_str("backends = []\nfrontends = []").expect("valid minimal config");
+                stub.config_path = Some(path);
+                (stub, String::new())
+            }
+        } else {
+            let stub: TunnelCliConfiguration =
+                toml::from_str("backends = []\nfrontends = []").expect("valid minimal config");
+            (stub, String::new())
+        }
     };
 
     Ok((
