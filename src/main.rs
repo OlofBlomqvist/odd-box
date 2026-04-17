@@ -1,3 +1,4 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod configuration;
 mod migrate;
 mod profile_page;
@@ -94,6 +95,9 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 // For the TUI / headless paths we create a runtime that lives for the
 // entire duration of the process.
 fn main() -> Result<()> {
+    #[cfg(target_os = "windows")]
+    windows_attach_parent_console_if_present();
+
     // Install the rustls crypto provider before any TLS operations.
     // This matches what the cruma binary does in its main().
     rustls::crypto::aws_lc_rs::default_provider()
@@ -285,6 +289,68 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_attach_parent_console_if_present() {
+    use std::ptr::null_mut;
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, FreeConsole, GetConsoleMode, GetConsoleProcessList,
+        GetConsoleWindow, GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SW_HIDE, ShowWindow};
+
+    unsafe {
+        if AttachConsole(ATTACH_PARENT_PROCESS) != 0 {
+            return;
+        }
+
+        let stdout = GetStdHandle(STD_OUTPUT_HANDLE);
+        if stdout != null_mut() && stdout != INVALID_HANDLE_VALUE {
+            let mut mode = 0;
+            if GetConsoleMode(stdout, &mut mode) != 0 {
+                let mut process_ids = [0u32; 4];
+                let attached_processes =
+                    GetConsoleProcessList(process_ids.as_mut_ptr(), process_ids.len() as u32);
+                if attached_processes > 1 {
+                    return;
+                }
+            }
+        }
+
+        let stdin = GetStdHandle(STD_INPUT_HANDLE);
+        if stdin != null_mut() && stdin != INVALID_HANDLE_VALUE {
+            let mut mode = 0;
+            if GetConsoleMode(stdin, &mut mode) != 0 {
+                let mut process_ids = [0u32; 4];
+                let attached_processes =
+                    GetConsoleProcessList(process_ids.as_mut_ptr(), process_ids.len() as u32);
+                if attached_processes > 1 {
+                    return;
+                }
+            }
+        }
+
+        let stderr = GetStdHandle(STD_ERROR_HANDLE);
+        if stderr != null_mut() && stderr != INVALID_HANDLE_VALUE {
+            let mut mode = 0;
+            if GetConsoleMode(stderr, &mut mode) != 0 {
+                let mut process_ids = [0u32; 4];
+                let attached_processes =
+                    GetConsoleProcessList(process_ids.as_mut_ptr(), process_ids.len() as u32);
+                if attached_processes > 1 {
+                    return;
+                }
+            }
+        }
+
+        let console_window = GetConsoleWindow();
+        if console_window != null_mut() {
+            FreeConsole();
+            ShowWindow(console_window, SW_HIDE);
+        }
+    }
 }
 
 /// Register odd-box's custom dynamic backend resolver on the live runtime.

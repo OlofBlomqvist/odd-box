@@ -5044,6 +5044,7 @@ dependencies = [
  "tokio-util",
  "toml 0.8.2",
  "tracing",
+ "windows-sys 0.61.2",
  "winresource",
 ]
 
