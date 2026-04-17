@@ -155,8 +155,8 @@ fn main() -> Result<()> {
         logo_url: None,
         logo_url_light: None,
         logo_link_url: Some("https://github.com/OlofBlomqvist/odd-box".into()),
-        logo_png_bytes: Some(ODD_BOX_ICON.to_vec()),
-        logo_png_bytes_light: Some(ODD_BOX_ICON_LIGHT.to_vec()),
+        logo_png_bytes: Some(APP_ICON.to_vec()),
+        logo_png_bytes_light: Some(APP_ICON.to_vec()),
     });
 
     // ── Odd-box custom error pages (embedded at compile time) ──────────
@@ -192,9 +192,7 @@ fn main() -> Result<()> {
     let theme = ThemeMode::from_cli_or_env(cli.theme.as_deref());
 
     // ── Odd-box icon (embedded PNG) for tray + window branding ─────────
-    const ODD_BOX_ICON: &[u8] = include_bytes!("assets/odd-box-icon.png");
-    // Light-mode variant (dark lines on transparent, visible on white backgrounds)
-    const ODD_BOX_ICON_LIGHT: &[u8] = include_bytes!("../ob3_black.png");
+    const APP_ICON: &[u8] = include_bytes!("../icons/icon.png");
 
     // ── Check for a newer stable odd-box release (best-effort, ~5 s timeout) ─
     // We do this synchronously before handing control to either the GUI or TUI
@@ -226,7 +224,7 @@ fn main() -> Result<()> {
             logo_light: None,
             logo_dark: None,
             tray_icon_shape: cruma::gui::TrayIconShape::Box,
-            window_icon: Some(ODD_BOX_ICON.to_vec()),
+            window_icon: Some(APP_ICON.to_vec()),
             pages: vec![
                 Page::Dashboard,
                 Page::Backends,
