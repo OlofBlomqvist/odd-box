@@ -699,7 +699,8 @@ args = []
         assert_eq!(cfg.root_dir.as_deref(), Some("/srv"));
         // $root_dir is preserved for cruma to expand at load time
         assert_eq!(cfg.global_env.get("BASE").map(|s| s.as_str()), Some("$root_dir/shared"));
-        assert_eq!(cfg.processes[0].env.get("BASE").map(|s| s.as_str()), Some("$root_dir/shared"));
+        // Global vars must NOT be duplicated into individual process envs
+        assert!(!cfg.processes[0].env.contains_key("BASE"));
     }
 
     #[test]

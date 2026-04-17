@@ -240,8 +240,8 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
                 p
             });
 
-            // Per-process env (merge global + per-process)
-            let mut proc_env = global_env.clone();
+            // Per-process env (process-specific only; globals stay in global_env)
+            let mut proc_env = HashMap::new();
             if let Some(env_vars) = &proc.env_vars {
                 for ev in env_vars {
                     proc_env.insert(ev.key.clone(), ev.value.clone());
