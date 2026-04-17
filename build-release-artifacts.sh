@@ -15,6 +15,9 @@ set -euo pipefail
 #   odd-box-x86_64-unknown-linux-gnu
 #   odd-box-x86_64-pc-windows-gnu.exe
 #   odd-box-x86_64-apple-darwin
+#
+# Examples:
+#   ./build-release-artifacts.sh --target macos --macos-branding stable
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
@@ -76,10 +79,11 @@ DEFAULT_TARGETS=(
 SELECTED_TARGETS=()
 EXCLUDED_TARGETS=()
 SKIP_EXISTING=0
+MACOS_BRANDING="auto"
 
 usage() {
   cat <<'USAGE'
-Usage: ./build-release-artifacts.sh [--target <name>] [--targets <csv>] [--exclude <name>] [--skip-existing]
+Usage: ./build-release-artifacts.sh [--target <name>] [--targets <csv>] [--exclude <name>] [--skip-existing] [--macos-branding <auto|stable>]
 
 Supported target names:
   linux-gnu, linux-x86_64-gnu, x86_64-unknown-linux-gnu
@@ -98,6 +102,9 @@ Examples:
   ./build-release-artifacts.sh --target linux-musl
   ./build-release-artifacts.sh --targets macos,linux-musl-all
   ./build-release-artifacts.sh --exclude linux-gnu --skip-existing
+  ./build-release-artifacts.sh --target macos --macos-branding stable
+
+Use --macos-branding stable to force stable macOS app/DMG branding even for prerelease versions.
 USAGE
 }
 
@@ -222,6 +229,20 @@ while [[ $# -gt 0 ]]; do
     --skip-existing)
       SKIP_EXISTING=1
       shift
+      ;;
+    --macos-branding)
+      [[ $# -ge 2 ]] || { echo "error: --macos-branding requires a value" >&2; exit 1; }
+      case "$2" in
+        auto|stable)
+          MACOS_BRANDING="$2"
+          ;;
+        *)
+          echo "error: unsupported macOS branding '$2' (expected: auto or stable)" >&2
+          usage >&2
+          exit 1
+          ;;
+      esac
+      shift 2
       ;;
     --help|-h)
       usage
@@ -612,7 +633,7 @@ build_target() {
     x86_64-apple-darwin-dmg|aarch64-apple-darwin-dmg)
       echo "[build] ${target} via pack-osx.sh"
       require_command bash
-      DMG_OUT="${SCRIPT_DIR}/${final_path}" bash pack-osx.sh
+      ODD_BOX_MACOS_BRANDING="${MACOS_BRANDING}" DMG_OUT="${SCRIPT_DIR}/${final_path}" bash pack-osx.sh
       ;;
     *)
       echo "[build] ${target} via cargo"

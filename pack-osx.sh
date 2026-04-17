@@ -3,13 +3,31 @@ set -euo pipefail
 
 # Builds the macOS .app bundle and produces a DMG.
 # Requires: cargo-bundle, create-dmg
-# Output: target/release/bundle/osx/Odd Box.app
-#         odd-box.dmg (in current directory, or $DMG_OUT if set)
+# Output: target/release/bundle/osx/Odd Box.app or Odd Box Preview.app
+#         odd-box.dmg or odd-box-preview.dmg (in current directory, or $DMG_OUT if set)
+# Set ODD_BOX_MACOS_BRANDING=stable to force stable macOS branding for prerelease builds.
 
-DMG_OUT="${DMG_OUT:-odd-box.dmg}"
-BUNDLE_DIR="target/release/bundle/osx/Odd Box.app"
 ICON_SRC="icons/icon.icns"
+APP_MANIFEST="Cargo.toml"
+VERSION="$(grep '^version' "${APP_MANIFEST}" | head -1 | sed 's/.*= *"\(.*\)"/\1/')"
+DEFAULT_APP_NAME="Odd Box"
+MACOS_BRANDING="${ODD_BOX_MACOS_BRANDING:-auto}"
+
+if [[ "${VERSION}" == *-* && "${MACOS_BRANDING}" != "stable" ]]; then
+    APP_NAME="Odd Box Preview"
+    DEFAULT_BUNDLE_IDENTIFIER="se.twnet.oddbox-preview"
+    DEFAULT_DMG_OUT="odd-box-preview.dmg"
+else
+    APP_NAME="${DEFAULT_APP_NAME}"
+    DEFAULT_BUNDLE_IDENTIFIER="se.twnet.oddbox"
+    DEFAULT_DMG_OUT="odd-box.dmg"
+fi
+
+DMG_OUT="${DMG_OUT:-${DEFAULT_DMG_OUT}}"
+DEFAULT_BUNDLE_DIR="target/release/bundle/osx/${DEFAULT_APP_NAME}.app"
+BUNDLE_DIR="target/release/bundle/osx/${APP_NAME}.app"
 PLIST="${BUNDLE_DIR}/Contents/Info.plist"
+BUNDLE_IDENTIFIER="${ODD_BOX_BUNDLE_IDENTIFIER:-${DEFAULT_BUNDLE_IDENTIFIER}}"
 
 if ! command -v cargo-bundle &>/dev/null; then
     echo "Installing cargo-bundle..."
@@ -25,6 +43,11 @@ fi
 echo "Building app bundle..."
 cargo bundle --release
 
+if [[ "${APP_NAME}" != "${DEFAULT_APP_NAME}" && -d "${DEFAULT_BUNDLE_DIR}" ]]; then
+    rm -rf "${BUNDLE_DIR}"
+    mv "${DEFAULT_BUNDLE_DIR}" "${BUNDLE_DIR}"
+fi
+
 # ── Patch the bundle (cargo-bundle leaves these incomplete) ───────────────────
 echo "Patching bundle..."
 
@@ -37,6 +60,12 @@ mkdir -p "${BUNDLE_DIR}/Contents/Resources"
 cp "${ICON_SRC}" "${BUNDLE_DIR}/Contents/Resources/icon.icns"
 /usr/libexec/PlistBuddy -c "Delete :CFBundleIconFile" "${PLIST}" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string icon" "${PLIST}"
+/usr/libexec/PlistBuddy -c "Delete :CFBundleIdentifier" "${PLIST}" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string ${BUNDLE_IDENTIFIER}" "${PLIST}"
+/usr/libexec/PlistBuddy -c "Delete :CFBundleName" "${PLIST}" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :CFBundleName string ${APP_NAME}" "${PLIST}"
+/usr/libexec/PlistBuddy -c "Delete :CFBundleDisplayName" "${PLIST}" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string ${APP_NAME}" "${PLIST}"
 
 # Remove the outdated LSRequiresCarbon key cargo-bundle inserts — it has no
 # effect on modern macOS but can confuse some tooling
