@@ -187,6 +187,8 @@ fn main() -> Result<()> {
         temp: config.temp,
         profile: config.profile.clone(),
         tower_server: cli.tower_server.clone(),
+        application_id: "odd-box".into(),
+        app_name: NAME.into(),
     };
 
     let theme = ThemeMode::from_cli_or_env(cli.theme.as_deref());
