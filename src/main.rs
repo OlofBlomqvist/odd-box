@@ -162,12 +162,26 @@ fn main() -> Result<()> {
     // ── Odd-box custom error pages (embedded at compile time) ──────────
     {
         let tmp = std::env::temp_dir();
-        let pages: &[(&[u8], &str, fn(&mut cruma::config::CustomPages, std::path::PathBuf))] = &[
-            (ODD_BOX_404,     "odd-box-404.html",     |cp, p| cp.not_found_page      = Some(p)),
-            (ODD_BOX_502,     "odd-box-502.html",     |cp, p| cp.bad_gateway_page     = Some(p)),
-            (ODD_BOX_504,     "odd-box-504.html",     |cp, p| cp.gateway_timeout_page = Some(p)),
-            (ODD_BOX_OFFLINE, "odd-box-offline.html", |cp, p| cp.process_offline_page      = Some(p)),
-            (ODD_BOX_503,     "odd-box-503.html",     |cp, p| cp.service_unavailable_page  = Some(p)),
+        let pages: &[(
+            &[u8],
+            &str,
+            fn(&mut cruma::config::CustomPages, std::path::PathBuf),
+        )] = &[
+            (ODD_BOX_404, "odd-box-404.html", |cp, p| {
+                cp.not_found_page = Some(p)
+            }),
+            (ODD_BOX_502, "odd-box-502.html", |cp, p| {
+                cp.bad_gateway_page = Some(p)
+            }),
+            (ODD_BOX_504, "odd-box-504.html", |cp, p| {
+                cp.gateway_timeout_page = Some(p)
+            }),
+            (ODD_BOX_OFFLINE, "odd-box-offline.html", |cp, p| {
+                cp.process_offline_page = Some(p)
+            }),
+            (ODD_BOX_503, "odd-box-503.html", |cp, p| {
+                cp.service_unavailable_page = Some(p)
+            }),
         ];
         for (bytes, filename, set) in pages {
             let path = tmp.join(filename);
@@ -186,7 +200,10 @@ fn main() -> Result<()> {
         cache_dir: dirs::cache_dir().map(|d| d.join("odd-box")),
         temp: config.temp,
         profile: config.profile.clone(),
-        tower_server: cli.tower_server.clone(),
+        tower_server: cli
+            .tower_server
+            .clone()
+            .unwrap_or_else(|| "tower.cruma.io:443".to_string()),
         application_id: "odd-box".into(),
         app_name: NAME.into(),
     };
@@ -531,6 +548,7 @@ fn inject_local_stop_routes(
             prefixes: vec!["/STOP".to_string()],
         },
         middlewares: Vec::new(),
+        forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
         target: cruma::cruma_proxy_lib::types::Target::DynamicBackend {
             resolver: cruma::cruma_proxy_lib::types::DynamicBackendId::from("odd-box"),
         },
