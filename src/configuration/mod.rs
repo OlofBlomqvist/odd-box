@@ -13,7 +13,7 @@ pub mod v1;
 pub mod v2;
 pub mod v3;
 
-use cruma::{config::TunnelCliConfiguration, cruma_proxy_lib::types::AcmeDirectory};
+use cruma::{config::AppConfig, cruma_proxy_lib::types::AcmeDirectory};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -151,7 +151,7 @@ impl AnyOddBoxConfig {
     /// Returns `(config, original_version)`.
     pub fn upgrade_to_cruma(
         &self,
-    ) -> Result<(TunnelCliConfiguration, OddBoxConfigVersion), String> {
+    ) -> Result<(AppConfig, OddBoxConfigVersion), String> {
         // First, upgrade through the typed chain to get a V3Config.
         let v3 = match self {
             AnyOddBoxConfig::Legacy(cfg) => {
@@ -183,7 +183,7 @@ impl AnyOddBoxConfig {
 // ---------------------------------------------------------------------------
 
 /// Convert a typed V3Config into a cruma `TunnelCliConfiguration`.
-pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> {
+pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
     use cruma::config::*;
     use std::collections::HashMap;
 
@@ -440,7 +440,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
         }
     }
 
-    Ok(TunnelCliConfiguration {
+    Ok(AppConfig {
         config_path: None,
         pre_expansion_snapshot: None,
         root_dir: v3.root_dir.clone(),
@@ -449,7 +449,6 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
         processes,
         global_env,
         listeners,
-        local_only: true,
         tunnel_secret: "ANON".to_string(),
         tunnel_id: "ANON".to_string(),
         tower_server: "tower.cruma.io:443".to_string(),
@@ -461,14 +460,6 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<TunnelCliConfiguration, String> 
         acme_eab: None,
         oauth2_providers: Vec::new(),
         local_oauth2_server: None,
-        mcp_enabled: false,
-        mcp_api_key: None,
-        mcp_cors_origins: Vec::new(),
-        mcp_listener_ports: Vec::new(),
-        mcp_hostname_filters: String::new(),
-        mcp_auth_mode: cruma::config::McpAuthMode::Anonymous,
-        mcp_session_secret: None,
-        runtime_limits: cruma::utils::RuntimeLimitsConfig::default(),
     })
 }
 

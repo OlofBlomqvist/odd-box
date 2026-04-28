@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, FromArgMatches};
 use cruma::bootstrap::{ApplicationRuntime, BootstrapOptions};
 use cruma::config::{
-    ProxyCmd, StartCmd, TunnelCli, TunnelCliCmd, TunnelCliConfiguration, load_config_from_path,
+    ProxyCmd, StartCmd, TunnelCli, TunnelCliCmd, AppConfig, load_config_from_path,
 };
 use cruma::gui::{DashboardViewMode, GuiOptions, Page, ThemeMode};
 use cruma::tui::TuiOptions;
@@ -123,7 +123,7 @@ fn main() -> Result<()> {
 
     match &cli.command {
         Some(TunnelCliCmd::Schema) => {
-            let schema = schemars::schema_for!(TunnelCliConfiguration);
+            let schema = schemars::schema_for!(AppConfig);
             println!("{}", serde_json::to_string_pretty(&schema)?);
             return Ok(());
         }
@@ -655,7 +655,7 @@ fn load_runtime_config(
     cli: &TunnelCli,
     want_gui: bool,
 ) -> Result<(
-    TunnelCliConfiguration,
+    AppConfig,
     String,
     Option<String>,
     profiles::ProfilesConfig,
@@ -663,7 +663,7 @@ fn load_runtime_config(
     match &cli.command {
         Some(TunnelCliCmd::Start(start_cmd)) => load_start_config(start_cmd, want_gui),
         Some(TunnelCliCmd::Proxy(_)) | Some(TunnelCliCmd::Serve(_)) => {
-            let config = TunnelCliConfiguration::new(cli)?;
+            let config = AppConfig::new(cli)?;
             let config_path = config
                 .config_path
                 .as_ref()
@@ -679,7 +679,7 @@ fn load_start_config(
     start_cmd: &StartCmd,
     want_gui: bool,
 ) -> Result<(
-    TunnelCliConfiguration,
+    AppConfig,
     String,
     Option<String>,
     profiles::ProfilesConfig,
@@ -798,13 +798,13 @@ fn load_start_config(
                 cfg.config_path = Some(std::path::PathBuf::from(&path_str));
                 (cfg, path_str)
             } else {
-                let mut stub: TunnelCliConfiguration =
+                let mut stub: AppConfig =
                     toml::from_str("backends = []\nfrontends = []").expect("valid minimal config");
                 stub.config_path = Some(path);
                 (stub, String::new())
             }
         } else {
-            let stub: TunnelCliConfiguration =
+            let stub: AppConfig =
                 toml::from_str("backends = []\nfrontends = []").expect("valid minimal config");
             (stub, String::new())
         }

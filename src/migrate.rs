@@ -20,7 +20,7 @@ use crate::configuration::AnyOddBoxConfig;
 ///
 /// Returns `(config, new_toml_path)` so the caller can continue booting
 /// with the migrated config without re-reading from disk.
-pub fn auto_migrate(old_path: &str) -> Result<(cruma::config::TunnelCliConfiguration, PathBuf)> {
+pub fn auto_migrate(old_path: &str) -> Result<(cruma::config::AppConfig, PathBuf)> {
     let rendered = render_migrated_config(old_path)?;
     let output_path = toml_output_path(old_path);
 
@@ -38,7 +38,7 @@ pub fn auto_migrate(old_path: &str) -> Result<(cruma::config::TunnelCliConfigura
 
     // Re-parse the written TOML so the caller gets an identical result to
     // what `load_config_from_path` would produce.
-    let cfg: cruma::config::TunnelCliConfiguration =
+    let cfg: cruma::config::AppConfig =
         toml::from_str(&rendered.content)
             .map_err(|e| anyhow::anyhow!("BUG: migrated TOML failed to parse: {e}"))?;
 
@@ -105,8 +105,8 @@ fn render_migrated_config(old_path: &str) -> Result<MigrationRender> {
         .map_err(|e| anyhow::anyhow!("Failed to read {old_path}: {e}"))?;
 
     // If the file is already valid cruma config, there's nothing to migrate.
-    if serde_yaml::from_str::<cruma::config::TunnelCliConfiguration>(&contents).is_ok()
-        || toml::from_str::<cruma::config::TunnelCliConfiguration>(&contents).is_ok()
+    if serde_yaml::from_str::<cruma::config::AppConfig>(&contents).is_ok()
+        || toml::from_str::<cruma::config::AppConfig>(&contents).is_ok()
     {
         bail!(
             "The config file '{old_path}' is already in the current format.\n\
@@ -354,7 +354,7 @@ mod tests {
 
     // ── Typed migration tests ──────────────────────────────────────────
 
-    fn migrate_from_str(input: &str) -> Result<cruma::config::TunnelCliConfiguration> {
+    fn migrate_from_str(input: &str) -> Result<cruma::config::AppConfig> {
         let any = AnyOddBoxConfig::parse(input)
             .map_err(|e| anyhow::anyhow!("parse failed: {e}"))?;
         let (cfg, _) = any
@@ -364,7 +364,7 @@ mod tests {
         // Verify the config round-trips through TOML (catches serialization issues early)
         let toml_str = toml::to_string_pretty(&cfg)
             .map_err(|e| anyhow::anyhow!("TOML serialize failed: {e}"))?;
-        let _: cruma::config::TunnelCliConfiguration = toml::from_str(&toml_str)
+        let _: cruma::config::AppConfig = toml::from_str(&toml_str)
             .map_err(|e| anyhow::anyhow!("TOML round-trip failed: {e}"))?;
 
         Ok(cfg)
@@ -573,7 +573,7 @@ args = []
         let toml_out = toml::to_string_pretty(&cfg).unwrap();
 
         // Should be valid TOML that parses back
-        let parsed: cruma::config::TunnelCliConfiguration =
+        let parsed: cruma::config::AppConfig =
             toml::from_str(&toml_out).unwrap();
         assert_eq!(parsed.processes.len(), 1);
         assert_eq!(parsed.listeners.len(), 2);
@@ -804,7 +804,7 @@ tls = true
             crate::NAME,
             crate::VERSION,
         );
-        let cfg: cruma::config::TunnelCliConfiguration =
+        let cfg: cruma::config::AppConfig =
             toml::from_str(&toml_input).expect("init template must parse as valid TOML config");
 
         assert_eq!(cfg.listeners.len(), 2);
