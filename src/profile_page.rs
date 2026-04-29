@@ -9,7 +9,10 @@ use cruma::iced::widget::{
 };
 use cruma::iced::{Alignment, Color, Element, Length, Padding, Theme};
 
-use crate::profiles::{ProfileEntry, ProfilesConfig, save_profiles};
+use crate::{
+    profiles::{ProfileEntry, ProfilesConfig, save_profiles},
+    resolve_home_config_path,
+};
 
 // ── Action IDs ────────────────────────────────────────────────────────────────
 /// Switch to the profile given by name (`Text(name)`).
@@ -122,10 +125,11 @@ impl ProfilePage {
             .unwrap_or(false)
     }
 
-    /// The canonical platform default config path: `<config_dir>/odd-box/odd-box.yaml`.
-    /// This is the "home" config — always shown as a built-in profile.
+    /// Resolve the built-in home config path from the platform config dir.
+    /// Prefers an existing odd-box.toml / odd-box.yaml / odd-box.yml file,
+    /// and otherwise returns the default creation target.
     fn home_config_path() -> Option<std::path::PathBuf> {
-        dirs::config_dir().map(|d| d.join("odd-box").join("odd-box.yaml"))
+        resolve_home_config_path()
     }
 }
 
@@ -148,9 +152,9 @@ impl CustomPage for ProfilePage {
 
         // Active config path for highlighting the active profile.
         let active_path = Self::active_config_path(&ctx);
-        let active_canonical = active_path.as_deref().and_then(|p| {
-            std::fs::canonicalize(p).ok()
-        });
+        let active_canonical = active_path
+            .as_deref()
+            .and_then(|p| std::fs::canonicalize(p).ok());
 
         let default_name = self.profiles.default_profile.as_deref();
 
@@ -161,9 +165,11 @@ impl CustomPage for ProfilePage {
             .unwrap_or_else(|| "(none – select a profile below)".into());
 
         let header = column![
-            text("Config Profiles")
-                .size(18.0)
-                .color(if is_dark { Color::WHITE } else { Color::BLACK }),
+            text("Config Profiles").size(18.0).color(if is_dark {
+                Color::WHITE
+            } else {
+                Color::BLACK
+            }),
             text(format!("Active config: {active_label}"))
                 .size(12.0)
                 .color(if is_dark {
@@ -185,7 +191,10 @@ impl CustomPage for ProfilePage {
             let home_is_active = match (&active_canonical, &home_canonical) {
                 (Some(a), Some(b)) => a == b,
                 // also match when the active path equals the unresolved home path
-                _ => active_path.as_deref().map(|p| p == home_path).unwrap_or(false),
+                _ => active_path
+                    .as_deref()
+                    .map(|p| p == home_path)
+                    .unwrap_or(false),
             };
             let home_is_default = self.profiles.default_profile.is_none();
             let home_file_missing = !home_path.exists();
@@ -205,7 +214,9 @@ impl CustomPage for ProfilePage {
                     .size(13.0)
                     .color(if is_dark { Color::WHITE } else { Color::BLACK })
                     .width(Length::Fixed(130.0)),
-                text("  🔒").size(11.0).color(Color::from_rgb(0.5, 0.5, 0.5)),
+                text("  🔒")
+                    .size(11.0)
+                    .color(Color::from_rgb(0.5, 0.5, 0.5)),
             ]
             .align_y(Alignment::Center)
             .width(Length::Fixed(160.0));
@@ -232,21 +243,41 @@ impl CustomPage for ProfilePage {
                 })
                 .style(move |theme: &Theme, status| {
                     let palette = theme.extended_palette();
-                    let bg = if home_is_active { palette.success.base.color } else { palette.primary.base.color };
-                    let bg_h = if home_is_active { palette.success.strong.color } else { palette.primary.strong.color };
+                    let bg = if home_is_active {
+                        palette.success.base.color
+                    } else {
+                        palette.primary.base.color
+                    };
+                    let bg_h = if home_is_active {
+                        palette.success.strong.color
+                    } else {
+                        palette.primary.strong.color
+                    };
                     use cruma::iced::widget::button;
                     button::Style {
                         background: Some(cruma::iced::Background::Color(
-                            if matches!(status, button::Status::Hovered | button::Status::Pressed) { bg_h } else { bg },
+                            if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+                                bg_h
+                            } else {
+                                bg
+                            },
                         )),
                         text_color: Color::WHITE,
-                        border: cruma::iced::Border { radius: 4.0.into(), ..Default::default() },
+                        border: cruma::iced::Border {
+                            radius: 4.0.into(),
+                            ..Default::default()
+                        },
                         ..Default::default()
                     }
                 });
 
             let home_default_btn = button(
-                text(if home_is_default { "★ Default" } else { "Set default" }).size(11.0),
+                text(if home_is_default {
+                    "★ Default"
+                } else {
+                    "Set default"
+                })
+                .size(11.0),
             )
             .padding(Padding::from([4.0, 8.0]))
             .on_press(Message::CustomPageAction {
@@ -257,14 +288,29 @@ impl CustomPage for ProfilePage {
             .style(move |theme: &Theme, status| {
                 use cruma::iced::widget::button;
                 let palette = theme.extended_palette();
-                let bg = if home_is_default { Color::from_rgb(0.5, 0.4, 0.0) } else { palette.background.strong.color };
-                let bg_h = if home_is_default { Color::from_rgb(0.6, 0.5, 0.0) } else { palette.background.weak.color };
+                let bg = if home_is_default {
+                    Color::from_rgb(0.5, 0.4, 0.0)
+                } else {
+                    palette.background.strong.color
+                };
+                let bg_h = if home_is_default {
+                    Color::from_rgb(0.6, 0.5, 0.0)
+                } else {
+                    palette.background.weak.color
+                };
                 button::Style {
                     background: Some(cruma::iced::Background::Color(
-                        if matches!(status, button::Status::Hovered | button::Status::Pressed) { bg_h } else { bg },
+                        if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+                            bg_h
+                        } else {
+                            bg
+                        },
                     )),
                     text_color: if is_dark { Color::WHITE } else { Color::BLACK },
-                    border: cruma::iced::Border { radius: 4.0.into(), ..Default::default() },
+                    border: cruma::iced::Border {
+                        radius: 4.0.into(),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 }
             });
@@ -294,7 +340,10 @@ impl CustomPage for ProfilePage {
                 .padding(Padding::from([6.0, 8.0]))
                 .style(move |_theme: &Theme| container::Style {
                     background: Some(cruma::iced::Background::Color(home_row_bg)),
-                    border: cruma::iced::Border { radius: 6.0.into(), ..Default::default() },
+                    border: cruma::iced::Border {
+                        radius: 6.0.into(),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 })
                 .width(Length::Fill)
@@ -366,9 +415,15 @@ impl CustomPage for ProfilePage {
                         payload: CustomPayload::None,
                     });
 
-                row![input, Space::new().width(4.0), ok_btn, Space::new().width(2.0), cancel_btn]
-                    .align_y(Alignment::Center)
-                    .into()
+                row![
+                    input,
+                    Space::new().width(4.0),
+                    ok_btn,
+                    Space::new().width(2.0),
+                    cancel_btn
+                ]
+                .align_y(Alignment::Center)
+                .into()
             } else {
                 let name_label = text(entry.name.clone())
                     .size(13.0)
@@ -387,7 +442,10 @@ impl CustomPage for ProfilePage {
                         let palette = theme.extended_palette();
                         button::Style {
                             background: Some(cruma::iced::Background::Color(
-                                if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+                                if matches!(
+                                    status,
+                                    button::Status::Hovered | button::Status::Pressed
+                                ) {
                                     palette.background.strong.color
                                 } else {
                                     Color::TRANSPARENT
@@ -440,14 +498,20 @@ impl CustomPage for ProfilePage {
                         let palette = theme.extended_palette();
                         button::Style {
                             background: Some(cruma::iced::Background::Color(
-                                if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+                                if matches!(
+                                    status,
+                                    button::Status::Hovered | button::Status::Pressed
+                                ) {
                                     palette.background.strong.color
                                 } else {
                                     palette.background.weak.color
                                 },
                             )),
                             text_color: palette.background.base.text,
-                            border: cruma::iced::Border { radius: 3.0.into(), ..Default::default() },
+                            border: cruma::iced::Border {
+                                radius: 3.0.into(),
+                                ..Default::default()
+                            },
                             ..Default::default()
                         }
                     });
@@ -475,10 +539,18 @@ impl CustomPage for ProfilePage {
                         payload: CustomPayload::None,
                     });
 
-                row![input, Space::new().width(4.0), browse_btn, Space::new().width(2.0), ok_btn, Space::new().width(2.0), cancel_btn]
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill)
-                    .into()
+                row![
+                    input,
+                    Space::new().width(4.0),
+                    browse_btn,
+                    Space::new().width(2.0),
+                    ok_btn,
+                    Space::new().width(2.0),
+                    cancel_btn
+                ]
+                .align_y(Alignment::Center)
+                .width(Length::Fill)
+                .into()
             } else {
                 let label = text(if file_missing {
                     format!("{path_str}  (file not found)")
@@ -505,14 +577,20 @@ impl CustomPage for ProfilePage {
                         let palette = theme.extended_palette();
                         button::Style {
                             background: Some(cruma::iced::Background::Color(
-                                if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+                                if matches!(
+                                    status,
+                                    button::Status::Hovered | button::Status::Pressed
+                                ) {
                                     palette.background.strong.color
                                 } else {
                                     Color::TRANSPARENT
                                 },
                             )),
                             text_color: palette.background.base.text,
-                            border: cruma::iced::Border { radius: 3.0.into(), ..Default::default() },
+                            border: cruma::iced::Border {
+                                radius: 3.0.into(),
+                                ..Default::default()
+                            },
                             ..Default::default()
                         }
                     });
@@ -562,42 +640,49 @@ impl CustomPage for ProfilePage {
                 });
 
             let name_for_default = name_cloned.clone();
-            let default_btn = button(text(if is_default { "★ Default" } else { "Set default" }).size(11.0))
-                .padding(Padding::from([4.0, 8.0]))
-                .on_press(Message::CustomPageAction {
-                    page_id: "profiles".into(),
-                    action_id: ACTION_SET_DEFAULT,
-                    payload: CustomPayload::Text(name_for_default),
+            let default_btn = button(
+                text(if is_default {
+                    "★ Default"
+                } else {
+                    "Set default"
                 })
-                .style(move |theme: &Theme, status| {
-                    use cruma::iced::widget::button;
-                    let palette = theme.extended_palette();
-                    let bg = if is_default {
-                        Color::from_rgb(0.5, 0.4, 0.0)
-                    } else {
-                        palette.background.strong.color
-                    };
-                    let bg_hover = if is_default {
-                        Color::from_rgb(0.6, 0.5, 0.0)
-                    } else {
-                        palette.background.weak.color
-                    };
-                    button::Style {
-                        background: Some(cruma::iced::Background::Color(
-                            if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-                                bg_hover
-                            } else {
-                                bg
-                            },
-                        )),
-                        text_color: if is_dark { Color::WHITE } else { Color::BLACK },
-                        border: cruma::iced::Border {
-                            radius: 4.0.into(),
-                            ..Default::default()
+                .size(11.0),
+            )
+            .padding(Padding::from([4.0, 8.0]))
+            .on_press(Message::CustomPageAction {
+                page_id: "profiles".into(),
+                action_id: ACTION_SET_DEFAULT,
+                payload: CustomPayload::Text(name_for_default),
+            })
+            .style(move |theme: &Theme, status| {
+                use cruma::iced::widget::button;
+                let palette = theme.extended_palette();
+                let bg = if is_default {
+                    Color::from_rgb(0.5, 0.4, 0.0)
+                } else {
+                    palette.background.strong.color
+                };
+                let bg_hover = if is_default {
+                    Color::from_rgb(0.6, 0.5, 0.0)
+                } else {
+                    palette.background.weak.color
+                };
+                button::Style {
+                    background: Some(cruma::iced::Background::Color(
+                        if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+                            bg_hover
+                        } else {
+                            bg
                         },
+                    )),
+                    text_color: if is_dark { Color::WHITE } else { Color::BLACK },
+                    border: cruma::iced::Border {
+                        radius: 4.0.into(),
                         ..Default::default()
-                    }
-                });
+                    },
+                    ..Default::default()
+                }
+            });
 
             let name_for_delete = name_cloned.clone();
             let delete_btn = button(text("✕").size(12.0))
@@ -672,8 +757,8 @@ impl CustomPage for ProfilePage {
         .width(Length::Fill);
 
         // ── Default picker & ask-on-startup ─────────────────────────
-        let ask_checkbox = checkbox(self.profiles.ask_on_startup)
-            .on_toggle(|v| Message::CustomPageAction {
+        let ask_checkbox =
+            checkbox(self.profiles.ask_on_startup).on_toggle(|v| Message::CustomPageAction {
                 page_id: "profiles".into(),
                 action_id: ACTION_TOGGLE_ASK,
                 payload: CustomPayload::Bool(v),
@@ -796,9 +881,17 @@ impl CustomPage for ProfilePage {
             } else {
                 Color::from_rgb(0.3, 0.3, 0.3)
             }),
-            row![add_name_input, Space::new().width(8.0), add_path_input, Space::new().width(4.0), browse_btn, Space::new().width(8.0), add_btn]
-                .align_y(Alignment::Center)
-                .width(Length::Fill),
+            row![
+                add_name_input,
+                Space::new().width(8.0),
+                add_path_input,
+                Space::new().width(4.0),
+                browse_btn,
+                Space::new().width(8.0),
+                add_btn
+            ]
+            .align_y(Alignment::Center)
+            .width(Length::Fill),
         ]
         .spacing(6.0)
         .width(Length::Fill);
@@ -885,9 +978,9 @@ impl CustomPage for ProfilePage {
                 match cruma::config::load_config_from_path(&entry.path) {
                     Ok(mut config) => {
                         config.config_path = Some(entry.path.clone());
-                        let _ = ctx.config_update_tx.send(
-                            cruma::utils::ConfigUpdateRequest::ReloadFromDisk { config },
-                        );
+                        let _ = ctx
+                            .config_update_tx
+                            .send(cruma::utils::ConfigUpdateRequest::ReloadFromDisk { config });
                         self.status = format!("Switched to profile '{name}'");
                     }
                     Err(e) => {
@@ -981,10 +1074,7 @@ impl CustomPage for ProfilePage {
                         }
                     }
                     Err(load_err) => {
-                        self.status = format!(
-                            "Invalid config '{}': {load_err}",
-                            path.display()
-                        );
+                        self.status = format!("Invalid config '{}': {load_err}", path.display());
                         return cruma::iced::Task::none();
                     }
                 }
@@ -1115,10 +1205,8 @@ impl CustomPage for ProfilePage {
                     self.add_path = path.display().to_string();
                     // Auto-fill name from path if still empty.
                     if self.add_name.trim().is_empty() {
-                        self.add_name = crate::profiles::derive_profile_name(
-                            &path,
-                            &self.profiles.profiles,
-                        );
+                        self.add_name =
+                            crate::profiles::derive_profile_name(&path, &self.profiles.profiles);
                     }
                 }
             }
@@ -1201,9 +1289,9 @@ impl CustomPage for ProfilePage {
                 match cruma::config::load_config_from_path(&path) {
                     Ok(mut config) => {
                         config.config_path = Some(path);
-                        let _ = ctx.config_update_tx.send(
-                            cruma::utils::ConfigUpdateRequest::ReloadFromDisk { config },
-                        );
+                        let _ = ctx
+                            .config_update_tx
+                            .send(cruma::utils::ConfigUpdateRequest::ReloadFromDisk { config });
                         self.status = "Switched to Home config".into();
                     }
                     Err(e) => {

@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, FromArgMatches};
 use cruma::bootstrap::{ApplicationRuntime, BootstrapOptions};
 use cruma::config::{
-    ProxyCmd, StartCmd, TunnelCli, TunnelCliCmd, AppConfig, load_config_from_path,
+    AppConfig, ProxyCmd, StartCmd, TunnelCli, TunnelCliCmd, load_config_from_path,
 };
 use cruma::gui::{DashboardViewMode, GuiOptions, Page, ThemeMode};
 use cruma::tui::TuiOptions;
@@ -82,6 +82,24 @@ use rustls;
 
 pub const NAME: &str = "odd-box";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub const HOME_CONFIG_CANDIDATE_FILES: &[&str] = &["odd-box.toml", "odd-box.yaml", "odd-box.yml"];
+pub const HOME_CONFIG_DEFAULT_FILE: &str = "odd-box.toml";
+
+pub fn home_config_dir() -> Option<std::path::PathBuf> {
+    dirs::config_dir().map(|d| d.join("odd-box"))
+}
+
+pub fn resolve_home_config_path() -> Option<std::path::PathBuf> {
+    let dir = home_config_dir()?;
+    for candidate in HOME_CONFIG_CANDIDATE_FILES {
+        let path = dir.join(candidate);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    Some(dir.join(HOME_CONFIG_DEFAULT_FILE))
+}
 
 // We intentionally use a synchronous `fn main()` rather than `#[tokio::main]`.
 //
@@ -657,12 +675,7 @@ fn cli_protocol(cli: &TunnelCli) -> cruma::config::Protocol {
 fn load_runtime_config(
     cli: &TunnelCli,
     want_gui: bool,
-) -> Result<(
-    AppConfig,
-    String,
-    Option<String>,
-    profiles::ProfilesConfig,
-)> {
+) -> Result<(AppConfig, String, Option<String>, profiles::ProfilesConfig)> {
     match &cli.command {
         Some(TunnelCliCmd::Start(start_cmd)) => load_start_config(start_cmd, want_gui),
         Some(TunnelCliCmd::Proxy(_)) | Some(TunnelCliCmd::Serve(_)) => {
@@ -681,12 +694,7 @@ fn load_runtime_config(
 fn load_start_config(
     start_cmd: &StartCmd,
     want_gui: bool,
-) -> Result<(
-    AppConfig,
-    String,
-    Option<String>,
-    profiles::ProfilesConfig,
-)> {
+) -> Result<(AppConfig, String, Option<String>, profiles::ProfilesConfig)> {
     let explicit_config = start_cmd
         .path
         .as_ref()
@@ -782,7 +790,7 @@ fn load_start_config(
         // Try to load the odd-box default config path so the GUI shows real
         // data rather than a blank state, and so any save lands in the right
         // place instead of cruma's fallback cruma.yaml.
-        let default_path = dirs::config_dir().map(|d| d.join("odd-box").join("odd-box.yaml"));
+        let default_path = resolve_home_config_path();
         if let Some(path) = default_path {
             let loaded = if path.exists() {
                 match load_config_from_path(&path) {
@@ -856,8 +864,8 @@ fn find_or_create_default_config() -> Result<String> {
     // 2. Platform config directories.
     //    Build the list of directories to probe in preference order.
     let mut config_dirs_to_check: Vec<std::path::PathBuf> = Vec::new();
-    if let Some(d) = dirs::config_dir() {
-        config_dirs_to_check.push(d.join("odd-box"));
+    if let Some(d) = home_config_dir() {
+        config_dirs_to_check.push(d);
     }
     // On macOS dirs::config_dir() returns ~/Library/Application Support.
     // Also probe ~/.config/odd-box/ since that is where many developers
@@ -870,7 +878,7 @@ fn find_or_create_default_config() -> Result<String> {
         }
     }
     for odd_box_dir in &config_dirs_to_check {
-        for candidate in ["odd-box.toml", "odd-box.yaml", "odd-box.yml"] {
+        for candidate in HOME_CONFIG_CANDIDATE_FILES {
             let path = odd_box_dir.join(candidate);
             if path.exists() {
                 return Ok(path.to_string_lossy().into_owned());
@@ -887,7 +895,7 @@ fn find_or_create_default_config() -> Result<String> {
              Pass --config <path> or create odd-box.toml in the current directory."
         )
     })?;
-    let create_path = create_dir.join("odd-box.toml");
+    let create_path = create_dir.join(HOME_CONFIG_DEFAULT_FILE);
     std::fs::create_dir_all(&create_dir)
         .with_context(|| format!("failed to create config directory {:?}", create_dir))?;
     std::fs::write(&create_path, default_config_toml())
