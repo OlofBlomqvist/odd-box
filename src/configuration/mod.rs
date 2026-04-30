@@ -288,6 +288,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                 forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
                 cert_mode_override: None,
                 cert_mode_overrides: None,
+                kubernetes_service: None,
             });
 
             // Wildcard companion for capture_subdomains
@@ -304,6 +305,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                     forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
                     cert_mode_override: None,
                     cert_mode_overrides: None,
+                    kubernetes_service: None,
                 });
             }
         }
@@ -370,6 +372,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                 forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
                 cert_mode_override: None,
                 cert_mode_overrides: None,
+                kubernetes_service: None,
             });
 
             if remote.capture_subdomains.unwrap_or(false) {
@@ -385,6 +388,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                     forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
                     cert_mode_override: None,
                     cert_mode_overrides: None,
+                    kubernetes_service: None,
                 });
             }
         }
@@ -420,6 +424,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                 forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
                 cert_mode_override: None,
                 cert_mode_overrides: None,
+                kubernetes_service: None,
             });
 
             if dir.capture_subdomains.unwrap_or(false) {
@@ -435,6 +440,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                     forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
                     cert_mode_override: None,
                     cert_mode_overrides: None,
+                    kubernetes_service: None,
                 });
             }
         }
