@@ -288,7 +288,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                 forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
                 cert_mode_override: None,
                 cert_mode_overrides: None,
-                kubernetes_service: None,
+                kubernetes_target_id: None,
             });
 
             // Wildcard companion for capture_subdomains
@@ -305,7 +305,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                     forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
                     cert_mode_override: None,
                     cert_mode_overrides: None,
-                    kubernetes_service: None,
+                    kubernetes_target_id: None,
                 });
             }
         }
@@ -372,7 +372,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                 forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
                 cert_mode_override: None,
                 cert_mode_overrides: None,
-                kubernetes_service: None,
+                kubernetes_target_id: None,
             });
 
             if remote.capture_subdomains.unwrap_or(false) {
@@ -388,7 +388,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                     forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
                     cert_mode_override: None,
                     cert_mode_overrides: None,
-                    kubernetes_service: None,
+                    kubernetes_target_id: None,
                 });
             }
         }
@@ -424,7 +424,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                 forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
                 cert_mode_override: None,
                 cert_mode_overrides: None,
-                kubernetes_service: None,
+                kubernetes_target_id: None,
             });
 
             if dir.capture_subdomains.unwrap_or(false) {
@@ -440,7 +440,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                     forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
                     cert_mode_override: None,
                     cert_mode_overrides: None,
-                    kubernetes_service: None,
+                    kubernetes_target_id: None,
                 });
             }
         }
@@ -455,6 +455,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
         processes,
         global_env,
         listeners,
+        kubernetes_targets: Vec::new(),
         tunnel_secret: "ANON".to_string(),
         tunnel_id: "ANON".to_string(),
         tower_server: "tower.cruma.io:443".to_string(),

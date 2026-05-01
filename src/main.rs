@@ -222,8 +222,7 @@ fn main() -> Result<()> {
             .tower_server
             .clone()
             .unwrap_or_else(|| "tower.cruma.io:443".to_string()),
-        application_id: "odd-box".into(),
-        app_name: NAME.into(),
+        app_identity: cruma::paths::AppIdentity::new(Some("odd-box"), NAME).to_owned(),
     };
 
     let theme = ThemeMode::from_cli_or_env(cli.theme.as_deref());
@@ -267,6 +266,7 @@ fn main() -> Result<()> {
                 Page::Backends,
                 Page::Frontends,
                 Page::Listeners,
+                Page::Kubernetes,
                 Page::Graph,
                 Page::Processes,
                 Page::Requests,
