@@ -448,7 +448,7 @@ can_build_target_on_host() {
   local target="$1"
   case "${target}" in
     x86_64-unknown-linux-gnu)
-      [[ "${host_os}" == "linux" ]]
+      [[ "${host_os}" == "linux" || "${host_os}" == "darwin" ]]
       ;;
     x86_64-pc-windows-msvc)
       [[ "${host_os}" == mingw* || "${host_os}" == msys* || "${host_os}" == cygwin* ]] || has_cargo_xwin
@@ -602,6 +602,68 @@ IGNORE
   cleanup_docker_build "${cruma_ignore}" "${docker_out}" "${cruma_ignore_created}"
 }
 
+build_linux_gnu_with_docker() {
+  local output_path="$1"
+
+  require_command docker
+
+  local cruma_sdk_real
+  cruma_sdk_real="$(realpath cruma-sdk)"
+  if [[ ! -d "${cruma_sdk_real}" ]]; then
+    echo "error: cruma-sdk symlink resolves to '${cruma_sdk_real}' which does not exist" >&2
+    exit 1
+  fi
+
+  local cruma_ignore="${cruma_sdk_real}/.dockerignore"
+  local cruma_ignore_created=0
+
+  if [[ ! -f "${cruma_ignore}" ]]; then
+    cat > "${cruma_ignore}" <<'IGNORE'
+**/target
+**/.git
+**/.DS_Store
+**/node_modules
+**/.cruma-tunnel-cache
+**/.odd-box-cruma-cache
+**/.h2t_cache
+**/.h2t_db
+**/.acme_cache
+odd-box
+IGNORE
+    cruma_ignore_created=1
+  fi
+
+  warn_if_large_cruma_paths_not_ignored "${cruma_sdk_real}" "${cruma_ignore}"
+
+  local docker_out="${SCRIPT_DIR}/target/_docker_out_x86_64_unknown_linux_gnu"
+  rm -rf "${docker_out}"
+  trap 'cleanup_docker_build "$cruma_ignore" "$docker_out" "$cruma_ignore_created"' EXIT
+
+  if ! docker_supports_platform "linux/amd64"; then
+    echo "error: Docker on this host is not ready to run linux/amd64 build steps." >&2
+    echo "error: building x86_64-unknown-linux-gnu from $(uname -s)/$(uname -m) requires linux/amd64 support via Docker Desktop or binfmt/QEMU." >&2
+    echo "error: verify 'docker buildx inspect --bootstrap' reports linux/amd64 in Platforms, then retry." >&2
+    exit 1
+  fi
+
+  DOCKER_BUILDKIT=1 docker build \
+    --platform linux/amd64 \
+    --file Dockerfile.build.gnu \
+    --build-context "cruma-sdk=${cruma_sdk_real}" \
+    --build-arg "RUST_TARGET=x86_64-unknown-linux-gnu" \
+    --build-arg "RUST_TOOLCHAIN=${RUST_TOOLCHAIN}" \
+    --target export \
+    --output "type=local,dest=${docker_out}" \
+    .
+
+  mkdir -p "$(dirname "${output_path}")"
+  mv "${docker_out}/odd-box" "${output_path}"
+  chmod +x "${output_path}" || true
+
+  trap - EXIT
+  cleanup_docker_build "${cruma_ignore}" "${docker_out}" "${cruma_ignore_created}"
+}
+
 build_target() {
   local target="$1"
   local asset
@@ -625,6 +687,21 @@ build_target() {
   fi
 
   case "${target}" in
+    x86_64-unknown-linux-gnu)
+      if [[ "${host_os}" == "darwin" ]]; then
+        echo "[build] ${target} via Docker"
+        build_linux_gnu_with_docker "${final_path}"
+      else
+        echo "[build] ${target} via cargo"
+        require_command cargo
+        require_command rustup
+        rustup target add "${target}" >/dev/null
+        cargo build --profile dist --target "${target}"
+        mkdir -p "${OUT_DIR}"
+        cp "${SCRIPT_DIR}/target/${target}/dist/odd-box" "${final_path}"
+        chmod +x "${final_path}" || true
+      fi
+      ;;
     x86_64-unknown-linux-musl|aarch64-unknown-linux-musl)
       echo "[build] ${target} via Docker"
       build_linux_musl_with_docker "${target}" "${final_path}"
@@ -641,20 +718,20 @@ build_target() {
       rustup target add "${target}" >/dev/null
       if [[ "${target}" == "x86_64-pc-windows-msvc" && "${host_os}" != mingw* && "${host_os}" != msys* && "${host_os}" != cygwin* ]]; then
         if has_cargo_xwin; then
-          cargo xwin build --release --target "${target}"
+          cargo xwin build --profile dist --target "${target}"
         else
           echo "error: cargo-xwin not found; cannot build ${target} on ${host_os}/${host_arch}" >&2
           exit 1
         fi
       else
-        cargo build --release --target "${target}"
+        cargo build --profile dist --target "${target}"
       fi
       mkdir -p "${OUT_DIR}"
       if [[ "${target}" == "x86_64-pc-windows-msvc" || "${target}" == "x86_64-pc-windows-gnu" ]]; then
-        cp "${SCRIPT_DIR}/target/${target}/release/odd-box.exe" "${final_path}"
+        cp "${SCRIPT_DIR}/target/${target}/dist/odd-box.exe" "${final_path}"
         verify_windows_icon_resources "${final_path}"
       else
-        cp "${SCRIPT_DIR}/target/${target}/release/odd-box" "${final_path}"
+        cp "${SCRIPT_DIR}/target/${target}/dist/odd-box" "${final_path}"
         chmod +x "${final_path}" || true
       fi
       ;;

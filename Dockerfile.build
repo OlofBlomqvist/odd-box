@@ -87,11 +87,11 @@ COPY . .
 COPY --from=cruma-sdk . ./cruma-sdk/
 
 # ── Build ──────────────────────────────────────────────────────────────────
-RUN cargo build --release --target "${RUST_TARGET}" -p odd-box
+RUN cargo build --profile dist --target "${RUST_TARGET}" -p odd-box
 
 # ── Minimal output image ───────────────────────────────────────────────────
 FROM scratch AS export
 ARG RUST_TARGET
 COPY --from=builder \
-    /usr/src/odd-box/target/${RUST_TARGET}/release/odd-box \
+    /usr/src/odd-box/target/${RUST_TARGET}/dist/odd-box \
     /odd-box

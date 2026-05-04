@@ -263,6 +263,7 @@ fn main() -> Result<()> {
             window_icon: Some(APP_ICON.to_vec()),
             pages: vec![
                 Page::Dashboard,
+                Page::Statistics,
                 Page::Backends,
                 Page::Frontends,
                 Page::Listeners,

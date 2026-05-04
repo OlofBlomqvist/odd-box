@@ -99,8 +99,8 @@ jobs:
         shell: pwsh
         run: |
           rustup target add ${{ matrix.target }}
-          cargo build --release --target ${{ matrix.target }}
-          Move-Item "target/${{ matrix.target }}/release/odd-box.exe" "${{ matrix.artifact_name }}"
+          cargo build --profile dist --target ${{ matrix.target }}
+          Move-Item "target/${{ matrix.target }}/dist/odd-box.exe" "${{ matrix.artifact_name }}"
 
       - name: Verify Windows artifact
         if: matrix.build_method == 'cargo_windows'

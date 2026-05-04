@@ -53,6 +53,13 @@ winresource = "0.1"
 opt-level = 'z'
 strip = true 
 
+[profile.dist]
+inherits = "release"
+debug = 0
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
 [package.metadata.bundle]
 name = "Odd Box"
 identifier = "se.twnet.oddbox"
