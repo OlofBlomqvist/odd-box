@@ -572,6 +572,7 @@ fn inject_local_stop_routes(
         middlewares: Vec::new(),
         forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
         target: cruma::cruma_proxy_lib::types::Target::DynamicBackend {
+            resolver_arg: None,
             resolver: cruma::cruma_proxy_lib::types::DynamicBackendId::from("odd-box"),
         },
     };
