@@ -218,6 +218,8 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
         tls: false,
         cert_mode: ListenerCertMode::default(),
         http3: false,
+        max_connections: None,
+        max_connections_per_ip: None,
     });
 
     listeners.push(ListenerDefinition {
@@ -227,6 +229,8 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
         tls: true,
         cert_mode: ListenerCertMode::default(),
         http3: true,
+        max_connections: None,
+        max_connections_per_ip: None,
     });
 
     let auto_start_global = v3.auto_start.unwrap_or(true);
@@ -467,6 +471,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
         acme_eab: None,
         oauth2_providers: Vec::new(),
         local_oauth2_server: None,
+        max_tunnel_connections: None,
     })
 }
 
