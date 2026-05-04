@@ -1594,6 +1594,7 @@ dependencies = [
  "quinn 0.12.0",
  "rand 0.9.4",
  "ratatui",
+ "regex",
  "reqwest",
  "rfd",
  "rustls",
