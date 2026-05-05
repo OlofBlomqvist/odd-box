@@ -3,7 +3,7 @@
 	"image": "mcr.microsoft.com/devcontainers/rust:dev-bookworm",
 	"features": {
 	  "ghcr.io/lee-orr/rusty-dev-containers/cargo-watch:0": {},
-	  "ghcr.io/devcontainers/features/node:1": {
+	  "ghcr.io/devcontainers/features/node:2": {
       "version": "latest"
     }
 	},
