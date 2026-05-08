@@ -98,8 +98,7 @@ pub fn derive_profile_name(path: &Path, existing: &[ProfileEntry]) -> String {
 pub fn path_already_registered(path: &Path, profiles: &[ProfileEntry]) -> bool {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     profiles.iter().any(|e| {
-        let entry_canonical =
-            std::fs::canonicalize(&e.path).unwrap_or_else(|_| e.path.clone());
+        let entry_canonical = std::fs::canonicalize(&e.path).unwrap_or_else(|_| e.path.clone());
         entry_canonical == canonical
     })
 }

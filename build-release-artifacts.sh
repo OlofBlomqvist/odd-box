@@ -7,6 +7,8 @@ set -euo pipefail
 #   odd-box-x86_64-unknown-linux-musl
 #   odd-box-aarch64-unknown-linux-musl
 #   odd-box-x86_64-pc-windows-msvc.exe
+#   odd-box-x86_64-pc-windows-msvc.msi
+#   odd-box-x86_64-pc-windows-msvc.msix
 #   odd-box-x86_64-apple-darwin.dmg
 #   odd-box-aarch64-apple-darwin
 #   odd-box-aarch64-apple-darwin.dmg
@@ -66,6 +68,10 @@ ALL_TARGETS=(
   "aarch64-apple-darwin"
   "aarch64-apple-darwin-dmg"
 )
+ALL_PACKAGING_FORMATS=(
+  "msi"
+  "msix"
+)
 
 DEFAULT_TARGETS=(
   "x86_64-unknown-linux-gnu"
@@ -77,12 +83,13 @@ DEFAULT_TARGETS=(
 
 SELECTED_TARGETS=()
 EXCLUDED_TARGETS=()
+SELECTED_PACKAGING_FORMATS=()
 SKIP_EXISTING=0
 MACOS_BRANDING="auto"
 
 usage() {
   cat <<'USAGE'
-Usage: ./build-release-artifacts.sh [--target <name>] [--targets <csv>] [--exclude <name>] [--skip-existing] [--macos-branding <auto|stable>]
+Usage: ./build-release-artifacts.sh [--target <name>] [--targets <csv>] [--exclude <name>] [--skip-existing] [--with-packaging] [--package <name>] [--packages <csv>] [--macos-branding <auto|stable>]
 
 Supported target names:
   linux-gnu, linux-x86_64-gnu, x86_64-unknown-linux-gnu
@@ -96,14 +103,22 @@ Supported target names:
   macos-arm64-dmg, darwin-arm64-dmg, aarch64-apple-darwin-dmg
   macos, linux-musl-all, release, all
 
+Supported packaging names:
+  msi, msix
+
 Examples:
   ./build-release-artifacts.sh
   ./build-release-artifacts.sh --target linux-musl
   ./build-release-artifacts.sh --targets macos,linux-musl-all
+  ./build-release-artifacts.sh --package msix
+  ./build-release-artifacts.sh --with-packaging --skip-existing
   ./build-release-artifacts.sh --exclude linux-gnu --skip-existing
   ./build-release-artifacts.sh --target macos --macos-branding stable
 
 Use --macos-branding stable to force stable macOS app/DMG branding even for prerelease versions.
+Packaging is opt-in. MSI packaging requires a Windows host or Linux x86_64 host.
+MSIX packaging currently requires a Linux x86_64 host.
+Windows packaging depends on the x86_64-pc-windows-msvc release artifact target.
 USAGE
 }
 
@@ -170,6 +185,38 @@ append_excluded_target() {
   EXCLUDED_TARGETS+=("${t}")
 }
 
+normalize_packaging_format() {
+  case "$1" in
+    msi)
+      echo "msi"
+      ;;
+    msix)
+      echo "msix"
+      ;;
+    all)
+      echo "all"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+append_packaging_format() {
+  local format="$1"
+
+  if [[ "${format}" == "all" ]]; then
+    SELECTED_PACKAGING_FORMATS=("${ALL_PACKAGING_FORMATS[@]}")
+    return
+  fi
+
+  local existing
+  for existing in "${SELECTED_PACKAGING_FORMATS[@]:-}"; do
+    [[ "${existing}" == "${format}" ]] && return
+  done
+  SELECTED_PACKAGING_FORMATS+=("${format}")
+}
+
 expand_and_append() {
   local mode="$1"
   local raw="$2"
@@ -229,6 +276,35 @@ while [[ $# -gt 0 ]]; do
       SKIP_EXISTING=1
       shift
       ;;
+    --with-packaging)
+      append_packaging_format "all"
+      shift
+      ;;
+    --package|-p)
+      [[ $# -ge 2 ]] || { echo "error: --package requires a value" >&2; exit 1; }
+      normalized_format="$(normalize_packaging_format "$2")" || {
+        echo "error: unsupported packaging format '$2'" >&2
+        usage >&2
+        exit 1
+      }
+      append_packaging_format "${normalized_format}"
+      shift 2
+      ;;
+    --packages)
+      [[ $# -ge 2 ]] || { echo "error: --packages requires a value" >&2; exit 1; }
+      IFS=',' read -r -a req_packages <<< "$2"
+      for p in "${req_packages[@]}"; do
+        p="${p//[[:space:]]/}"
+        [[ -n "${p}" ]] || continue
+        normalized_format="$(normalize_packaging_format "${p}")" || {
+          echo "error: unsupported packaging format '${p}'" >&2
+          usage >&2
+          exit 1
+        }
+        append_packaging_format "${normalized_format}"
+      done
+      shift 2
+      ;;
     --macos-branding)
       [[ $# -ge 2 ]] || { echo "error: --macos-branding requires a value" >&2; exit 1; }
       case "$2" in
@@ -279,6 +355,24 @@ if [[ ${#SELECTED_TARGETS[@]} -eq 0 ]]; then
   echo "error: no targets selected" >&2
   exit 1
 fi
+
+should_build() {
+  local target="$1"
+  local selected
+  for selected in "${SELECTED_TARGETS[@]}"; do
+    [[ "${selected}" == "${target}" ]] && return 0
+  done
+  return 1
+}
+
+should_package() {
+  local format="$1"
+  local selected
+  for selected in "${SELECTED_PACKAGING_FORMATS[@]:-}"; do
+    [[ "${selected}" == "${format}" ]] && return 0
+  done
+  return 1
+}
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -442,6 +536,14 @@ has_cargo_xwin() {
 
 has_mingw_linker() {
   command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1
+}
+
+is_windows_host() {
+  [[ "${host_os}" == mingw* || "${host_os}" == msys* || "${host_os}" == cygwin* ]]
+}
+
+is_linux_x86_64_host() {
+  [[ "${host_os}" == "linux" && "${host_arch}" == "x86_64" ]]
 }
 
 can_build_target_on_host() {
@@ -738,14 +840,95 @@ build_target() {
   esac
 }
 
+release_name_for_packaging() {
+  case "$1" in
+    msi) echo "odd-box-x86_64-pc-windows-msvc.msi" ;;
+    msix) echo "odd-box-x86_64-pc-windows-msvc.msix" ;;
+    *) return 1 ;;
+  esac
+}
+
+package_windows_artifact() {
+  local format="$1"
+  local asset
+  asset="$(release_name_for_packaging "${format}")"
+  local final_path="${OUT_DIR}/${asset}"
+  local windows_binary="${OUT_DIR}/$(release_name_for_target "x86_64-pc-windows-msvc")"
+
+  if [[ ${SKIP_EXISTING} -eq 1 && -f "${final_path}" ]]; then
+    echo "[skip] ${format} (exists: ${final_path})"
+    return
+  fi
+
+  if [[ ! -f "${windows_binary}" ]]; then
+    echo "error: required Windows release artifact not found: ${windows_binary}" >&2
+    echo "hint: include x86_64-pc-windows-msvc in the build target selection" >&2
+    exit 1
+  fi
+
+  local staging_dir="${OUT_DIR}/.${format}-staging"
+  rm -rf "${staging_dir}"
+  mkdir -p "${staging_dir}"
+
+  case "${format}" in
+    msi)
+      echo "[package] ${format}"
+      bash packaging/windows/build-msi.sh --no-build --binary "${windows_binary}" --output-dir "${staging_dir}"
+      ;;
+    msix)
+      echo "[package] ${format}"
+      bash packaging/msix/build-msix.sh --no-build --binary "${windows_binary}" --output-dir "${staging_dir}"
+      ;;
+    *)
+      echo "error: unsupported packaging format '${format}'" >&2
+      exit 1
+      ;;
+  esac
+
+  local built_package
+  built_package="$(find "${staging_dir}" -maxdepth 1 -type f -name "*.${format}" | head -1)"
+  if [[ -z "${built_package}" ]]; then
+    echo "error: packaging script did not produce a .${format} artifact in ${staging_dir}" >&2
+    exit 1
+  fi
+
+  mv "${built_package}" "${final_path}"
+  rm -rf "${staging_dir}"
+}
+
+if [[ ${#SELECTED_PACKAGING_FORMATS[@]} -gt 0 ]]; then
+  if ! should_build "x86_64-pc-windows-msvc"; then
+    echo "error: Windows packaging requires the x86_64-pc-windows-msvc release artifact target" >&2
+    echo "hint: include --target windows-msvc or remove the packaging flag" >&2
+    exit 1
+  fi
+
+  if should_package "msi" && ! is_windows_host && ! is_linux_x86_64_host; then
+    echo "error: MSI packaging expects either a Windows host or a Linux x86_64 host" >&2
+    exit 1
+  fi
+
+  if should_package "msix" && ! is_linux_x86_64_host; then
+    echo "error: MSIX packaging currently expects a Linux x86_64 host" >&2
+    exit 1
+  fi
+fi
+
 mkdir -p "${OUT_DIR}"
 
 echo "==> odd-box ${VERSION}"
 echo "==> output: ${OUT_DIR}"
 echo "==> targets: ${SELECTED_TARGETS[*]}"
+if [[ ${#SELECTED_PACKAGING_FORMATS[@]} -gt 0 ]]; then
+  echo "==> packaging: ${SELECTED_PACKAGING_FORMATS[*]}"
+fi
 
 for t in "${SELECTED_TARGETS[@]}"; do
   build_target "${t}"
+done
+
+for format in "${SELECTED_PACKAGING_FORMATS[@]:-}"; do
+  package_windows_artifact "${format}"
 done
 
 echo

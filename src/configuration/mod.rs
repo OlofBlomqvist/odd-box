@@ -149,9 +149,7 @@ impl AnyOddBoxConfig {
     /// `TunnelCliConfiguration`.
     ///
     /// Returns `(config, original_version)`.
-    pub fn upgrade_to_cruma(
-        &self,
-    ) -> Result<(AppConfig, OddBoxConfigVersion), String> {
+    pub fn upgrade_to_cruma(&self) -> Result<(AppConfig, OddBoxConfigVersion), String> {
         // First, upgrade through the typed chain to get a V3Config.
         let v3 = match self {
             AnyOddBoxConfig::Legacy(cfg) => {

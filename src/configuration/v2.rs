@@ -199,7 +199,11 @@ impl TryFrom<super::v1::V1Config> for V2Config {
                         active_port: None,
                         forward_subdomains: x.forward_subdomains,
                         disable_tcp_tunnel_mode: x.disable_tcp_tunnel_mode,
-                        args: if x.args.is_empty() { None } else { Some(x.args) },
+                        args: if x.args.is_empty() {
+                            None
+                        } else {
+                            Some(x.args)
+                        },
                         auto_start: x.auto_start,
                         bin: x.bin,
                         capture_subdomains: x.capture_subdomains,

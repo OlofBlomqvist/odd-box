@@ -38,9 +38,8 @@ pub fn auto_migrate(old_path: &str) -> Result<(cruma::config::AppConfig, PathBuf
 
     // Re-parse the written TOML so the caller gets an identical result to
     // what `load_config_from_path` would produce.
-    let cfg: cruma::config::AppConfig =
-        toml::from_str(&rendered.content)
-            .map_err(|e| anyhow::anyhow!("BUG: migrated TOML failed to parse: {e}"))?;
+    let cfg: cruma::config::AppConfig = toml::from_str(&rendered.content)
+        .map_err(|e| anyhow::anyhow!("BUG: migrated TOML failed to parse: {e}"))?;
 
     Ok((cfg, output_path))
 }
@@ -167,9 +166,7 @@ fn write_migrated_in_place(old_path: &Path, output_path: &Path, content: &str) -
     temp_file
         .write_all(content.as_bytes())
         .and_then(|_| temp_file.sync_all())
-        .map_err(|e| {
-            anyhow::anyhow!("Failed to write temp file '{}': {e}", temp_path.display())
-        })?;
+        .map_err(|e| anyhow::anyhow!("Failed to write temp file '{}': {e}", temp_path.display()))?;
     drop(temp_file);
 
     if let Err(err) = std::fs::rename(old_path, &backup_path) {
@@ -231,9 +228,7 @@ fn temp_output_path(target: &Path) -> Result<PathBuf> {
         .map_err(|e| anyhow::anyhow!("System clock error while creating temp path: {e}"))?
         .as_nanos();
 
-    Ok(parent.join(format!(
-        ".{file_name}.migrating.{pid}.{now_nanos}.tmp"
-    )))
+    Ok(parent.join(format!(".{file_name}.migrating.{pid}.{now_nanos}.tmp")))
 }
 
 /// Compute the TOML output path for a migration.
@@ -247,8 +242,6 @@ fn toml_output_path(old_path: &str) -> PathBuf {
         _ => p.with_extension("toml"),
     }
 }
-
-
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
@@ -297,7 +290,8 @@ mod tests {
         let output_path = root.join("odd-box.yaml");
         std::fs::write(&old_path, "old-config: true\n").unwrap();
 
-        let backup = write_migrated_in_place(&old_path, &output_path, "new-config: true\n").unwrap();
+        let backup =
+            write_migrated_in_place(&old_path, &output_path, "new-config: true\n").unwrap();
         assert_eq!(backup, root.join("odd-box.yaml.backup1"));
 
         let current = std::fs::read_to_string(&output_path).unwrap();
@@ -325,25 +319,39 @@ mod tests {
         let output_path = root.join("odd-box.toml");
         std::fs::write(&old_path, "version = \"V3\"\n").unwrap();
 
-        let backup = write_migrated_in_place(&old_path, &output_path, "backends = []\nfrontends = []\n").unwrap();
+        let backup =
+            write_migrated_in_place(&old_path, &output_path, "backends = []\nfrontends = []\n")
+                .unwrap();
         assert_eq!(backup, root.join("odd-box.toml.backup1"));
 
         // Output path has the migrated content (same path as old, overwritten)
-        assert_eq!(std::fs::read_to_string(&output_path).unwrap(), "backends = []\nfrontends = []\n");
+        assert_eq!(
+            std::fs::read_to_string(&output_path).unwrap(),
+            "backends = []\nfrontends = []\n"
+        );
         // Backup has the original content
-        assert_eq!(std::fs::read_to_string(&backup).unwrap(), "version = \"V3\"\n");
+        assert_eq!(
+            std::fs::read_to_string(&backup).unwrap(),
+            "version = \"V3\"\n"
+        );
 
         std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
     fn toml_output_path_replaces_yaml_extension() {
-        assert_eq!(toml_output_path("odd-box.yaml"), PathBuf::from("odd-box.toml"));
+        assert_eq!(
+            toml_output_path("odd-box.yaml"),
+            PathBuf::from("odd-box.toml")
+        );
     }
 
     #[test]
     fn toml_output_path_keeps_toml_extension() {
-        assert_eq!(toml_output_path("config.toml"), PathBuf::from("config.toml"));
+        assert_eq!(
+            toml_output_path("config.toml"),
+            PathBuf::from("config.toml")
+        );
     }
 
     #[test]
@@ -355,8 +363,8 @@ mod tests {
     // ── Typed migration tests ──────────────────────────────────────────
 
     fn migrate_from_str(input: &str) -> Result<cruma::config::AppConfig> {
-        let any = AnyOddBoxConfig::parse(input)
-            .map_err(|e| anyhow::anyhow!("parse failed: {e}"))?;
+        let any =
+            AnyOddBoxConfig::parse(input).map_err(|e| anyhow::anyhow!("parse failed: {e}"))?;
         let (cfg, _) = any
             .upgrade_to_cruma()
             .map_err(|e| anyhow::anyhow!("upgrade failed: {e}"))?;
@@ -494,8 +502,11 @@ https = true
         assert_eq!(cfg.backends.len(), 1);
 
         // Listeners should use All for 0.0.0.0
-        assert!(cfg.listeners.iter().any(|l| l.addr
-            == cruma::config::ListenerBindAddress::All));
+        assert!(
+            cfg.listeners
+                .iter()
+                .any(|l| l.addr == cruma::config::ListenerBindAddress::All)
+        );
 
         // Global env should be present
         assert_eq!(
@@ -522,14 +533,16 @@ capture_subdomains = true
 
         // Should have two frontends: the exact and the wildcard
         assert_eq!(cfg.frontends.len(), 2);
-        assert!(cfg
-            .frontends
-            .iter()
-            .any(|f| f.hostname.0 == "app.localhost"));
-        assert!(cfg
-            .frontends
-            .iter()
-            .any(|f| f.hostname.0 == "*.app.localhost"));
+        assert!(
+            cfg.frontends
+                .iter()
+                .any(|f| f.hostname.0 == "app.localhost")
+        );
+        assert!(
+            cfg.frontends
+                .iter()
+                .any(|f| f.hostname.0 == "*.app.localhost")
+        );
     }
 
     #[test]
@@ -573,8 +586,7 @@ args = []
         let toml_out = toml::to_string_pretty(&cfg).unwrap();
 
         // Should be valid TOML that parses back
-        let parsed: cruma::config::AppConfig =
-            toml::from_str(&toml_out).unwrap();
+        let parsed: cruma::config::AppConfig = toml::from_str(&toml_out).unwrap();
         assert_eq!(parsed.processes.len(), 1);
         assert_eq!(parsed.listeners.len(), 2);
         assert_eq!(parsed.frontends.len(), 1);
@@ -647,7 +659,10 @@ args = ["--port", "$port", "--bind", "0.0.0.0:$port"]
         assert_eq!(cfg.processes.len(), 1);
         let proc = &cfg.processes[0];
         // $port is handled by cruma at runtime, so it must NOT be expanded here
-        assert_eq!(proc.args, vec!["--port", "$port", "--bind", "0.0.0.0:$port"]);
+        assert_eq!(
+            proc.args,
+            vec!["--port", "$port", "--bind", "0.0.0.0:$port"]
+        );
     }
 
     #[test]
@@ -673,8 +688,14 @@ env_vars = [
         assert_eq!(cfg.root_dir.as_deref(), Some("/opt/apps"));
         assert_eq!(cfg.processes.len(), 1);
         let proc = &cfg.processes[0];
-        assert_eq!(proc.env.get("DATA_DIR").map(|s| s.as_str()), Some("$root_dir/data"));
-        assert_eq!(proc.env.get("LOG_FILE").map(|s| s.as_str()), Some("$root_dir/logs/app.log"));
+        assert_eq!(
+            proc.env.get("DATA_DIR").map(|s| s.as_str()),
+            Some("$root_dir/data")
+        );
+        assert_eq!(
+            proc.env.get("LOG_FILE").map(|s| s.as_str()),
+            Some("$root_dir/logs/app.log")
+        );
     }
 
     #[test]
@@ -698,7 +719,10 @@ args = []
 
         assert_eq!(cfg.root_dir.as_deref(), Some("/srv"));
         // $root_dir is preserved for cruma to expand at load time
-        assert_eq!(cfg.global_env.get("BASE").map(|s| s.as_str()), Some("$root_dir/shared"));
+        assert_eq!(
+            cfg.global_env.get("BASE").map(|s| s.as_str()),
+            Some("$root_dir/shared")
+        );
         // Global vars must NOT be duplicated into individual process envs
         assert!(!cfg.processes[0].env.contains_key("BASE"));
     }
@@ -774,9 +798,18 @@ env_vars = [
         let proc = &cfg.processes[0];
         // Both $root_dir and $port are preserved for cruma to expand
         assert_eq!(proc.command, "$root_dir/bin/app");
-        assert_eq!(proc.args, vec!["--dir", "$root_dir/data", "--port", "$port"]);
-        assert_eq!(proc.env.get("LISTEN").map(|s| s.as_str()), Some("0.0.0.0:$port"));
-        assert_eq!(proc.env.get("STORAGE").map(|s| s.as_str()), Some("$root_dir/storage"));
+        assert_eq!(
+            proc.args,
+            vec!["--dir", "$root_dir/data", "--port", "$port"]
+        );
+        assert_eq!(
+            proc.env.get("LISTEN").map(|s| s.as_str()),
+            Some("0.0.0.0:$port")
+        );
+        assert_eq!(
+            proc.env.get("STORAGE").map(|s| s.as_str()),
+            Some("$root_dir/storage")
+        );
     }
 
     #[test]
@@ -845,22 +878,39 @@ dir = "$cfg_dir/static/docs"
         let cfg = migrate_from_str(toml_input).unwrap();
 
         let proc = &cfg.processes[0];
-        assert_eq!(proc.command, "$cfg_dir/bin/server",
-            "bin should preserve $cfg_dir");
-        assert_eq!(proc.working_directory.as_ref().map(|p| p.to_str().unwrap()),
+        assert_eq!(
+            proc.command, "$cfg_dir/bin/server",
+            "bin should preserve $cfg_dir"
+        );
+        assert_eq!(
+            proc.working_directory.as_ref().map(|p| p.to_str().unwrap()),
             Some("$cfg_dir/work"),
-            "dir should preserve $cfg_dir");
-        assert_eq!(proc.args, vec!["--config", "$cfg_dir/etc/app.toml"],
-            "args should preserve $cfg_dir");
-        assert_eq!(proc.env.get("DATA_DIR").map(|s| s.as_str()),
+            "dir should preserve $cfg_dir"
+        );
+        assert_eq!(
+            proc.args,
+            vec!["--config", "$cfg_dir/etc/app.toml"],
+            "args should preserve $cfg_dir"
+        );
+        assert_eq!(
+            proc.env.get("DATA_DIR").map(|s| s.as_str()),
             Some("$cfg_dir/data"),
-            "per-process env should preserve $cfg_dir");
-        assert_eq!(cfg.global_env.get("GLOBAL_VAR").map(|s| s.as_str()),
+            "per-process env should preserve $cfg_dir"
+        );
+        assert_eq!(
+            cfg.global_env.get("GLOBAL_VAR").map(|s| s.as_str()),
             Some("$cfg_dir/shared"),
-            "global env should preserve $cfg_dir");
+            "global env should preserve $cfg_dir"
+        );
 
-        let dir_backend = cfg.backends.iter().find(|b| b.id == "docs.localhost").unwrap();
-        assert_eq!(dir_backend.destination, "$cfg_dir/static/docs",
-            "dir_server destination should preserve $cfg_dir");
+        let dir_backend = cfg
+            .backends
+            .iter()
+            .find(|b| b.id == "docs.localhost")
+            .unwrap();
+        assert_eq!(
+            dir_backend.destination, "$cfg_dir/static/docs",
+            "dir_server destination should preserve $cfg_dir"
+        );
     }
 }
