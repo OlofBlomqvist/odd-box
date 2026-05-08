@@ -242,7 +242,7 @@ impl CustomPage for ProfilePage {
                     payload: CustomPayload::Text(home_path.to_string_lossy().into_owned()),
                 })
                 .style(move |theme: &Theme, status| {
-                    let palette = theme.extended_palette();
+                    let palette = theme.palette();
                     let bg = if home_is_active {
                         palette.success.base.color
                     } else {
@@ -287,7 +287,7 @@ impl CustomPage for ProfilePage {
             })
             .style(move |theme: &Theme, status| {
                 use cruma::iced::widget::button;
-                let palette = theme.extended_palette();
+                let palette = theme.palette();
                 let bg = if home_is_default {
                     Color::from_rgb(0.5, 0.4, 0.0)
                 } else {
@@ -439,7 +439,7 @@ impl CustomPage for ProfilePage {
                     })
                     .style(|theme: &Theme, status| {
                         use cruma::iced::widget::button;
-                        let palette = theme.extended_palette();
+                        let palette = theme.palette();
                         button::Style {
                             background: Some(cruma::iced::Background::Color(
                                 if matches!(
@@ -495,7 +495,7 @@ impl CustomPage for ProfilePage {
                     })
                     .style(|theme: &Theme, status| {
                         use cruma::iced::widget::button;
-                        let palette = theme.extended_palette();
+                        let palette = theme.palette();
                         button::Style {
                             background: Some(cruma::iced::Background::Color(
                                 if matches!(
@@ -574,7 +574,7 @@ impl CustomPage for ProfilePage {
                     })
                     .style(|theme: &Theme, status| {
                         use cruma::iced::widget::button;
-                        let palette = theme.extended_palette();
+                        let palette = theme.palette();
                         button::Style {
                             background: Some(cruma::iced::Background::Color(
                                 if matches!(
@@ -610,7 +610,7 @@ impl CustomPage for ProfilePage {
                     payload: CustomPayload::Text(name_cloned.clone()),
                 })
                 .style(move |theme: &Theme, status| {
-                    let palette = theme.extended_palette();
+                    let palette = theme.palette();
                     let bg = if is_active {
                         palette.success.base.color
                     } else {
@@ -656,7 +656,7 @@ impl CustomPage for ProfilePage {
             })
             .style(move |theme: &Theme, status| {
                 use cruma::iced::widget::button;
-                let palette = theme.extended_palette();
+                let palette = theme.palette();
                 let bg = if is_default {
                     Color::from_rgb(0.5, 0.4, 0.0)
                 } else {
@@ -694,7 +694,7 @@ impl CustomPage for ProfilePage {
                 })
                 .style(|theme: &Theme, status| {
                     use cruma::iced::widget::button;
-                    let palette = theme.extended_palette();
+                    let palette = theme.palette();
                     button::Style {
                         background: Some(cruma::iced::Background::Color(
                             if matches!(status, button::Status::Hovered | button::Status::Pressed) {
@@ -820,7 +820,7 @@ impl CustomPage for ProfilePage {
             })
             .style(|theme: &Theme, status| {
                 use cruma::iced::widget::button;
-                let palette = theme.extended_palette();
+                let palette = theme.palette();
                 button::Style {
                     background: Some(cruma::iced::Background::Color(
                         if matches!(status, button::Status::Hovered | button::Status::Pressed) {
@@ -847,7 +847,7 @@ impl CustomPage for ProfilePage {
                 .padding(Padding::from([6.0, 14.0]))
                 .style(|theme: &Theme, status| {
                     use cruma::iced::widget::button;
-                    let palette = theme.extended_palette();
+                    let palette = theme.palette();
                     button::Style {
                         background: Some(cruma::iced::Background::Color(
                             if matches!(status, button::Status::Hovered | button::Status::Pressed) {
