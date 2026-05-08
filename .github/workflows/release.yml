@@ -134,3 +134,62 @@ jobs:
       # ── Upload ───────────────────────────────────────────────────────────────
       - name: Upload release artifact
         run: gh release upload "${{ github.event.inputs.release_tag }}" "${{ matrix.artifact_name }}"
+
+  # ── Windows installer packages (MSI + MSIX) ─────────────────────────────
+  # Runs after all platform builds so the Windows .exe is already in the release.
+  package-windows-installers:
+    name: Package Windows installers (MSI + MSIX)
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout odd-box
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Download Windows binary from release
+        run: |
+          gh release download "${{ github.event.inputs.release_tag }}" \
+            --pattern "odd-box-x86_64-pc-windows-msvc.exe" \
+            --output odd-box.exe
+
+      # ── MSI via wixl ──────────────────────────────────────────────────────
+      - name: Install wixl
+        run: sudo apt-get update && sudo apt-get install -y msitools
+
+      - name: Build MSI
+        run: bash packaging/windows/build-msi.sh --no-build --binary odd-box.exe --output-dir msi-out
+
+      - name: Upload MSI to release
+        run: gh release upload "${{ github.event.inputs.release_tag }}" msi-out/*.msi
+
+      # ── MSIX via makemsix ─────────────────────────────────────────────────
+      - name: Checkout msix-packaging
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/msix-packaging
+          path: msix-packaging
+
+      - name: Cache makemsix build
+        id: cache-makemsix
+        uses: actions/cache@v4
+        with:
+          path: msix-packaging/.vs
+          key: makemsix-linux-x64-${{ hashFiles('msix-packaging/CMakeLists.txt') }}
+
+      - name: Build makemsix
+        if: steps.cache-makemsix.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get install -y cmake ninja-build libssl-dev
+          cd msix-packaging
+          ./makelinux.sh --pack --skip-tests --skip-samples
+
+      - name: Build MSIX
+        env:
+          MSIX_SDK_ROOT: ${{ github.workspace }}/msix-packaging
+        run: bash packaging/msix/build-msix.sh --no-build --binary odd-box.exe --output-dir msix-out
+
+      - name: Upload MSIX to release
+        run: gh release upload "${{ github.event.inputs.release_tag }}" msix-out/*.msix

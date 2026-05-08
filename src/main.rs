@@ -264,6 +264,7 @@ fn main() -> Result<()> {
             pages: vec![
                 Page::Dashboard,
                 Page::Statistics,
+                Page::ServiceMap,
                 Page::Backends,
                 Page::Frontends,
                 Page::Listeners,
