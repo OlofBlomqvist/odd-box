@@ -4,7 +4,7 @@ fn main() {
         let mut res = winresource::WindowsResource::new();
         res.set_icon("icons/black-icon-for-windows-only.ico");
         res.set("ProductName", "Odd Box");
-        res.set("FileDescription", "a dead simple reverse proxy server and web server");
+        res.set("FileDescription", "ODD-BOX PROXY");
         res.set("InternalName", "odd-box");
         res.set("OriginalFilename", "odd-box.exe");
         res.set("LegalCopyright", "Copyright © Olof Blomqvist");

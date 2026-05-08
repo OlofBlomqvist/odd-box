@@ -575,6 +575,7 @@ fn inject_local_stop_routes(
             resolver_arg: None,
             resolver: cruma::cruma_proxy_lib::types::DynamicBackendId::from("odd-box"),
         },
+        request_limits: Default::default(),
     };
 
     for built_listener in &mut cfg.listeners {

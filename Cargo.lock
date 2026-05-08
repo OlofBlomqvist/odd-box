@@ -5371,7 +5371,7 @@ dependencies = [
 
 [[package]]
 name = "odd-box"
-version = "2.0.0-RC1"
+version = "2.0.0-RC2"
 dependencies = [
  "anyhow",
  "clap",

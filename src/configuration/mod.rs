@@ -220,6 +220,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
         http3: false,
         max_connections: None,
         max_connections_per_ip: None,
+        request_limits: Default::default(),
     });
 
     listeners.push(ListenerDefinition {
@@ -231,6 +232,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
         http3: true,
         max_connections: None,
         max_connections_per_ip: None,
+        request_limits: Default::default(),
     });
 
     let auto_start_global = v3.auto_start.unwrap_or(true);
@@ -293,6 +295,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                 cert_mode_override: None,
                 cert_mode_overrides: None,
                 kubernetes_target_id: None,
+                request_limits: Default::default(),
             });
 
             // Wildcard companion for capture_subdomains
@@ -310,6 +313,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                     cert_mode_override: None,
                     cert_mode_overrides: None,
                     kubernetes_target_id: None,
+                    request_limits: Default::default(),
                 });
             }
         }
@@ -377,6 +381,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                 cert_mode_override: None,
                 cert_mode_overrides: None,
                 kubernetes_target_id: None,
+                request_limits: Default::default(),
             });
 
             if remote.capture_subdomains.unwrap_or(false) {
@@ -393,6 +398,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                     cert_mode_override: None,
                     cert_mode_overrides: None,
                     kubernetes_target_id: None,
+                    request_limits: Default::default(),
                 });
             }
         }
@@ -429,6 +435,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                 cert_mode_override: None,
                 cert_mode_overrides: None,
                 kubernetes_target_id: None,
+                request_limits: Default::default(),
             });
 
             if dir.capture_subdomains.unwrap_or(false) {
@@ -445,6 +452,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                     cert_mode_override: None,
                     cert_mode_overrides: None,
                     kubernetes_target_id: None,
+                    request_limits: Default::default(),
                 });
             }
         }
