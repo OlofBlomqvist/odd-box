@@ -269,6 +269,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
 
             processes.push(ProcessDefinition {
                 binary_watch: None,
+                shadow_copy: None,
                 id: process_id.clone(),
                 command: proc.bin.clone(),
                 args: proc.args.clone().unwrap_or_default(),

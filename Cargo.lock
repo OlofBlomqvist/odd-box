@@ -1635,6 +1635,7 @@ dependencies = [
  "cruma-ring-log",
  "nix",
  "sysinfo",
+ "tempfile",
  "tokio",
  "tokio-util",
  "tracing",
