@@ -23,3 +23,14 @@ If you do not have a specific reason for using odd-box, you most likely should u
 - Config-File switch at runtime and general management (odd-box specific feature)
 
 .. And many more! 
+
+### Installation
+
+Pre-built binaries for Windows, MacOS & Linux can be found in the [releases](https://github.com/OlofBlomqvist/odd-box/releases) section.
+
+Mac users can also use homebrew:
+```sh
+#brew tap OlofBlomqvist/repo
+brew install --cask OlofBlomqvist/repo/odd-box
+```
+ 
