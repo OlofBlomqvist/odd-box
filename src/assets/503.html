@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>503 - Service Unavailable</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0f1419;
+        --fg: #e6edf3;
+        --muted: #8b949e;
+        --accent: #ff6c00;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f6f8fa;
+          --fg: #1f2328;
+          --muted: #57606a;
+        }
+      }
+      body {
+        margin: 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+          "Courier New", monospace;
+        background: radial-gradient(800px 400px at 50% 0%, rgba(255, 108, 0, 0.12), transparent 60%),
+          var(--bg);
+        color: var(--fg);
+        display: grid;
+        place-items: center;
+        min-height: 100vh;
+      }
+      .wrap {
+        text-align: center;
+        padding: 32px;
+      }
+      h1 {
+        font-size: 48px;
+        margin: 0 0 12px;
+        color: var(--accent);
+      }
+      p {
+        margin: 0;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>503</h1>
+      <p>Service temporarily unavailable — the process is still starting up.</p>
+      <p>Try refreshing in a moment.</p>
+    </div>
+  </body>
+</html>

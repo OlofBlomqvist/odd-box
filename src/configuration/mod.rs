@@ -1,73 +1,46 @@
-// ====================================================================
-/// This is not expected to be used unless you are working on tests
-/// or configuration-file upgrade logic
+//! Strongly-typed configuration structs for every odd-box config generation.
+//!
+//! This module lets us deserialize any historical config format (legacy TOML,
+//! V1, V2, V3 TOML) into typed Rust structs, then upgrade through the chain:
+//!
+//!   legacy → V1 → V2 → V3 → TunnelCliConfiguration (cruma format)
+//!
+//! The cruma `TunnelCliConfiguration` **is** the current format.  There is no
+//! separate "V4" — cruma's config IS V4.
+
 pub mod legacy;
-/// This is not expected to be used unless you are working on tests
-/// or configuration-file upgrade logic
 pub mod v1;
-/// This is not expected to be used unless you are working on tests
-/// or configuration-file upgrade logic
 pub mod v2;
-/// This is not expected to be used unless you are working on tests
-/// or configuration-file upgrade logic
 pub mod v3;
-// ====================================================================
 
-use std::sync::Arc;
-use anyhow::bail;
-use dashmap::DashMap;
+use cruma::{config::AppConfig, cruma_proxy_lib::types::AcmeDirectory};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
-// Re-export the latest config version
-pub use v3::*;
+// ---------------------------------------------------------------------------
+// Shared types used across all config generations
+// ---------------------------------------------------------------------------
 
-pub use v3::OddBoxV3Config as OddBoxConfig;
-
-use crate::types::proc_info::ProcId;
-
-
-pub mod reload;
-
-pub trait OddBoxConfiguration<T> { 
-    fn example() -> T;
-    fn to_string(&self) -> anyhow::Result<String> {
-        bail!("to_string is not implemented for this configuration version")
-    }
-    fn write_to_disk(&self) -> anyhow::Result<()> {
-        bail!("write_to_disk is not implemented for this configuration version")
-    }
-}
-
-#[derive(Debug,Clone)]
-pub enum AnyOddBoxConfig {
-    #[allow(dead_code)]Legacy(legacy::OddBoxLegacyConfig),
-    V1(v1::OddBoxV1Config),
-    V2(v2::OddBoxV2Config),
-    V3(v3::OddBoxV3Config),
-}
-
-
-#[derive(Debug, Clone, Serialize, Deserialize,ToSchema,PartialEq, Eq, Hash, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct EnvVar {
     pub key: String,
     pub value: String,
 }
 
-#[derive(Serialize,Deserialize,Debug,Clone,ToSchema,PartialEq, Eq, Hash, schemars::JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
 #[allow(non_camel_case_types)]
 pub enum LogFormat {
+    #[default]
     standard,
-    dotnet
+    dotnet,
 }
 
-#[derive(Debug,Serialize,Clone,ToSchema, PartialEq, Eq, Hash, schemars::JsonSchema)]
+#[derive(Debug, Serialize, Clone, PartialEq, Eq, Hash)]
 pub enum LogLevel {
     Trace,
     Debug,
     Info,
     Warn,
-    Error
+    Error,
 }
 
 impl<'de> Deserialize<'de> for LogLevel {
@@ -103,702 +76,427 @@ impl<'de> Deserialize<'de> for LogLevel {
     }
 }
 
-
-#[derive(Debug,Clone,Serialize,Deserialize,Default,ToSchema,PartialEq, Eq, Hash, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
 pub enum OddBoxConfigVersion {
-    #[default] Unmarked,
+    #[default]
+    Unmarked,
     V1,
     V2,
-    V3
+    V3,
 }
 
+// ---------------------------------------------------------------------------
+// AnyOddBoxConfig — auto-detect + parse any generation
+// ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone)]
+pub enum AnyOddBoxConfig {
+    Legacy(legacy::LegacyConfig),
+    V1(v1::V1Config),
+    V2(v2::V2Config),
+    V3(v3::V3Config),
+}
 
 impl AnyOddBoxConfig {
-    
-    pub fn  parse(content:&str) -> Result<AnyOddBoxConfig,String> {
-        
-        let v3_result = toml::from_str::<v3::OddBoxV3Config>(content);
+    /// Parse configuration content (auto-detects YAML vs TOML).
+    pub fn parse(content: &str) -> Result<AnyOddBoxConfig, String> {
+        // Try TOML formats (V3 and earlier) — newest first
+        let v3_result = toml::from_str::<v3::V3Config>(content);
         if let Ok(v3_config) = v3_result {
-            return Ok(AnyOddBoxConfig::V3(v3_config))
+            return Ok(AnyOddBoxConfig::V3(v3_config));
         };
 
-
-        let v2_result = toml::from_str::<v2::OddBoxV2Config>(content);
+        let v2_result = toml::from_str::<v2::V2Config>(content);
         if let Ok(v2_config) = v2_result {
-            return Ok(AnyOddBoxConfig::V2(v2_config))
+            return Ok(AnyOddBoxConfig::V2(v2_config));
         };
 
-        let v1_result = toml::from_str::<v1::OddBoxV1Config>(content);
+        let v1_result = toml::from_str::<v1::V1Config>(content);
         if let Ok(v1_config) = v1_result {
-            return Ok(AnyOddBoxConfig::V1(v1_config))
+            return Ok(AnyOddBoxConfig::V1(v1_config));
         };
 
-        let legacy_result = toml::from_str::<legacy::OddBoxLegacyConfig>(&content);
+        let legacy_result = toml::from_str::<legacy::LegacyConfig>(content);
         if let Ok(legacy_config) = legacy_result {
-            return Ok(AnyOddBoxConfig::Legacy(legacy_config))
+            return Ok(AnyOddBoxConfig::Legacy(legacy_config));
         };
 
+        // Build a helpful error message
         if content.contains("version = \"V3\"") {
-            Err(format!("invalid v3 configuration file.\n{}", v3_result.unwrap_err().to_string()))
+            Err(format!(
+                "invalid v3 configuration file.\n{}",
+                v3_result.unwrap_err()
+            ))
         } else if content.contains("version = \"V2\"") {
-            Err(format!("invalid v2 configuration file.\n{}", v2_result.unwrap_err().to_string()))
+            Err(format!(
+                "invalid v2 configuration file.\n{}",
+                v2_result.unwrap_err()
+            ))
         } else if content.contains("version = \"V1\"") {
-            Err(format!("invalid v1 configuration file.\n{}", v1_result.unwrap_err().to_string()))
+            Err(format!(
+                "invalid v1 configuration file.\n{}",
+                v1_result.unwrap_err()
+            ))
         } else {
-            Err(format!("invalid (legacy) configuration file.\n{}", legacy_result.unwrap_err().to_string()))
+            Err(format!(
+                "invalid (legacy) configuration file.\n{}",
+                legacy_result.unwrap_err()
+            ))
         }
     }
 
-    // Result<(validated_config,original_version,was_upgraded),error>
-    pub fn try_upgrade_to_latest_version(&self) -> Result<(crate::configuration::OddBoxConfig,OddBoxConfigVersion,bool),String> {
-        match self {
-            AnyOddBoxConfig::Legacy(legacy_config) => {
-                let v1 : v1::OddBoxV1Config = legacy_config.to_owned().try_into()?;
-                let v2 : v2::OddBoxV2Config = v1.to_owned().try_into()?;
-                let v3 : v3::OddBoxV3Config = v2.to_owned().try_into()?;
-                Ok((v3,OddBoxConfigVersion::Unmarked,true))
-            },
-            AnyOddBoxConfig::V1(v1_config) => {
-                let v2 : v2::OddBoxV2Config = v1_config.to_owned().try_into()?;
-                let v3 : v3::OddBoxV3Config = v2.to_owned().try_into()?;
-                Ok((v3,OddBoxConfigVersion::V1,true))
-            },
-            AnyOddBoxConfig::V2(v2) => {
-                let v3 : v3::OddBoxV3Config = v2.to_owned().try_into()?;
-                Ok((v3,OddBoxConfigVersion::V2,true))
-            },
-            AnyOddBoxConfig::V3(v3) => {
-                Ok((v3.clone(),OddBoxConfigVersion::V3,false))
+    /// Upgrade any config generation all the way to a cruma
+    /// `TunnelCliConfiguration`.
+    ///
+    /// Returns `(config, original_version)`.
+    pub fn upgrade_to_cruma(&self) -> Result<(AppConfig, OddBoxConfigVersion), String> {
+        // First, upgrade through the typed chain to get a V3Config.
+        let v3 = match self {
+            AnyOddBoxConfig::Legacy(cfg) => {
+                let v1: v1::V1Config = cfg.clone().try_into()?;
+                let v2: v2::V2Config = v1.try_into()?;
+                let v3: v3::V3Config = v2.try_into()?;
+                (v3, OddBoxConfigVersion::Unmarked)
             }
-        }
-    }
-}
-
-
-
-#[derive(Debug,Clone)]
-pub struct ConfigWrapper {
-    internal_configuration : crate::configuration::OddBoxConfig,
-    pub remote_sites: DashMap<String, crate::configuration::RemoteSiteConfig>,
-    pub hosted_processes: DashMap<String, crate::configuration::InProcessSiteConfig>,
-    pub docker_containers: DashMap<String, crate::docker::ContainerProxyTarget>,
-    pub wrapper_cache_map_is_dirty: bool,
-    pub internal_version: u64
-}
-
-
-impl std::ops::Deref for ConfigWrapper {
-    type Target = crate::configuration::OddBoxConfig;
-    fn deref(&self) -> &Self::Target {
-        &self.internal_configuration
-    }
-}
-impl std::ops::DerefMut for ConfigWrapper {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.internal_configuration
-    }
-}
-
-
-// This is meant to simplify the process of upgrading from one configuration version to another.
-// It is also used as a runtime-cache for the configuration such that one can change the config
-// during runtime without having to save it to disk, and so that it becomes easier to 
-// work with from code in general..
-impl ConfigWrapper {
-
-    /// Creates a new ConfigWrapper from an the latest version of a configuration file,
-    /// initializing the DashMaps from the vectors in the config.
-    pub fn new(config: crate::configuration::OddBoxConfig) -> Self {
-        let remote_sites = DashMap::new();
-        if let Some(remote_targets) = &config.remote_target {
-            for site in remote_targets {
-                remote_sites.insert(site.host_name.clone(), site.clone());
+            AnyOddBoxConfig::V1(cfg) => {
+                let v2: v2::V2Config = cfg.clone().try_into()?;
+                let v3: v3::V3Config = v2.try_into()?;
+                (v3, OddBoxConfigVersion::V1)
             }
-        }
-
-        let hosted_processes = DashMap::new();
-        if let Some(hosted_procs) = &config.hosted_process {
-            for proc in hosted_procs {
-                hosted_processes.insert(proc.host_name.clone(), proc.clone());
+            AnyOddBoxConfig::V2(cfg) => {
+                let v3: v3::V3Config = cfg.clone().try_into()?;
+                (v3, OddBoxConfigVersion::V2)
             }
-        }
-
-        ConfigWrapper {
-            internal_version: 0,
-            internal_configuration: config,
-            remote_sites,
-            hosted_processes,
-            wrapper_cache_map_is_dirty: false,
-            docker_containers: DashMap::new()
-        }
-    }
-
-    // re-populate the dashmaps from the internal configuration vectors
-    pub fn reload_dashmaps(&mut self) {
-        
-        self.hosted_processes.clear();
-        self.remote_sites.clear();
-
-        if let Some(remote_targets) = &self.remote_target {
-            for site in remote_targets {
-                self.remote_sites.insert(site.host_name.clone(), site.clone());
-            }
-        }
-
-        if let Some(hosted_procs) = &self.hosted_process {
-            for proc in hosted_procs {
-                self.hosted_processes.insert(proc.host_name.clone(), proc.clone());
-            }
-        }
-
-        
-
-        self.wrapper_cache_map_is_dirty = false;
-        
-
-    } 
-
-    /// Persists the current state of the DashMaps back into the config vectors.
-    /// This method should be called before serialization.
-    pub fn persist(&mut self) {
-        let remote_targets: Vec<_> = self
-            .remote_sites
-            .iter()
-            .map(|kv| kv.value().clone())
-            .collect();
-        self.internal_configuration.remote_target = if remote_targets.is_empty() {
-            None
-        } else {
-            Some(remote_targets)
+            AnyOddBoxConfig::V3(cfg) => (cfg.clone(), OddBoxConfigVersion::V3),
         };
 
-        let hosted_processes: Vec<_> = self
-            .hosted_processes
-            .iter()
-            .map(|kv| kv.value().clone())
-            .collect();
-        self.internal_configuration.hosted_process = if hosted_processes.is_empty() {
-            None
-        } else {
-            Some(hosted_processes)
-        };
+        // Then convert V3 → TunnelCliConfiguration (the cruma/V4 format).
+        let cruma_cfg = v3_to_cruma(&v3.0)?;
+        Ok((cruma_cfg, v3.1))
+    }
+}
 
-        self.wrapper_cache_map_is_dirty = false;
+// ---------------------------------------------------------------------------
+// V3 → TunnelCliConfiguration conversion
+// ---------------------------------------------------------------------------
+
+/// Convert a typed V3Config into a cruma `TunnelCliConfiguration`.
+pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
+    use cruma::config::*;
+    use std::collections::HashMap;
+
+    let mut backends = Vec::<BackendDefinition>::new();
+    let mut frontends = Vec::<FrontendDefinition>::new();
+    let mut processes = Vec::<ProcessDefinition>::new();
+    let mut listeners = Vec::<ListenerDefinition>::new();
+    let mut global_env = HashMap::<String, String>::new();
+
+    // ── Global env vars ─────────────────────────────────────────────────
+    for ev in &v3.env_vars {
+        global_env.insert(ev.key.clone(), ev.value.clone());
     }
 
-    pub fn set_disk_path(&mut self,cfg_path:&str) -> anyhow::Result<()>  {
-        self.path = Some(std::path::Path::new(&cfg_path).canonicalize()?.to_str().unwrap_or_default().into());
-        Ok(())
-    }
+    let ip = v3
+        .ip
+        .map(|addr| addr.to_string())
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let bind_addr = match ip.as_str() {
+        "0.0.0.0" => ListenerBindAddress::All,
+        _ => ListenerBindAddress::Localhost,
+    };
 
-    pub fn is_valid(&self) -> anyhow::Result<()> {
+    // ── Listeners ──────────────────────────────────────────────────────
+    let http_port = v3.http_port.unwrap_or(8080);
+    let tls_port = v3.tls_port.unwrap_or(4343);
 
-        // TODO:
-        // - check for invalid hint combinations
+    listeners.push(ListenerDefinition {
+        kind: Some(ListenerKind::Http),
+        port: http_port,
+        addr: bind_addr.clone(),
+        bind_ip: None,
+        tls: false,
+        cert_mode: ListenerCertMode::default(),
+        http3: false,
+        max_connections: None,
+        max_connections_per_ip: None,
+        request_limits: Default::default(),
+    });
 
-        if self.env_vars.iter().any(|x| x.key.eq_ignore_ascii_case("port")) {
-            anyhow::bail!("Invalid configuration. You cannot use 'port' as a global environment variable");
-        }
+    listeners.push(ListenerDefinition {
+        kind: Some(ListenerKind::Https),
+        port: tls_port,
+        addr: bind_addr,
+        bind_ip: None,
+        tls: true,
+        cert_mode: ListenerCertMode::default(),
+        http3: true,
+        max_connections: None,
+        max_connections_per_ip: None,
+        request_limits: Default::default(),
+    });
 
-    
-        let mut host_names = std::collections::HashMap::new();
-        let mut ports = std::collections::HashMap::new();
-    
-        for target in self.dir_server.iter().flatten() {
-            host_names
-                .entry(target.host_name.clone())
-                .and_modify(|count| *count += 1)
-                .or_insert(1);
-        }
-        
-        for target in self.remote_target.iter().flatten() {
-            
-            host_names
-                .entry(target.host_name.clone())
-                .and_modify(|count| *count += 1)
-                .or_insert(1);
+    let auto_start_global = v3.auto_start.unwrap_or(true);
+    let port_range_start = v3.port_range_start;
 
-            if target.enable_lets_encrypt.unwrap_or(false) {
-                if !target.terminate_tls.unwrap_or(false) {
-                    anyhow::bail!(format!("Invalid configuration for remote target '{}'. LetsEncrypt cannot be enabled when TCP tunnel mode is enabled.", target.host_name));
-                }
-                if target.capture_subdomains.unwrap_or_default() {
-                    anyhow::bail!("Invalid configuration for remote target '{}'. LetsEncrypt cannot be enabled when capture_subdomains is enabled as odd-box does not yet support wildcard certificates", target.host_name);
-                }
-            }
-        }
+    // ── Hosted processes → ProcessDefinition + FrontendDefinition ──────
+    let mut port_offset: u16 = 0;
+    if let Some(hosted) = &v3.hosted_process {
+        for proc in hosted {
+            let assigned_port = proc.port.unwrap_or_else(|| {
+                let p = port_range_start + port_offset;
+                port_offset += 1;
+                p
+            });
 
-        for process in self.hosted_process.iter().flatten() {
-  
-            host_names
-                .entry(process.host_name.clone())
-                .and_modify(|count| *count += 1)
-                .or_insert(1);
-    
-            if let Some(port) = process.port {
-                ports
-                    .entry(port)
-                    .or_insert_with(Vec::new)
-                    .push(process.host_name.clone());
-            }
-
-            if process.enable_lets_encrypt.unwrap_or(false) {
-                if !process.terminate_tls.unwrap_or(false) {
-                    anyhow::bail!(format!("Invalid configuration for hosted process '{}'. LetsEncrypt cannot be enabled when TCP tunnel mode is enabled.", process.host_name));
-                }
-                if process.capture_subdomains.unwrap_or_default() {
-                    anyhow::bail!("Invalid configuration for hosted process '{}'. LetsEncrypt cannot be enabled when capture_subdomains is enabled as odd-box does not yet support wildcard certificates", process.host_name);
-                }
-            }
-    
-            if let Some(port) = process.port {
-                if let Some(env_vars) = &process.env_vars {
-                    for env_var in env_vars {
-                        if env_var.key.eq_ignore_ascii_case("port") {
-                            if let Ok(env_port) = env_var.value.parse::<u16>() {
-                                if env_port != port {
-                                    anyhow::bail!(format!(
-                                        "Environment variable PORT for '{}' does not match the port specified in the configuration.\n\
-                                        It is recommended to rely on the port setting - it will automatically inject the port variable to the process-local context.",
-                                        process.host_name
-                                    ));
-                                }
-                            }
-                        }
-                    }
+            // Per-process env (process-specific only; globals stay in global_env)
+            let mut proc_env = HashMap::new();
+            if let Some(env_vars) = &proc.env_vars {
+                for ev in env_vars {
+                    proc_env.insert(ev.key.clone(), ev.value.clone());
                 }
             }
-        }
-    
-        let duplicate_host_names: Vec<String> = host_names
-            .into_iter()
-            .filter_map(|(name, count)| if count > 1 { Some(name) } else { None })
-            .collect();
-    
-        if !duplicate_host_names.is_empty() {
-            anyhow::bail!(format!(
-                "Duplicate host names found: {}",
-                duplicate_host_names.join(", ")
-            ));
-        }
-    
-        let duplicate_ports: Vec<(u16, Vec<String>)> = ports
-            .into_iter()
-            .filter(|(_, sites)| sites.len() > 1)
-            .collect();
-    
-        if !duplicate_ports.is_empty() {
-            let conflict_details: Vec<String> = duplicate_ports
-                .into_iter()
-                .map(|(port, sites)| format!("Port {}: [{}]", port, sites.join(", ")))
-                .collect();
-    
-            anyhow::bail!(format!(
-                "Duplicate ports found with conflicting sites: {}",
-                conflict_details.join("; ")
-            ));
-        }
-    
-        Ok(())
-    }
-    
+            // Inject PORT if not present
+            proc_env
+                .entry("PORT".to_string())
+                .or_insert_with(|| assigned_port.to_string());
 
-    pub fn get_parent_path(&self) -> anyhow::Result<String> {
-        // todo - use cache and clear on path change
-        // if let Some(pre_resolved) = &self.1 {
-        //     return Ok(pre_resolved.to_string())
-        // }
-        let p = self.path.clone().ok_or(anyhow::anyhow!(String::from("Failed to resolve path.")))?;
-        if let Some(directory_path_str) = 
-            std::path::Path::new(&p)
-            .parent()
-            .map(|p| p.to_str().unwrap_or_default()) 
-        {
-            if directory_path_str.eq("") {
-                //tracing::trace!("$cfg_dir resolved to '.'");
-                let xx = ".".to_string();
-                //self.1 = Some(xx.clone());
-                Ok(xx)
-            } else {
-                //tracing::trace!("$cfg_dir resolved to {directory_path_str}");
-                let xx = directory_path_str.to_string();
-                //self.1 = Some(xx.clone());
-                Ok(xx)
-            }
-            
-        } else {
-            bail!(format!("Failed to resolve $cfg_dir"));
-        }   
-    }
+            // Convert hints to upstream protocol
+            let upstream_protocol = hints_to_upstream_protocol(proc.hints.as_ref());
 
-    
-   
+            let process_id = proc.host_name.clone();
 
-    pub fn busy_ports(&self) -> Vec<(ProcId,u16)> {
-        self.hosted_process.iter().flatten().flat_map(|x| {
-            
-            let mut items = Vec::new();
-            
-            // manually set ports needs to be marked as busy even if the process is not running
-            if let Some(p) = x.port { 
-                items.push((x.get_id().clone(),p))
-            }
+            processes.push(ProcessDefinition {
+                binary_watch: None,
+                shadow_copy: None,
+                id: process_id.clone(),
+                command: proc.bin.clone(),
+                args: proc.args.clone().unwrap_or_default(),
+                working_directory: proc.dir.as_ref().map(|d| d.into()),
+                env: proc_env,
+                auto_start: proc.auto_start.unwrap_or(auto_start_global),
+                start_on_request: true, // keep legacy behavior
+                restart_policy: ProcessRestartPolicy::Never,
+                upstream_protocol,
+                upstream_tls: proc.https.unwrap_or(false),
+                backend_timeout_seconds: Some(60), // legacy behavior was unlimited while new default using None is 10 sec. lets do 1min at least
+                idle_timeout_seconds: None,
+            });
 
+            // Frontend routing
+            frontends.push(FrontendDefinition {
+                hostname: HostName(proc.host_name.clone()),
+                backend_id: None,
+                path_routes: vec![],
+                process_id: Some(process_id.clone()),
+                listener_kinds: None,
+                middlewares: Vec::new(),
+                alpn: None,
+                forward_host_header: true,
+                forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
+                cert_mode_override: None,
+                cert_mode_overrides: None,
+                kubernetes_target_id: None,
+                request_limits: Default::default(),
+            });
 
-            // active ports means that there is a loop active for this process using that port
-            if let Some(p) = x.active_port { 
-                items.push((x.get_id().clone(),p))
-            }
-
-            if items.len() > 0 {
-                Some(items)
-            } else {
-                None
-            }
-
-        }).flatten().collect::<Vec<(ProcId,u16)>>()
-    }
-    
-    pub async fn find_and_set_unused_port(selfy : &mut Self, proc:&mut crate::InProcessSiteConfig) -> anyhow::Result<u16> {
-        
-        if let Some(procs) = &selfy.hosted_process {
-            
-            let used_ports = procs.iter().filter_map(|x|x.port).collect::<Vec<u16>>();
-
-            if let Some(manually_chosen_port) = proc.port {
-                if used_ports.contains(&manually_chosen_port) {
-                    // this port is already in use
-                    bail!("The port configured for this site is already in use..")
-                } else {
-                    return Ok(manually_chosen_port)
-                }
-            }
-
-        };
-
-        if let Some(manually_chosen_port) = proc.port {
-            // clearly this port is not in use yet
-            Ok(manually_chosen_port)
-        } else {
-            // if nothing is running and user has not selected any specific one lets just use the first port from the start range
-            Ok(selfy.port_range_start)
-        }
-    }
-    
-     // ---> port-mapping...
-    // todo: work with the wrapper dashmap instead
-    pub async fn add_or_replace_hosted_process(&mut self,hostname:&str,item:crate::InProcessSiteConfig,_state:Arc<crate::GlobalState>) -> anyhow::Result<()> {
-        
-        if let Some(hosted_site_configs) = &mut self.hosted_process {
-            hosted_site_configs.retain(|x| x.host_name != item.host_name);
-            hosted_site_configs.retain(|x| x.host_name != hostname);
-            hosted_site_configs.push(item.clone());            
-        } else {    
-            self.hosted_process = Some(vec![item.clone()]);
-        }
-        self.write_to_disk()
-    }
-
-    // todo: work with the wrapper dashmap instead
-    pub async fn add_or_replace_dir_site(&mut self,old_hostname:&str,item:DirServer,_state:Arc<crate::GlobalState>) -> anyhow::Result<()> {
-        
-
-        if let Some(sites) = self.dir_server.as_mut() {
-            // out with the old, in with the new
-            sites.retain(|x| x.host_name != old_hostname);
-            sites.retain(|x| x.host_name != item.host_name);
-            sites.push(item.clone());
-        } else {
-            self.dir_server = Some(vec![item.clone()]);
-        }
-        self.write_to_disk()
-    
-    }
-    
-     // todo: work with the wrapper dashmap instead
-     pub async fn add_or_replace_remote_site(&mut self,hostname:&str,item:crate::RemoteSiteConfig,_state:Arc<crate::GlobalState>) -> anyhow::Result<()> {
-        
-
-        if let Some(sites) = self.remote_target.as_mut() {
-            // out with the old, in with the new
-            sites.retain(|x| x.host_name != hostname);
-            sites.retain(|x| x.host_name != item.host_name);
-            sites.push(item.clone());
-        } else {
-            self.remote_target = Some(vec![item.clone()]);
-        }
-        self.write_to_disk()
-    
-    }
-
-    pub fn port_is_free(port: u16) -> bool {
-        match std::net::TcpListener::bind(("127.0.0.1", port)) {
-            Ok(listener) => {
-                drop(listener);
-                true
-            },
-            Err(_) => {
-                false
-            },
-        }
-    }
-
-    pub fn get_random_free_port() -> Option<u16> {
-        match std::net::TcpListener::bind(("127.0.0.1", 0)) {
-            Ok(listener) => {
-                match listener.local_addr() {
-                    Ok(l) => Some(l.port()),
-                    _ => None
-                }
-            },
-            Err(e) => {
-                tracing::warn!("{:?}",e);
-                None
-            },
-        }
-    }
-
-    // todo: work with the wrapper dashmap instead
-    pub fn set_active_port(&mut self, resolved_proc:&mut FullyResolvedInProcessSiteConfig) -> anyhow::Result<u16> {
-      
-    
-        let mut selected_port = resolved_proc.active_port;
-
-        // ports in use or configured for use by other sites
-        let unavailable_ports = self.busy_ports().into_iter().filter(|x|{
-                x.0 != resolved_proc.proc_id 
-        }).collect::<Vec<(ProcId,u16)>>();
-
-        if let Some(currently_selected_port) = selected_port {
-            if !unavailable_ports.iter().any(|x|x.1 == currently_selected_port) {
-                if Self::port_is_free(currently_selected_port) {
-                    return Ok(currently_selected_port)
-                } else {
-                    selected_port = None;
-                }
+            // Wildcard companion for capture_subdomains
+            if proc.capture_subdomains.unwrap_or(false) {
+                frontends.push(FrontendDefinition {
+                    hostname: HostName(format!("*.{}", proc.host_name)),
+                    backend_id: None,
+                    path_routes: vec![],
+                    process_id: Some(process_id),
+                    listener_kinds: None,
+                    middlewares: Vec::new(),
+                    alpn: None,
+                    forward_host_header: true,
+                    forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
+                    cert_mode_override: None,
+                    cert_mode_overrides: None,
+                    kubernetes_target_id: None,
+                    request_limits: Default::default(),
+                });
             }
         }
+    }
 
-        // decide which port to use (ie. which port to add as the environment variable PORT)
-        if let Some(prefered_port) = resolved_proc.port {
+    // ── Remote targets → BackendDefinition + FrontendDefinition ────────
+    if let Some(remotes) = &v3.remote_target {
+        for remote in remotes {
+            let backend_id = remote.host_name.clone();
 
-            if prefered_port == 0 {
-                selected_port = Self::get_random_free_port() 
-            } else {
-                if let Some(taken_by) = unavailable_ports.iter().find(|x|x.1 == prefered_port) {
-                    tracing::warn!("[{}] The configured port '{}' is unavailable (configured for another site: '{}').. ",&resolved_proc.host_name,prefered_port,taken_by.1);
-                } else {
-                    tracing::info!("[{}] Starting on port '{}' as configured for the process!",&resolved_proc.host_name,prefered_port);
-                    selected_port = Some(prefered_port);
-                }
-            }
-        } else if let Some(EnvVar { key: _, value }) = resolved_proc.env_vars.iter().flatten().find(|x|x.key.to_lowercase()=="port") { 
-            if let Some(taken_by) = unavailable_ports.iter().find(|x|x.1.to_string() == *value) {
-                tracing::warn!("[{}] The configured port (via env var in cfg) '{}' is unavailable (configured for another site: '{}').. ",&resolved_proc.host_name,value,taken_by.1);
-            } else {
-                if let Ok(spbev) = value.parse::<u16>() {
-                    tracing::info!("[{}] Starting on port '{}' as selected via a configured environment variable for port!",&resolved_proc.host_name,value);
-                    selected_port = Some(spbev)
-                } else {
-                    tracing::info!("[{}] The env var for port was configured to '{}' which is not a valid u16, ignoring.",&resolved_proc.host_name,value);
-                }
-            }
-        }
-
-        // if no port manually specified, find the first available port
-        if selected_port.is_none() {
-            let min_auto_port = self.port_range_start;
-            let unavailable = unavailable_ports.iter().map(|x|x.1).collect::<Vec<u16>>();
-            // find first port that is not in use starting from min_auto_port, looking at the unavailable_ports list:
-            let mut inner_selected_port = min_auto_port;
-            loop {
-                if unavailable.contains(&inner_selected_port) {
-                    inner_selected_port += 1;
-                } else {
-                    if Self::port_is_free(inner_selected_port) {
-                        break
+            let (destination, use_https) = if let Some(first) = remote.backends.first() {
+                let port = if first.port == 0 {
+                    if first.https.unwrap_or(false) {
+                        443
                     } else {
-                        inner_selected_port += 1;
+                        80
                     }
-                }
-            }            
-            tracing::trace!("[{}] Using the first available port found (starting from the configured start port: {min_auto_port}) ---> '{}'",&resolved_proc.host_name,inner_selected_port);
-            selected_port = Some(inner_selected_port);
-        } 
-
-        // make sure nobody else is using this port before returning it to caller.
-        // mark this process as using this port
-        if let Some(sp) = selected_port {
-            if let Some(hosted_processes) = &mut self.hosted_process {
-                if let Some(mm) = hosted_processes.iter_mut().find(|x| x.get_id() == &resolved_proc.proc_id) {
-                    // save the selected port in the globally shared state
-                    mm.active_port = Some(sp);
                 } else {
-                    tracing::error!("[{}] Could not find an active site in the hosted process list.. This is a bug in odd-box!",&resolved_proc.host_name);
-                }
+                    first.port
+                };
+                (
+                    format!("{}:{}", first.address, port),
+                    first.https.unwrap_or(false),
+                )
             } else {
-                tracing::error!("[{}] The site proc list is empty! Most likely this is a bug in odd-box.",&resolved_proc.host_name);
-            }
-        }
+                ("localhost:80".to_string(), false)
+            };
 
-        if let Some(p) = selected_port {
-            Ok(p)
-        } else {
-            bail!("Failed to find a port for the process..")
+            let kind = if use_https {
+                TargetKind::Https
+            } else {
+                TargetKind::Http
+            };
+
+            let upstream_protocol = remote
+                .backends
+                .first()
+                .and_then(|b| b.hints.as_ref())
+                .map(|h| hints_to_upstream_protocol(Some(h)))
+                .unwrap_or(UpstreamProtocol::H1);
+
+            backends.push(BackendDefinition {
+                id: backend_id.clone(),
+                kind,
+                destination,
+                destinations: Vec::new(),
+                upstream_protocol,
+                allow_directory_indexing: None,
+                render_markdown: None,
+                spa_fallback: None,
+                middlewares: Vec::new(),
+                backend_timeout_seconds: None,
+            });
+
+            frontends.push(FrontendDefinition {
+                hostname: HostName(remote.host_name.clone()),
+                backend_id: Some(backend_id.clone()),
+                path_routes: vec![],
+                process_id: None,
+                listener_kinds: None,
+                middlewares: Vec::new(),
+                alpn: None,
+                forward_host_header: remote.keep_original_host_header.unwrap_or(true),
+                forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
+                cert_mode_override: None,
+                cert_mode_overrides: None,
+                kubernetes_target_id: None,
+                request_limits: Default::default(),
+            });
+
+            if remote.capture_subdomains.unwrap_or(false) {
+                frontends.push(FrontendDefinition {
+                    hostname: HostName(format!("*.{}", remote.host_name)),
+                    backend_id: Some(backend_id),
+                    path_routes: vec![],
+                    process_id: None,
+                    listener_kinds: None,
+                    middlewares: Vec::new(),
+                    alpn: None,
+                    forward_host_header: remote.keep_original_host_header.unwrap_or(true),
+                    forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
+                    cert_mode_override: None,
+                    cert_mode_overrides: None,
+                    kubernetes_target_id: None,
+                    request_limits: Default::default(),
+                });
+            }
         }
     }
 
-    pub fn resolve_dir_server_configuration(&self,item:&DirServer) -> anyhow::Result<DirServer> {
+    // ── Dir servers → BackendDefinition + FrontendDefinition ───────────
+    if let Some(dirs) = &v3.dir_server {
+        for dir in dirs {
+            let backend_id = dir.host_name.clone();
 
-        let mut resolved_dir_server = item.clone();
+            backends.push(BackendDefinition {
+                id: backend_id.clone(),
+                kind: TargetKind::LocalDirectory,
+                destination: dir.dir.clone(),
+                destinations: Vec::new(),
+                upstream_protocol: UpstreamProtocol::H1,
+                allow_directory_indexing: Some(dir.enable_directory_browsing.unwrap_or(false)),
+                render_markdown: Some(dir.render_markdown.unwrap_or(false)),
+                spa_fallback: None,
+                middlewares: Vec::new(),
+                backend_timeout_seconds: None,
+            });
 
-        let resolved_home_dir_path = dirs::home_dir().ok_or(anyhow::anyhow!(String::from("Failed to resolve home directory.")))?;
-        let resolved_home_dir_str = resolved_home_dir_path.to_str().ok_or(anyhow::anyhow!(String::from("Failed to parse home directory.")))?;
+            frontends.push(FrontendDefinition {
+                hostname: HostName(dir.host_name.clone()),
+                backend_id: Some(backend_id.clone()),
+                path_routes: vec![],
+                process_id: None,
+                listener_kinds: None,
+                middlewares: Vec::new(),
+                alpn: None,
+                forward_host_header: true,
+                forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
+                cert_mode_override: None,
+                cert_mode_overrides: None,
+                kubernetes_target_id: None,
+                request_limits: Default::default(),
+            });
 
-        // tracing::info!("Resolved home directory: {}",&resolved_home_dir_str);
-
-        let cfg_dir = self.get_parent_path()?;
-
-
-        let root_dir = if let Some(rd) = &self.root_dir {
-            
-            if rd.contains("$root_dir") {
-                anyhow::bail!("it is clearly not a good idea to use $root_dir in the configuration of root dir...")
-            }
-
-            let rd_with_vars_replaced = rd
-                .replace("$cfg_dir", &cfg_dir)
-                .replace("~", resolved_home_dir_str);
-
-            let canonicalized_with_vars = 
-                match std::fs::canonicalize(rd_with_vars_replaced.clone()) {
-                    Ok(resolved_path) => {
-                        resolved_path.display().to_string()
-                            // we dont want to use ext path def on windows
-                            .replace("\\\\?\\", "")
-                    }
-                    Err(e) => {
-                        anyhow::bail!(format!("root_dir item in configuration ({rd}) resolved to this: '{rd_with_vars_replaced}' - error: {}", e));
-                    }
-                };
-            
-            // tracing::debug!("$root_dir resolved to: {rd}");
-            canonicalized_with_vars
-        } else {
-            "$root_dir".to_string()
-        };
-
-        let resolved_home_dir_path = dirs::home_dir().ok_or(anyhow::anyhow!(String::from("Failed to resolve home directory.")))?;
-        let resolved_home_dir_str = resolved_home_dir_path.to_str().ok_or(anyhow::anyhow!(String::from("Failed to parse home directory.")))?;
-        
-        let with_vars = |x:&str| -> String {
-            x.replace("$root_dir", &root_dir)
-            .replace("$cfg_dir", &cfg_dir)
-            .replace("~", resolved_home_dir_str)
-        };
-
-        resolved_dir_server.dir = with_vars(&item.dir);
-
-        Ok(resolved_dir_server)
-
-    }
-
-
-
-    // this MUST be called by proc_host prior to starting a process in order to resolve all variables.
-    // it is done this way in order to avoid changing the global state of the configuration in to the resolved state
-    // since that would then be saved to disk and we would lose the original configuration with dynamic variables
-    // making configuration files less portable.
-    // todo: work with the wrapper dashmap instead
-    // note: we dont cache this right now but perhaps we should...
-    //       the reason it's not cached is that the configuration may change at runtime
-    //       and we'd need to invalidate this cache every time the global configuration changes.
-    //       perhaps work on this later.
-    pub fn resolve_process_configuration(&mut self,proc:&crate::InProcessSiteConfig) -> anyhow::Result<crate::FullyResolvedInProcessSiteConfig> {
-
-        let mut resolved_proc = crate::FullyResolvedInProcessSiteConfig {
-            log_level: proc.log_level.clone(),
-            excluded_from_start_all: proc.exclude_from_start_all.unwrap_or(false),
-            proc_id: proc.get_id().clone(),
-            active_port: proc.active_port,
-            terminate_tls: proc.terminate_tls,
-            hints: proc.hints.clone(),
-            host_name: proc.host_name.clone(),
-            dir: proc.dir.clone(),
-            bin: proc.bin.clone(),
-            args: proc.args.clone(),
-            env_vars: proc.env_vars.clone(),
-            log_format: proc.log_format.clone(),
-            auto_start: proc.auto_start,
-            port: proc.port,
-            https: proc.https,
-            capture_subdomains: proc.capture_subdomains,
-            forward_subdomains: proc.forward_subdomains
-        };
-
-        let resolved_home_dir_path = dirs::home_dir().ok_or(anyhow::anyhow!(String::from("Failed to resolve home directory.")))?;
-        let resolved_home_dir_str = resolved_home_dir_path.to_str().ok_or(anyhow::anyhow!(String::from("Failed to parse home directory.")))?;
-
-        //tracing::info!("Resolved home directory: {}",&resolved_home_dir_str);
-
-        let cfg_dir = self.get_parent_path()?;
-
-
-        let root_dir = if let Some(rd) = &self.root_dir {
-            
-            if rd.contains("$root_dir") {
-                anyhow::bail!("it is clearly not a good idea to use $root_dir in the configuration of root dir...")
-            }
-
-            let rd_with_vars_replaced = rd
-                .replace("$cfg_dir", &cfg_dir)
-                .replace("~", resolved_home_dir_str);
-
-            let canonicalized_with_vars = 
-                match std::fs::canonicalize(rd_with_vars_replaced.clone()) {
-                    Ok(resolved_path) => {
-                        resolved_path.display().to_string()
-                            // we dont want to use ext path def on windows
-                            .replace("\\\\?\\", "")
-                    }
-                    Err(e) => {
-                        anyhow::bail!(format!("root_dir item in configuration ({rd}) resolved to this: '{rd_with_vars_replaced}' - error: {}", e));
-                    }
-                };
-            
-            //tracing::debug!("$root_dir resolved to: {rd}");
-            canonicalized_with_vars
-        } else {
-            let current_directory = std::env::current_dir()?;
-            current_directory.display().to_string()
-        };
-
-        let resolved_home_dir_path = dirs::home_dir().ok_or(anyhow::anyhow!(String::from("Failed to resolve home directory.")))?;
-        let resolved_home_dir_str = resolved_home_dir_path.to_str().ok_or(anyhow::anyhow!(String::from("Failed to parse home directory.")))?;
-        
-        let with_vars = |x:&str| -> String {
-            x.replace("$root_dir", &root_dir)
-            .replace("$cfg_dir", &cfg_dir)
-            .replace("~", resolved_home_dir_str)
-        };
-
-        if let Some(args) = &mut resolved_proc.args {
-            for argument in args {
-                *argument = with_vars(argument)
+            if dir.capture_subdomains.unwrap_or(false) {
+                frontends.push(FrontendDefinition {
+                    hostname: HostName(format!("*.{}", dir.host_name)),
+                    backend_id: Some(backend_id),
+                    path_routes: vec![],
+                    process_id: None,
+                    listener_kinds: None,
+                    middlewares: Vec::new(),
+                    alpn: None,
+                    forward_host_header: true,
+                    forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
+                    cert_mode_override: None,
+                    cert_mode_overrides: None,
+                    kubernetes_target_id: None,
+                    request_limits: Default::default(),
+                });
             }
         }
-       
-        if let Some(dir) = &mut resolved_proc.dir {
-            *dir = with_vars(&dir);
-        }
-
-        resolved_proc.bin = with_vars(&resolved_proc.bin);
-        
-
-        Ok(resolved_proc)
-
     }
 
+    Ok(AppConfig {
+        config_path: None,
+        pre_expansion_snapshot: None,
+        root_dir: v3.root_dir.clone(),
+        backends,
+        frontends,
+        processes,
+        global_env,
+        listeners,
+        kubernetes_targets: Vec::new(),
+        tunnel_secret: "ANON".to_string(),
+        tunnel_id: "ANON".to_string(),
+        tower_server: "tower.cruma.io:443".to_string(),
+        temp: false,
+        profile: None,
+        custom_pages: Default::default(),
+        dir_listing_branding: None,
+        acme_directory: AcmeDirectory::LetsEncrypt { staging: false },
+        acme_eab: None,
+        oauth2_providers: Vec::new(),
+        local_oauth2_server: None,
+        max_tunnel_connections: None,
+    })
+}
 
+/// Convert V3 hints to cruma UpstreamProtocol.
+fn hints_to_upstream_protocol(hints: Option<&Vec<v3::Hint>>) -> cruma::config::UpstreamProtocol {
+    use cruma::config::UpstreamProtocol;
+    let hints = match hints {
+        Some(h) => h,
+        None => return UpstreamProtocol::H1,
+    };
+
+    if hints.iter().any(|h| matches!(h, v3::Hint::H2)) {
+        UpstreamProtocol::H2
+    } else if hints.iter().any(|h| matches!(h, v3::Hint::H2CPK)) {
+        UpstreamProtocol::H2PK
+    } else {
+        UpstreamProtocol::H1
+    }
 }

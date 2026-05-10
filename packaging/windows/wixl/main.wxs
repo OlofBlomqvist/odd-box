@@ -1,0 +1,63 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+    <Product
+        Id='*'
+        Name='Odd Box'
+        UpgradeCode='E4B7A2F1-3C9D-4E5A-8B6F-1D2C3A4E5B6F'
+        Manufacturer='Olof Blomqvist'
+        Language='1033'
+        Codepage='1252'
+        Version='$(var.Version)'>
+
+        <Package
+            Id='*'
+            Keywords='Installer'
+            Description='Odd Box - a dead simple reverse proxy and web server'
+            Manufacturer='Olof Blomqvist'
+            InstallerVersion='200'
+            Languages='1033'
+            Compressed='yes'
+            InstallScope='perMachine'
+            SummaryCodepage='1252' />
+
+        <MajorUpgrade
+            DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.' />
+
+        <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' />
+
+        <Directory Id='TARGETDIR' Name='SourceDir'>
+            <Directory Id='ProgramFiles64Folder'>
+                <Directory Id='INSTALLDIR' Name='Odd Box'>
+                    <Directory Id='BinDir' Name='bin'>
+                        <Component Id='MainExecutable' Guid='*' Win64='yes'>
+                            <File
+                                Id='OddBoxExe'
+                                Name='odd-box.exe'
+                                Source='$(var.SourceDir)/odd-box.exe'
+                                KeyPath='yes' />
+                        </Component>
+                        <Component Id='PathEntry' Guid='2A5C8E1F-7D3B-4F6A-9C2E-5B8D1A3F7C4E' Win64='yes'>
+                            <CreateFolder />
+                            <Environment
+                                Id='OddBoxPath'
+                                Action='set'
+                                Name='PATH'
+                                Part='last'
+                                Permanent='no'
+                                System='yes'
+                                Value='[BinDir]' />
+                        </Component>
+                    </Directory>
+                </Directory>
+            </Directory>
+        </Directory>
+
+        <Feature Id='Complete' Title='Odd Box' Level='1'>
+            <ComponentRef Id='MainExecutable' />
+            <ComponentRef Id='PathEntry' />
+        </Feature>
+
+        <Property Id='ARPINSTALLLOCATION' Value='[INSTALLDIR]' />
+        <Property Id='ARPHELPLINK' Value='https://github.com/OlofBlomqvist/odd-box' />
+    </Product>
+</Wix>
