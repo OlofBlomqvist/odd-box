@@ -63,6 +63,10 @@ is_linux_host() {
     [[ "${host_os}" == "Linux" ]]
 }
 
+has_cargo_xwin() {
+    command -v cargo-xwin >/dev/null 2>&1
+}
+
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
         echo "error: required command '$1' not found in PATH" >&2
@@ -87,8 +91,12 @@ if [[ ${NO_BUILD} -eq 0 ]]; then
         cargo build --profile dist --target x86_64-pc-windows-msvc
         BINARY_PATH="${REPO_ROOT}/target/x86_64-pc-windows-msvc/dist/odd-box.exe"
     elif is_linux_host; then
-        require_command cross
-        cross build --profile dist --target x86_64-pc-windows-msvc
+        if has_cargo_xwin; then
+            cargo xwin build --profile dist --target x86_64-pc-windows-msvc
+        else
+            echo "error: cargo-xwin is required to cross-build x86_64-pc-windows-msvc on Linux" >&2
+            exit 1
+        fi
         BINARY_PATH="${REPO_ROOT}/target/x86_64-pc-windows-msvc/dist/odd-box.exe"
     else
         echo "error: MSI packaging is supported on Windows or Linux hosts" >&2

@@ -6,5 +6,4 @@ Under the hood, odd-box is a thin wrapper around the [cruma](https://cruma.io) a
 
 Pre-built binaries are available in the [release section](https://github.com/OlofBlomqvist/odd-box/releases).
 
-**NOTE**: If you do not have a specific reason for using odd-box, it is recommended that you migrate to [cruma](https://cruma.io/#downloads) as it is more actively developed and maintained. 
-
+**NOTE**: If you do not have a specific reason for using odd-box, it is recommended you migrate to [cruma](https://cruma.io/#downloads) as it is more actively developed and maintained. 

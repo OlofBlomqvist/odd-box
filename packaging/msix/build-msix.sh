@@ -63,6 +63,10 @@ require_command() {
     fi
 }
 
+has_cargo_xwin() {
+    command -v cargo-xwin >/dev/null 2>&1
+}
+
 prepend_path() {
     local dir="$1"
     [[ -d "${dir}" ]] || return 0
@@ -132,8 +136,12 @@ echo "  PublisherDisplayName=${PUBLISHER_DISPLAY_NAME}"
 mkdir -p "${OUTPUT_DIR}"
 
 if [[ ${NO_BUILD} -eq 0 ]]; then
-    require_command cross
-    cross build --profile dist --target x86_64-pc-windows-msvc
+    if has_cargo_xwin; then
+        cargo xwin build --profile dist --target x86_64-pc-windows-msvc
+    else
+        echo "error: cargo-xwin is required to cross-build x86_64-pc-windows-msvc for MSIX packaging" >&2
+        exit 1
+    fi
     BINARY_PATH="${REPO_ROOT}/target/x86_64-pc-windows-msvc/dist/odd-box.exe"
 fi
 
