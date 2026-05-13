@@ -600,6 +600,8 @@ fn parse_cli() -> Result<TunnelCli> {
     let cmd = TunnelCli::command()
         .name(NAME)
         .bin_name(NAME)
+        .version(VERSION)
+        .long_version(VERSION)
         .about("A simple reverse proxy and process manager")
         .long_about(
             "odd-box is a lightweight reverse proxy that manages backends, \
