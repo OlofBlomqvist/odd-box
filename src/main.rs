@@ -271,6 +271,7 @@ fn main() -> Result<()> {
                 Page::Listeners,
                 Page::TcpPorts,
                 Page::Kubernetes,
+                Page::Ipv6Tunnel,
                 Page::Graph,
                 Page::Processes,
                 Page::Requests,

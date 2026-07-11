@@ -11,7 +11,7 @@ build = "build.rs"
 [dependencies]
 # The cruma agent library — provides all proxy, tunnel, process-hosting,
 # TLS termination, ACME, GUI, TUI, and headless functionality.
-cruma = { path = "cruma-sdk/cruma-tunnel-agent-bin" , features = ["service-map"]}
+cruma = { path = "cruma-sdk/cruma-tunnel-agent-bin" , features = ["service-map", "ipv6-tunnel"]}
 cruma-tunnels-lib = { path = "cruma-sdk/cruma-tunnels-lib", default-features = false, features = ["schema"] }
 
 # Core
