@@ -223,6 +223,7 @@ fn main() -> Result<()> {
             .clone()
             .unwrap_or_else(|| "tower.cruma.io:443".to_string()),
         app_identity: cruma::paths::AppIdentity::new(Some("odd-box"), NAME).to_owned(),
+        gui_mode: true,
     };
 
     let theme = ThemeMode::from_cli_or_env(cli.theme.as_deref());
@@ -268,6 +269,7 @@ fn main() -> Result<()> {
                 Page::Backends,
                 Page::Frontends,
                 Page::Listeners,
+                Page::TcpPorts,
                 Page::Kubernetes,
                 Page::Graph,
                 Page::Processes,

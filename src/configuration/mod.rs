@@ -284,7 +284,9 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
 
             // Frontend routing
             frontends.push(FrontendDefinition {
+                kind: FrontendKind::Web,
                 hostname: HostName(proc.host_name.clone()),
+                port: None,
                 backend_id: None,
                 path_routes: vec![],
                 process_id: Some(process_id.clone()),
@@ -293,16 +295,20 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                 alpn: None,
                 forward_host_header: true,
                 forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
+                tcp_terminate_tls: true,
                 cert_mode_override: None,
                 cert_mode_overrides: None,
                 kubernetes_target_id: None,
                 request_limits: Default::default(),
+                accept_direct_tcp_connections: false,
             });
 
             // Wildcard companion for capture_subdomains
             if proc.capture_subdomains.unwrap_or(false) {
                 frontends.push(FrontendDefinition {
+                    kind: FrontendKind::Web,
                     hostname: HostName(format!("*.{}", proc.host_name)),
+                    port: None,
                     backend_id: None,
                     path_routes: vec![],
                     process_id: Some(process_id),
@@ -311,10 +317,12 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                     alpn: None,
                     forward_host_header: true,
                     forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
+                    tcp_terminate_tls: true,
                     cert_mode_override: None,
                     cert_mode_overrides: None,
                     kubernetes_target_id: None,
                     request_limits: Default::default(),
+                    accept_direct_tcp_connections: false,
                 });
             }
         }
@@ -367,10 +375,14 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                 spa_fallback: None,
                 middlewares: Vec::new(),
                 backend_timeout_seconds: None,
+                health_check: None,
+                maintenance_mode: false,
             });
 
             frontends.push(FrontendDefinition {
+                kind: FrontendKind::Web,
                 hostname: HostName(remote.host_name.clone()),
+                port: None,
                 backend_id: Some(backend_id.clone()),
                 path_routes: vec![],
                 process_id: None,
@@ -379,15 +391,19 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                 alpn: None,
                 forward_host_header: remote.keep_original_host_header.unwrap_or(true),
                 forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
+                tcp_terminate_tls: true,
                 cert_mode_override: None,
                 cert_mode_overrides: None,
                 kubernetes_target_id: None,
                 request_limits: Default::default(),
+                accept_direct_tcp_connections: false,
             });
 
             if remote.capture_subdomains.unwrap_or(false) {
                 frontends.push(FrontendDefinition {
+                    kind: FrontendKind::Web,
                     hostname: HostName(format!("*.{}", remote.host_name)),
+                    port: None,
                     backend_id: Some(backend_id),
                     path_routes: vec![],
                     process_id: None,
@@ -396,10 +412,12 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                     alpn: None,
                     forward_host_header: remote.keep_original_host_header.unwrap_or(true),
                     forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
+                    tcp_terminate_tls: true,
                     cert_mode_override: None,
                     cert_mode_overrides: None,
                     kubernetes_target_id: None,
                     request_limits: Default::default(),
+                    accept_direct_tcp_connections: false,
                 });
             }
         }
@@ -421,10 +439,14 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                 spa_fallback: None,
                 middlewares: Vec::new(),
                 backend_timeout_seconds: None,
+                health_check: None,
+                maintenance_mode: false,
             });
 
             frontends.push(FrontendDefinition {
+                kind: FrontendKind::Web,
                 hostname: HostName(dir.host_name.clone()),
+                port: None,
                 backend_id: Some(backend_id.clone()),
                 path_routes: vec![],
                 process_id: None,
@@ -433,15 +455,19 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                 alpn: None,
                 forward_host_header: true,
                 forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
+                tcp_terminate_tls: true,
                 cert_mode_override: None,
                 cert_mode_overrides: None,
                 kubernetes_target_id: None,
                 request_limits: Default::default(),
+                accept_direct_tcp_connections: false,
             });
 
             if dir.capture_subdomains.unwrap_or(false) {
                 frontends.push(FrontendDefinition {
+                    kind: FrontendKind::Web,
                     hostname: HostName(format!("*.{}", dir.host_name)),
+                    port: None,
                     backend_id: Some(backend_id),
                     path_routes: vec![],
                     process_id: None,
@@ -450,10 +476,12 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
                     alpn: None,
                     forward_host_header: true,
                     forwarded_headers_mode: cruma::config::ForwardedHeadersMode::Preserve,
+                    tcp_terminate_tls: true,
                     cert_mode_override: None,
                     cert_mode_overrides: None,
                     kubernetes_target_id: None,
                     request_limits: Default::default(),
+                    accept_direct_tcp_connections: false,
                 });
             }
         }
@@ -468,6 +496,7 @@ pub fn v3_to_cruma(v3: &v3::V3Config) -> Result<AppConfig, String> {
         processes,
         global_env,
         listeners,
+        performance: Default::default(),
         kubernetes_targets: Vec::new(),
         tunnel_secret: "ANON".to_string(),
         tunnel_id: "ANON".to_string(),
