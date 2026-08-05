@@ -407,7 +407,7 @@ fn windows_attach_parent_console_if_present() {
 ///
 fn register_oddbox_resolver(runtime: &Arc<ApplicationRuntime>) {
     use cruma::cruma_proxy_lib::types::{
-        DynamicBackendId, DynamicBackendResolver, ResolvedBackend, Target,
+        DynamicBackendId, DynamicBackendResolver, RegisteredResolver, ResolvedBackend, Target,
     };
     use cruma::process_hosting::{DefaultProcessHost, ProcessHost};
 
@@ -545,8 +545,10 @@ fn register_oddbox_resolver(runtime: &Arc<ApplicationRuntime>) {
     });
 
     runtime.register_proxy_config_mutator(Arc::new(move |cfg| {
-        cfg.dynamic_backend_resolvers
-            .insert(DynamicBackendId::from("odd-box"), resolver.clone());
+        cfg.dynamic_backend_resolvers.insert(
+            DynamicBackendId::from("odd-box"),
+            RegisteredResolver::new(resolver.clone()),
+        );
         inject_local_stop_routes(cfg, &source_listeners.load());
     }));
 }
