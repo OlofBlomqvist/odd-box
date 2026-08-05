@@ -264,6 +264,7 @@ fn main() -> Result<()> {
             window_icon: Some(APP_ICON.to_vec()),
             pages: vec![
                 Page::Dashboard,
+                Page::AiAssistant,
                 Page::Statistics,
                 Page::ServiceMap,
                 Page::Backends,
