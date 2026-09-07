@@ -477,6 +477,7 @@ fn register_oddbox_resolver(runtime: &Arc<ApplicationRuntime>) {
                     status: 200,
                     body: Some(body.into_bytes().into()),
                     content_type: Some("text/plain".into()),
+                    retry_after_seconds: None,
                 }))));
             };
 
@@ -524,6 +525,7 @@ fn register_oddbox_resolver(runtime: &Arc<ApplicationRuntime>) {
                             status: 500,
                             body: Some(format!("The /STOP command failed because there is no process matching '{tried}' exactly or as a prefix.").into_bytes().into()),
                             content_type: Some("text/plain".into()),
+                            retry_after_seconds: None,
                         }))));
                     }
                 }
@@ -534,11 +536,13 @@ fn register_oddbox_resolver(runtime: &Arc<ApplicationRuntime>) {
                     status: 200,
                     body: Some(format!("stopped process '{name}'").into_bytes().into()),
                     content_type: Some("text/plain".into()),
+                    retry_after_seconds: None,
                 })))),
                 Err(e) => Ok(Some(Arc::new(ResolvedBackend::Target(Target::Respond {
                     status: 500,
                     body: Some(format!("failed to stop '{name}': {e}").into_bytes().into()),
                     content_type: Some("text/plain".into()),
+                    retry_after_seconds: None,
                 })))),
             }
         })
