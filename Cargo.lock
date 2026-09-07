@@ -1798,7 +1798,7 @@ dependencies = [
 
 [[package]]
 name = "cruma"
-version = "1.0.4"
+version = "1.0.7"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1857,7 +1857,7 @@ dependencies = [
 
 [[package]]
 name = "cruma-core"
-version = "1.0.3"
+version = "1.0.7"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1926,13 +1926,14 @@ dependencies = [
  "which 7.0.3",
  "windows-service",
  "windows-sys 0.61.2",
+ "winreg 0.55.0",
  "winrt-notification",
  "zip",
 ]
 
 [[package]]
 name = "cruma-gui-core"
-version = "1.0.3"
+version = "1.0.7"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1948,7 +1949,7 @@ dependencies = [
 
 [[package]]
 name = "cruma-gui-iced"
-version = "1.0.4"
+version = "1.0.7"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1997,7 +1998,6 @@ dependencies = [
  "urlencoding",
  "which 7.0.3",
  "windows-sys 0.61.2",
- "zbus",
 ]
 
 [[package]]
@@ -2010,11 +2010,11 @@ dependencies = [
 
 [[package]]
 name = "cruma-local-service-scan"
-version = "1.0.0-RC4"
+version = "1.0.7"
 
 [[package]]
 name = "cruma-mac-ext"
-version = "1.0.0"
+version = "1.0.7"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2038,11 +2038,12 @@ dependencies = [
 
 [[package]]
 name = "cruma-proc-host"
-version = "1.0.0"
+version = "1.0.7"
 dependencies = [
  "arc-swap",
  "cruma-ring-log",
  "nix 0.29.0",
+ "serde_json",
  "sysinfo",
  "tempfile",
  "tokio",
@@ -2054,7 +2055,7 @@ dependencies = [
 
 [[package]]
 name = "cruma-proxy-lib"
-version = "1.0.0"
+version = "1.0.7"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2069,9 +2070,10 @@ dependencies = [
  "compio-tls",
  "cruma-h2",
  "dashmap",
+ "flate2",
  "futures",
  "futures-util",
- "h2",
+ "h2 0.4.15 (git+https://github.com/OlofBlomqvist/h2?rev=a30b7d1c9bea9b191810857420065c5582f2258c)",
  "h3",
  "hmac",
  "http",
@@ -2131,7 +2133,7 @@ dependencies = [
 
 [[package]]
 name = "cruma-ring-log"
-version = "1.0.0"
+version = "1.0.7"
 dependencies = [
  "arc-swap",
  "criterion",
@@ -2140,7 +2142,7 @@ dependencies = [
 
 [[package]]
 name = "cruma-tunnels-lib"
-version = "1.0.3"
+version = "1.0.7"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3196,8 +3198,8 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows-link 0.1.3",
- "windows-result 0.3.4",
+ "windows-link 0.2.1",
+ "windows-result 0.4.1",
 ]
 
 [[package]]
@@ -3533,6 +3535,24 @@ dependencies = [
 [[package]]
 name = "h2"
 version = "0.4.15"
+source = "git+https://github.com/OlofBlomqvist/h2?rev=a30b7d1c9bea9b191810857420065c5582f2258c#a30b7d1c9bea9b191810857420065c5582f2258c"
+dependencies = [
+ "atomic-waker",
+ "bytes",
+ "fnv",
+ "futures-core",
+ "futures-sink",
+ "http",
+ "indexmap",
+ "slab",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "h2"
+version = "0.4.15"
 source = "git+https://github.com/OlofBlomqvist/h2#a30b7d1c9bea9b191810857420065c5582f2258c"
 dependencies = [
  "atomic-waker",
@@ -3551,8 +3571,7 @@ dependencies = [
 [[package]]
 name = "h3"
 version = "0.0.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10872b55cfb02a821b69dc7cf8dc6a71d6af25eb9a79662bec4a9d016056b3be"
+source = "git+https://github.com/hyperium/h3?rev=154ff8d4eb939cddf8136e45cfb757d7f9e55866#154ff8d4eb939cddf8136e45cfb757d7f9e55866"
 dependencies = [
  "bytes",
  "fastrand",
@@ -3778,7 +3797,7 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-core",
- "h2",
+ "h2 0.4.15 (git+https://github.com/OlofBlomqvist/h2)",
  "http",
  "http-body",
  "httparse",
@@ -3895,7 +3914,7 @@ dependencies = [
 [[package]]
 name = "iced"
 version = "0.15.0-dev"
-source = "git+https://github.com/wilsonglasser/iced?branch=text-selection#47472e70e49bc4dfda3afe8bf835b20682ac8707"
+source = "git+https://github.com/wilsonglasser/iced?rev=47472e70e49bc4dfda3afe8bf835b20682ac8707#47472e70e49bc4dfda3afe8bf835b20682ac8707"
 dependencies = [
  "iced_core",
  "iced_debug",
@@ -3911,7 +3930,7 @@ dependencies = [
 [[package]]
 name = "iced_core"
 version = "0.15.0-dev"
-source = "git+https://github.com/wilsonglasser/iced?branch=text-selection#47472e70e49bc4dfda3afe8bf835b20682ac8707"
+source = "git+https://github.com/wilsonglasser/iced?rev=47472e70e49bc4dfda3afe8bf835b20682ac8707#47472e70e49bc4dfda3afe8bf835b20682ac8707"
 dependencies = [
  "bitflags 2.11.1",
  "bytes",
@@ -3930,7 +3949,7 @@ dependencies = [
 [[package]]
 name = "iced_debug"
 version = "0.15.0-dev"
-source = "git+https://github.com/wilsonglasser/iced?branch=text-selection#47472e70e49bc4dfda3afe8bf835b20682ac8707"
+source = "git+https://github.com/wilsonglasser/iced?rev=47472e70e49bc4dfda3afe8bf835b20682ac8707#47472e70e49bc4dfda3afe8bf835b20682ac8707"
 dependencies = [
  "iced_core",
  "iced_futures",
@@ -3940,7 +3959,7 @@ dependencies = [
 [[package]]
 name = "iced_futures"
 version = "0.15.0-dev"
-source = "git+https://github.com/wilsonglasser/iced?branch=text-selection#47472e70e49bc4dfda3afe8bf835b20682ac8707"
+source = "git+https://github.com/wilsonglasser/iced?rev=47472e70e49bc4dfda3afe8bf835b20682ac8707#47472e70e49bc4dfda3afe8bf835b20682ac8707"
 dependencies = [
  "futures",
  "iced_core",
@@ -3954,7 +3973,7 @@ dependencies = [
 [[package]]
 name = "iced_graphics"
 version = "0.15.0-dev"
-source = "git+https://github.com/wilsonglasser/iced?branch=text-selection#47472e70e49bc4dfda3afe8bf835b20682ac8707"
+source = "git+https://github.com/wilsonglasser/iced?rev=47472e70e49bc4dfda3afe8bf835b20682ac8707#47472e70e49bc4dfda3afe8bf835b20682ac8707"
 dependencies = [
  "bitflags 2.11.1",
  "bytemuck",
@@ -3975,7 +3994,7 @@ dependencies = [
 [[package]]
 name = "iced_program"
 version = "0.15.0-dev"
-source = "git+https://github.com/wilsonglasser/iced?branch=text-selection#47472e70e49bc4dfda3afe8bf835b20682ac8707"
+source = "git+https://github.com/wilsonglasser/iced?rev=47472e70e49bc4dfda3afe8bf835b20682ac8707#47472e70e49bc4dfda3afe8bf835b20682ac8707"
 dependencies = [
  "iced_graphics",
  "iced_runtime",
@@ -3984,7 +4003,7 @@ dependencies = [
 [[package]]
 name = "iced_renderer"
 version = "0.15.0-dev"
-source = "git+https://github.com/wilsonglasser/iced?branch=text-selection#47472e70e49bc4dfda3afe8bf835b20682ac8707"
+source = "git+https://github.com/wilsonglasser/iced?rev=47472e70e49bc4dfda3afe8bf835b20682ac8707#47472e70e49bc4dfda3afe8bf835b20682ac8707"
 dependencies = [
  "iced_graphics",
  "iced_tiny_skia",
@@ -3996,7 +4015,7 @@ dependencies = [
 [[package]]
 name = "iced_runtime"
 version = "0.15.0-dev"
-source = "git+https://github.com/wilsonglasser/iced?branch=text-selection#47472e70e49bc4dfda3afe8bf835b20682ac8707"
+source = "git+https://github.com/wilsonglasser/iced?rev=47472e70e49bc4dfda3afe8bf835b20682ac8707#47472e70e49bc4dfda3afe8bf835b20682ac8707"
 dependencies = [
  "bytes",
  "iced_core",
@@ -4007,7 +4026,7 @@ dependencies = [
 [[package]]
 name = "iced_tiny_skia"
 version = "0.15.0-dev"
-source = "git+https://github.com/wilsonglasser/iced?branch=text-selection#47472e70e49bc4dfda3afe8bf835b20682ac8707"
+source = "git+https://github.com/wilsonglasser/iced?rev=47472e70e49bc4dfda3afe8bf835b20682ac8707#47472e70e49bc4dfda3afe8bf835b20682ac8707"
 dependencies = [
  "bytemuck",
  "cosmic-text",
@@ -4024,7 +4043,7 @@ dependencies = [
 [[package]]
 name = "iced_wgpu"
 version = "0.15.0-dev"
-source = "git+https://github.com/wilsonglasser/iced?branch=text-selection#47472e70e49bc4dfda3afe8bf835b20682ac8707"
+source = "git+https://github.com/wilsonglasser/iced?rev=47472e70e49bc4dfda3afe8bf835b20682ac8707#47472e70e49bc4dfda3afe8bf835b20682ac8707"
 dependencies = [
  "bitflags 2.11.1",
  "bytemuck",
@@ -4045,7 +4064,7 @@ dependencies = [
 [[package]]
 name = "iced_widget"
 version = "0.15.0-dev"
-source = "git+https://github.com/wilsonglasser/iced?branch=text-selection#47472e70e49bc4dfda3afe8bf835b20682ac8707"
+source = "git+https://github.com/wilsonglasser/iced?rev=47472e70e49bc4dfda3afe8bf835b20682ac8707#47472e70e49bc4dfda3afe8bf835b20682ac8707"
 dependencies = [
  "iced_renderer",
  "log",
@@ -4060,7 +4079,7 @@ dependencies = [
 [[package]]
 name = "iced_winit"
 version = "0.15.0-dev"
-source = "git+https://github.com/wilsonglasser/iced?branch=text-selection#47472e70e49bc4dfda3afe8bf835b20682ac8707"
+source = "git+https://github.com/wilsonglasser/iced?rev=47472e70e49bc4dfda3afe8bf835b20682ac8707#47472e70e49bc4dfda3afe8bf835b20682ac8707"
 dependencies = [
  "arboard",
  "iced_debug",
@@ -4347,8 +4366,8 @@ dependencies = [
 
 [[package]]
 name = "instant-acme"
-version = "0.8.4"
-source = "git+https://github.com/OlofBlomqvist/instant-acme.git#dc6c1cc85107ef06bfbee278bd1573dc40b0ba3c"
+version = "0.9.0"
+source = "git+https://github.com/OlofBlomqvist/instant-acme.git?rev=03782d9a88cedbc93c83447f41b064ac525abbca#03782d9a88cedbc93c83447f41b064ac525abbca"
 dependencies = [
  "async-trait",
  "base64",
@@ -6950,7 +6969,7 @@ dependencies = [
 [[package]]
 name = "quinn"
 version = "0.12.0"
-source = "git+https://github.com/olofBlomqvist/quinn?branch=main#eda4ff243715d12e5e0dc92cabcce2606b71bbbd"
+source = "git+https://github.com/olofBlomqvist/quinn?rev=eda4ff243715d12e5e0dc92cabcce2606b71bbbd#eda4ff243715d12e5e0dc92cabcce2606b71bbbd"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -6990,7 +7009,7 @@ dependencies = [
 [[package]]
 name = "quinn-proto"
 version = "0.12.0"
-source = "git+https://github.com/olofBlomqvist/quinn?branch=main#eda4ff243715d12e5e0dc92cabcce2606b71bbbd"
+source = "git+https://github.com/olofBlomqvist/quinn?rev=eda4ff243715d12e5e0dc92cabcce2606b71bbbd#eda4ff243715d12e5e0dc92cabcce2606b71bbbd"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -7026,7 +7045,7 @@ dependencies = [
 [[package]]
 name = "quinn-udp"
 version = "0.6.1"
-source = "git+https://github.com/olofBlomqvist/quinn?branch=main#eda4ff243715d12e5e0dc92cabcce2606b71bbbd"
+source = "git+https://github.com/olofBlomqvist/quinn?rev=eda4ff243715d12e5e0dc92cabcce2606b71bbbd#eda4ff243715d12e5e0dc92cabcce2606b71bbbd"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -7427,7 +7446,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "futures-util",
- "h2",
+ "h2 0.4.15 (git+https://github.com/OlofBlomqvist/h2)",
  "http",
  "http-body",
  "http-body-util",
@@ -10817,12 +10836,22 @@ dependencies = [
 
 [[package]]
 name = "winreg"
+version = "0.55.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb5a765337c50e9ec252c2069be9bf91c7df47afb103b642ba3a53bf8101be97"
+dependencies = [
+ "cfg-if",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "winreg"
 version = "0.56.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
 dependencies = [
  "cfg-if",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
